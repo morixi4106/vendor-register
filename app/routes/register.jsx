@@ -64,28 +64,40 @@ export default function Register() {
           color:#111;
         }
 
-        .register-shell{
+        .register-header-outer{
           max-width:1540px;
           margin:0 auto;
-          padding:34px 32px 72px;
+          padding:32px 32px 0;
         }
 
-        .vendor-header{
+        .register-header{
+          min-height:118px;
           display:flex;
-          align-items:center;
-          margin-bottom:46px;
+          align-items:flex-start;
         }
 
         .vendor-logo-link{
           display:inline-flex;
-          align-items:center;
+          align-items:flex-start;
           text-decoration:none;
+          line-height:0;
         }
 
         .vendor-logo{
-          width:156px;
+          width:154px;
           height:auto;
           display:block;
+        }
+
+        .register-main{
+          max-width:1540px;
+          margin:0 auto;
+          padding:22px 32px 72px;
+        }
+
+        .vendor-form-wrap{
+          max-width:1180px;
+          margin:0 auto;
         }
 
         .vendor-title{
@@ -95,11 +107,6 @@ export default function Register() {
           line-height:1.15;
           font-weight:800;
           color:#111;
-        }
-
-        .vendor-form-wrap{
-          max-width:1180px;
-          margin:0 auto;
         }
 
         .vendor-form-grid{
@@ -235,16 +242,20 @@ export default function Register() {
         }
 
         @media screen and (max-width:768px){
-          .register-shell{
-            padding:20px 16px 48px;
+          .register-header-outer{
+            padding:20px 16px 0;
           }
 
-          .vendor-header{
-            margin-bottom:28px;
+          .register-header{
+            min-height:auto;
           }
 
           .vendor-logo{
             width:120px;
+          }
+
+          .register-main{
+            padding:20px 16px 48px;
           }
 
           .vendor-title{
@@ -287,8 +298,8 @@ export default function Register() {
         }
       `}</style>
 
-      <div className="register-shell">
-        <header className="vendor-header">
+      <div className="register-header-outer">
+        <header className="register-header">
           <a
             className="vendor-logo-link"
             href="https://oja-immanuel-bacchus.myshopify.com/"
@@ -301,7 +312,9 @@ export default function Register() {
             />
           </a>
         </header>
+      </div>
 
+      <main className="register-main">
         <div className="vendor-form-wrap">
           <h1 className="vendor-title">店舗登録</h1>
 
@@ -450,7 +463,6 @@ export default function Register() {
                         checked={ageCheck === "私は18歳以上です"}
                         onChange={(e) => setAgeCheck(e.target.value)}
                       />
-
                       <span className="vendor-radio-label">
                         私は18歳以上です
                       </span>
@@ -465,7 +477,6 @@ export default function Register() {
                         checked={ageCheck === "私は18歳未満です"}
                         onChange={(e) => setAgeCheck(e.target.value)}
                       />
-
                       <span className="vendor-radio-label">
                         私は18歳未満です
                       </span>
@@ -486,7 +497,7 @@ export default function Register() {
             </div>
           </form>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
