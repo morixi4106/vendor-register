@@ -32,3 +32,18 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model VendorStore {
+  id         String   @id @default(cuid())
+  ownerName  String
+  storeName  String
+  email      String
+  phone      String
+  address    String
+  country    String
+  category   String
+  note       String?
+  ageCheck   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

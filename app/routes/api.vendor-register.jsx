@@ -1,20 +1,5 @@
 import { json } from "@remix-run/node";
-
-const SHOP = process.env.SHOPIFY_SHOP || "oja-immanuel-bacchus.myshopify.com";
-const TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-
-async function shopify(query, variables = {}) {
-  const res = await fetch(`https://${SHOP}/admin/api/2025-01/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": TOKEN,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  return res.json();
-}
+import prisma from "../db.server";
 
 export const action = async ({ request }) => {
   const formData = await request.formData();
@@ -30,105 +15,44 @@ export const action = async ({ request }) => {
   const note = String(formData.get("note") || "").trim();
   const ageCheck = String(formData.get("age_check") || "").trim();
 
-  if (!TOKEN) {
+  if (
+    !email ||
+    !phone ||
+    !ownerName ||
+    !storeName ||
+    !address ||
+    !country ||
+    !category ||
+    !ageCheck
+  ) {
     return json(
       {
         ok: false,
-        errors: [{ message: "SHOPIFY_ADMIN_ACCESS_TOKEN が未設定です。" }],
-      },
-      { status: 500 }
-    );
-  }
-
-  const result = await shopify(
-    `mutation customerCreate($input: CustomerInput!) {
-      customerCreate(input: $input) {
-        customer {
-          id
-          email
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      input: {
-        email,
-        phone,
-        tags: ["vendor"],
-        metafields: [
-          {
-            namespace: "vendor",
-            key: "owner_name",
-            type: "single_line_text_field",
-            value: ownerName,
-          },
-          {
-            namespace: "vendor",
-            key: "store_name",
-            type: "single_line_text_field",
-            value: storeName,
-          },
-          {
-            namespace: "vendor",
-            key: "address",
-            type: "single_line_text_field",
-            value: address,
-          },
-          {
-            namespace: "vendor",
-            key: "country",
-            type: "single_line_text_field",
-            value: country,
-          },
-          {
-            namespace: "vendor",
-            key: "category",
-            type: "single_line_text_field",
-            value: category,
-          },
-          {
-            namespace: "vendor",
-            key: "website",
-            type: "single_line_text_field",
-            value: website,
-          },
-          {
-            namespace: "vendor",
-            key: "note",
-            type: "multi_line_text_field",
-            value: note,
-          },
-          {
-            namespace: "vendor",
-            key: "age_check",
-            type: "single_line_text_field",
-            value: ageCheck,
-          },
-        ],
-      },
-    }
-  );
-
-  const errors = result?.data?.customerCreate?.userErrors || [];
-
-  if (errors.length > 0) {
-    return json(
-      {
-        ok: false,
-        errors,
+        errors: [{ message: "必須項目が不足しています。" }],
       },
       { status: 400 }
     );
   }
 
+  await prisma.vendorStore.create({
+    data: {
+      email,
+      phone,
+      ownerName,
+      storeName,
+      address,
+      country,
+      category,
+      note: note || null,
+      ageCheck,
+    },
+  });
+
   return new Response(null, {
     status: 302,
     headers: {
       Location:
-      "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
+        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
     },
   });
 };
