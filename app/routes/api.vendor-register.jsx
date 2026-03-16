@@ -124,9 +124,7 @@ export const action = async ({ request }) => {
       {
         ok: false,
         step: "customerCreate",
-        errors: customerErrors.length > 0
-          ? customerErrors
-          : [{ message: "customerCreate に失敗しました。" }],
+        errors: customerErrors,
       },
       { status: 400 }
     );
@@ -170,7 +168,8 @@ export const action = async ({ request }) => {
     }
   );
 
-  const metaobjectErrors = metaobjectResult?.data?.metaobjectCreate?.userErrors || [];
+  const metaobjectErrors =
+    metaobjectResult?.data?.metaobjectCreate?.userErrors || [];
   const metaobject = metaobjectResult?.data?.metaobjectCreate?.metaobject;
 
   if (metaobjectErrors.length > 0 || !metaobject?.id) {
@@ -178,9 +177,7 @@ export const action = async ({ request }) => {
       {
         ok: false,
         step: "metaobjectCreate",
-        errors: metaobjectErrors.length > 0
-          ? metaobjectErrors
-          : [{ message: "stores メタオブジェクト作成に失敗しました。" }],
+        errors: metaobjectErrors,
       },
       { status: 400 }
     );
@@ -230,9 +227,7 @@ ${note ? `<p>${note}</p>` : ""}
       {
         ok: false,
         step: "pageCreate",
-        errors: pageErrors.length > 0
-          ? pageErrors
-          : [{ message: "店舗ページ作成に失敗しました。" }],
+        errors: pageErrors,
       },
       { status: 400 }
     );
@@ -241,7 +236,8 @@ ${note ? `<p>${note}</p>` : ""}
   return new Response(null, {
     status: 302,
     headers: {
-      Location: `/pages/${storeHandle}`,
+      Location:
+        "/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
     },
   });
 };
