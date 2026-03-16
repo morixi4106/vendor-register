@@ -50,19 +50,24 @@ export default function AppIndex() {
 
         .vendor-form-row{
           display:grid;
-          grid-template-columns:300px 1fr;
+          grid-template-columns:minmax(220px,280px) 1fr;
           gap:34px;
           align-items:start;
         }
 
         .vendor-form-label{
           display:flex;
+          flex-wrap:wrap;
           align-items:center;
           gap:16px;
           padding-top:18px;
           color:#111;
           font-size:30px;
           font-weight:800;
+        }
+
+        .vendor-form-label span:first-child{
+          word-break:break-word;
         }
 
         .vendor-required,
