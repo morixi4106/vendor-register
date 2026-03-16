@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import shopify from "../shopify.server";
 
 function slugify(text) {
   return String(text || "")
@@ -18,7 +18,10 @@ async function graphqlJson(admin, query, variables = {}) {
 }
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin } = await shopify.unauthenticated.admin(
+    "oja-immanuel-bacchus.myshopify.com"
+  );
+
   const formData = await request.formData();
 
   const email = String(formData.get("email") || "").trim();
