@@ -22,199 +22,33 @@ export default function AppIndex() {
   const [note, setNote] = useState("");
   const [ageCheck, setAgeCheck] = useState("私は18歳以上です");
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
+
+    const formData = new FormData();
+
+    formData.append("owner_name", ownerName);
+    formData.append("store_name", storeName);
+    formData.append("email", email);
+    formData.append("phone", phone);
+    formData.append("address", address);
+    formData.append("country", country);
+    formData.append("category", category);
+    formData.append("note", note);
+    formData.append("age_check", ageCheck);
+
+    const res = await fetch("/api/vendor-register", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (res.redirected) {
+      window.location.href = res.url;
+    }
   }
 
   return (
     <Page fullWidth>
-      <style>{`
-        .vendor-form-wrap{
-          max-width:1180px;
-          margin:24px auto 48px;
-          padding:0 24px;
-        }
-
-        .vendor-form-title{
-          font-size:56px;
-          font-weight:800;
-          line-height:1.2;
-          color:#111;
-          margin:0 0 40px;
-        }
-
-        .vendor-form-grid{
-          display:grid;
-          gap:34px;
-        }
-
-        .vendor-form-row{
-          display:grid;
-          grid-template-columns:minmax(220px,280px) 1fr;
-          gap:34px;
-          align-items:start;
-        }
-
-        .vendor-form-label{
-          display:flex;
-          flex-wrap:wrap;
-          align-items:center;
-          gap:16px;
-          padding-top:18px;
-          color:#111;
-          font-size:30px;
-          font-weight:800;
-        }
-
-        .vendor-form-label span:first-child{
-          word-break:break-word;
-        }
-
-        .vendor-required,
-        .vendor-optional{
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          min-width:80px;
-          height:44px;
-          padding:0 18px;
-          border-radius:12px;
-          color:#fff;
-          font-size:18px;
-          font-weight:800;
-        }
-
-        .vendor-required{
-          background:#c91c1c;
-        }
-
-        .vendor-optional{
-          background:#8b8b8b;
-        }
-
-        .vendor-input,
-        .vendor-textarea,
-        .vendor-country-select{
-          width:100%;
-          box-sizing:border-box;
-          border:1px solid #d8d8d8;
-          border-radius:12px;
-          background:#fff;
-          color:#111;
-          padding:0 28px;
-          font-size:22px;
-        }
-
-        .vendor-input,
-        .vendor-country-select{
-          height:92px;
-        }
-
-        .vendor-textarea{
-          min-height:230px;
-          padding-top:22px;
-          padding-bottom:22px;
-          resize:vertical;
-        }
-
-        .vendor-radio-group{
-          border:1px solid #d8d8d8;
-          border-radius:12px;
-          background:#fff;
-          padding:22px 28px;
-        }
-
-        .vendor-radio-row{
-          display:flex;
-          align-items:center;
-          gap:18px;
-          margin-bottom:20px;
-        }
-
-        .vendor-radio-row:last-child{
-          margin-bottom:0;
-        }
-
-        .vendor-radio-input{
-          width:28px;
-          height:28px;
-        }
-
-        .vendor-radio-label{
-          font-size:28px;
-        }
-
-        .vendor-age-note{
-          margin-top:16px;
-          border:1px solid #ecd08d;
-          background:#fff7e4;
-          border-radius:12px;
-          padding:18px 22px;
-          color:#8a6200;
-          font-size:16px;
-        }
-
-        .vendor-submit-wrap{
-          margin-top:18px;
-          text-align:center;
-        }
-
-        .vendor-submit{
-          min-width:320px;
-          height:88px;
-          border:none;
-          border-radius:999px;
-          background:#111;
-          color:#fff;
-          font-size:26px;
-          font-weight:800;
-          cursor:pointer;
-        }
-
-        .vendor-submit:hover{
-          opacity:0.92;
-        }
-
-        @media screen and (max-width:768px){
-          .vendor-form-title{
-            font-size:32px;
-          }
-
-          .vendor-form-row{
-            grid-template-columns:1fr;
-            gap:10px;
-          }
-
-          .vendor-form-label{
-            font-size:20px;
-            padding-top:0;
-          }
-
-          .vendor-input,
-          .vendor-country-select{
-            height:56px;
-            font-size:18px;
-            padding:0 16px;
-          }
-
-          .vendor-textarea{
-            min-height:140px;
-            font-size:18px;
-            padding:14px 16px;
-          }
-
-          .vendor-radio-label{
-            font-size:18px;
-          }
-
-          .vendor-submit{
-            width:100%;
-            height:60px;
-            font-size:22px;
-          }
-        }
-      `}</style>
-
       <div className="vendor-form-wrap">
         <h1 className="vendor-form-title">店舗登録（申請）</h1>
 
@@ -227,6 +61,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="owner_name"
                 className="vendor-input"
                 value={ownerName}
                 onChange={(e) => setOwnerName(e.target.value)}
@@ -241,6 +76,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="store_name"
                 className="vendor-input"
                 value={storeName}
                 onChange={(e) => setStoreName(e.target.value)}
@@ -255,6 +91,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="email"
                 className="vendor-input"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -269,6 +106,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="phone"
                 className="vendor-input"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -283,6 +121,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="address"
                 className="vendor-input"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
@@ -297,6 +136,7 @@ export default function AppIndex() {
               </label>
 
               <select
+                name="country"
                 className="vendor-country-select"
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
@@ -318,6 +158,7 @@ export default function AppIndex() {
               </label>
 
               <input
+                name="category"
                 className="vendor-input"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
@@ -332,6 +173,7 @@ export default function AppIndex() {
               </label>
 
               <textarea
+                name="note"
                 className="vendor-textarea"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -349,6 +191,7 @@ export default function AppIndex() {
                 <div className="vendor-radio-group">
                   <div className="vendor-radio-row">
                     <input
+                      name="age_check"
                       type="radio"
                       className="vendor-radio-input"
                       value="私は18歳以上です"
@@ -363,6 +206,7 @@ export default function AppIndex() {
 
                   <div className="vendor-radio-row">
                     <input
+                      name="age_check"
                       type="radio"
                       className="vendor-radio-input"
                       value="私は18歳未満です"
