@@ -1,27 +1,22 @@
 import { json } from "@remix-run/node";
-import shopify from "../shopify.server";
 
-function slugify(text) {
-  return String(text || "")
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s　]+/g, "-")
-    .replace(/[^a-z0-9-ぁ-んァ-ヶ一-龠ー]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+const SHOP = process.env.SHOPIFY_SHOP || "oja-immanuel-bacchus.myshopify.com";
+const TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-async function graphqlJson(admin, query, variables = {}) {
-  const response = await admin.graphql(query, { variables });
-  return response.json();
+async function shopify(query, variables = {}) {
+  const res = await fetch(`https://${SHOP}/admin/api/2025-01/graphql.json`, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": TOKEN,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  return res.json();
 }
 
 export const action = async ({ request }) => {
-  const { admin } = await shopify.unauthenticated.admin(
-    "oja-immanuel-bacchus.myshopify.com"
-  );
-
   const formData = await request.formData();
 
   const email = String(formData.get("email") || "").trim();
@@ -35,18 +30,22 @@ export const action = async ({ request }) => {
   const note = String(formData.get("note") || "").trim();
   const ageCheck = String(formData.get("age_check") || "").trim();
 
-  const storeHandleBase = slugify(storeName || ownerName || email.split("@")[0]);
-  const storeHandle = storeHandleBase || `store-${Date.now()}`;
+  if (!TOKEN) {
+    return json(
+      {
+        ok: false,
+        errors: [{ message: "SHOPIFY_ADMIN_ACCESS_TOKEN が未設定です。" }],
+      },
+      { status: 500 }
+    );
+  }
 
-  const customerResult = await graphqlJson(
-    admin,
-    `#graphql
-    mutation customerCreate($input: CustomerInput!) {
+  const result = await shopify(
+    `mutation customerCreate($input: CustomerInput!) {
       customerCreate(input: $input) {
         customer {
           id
           email
-          tags
         }
         userErrors {
           field
@@ -108,129 +107,18 @@ export const action = async ({ request }) => {
             type: "single_line_text_field",
             value: ageCheck,
           },
-          {
-            namespace: "vendor",
-            key: "store_handle",
-            type: "single_line_text_field",
-            value: storeHandle,
-          },
         ],
       },
     }
   );
 
-  const customerErrors = customerResult?.data?.customerCreate?.userErrors || [];
-  const customer = customerResult?.data?.customerCreate?.customer;
+  const errors = result?.data?.customerCreate?.userErrors || [];
 
-  if (customerErrors.length > 0 || !customer?.id) {
+  if (errors.length > 0) {
     return json(
       {
         ok: false,
-        step: "customerCreate",
-        errors: customerErrors,
-      },
-      { status: 400 }
-    );
-  }
-
-  const metaobjectResult = await graphqlJson(
-    admin,
-    `#graphql
-    mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
-      metaobjectCreate(metaobject: $metaobject) {
-        metaobject {
-          id
-          handle
-          type
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      metaobject: {
-        type: "stores",
-        handle: storeHandle,
-        fields: [
-          {
-            key: "store_name",
-            value: storeName,
-          },
-          {
-            key: "store_description",
-            value: note || `${storeName} の店舗ページです。`,
-          },
-          {
-            key: "location",
-            value: [address, country].filter(Boolean).join(" / "),
-          },
-        ],
-      },
-    }
-  );
-
-  const metaobjectErrors =
-    metaobjectResult?.data?.metaobjectCreate?.userErrors || [];
-  const metaobject = metaobjectResult?.data?.metaobjectCreate?.metaobject;
-
-  if (metaobjectErrors.length > 0 || !metaobject?.id) {
-    return json(
-      {
-        ok: false,
-        step: "metaobjectCreate",
-        errors: metaobjectErrors,
-      },
-      { status: 400 }
-    );
-  }
-
-  const pageBody = `
-<p>${storeName} の店舗ページです。</p>
-${ownerName ? `<p>運営者: ${ownerName}</p>` : ""}
-${category ? `<p>カテゴリ: ${category}</p>` : ""}
-${website ? `<p>Web / SNS: <a href="${website}">${website}</a></p>` : ""}
-${note ? `<p>${note}</p>` : ""}
-  `.trim();
-
-  const pageResult = await graphqlJson(
-    admin,
-    `#graphql
-    mutation pageCreate($page: PageCreateInput!) {
-      pageCreate(page: $page) {
-        page {
-          id
-          title
-          handle
-          onlineStoreUrl
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      page: {
-        title: storeName,
-        handle: storeHandle,
-        body: pageBody,
-        templateSuffix: "store",
-        isPublished: true,
-      },
-    }
-  );
-
-  const pageErrors = pageResult?.data?.pageCreate?.userErrors || [];
-  const page = pageResult?.data?.pageCreate?.page;
-
-  if (pageErrors.length > 0 || !page?.id) {
-    return json(
-      {
-        ok: false,
-        step: "pageCreate",
-        errors: pageErrors,
+        errors,
       },
       { status: 400 }
     );
