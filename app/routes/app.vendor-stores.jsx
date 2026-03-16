@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -49,7 +49,18 @@ export default function VendorStoresPage() {
             <tbody>
               {stores.map((store) => (
                 <tr key={store.id}>
-                  <td style={tdStyle}>{store.storeName}</td>
+                  <td style={tdStyle}>
+                    <Link
+                      to={`/app/vendor/${store.id}`}
+                      style={{
+                        color: "#0b57d0",
+                        textDecoration: "none",
+                        fontWeight: "700",
+                      }}
+                    >
+                      {store.storeName}
+                    </Link>
+                  </td>
                   <td style={tdStyle}>{store.ownerName}</td>
                   <td style={tdStyle}>{store.email}</td>
                   <td style={tdStyle}>{store.phone}</td>
