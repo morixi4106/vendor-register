@@ -67,7 +67,7 @@ export default function Register() {
         .register-header-outer{
           max-width:1540px;
           margin:0 auto;
-          padding:32px 32px 0;
+          padding:24px 40px 0;
         }
 
         .register-header{
@@ -92,7 +92,7 @@ export default function Register() {
         .register-main{
           max-width:1540px;
           margin:0 auto;
-          padding:22px 32px 72px;
+          padding:8px 40px 72px;
         }
 
         .vendor-form-wrap{
