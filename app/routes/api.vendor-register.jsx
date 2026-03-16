@@ -111,21 +111,10 @@ export const action = async ({ request }) => {
       },
     }
   );
-  const topErrors = result?.errors || [];
-  if (topErrors.length > 0) {
-    console.error("Shopify GraphQL errors:", JSON.stringify(topErrors, null, 2));
-    return json(
-      {
-        ok: false,
-        errors: topErrors,
-      },
-      { status: 400 }
-    );
-  }
 
   const errors = result?.data?.customerCreate?.userErrors || [];
+
   if (errors.length > 0) {
-    console.error("customerCreate userErrors:", JSON.stringify(errors, null, 2));
     return json(
       {
         ok: false,
@@ -135,23 +124,11 @@ export const action = async ({ request }) => {
     );
   }
 
-  const customer = result?.data?.customerCreate?.customer;
-  if (!customer) {
-    console.error("customerCreate returned no customer:", JSON.stringify(result, null, 2));
-    return json(
-      {
-        ok: false,
-        errors: [{ message: "customerCreate succeeded neither with customer nor userErrors." }],
-      },
-      { status: 400 }
-    );
-  }
-
   return new Response(null, {
     status: 302,
     headers: {
       Location:
-        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
+        "/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
     },
   });
 };
