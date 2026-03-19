@@ -40,7 +40,7 @@ export default function Register() {
     formData.append("age_check", ageCheck);
 
     try {
-      const res = await fetch("/api/vendor-register", {
+      const res = await fetch("https://vendor-register-pbjl.onrender.com/api/vendor-register", {
         method: "POST",
         body: formData,
       });
