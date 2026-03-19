@@ -68,7 +68,7 @@ export default function Register() {
     }
 
     alert("保存成功");
-    window.location.href =
+    window.top.location.href =
       "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84";
   } catch (err) {
     console.error(err);
