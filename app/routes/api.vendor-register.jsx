@@ -1,6 +1,13 @@
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
+export const loader = async () => {
+  return new Response("proxy ok", {
+    status: 200,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+};
+
 export const action = async ({ request }) => {
   const formData = await request.formData();
 
@@ -43,6 +50,7 @@ export const action = async ({ request }) => {
       address,
       country,
       category,
+      website: website || null,
       note: note || null,
       ageCheck,
     },
