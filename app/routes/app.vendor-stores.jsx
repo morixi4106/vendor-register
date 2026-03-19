@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import { json, redirect } from "@remix-run/node";
+import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -13,8 +13,40 @@ export const loader = async ({ request }) => {
   return json({ stores });
 };
 
+export const action = async ({ request }) => {
+  await authenticate.admin(request);
+
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+  const id = String(formData.get("id") || "");
+
+  if (intent !== "delete") {
+    return json({ ok: false, message: "不正な操作です。" }, { status: 400 });
+  }
+
+  if (!id) {
+    return json({ ok: false, message: "店舗IDがありません。" }, { status: 400 });
+  }
+
+  await prisma.product.deleteMany({
+    where: { vendorStoreId: id },
+  });
+
+  await prisma.vendorStore.delete({
+    where: { id },
+  });
+
+  return redirect("/app/vendor-stores");
+};
+
 export default function VendorStoresPage() {
   const { stores } = useLoaderData();
+  const navigation = useNavigation();
+
+  const deletingId =
+    navigation.formData?.get("intent") === "delete"
+      ? String(navigation.formData?.get("id") || "")
+      : "";
 
   return (
     <div style={{ padding: "24px" }}>
@@ -44,35 +76,71 @@ export default function VendorStoresPage() {
                 <th style={thStyle}>カテゴリ</th>
                 <th style={thStyle}>年齢確認</th>
                 <th style={thStyle}>登録日時</th>
+                <th style={thStyle}>操作</th>
               </tr>
             </thead>
             <tbody>
-              {stores.map((store) => (
-                <tr key={store.id}>
-                  <td style={tdStyle}>
-                    <Link
-                      to={`/app/vendor/${store.id}`}
-                      style={{
-                        color: "#0b57d0",
-                        textDecoration: "none",
-                        fontWeight: "700",
-                      }}
-                    >
-                      {store.storeName}
-                    </Link>
-                  </td>
-                  <td style={tdStyle}>{store.ownerName}</td>
-                  <td style={tdStyle}>{store.email}</td>
-                  <td style={tdStyle}>{store.phone}</td>
-                  <td style={tdStyle}>{store.address}</td>
-                  <td style={tdStyle}>{store.country}</td>
-                  <td style={tdStyle}>{store.category}</td>
-                  <td style={tdStyle}>{store.ageCheck}</td>
-                  <td style={tdStyle}>
-                    {new Date(store.createdAt).toLocaleString("ja-JP")}
-                  </td>
-                </tr>
-              ))}
+              {stores.map((store) => {
+                const isDeleting = deletingId === store.id;
+
+                return (
+                  <tr key={store.id}>
+                    <td style={tdStyle}>
+                      <Link
+                        to={`/app/vendor/${store.id}`}
+                        style={{
+                          color: "#0b57d0",
+                          textDecoration: "none",
+                          fontWeight: "700",
+                        }}
+                      >
+                        {store.storeName}
+                      </Link>
+                    </td>
+                    <td style={tdStyle}>{store.ownerName}</td>
+                    <td style={tdStyle}>{store.email}</td>
+                    <td style={tdStyle}>{store.phone}</td>
+                    <td style={tdStyle}>{store.address}</td>
+                    <td style={tdStyle}>{store.country}</td>
+                    <td style={tdStyle}>{store.category}</td>
+                    <td style={tdStyle}>{store.ageCheck}</td>
+                    <td style={tdStyle}>
+                      {new Date(store.createdAt).toLocaleString("ja-JP")}
+                    </td>
+                    <td style={tdStyle}>
+                      <Form
+                        method="post"
+                        onSubmit={(e) => {
+                          const ok = window.confirm(
+                            `「${store.storeName}」を削除しますか？`
+                          );
+                          if (!ok) e.preventDefault();
+                        }}
+                      >
+                        <input type="hidden" name="intent" value="delete" />
+                        <input type="hidden" name="id" value={store.id} />
+                        <button
+                          type="submit"
+                          disabled={isDeleting}
+                          style={{
+                            minWidth: "88px",
+                            height: "36px",
+                            border: "none",
+                            borderRadius: "999px",
+                            background: "#c91c1c",
+                            color: "#fff",
+                            fontWeight: "700",
+                            cursor: isDeleting ? "not-allowed" : "pointer",
+                            opacity: isDeleting ? 0.7 : 1,
+                          }}
+                        >
+                          {isDeleting ? "削除中..." : "削除"}
+                        </button>
+                      </Form>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -93,4 +161,5 @@ const tdStyle = {
   padding: "12px",
   borderBottom: "1px solid #eee",
   verticalAlign: "top",
+  whiteSpace: "nowrap",
 };
