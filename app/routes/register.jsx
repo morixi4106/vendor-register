@@ -45,18 +45,30 @@ export default function Register() {
       body: formData,
     });
 
-    const data = await res.json().catch(() => null);
+    const text = await res.text();
+    let data = null;
+
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      data = null;
+    }
+
+    console.log("vendor-register response status:", res.status);
+    console.log("vendor-register response body:", text);
 
     if (!res.ok || !data?.ok) {
       alert(
         data?.errors?.map((e) => e.message).join("\n") ||
+          text ||
           "送信に失敗しました。"
       );
       setIsSubmitting(false);
       return;
     }
 
-    window.top.location.href =
+    alert("保存成功");
+    window.location.href =
       "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84";
   } catch (err) {
     console.error(err);
