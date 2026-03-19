@@ -23,23 +23,30 @@ export default function AppIndex() {
   const [ageCheck, setAgeCheck] = useState("私は18歳以上です");
 
   async function handleSubmit(e) {
-    e.preventDefault();
+  e.preventDefault();
 
-    const formData = new FormData();
-    formData.append("owner_name", ownerName);
-    formData.append("store_name", storeName);
-    formData.append("email", email);
-    formData.append("phone", phone);
-    formData.append("address", address);
-    formData.append("country", country);
-    formData.append("category", category);
-    formData.append("note", note);
-    formData.append("age_check", ageCheck);
+  if (isSubmitting) return;
+  setIsSubmitting(true);
 
+  const formData = new FormData();
+  formData.append("owner_name", ownerName);
+  formData.append("store_name", storeName);
+  formData.append("email", email);
+  formData.append("phone", phone);
+  formData.append("address", address);
+  formData.append("country", country);
+  formData.append("category", category);
+  formData.append("note", note);
+  formData.append("age_check", ageCheck);
+
+  try {
     const res = await fetch("/api/vendor-register", {
       method: "POST",
       body: formData,
     });
+
+    // 👇 ここ重要：一瞬待たせる
+    await new Promise((r) => setTimeout(r, 500));
 
     if (res.redirected) {
       window.location.href = res.url;
@@ -47,13 +54,23 @@ export default function AppIndex() {
     }
 
     const data = await res.json().catch(() => null);
+
     if (!res.ok) {
       alert(
         data?.errors?.map((e) => e.message).join("\n") ||
           "送信に失敗しました。"
       );
+      setIsSubmitting(false);
+      return;
     }
+
+    setIsSubmitting(false);
+  } catch (err) {
+    console.error(err);
+    alert("通信エラーが発生しました。");
+    setIsSubmitting(false);
   }
+}
 
   return (
     <Page fullWidth>
