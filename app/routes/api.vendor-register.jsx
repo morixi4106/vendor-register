@@ -18,7 +18,6 @@ export const action = async ({ request }) => {
   const address = String(formData.get("address") || "").trim();
   const country = String(formData.get("country") || "").trim();
   const category = String(formData.get("category") || "").trim();
-  const website = String(formData.get("website") || "").trim();
   const note = String(formData.get("note") || "").trim();
   const ageCheck = String(formData.get("age_check") || "").trim();
 
@@ -50,7 +49,6 @@ export const action = async ({ request }) => {
       address,
       country,
       category,
-      website: website || null,
       note: note || null,
       ageCheck,
     },
