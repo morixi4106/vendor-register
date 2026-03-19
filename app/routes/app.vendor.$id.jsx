@@ -8,6 +8,9 @@ export const loader = async ({ request, params }) => {
 
   const store = await prisma.vendorStore.findUnique({
     where: { id: params.id },
+    include: {
+      products: true, // ← 追加
+    },
   });
 
   if (!store) {
@@ -48,6 +51,30 @@ export default function VendorDetailPage() {
           value={new Date(store.createdAt).toLocaleString("ja-JP")}
         />
       </div>
+
+      <hr style={{ margin: "40px 0" }} />
+
+      <h2>この店舗の商品</h2>
+
+      {store.products.length === 0 ? (
+        <p>※ まだ商品はありません</p>
+      ) : (
+        <div style={{ display: "grid", gap: "12px" }}>
+          {store.products.map((product) => (
+            <div
+              key={product.id}
+              style={{
+                border: "1px solid #eee",
+                borderRadius: "8px",
+                padding: "12px",
+              }}
+            >
+              <div style={{ fontWeight: "700" }}>{product.name}</div>
+              <div>¥{product.price.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

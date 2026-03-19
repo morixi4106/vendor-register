@@ -20,9 +20,13 @@ export default function Register() {
   const [category, setCategory] = useState("");
   const [note, setNote] = useState("");
   const [ageCheck, setAgeCheck] = useState("私は18歳以上です");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
+
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
     const formData = new FormData();
     formData.append("owner_name", ownerName);
@@ -53,11 +57,15 @@ export default function Register() {
           data?.errors?.map((e) => e.message).join("\n") ||
             "送信に失敗しました。"
         );
+        setIsSubmitting(false);
         return;
       }
+
+      setIsSubmitting(false);
     } catch (err) {
       console.error(err);
       alert("通信エラーが発生しました。");
+      setIsSubmitting(false);
     }
   }
 
@@ -245,6 +253,11 @@ export default function Register() {
 
         .vendor-submit:hover{
           opacity:0.92;
+        }
+
+        .vendor-submit:disabled{
+          opacity:0.7;
+          cursor:not-allowed;
         }
 
         @media screen and (max-width:768px){
@@ -497,8 +510,12 @@ export default function Register() {
             </div>
 
             <div className="vendor-submit-wrap">
-              <button type="submit" className="vendor-submit">
-                送信
+              <button
+                type="submit"
+                className="vendor-submit"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "送信中..." : "送信"}
               </button>
             </div>
           </form>
