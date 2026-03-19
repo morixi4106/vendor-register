@@ -13,5 +13,11 @@ export const loader = async () => {
     },
   });
 
-  return json({ ok: true, stores });
+  return new Response(JSON.stringify({ ok: true, stores }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
 };
