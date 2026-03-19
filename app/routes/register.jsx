@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useAppBridge } from "@shopify/app-bridge-react";
 import isoCountries from "i18n-iso-countries";
 import jaLocale from "i18n-iso-countries/langs/ja.json";
 
@@ -12,7 +11,6 @@ const countryList = Object.entries(
   .sort((a, b) => a.name.localeCompare(b.name, "ja"));
 
 export default function Register() {
-  const shopify = useAppBridge();
   const [ownerName, setOwnerName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [email, setEmail] = useState("");
@@ -73,10 +71,8 @@ export default function Register() {
       }
 
       alert("保存成功");
-      shopify.open(
-        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
-        "_top"
-      );
+      window.top.location.href =
+        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84";
     } catch (err) {
       console.error(err);
       alert("通信エラーが発生しました。");
