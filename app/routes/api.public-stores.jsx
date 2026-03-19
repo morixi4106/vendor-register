@@ -1,4 +1,3 @@
-import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
 export const loader = async () => {
@@ -9,6 +8,8 @@ export const loader = async () => {
       storeName: true,
       category: true,
       country: true,
+      address: true,
+      note: true,
       createdAt: true,
     },
   });
