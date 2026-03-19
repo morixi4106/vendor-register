@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import isoCountries from "i18n-iso-countries";
 import jaLocale from "i18n-iso-countries/langs/ja.json";
 
@@ -11,6 +12,7 @@ const countryList = Object.entries(
   .sort((a, b) => a.name.localeCompare(b.name, "ja"));
 
 export default function Register() {
+  const shopify = useAppBridge();
   const [ownerName, setOwnerName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [email, setEmail] = useState("");
@@ -23,59 +25,64 @@ export default function Register() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(e) {
-  e.preventDefault();
+    e.preventDefault();
 
-  if (isSubmitting) return;
-  setIsSubmitting(true);
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
-  const formData = new FormData();
-  formData.append("owner_name", ownerName);
-  formData.append("store_name", storeName);
-  formData.append("email", email);
-  formData.append("phone", phone);
-  formData.append("address", address);
-  formData.append("country", country);
-  formData.append("category", category);
-  formData.append("note", note);
-  formData.append("age_check", ageCheck);
-
-  try {
-    const res = await fetch("https://vendor-register-pbjl.onrender.com/api/vendor-register", {
-      method: "POST",
-      body: formData,
-    });
-
-    const text = await res.text();
-    let data = null;
+    const formData = new FormData();
+    formData.append("owner_name", ownerName);
+    formData.append("store_name", storeName);
+    formData.append("email", email);
+    formData.append("phone", phone);
+    formData.append("address", address);
+    formData.append("country", country);
+    formData.append("category", category);
+    formData.append("note", note);
+    formData.append("age_check", ageCheck);
 
     try {
-      data = JSON.parse(text);
-    } catch (_) {
-      data = null;
-    }
-
-    console.log("vendor-register response status:", res.status);
-    console.log("vendor-register response body:", text);
-
-    if (!res.ok || !data?.ok) {
-      alert(
-        data?.errors?.map((e) => e.message).join("\n") ||
-          text ||
-          "送信に失敗しました。"
+      const res = await fetch(
+        "https://vendor-register-pbjl.onrender.com/api/vendor-register",
+        {
+          method: "POST",
+          body: formData,
+        }
       );
-      setIsSubmitting(false);
-      return;
-    }
 
-    alert("保存成功");
-    window.top.location.href =
-      "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84";
-  } catch (err) {
-    console.error(err);
-    alert("通信エラーが発生しました。");
-    setIsSubmitting(false);
+      const text = await res.text();
+      let data = null;
+
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = null;
+      }
+
+      console.log("vendor-register response status:", res.status);
+      console.log("vendor-register response body:", text);
+
+      if (!res.ok || !data?.ok) {
+        alert(
+          data?.errors?.map((e) => e.message).join("\n") ||
+            text ||
+            "送信に失敗しました。"
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      alert("保存成功");
+      shopify.open(
+        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84",
+        "_top"
+      );
+    } catch (err) {
+      console.error(err);
+      alert("通信エラーが発生しました。");
+      setIsSubmitting(false);
+    }
   }
-}
 
   return (
     <div className="register-page">
