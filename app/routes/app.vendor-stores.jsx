@@ -2,6 +2,8 @@ import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { Redirect } from "@shopify/app-bridge/actions";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -42,6 +44,7 @@ export const action = async ({ request }) => {
 export default function VendorStoresPage() {
   const { stores } = useLoaderData();
   const navigation = useNavigation();
+  const app = useAppBridge();
 
   const deletingId =
     navigation.formData?.get("intent") === "delete"
@@ -49,9 +52,9 @@ export default function VendorStoresPage() {
       : "";
 
   const openStorefrontDetail = (id) => {
-    const base = window.location.origin.replace(/\/admin.*$/, "");
-    const url = `${base}/apps/vendors/${id}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const url = `${window.location.origin}/apps/vendors/${id}`;
+    const redirect = Redirect.create(app);
+    redirect.dispatch(Redirect.Action.REMOTE, url);
   };
 
   return (
@@ -104,6 +107,7 @@ export default function VendorStoresPage() {
                           fontWeight: "700",
                           cursor: "pointer",
                           fontSize: "inherit",
+                          fontFamily: "inherit",
                         }}
                       >
                         {store.storeName}
@@ -120,7 +124,15 @@ export default function VendorStoresPage() {
                       {new Date(store.createdAt).toLocaleString("ja-JP")}
                     </td>
                     <td style={tdStyle}>
-                      <Form method="post">
+                      <Form
+                        method="post"
+                        onSubmit={(e) => {
+                          const ok = window.confirm(
+                            `「${store.storeName}」を削除しますか？`
+                          );
+                          if (!ok) e.preventDefault();
+                        }}
+                      >
                         <input type="hidden" name="intent" value="delete" />
                         <input type="hidden" name="id" value={store.id} />
                         <button
@@ -158,9 +170,12 @@ const thStyle = {
   padding: "12px",
   borderBottom: "1px solid #ddd",
   background: "#f7f7f7",
+  whiteSpace: "nowrap",
 };
 
 const tdStyle = {
   padding: "12px",
   borderBottom: "1px solid #eee",
+  verticalAlign: "top",
+  whiteSpace: "nowrap",
 };
