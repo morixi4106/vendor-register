@@ -86,8 +86,8 @@ export default function VendorStoresPage() {
                 return (
                   <tr key={store.id}>
                     <td style={tdStyle}>
-                      <Link
-                        to={`/app/vendor/${store.id}`}
+                      <a
+                        href={`/apps/vendors/${store.id}`}
                         style={{
                           color: "#0b57d0",
                           textDecoration: "none",
@@ -95,7 +95,7 @@ export default function VendorStoresPage() {
                         }}
                       >
                         {store.storeName}
-                      </Link>
+                      </a>
                     </td>
                     <td style={tdStyle}>{store.ownerName}</td>
                     <td style={tdStyle}>{store.email}</td>
