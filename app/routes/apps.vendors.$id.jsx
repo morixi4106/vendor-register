@@ -31,6 +31,15 @@ function liquidResponse(markup, status = 200) {
 export const loader = async ({ params }) => {
   const id = String(params.id || "");
 
+  if (id === "verify") {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/apps/vendors/verify",
+      },
+    });
+  }
+
   if (!id) {
     return liquidResponse(`
       <section class="page-width" style="padding: 40px 20px 80px;">
