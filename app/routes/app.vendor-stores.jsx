@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -88,6 +88,8 @@ export default function VendorStoresPage() {
                     <td style={tdStyle}>
                       <a
                         href={`/apps/vendors/${store.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         style={{
                           color: "#0b57d0",
                           textDecoration: "none",
