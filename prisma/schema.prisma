@@ -1,13 +1,7 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -47,6 +41,7 @@ model VendorStore {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  vendorAuth Vendor?
   products   Product[]
 }
 
@@ -59,4 +54,48 @@ model Product {
   updatedAt     DateTime @updatedAt
 
   vendorStore   VendorStore @relation(fields: [vendorStoreId], references: [id])
+}
+
+model Vendor {
+  id              String   @id @default(cuid())
+  vendorStoreId   String   @unique
+  storeName       String
+  handle          String   @unique
+  managementEmail String
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  vendorStore   VendorStore         @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
+  loginCodes    VendorLoginCode[]
+  adminSessions VendorAdminSession[]
+}
+
+model VendorLoginCode {
+  id         String   @id @default(cuid())
+  vendorId   String
+  email      String
+  code       String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  vendor     Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([code])
+  @@index([expiresAt])
+}
+
+model VendorAdminSession {
+  id           String   @id @default(cuid())
+  vendorId     String
+  sessionToken String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@index([expiresAt])
 }
