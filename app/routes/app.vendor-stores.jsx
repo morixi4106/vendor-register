@@ -48,6 +48,12 @@ export default function VendorStoresPage() {
       ? String(navigation.formData?.get("id") || "")
       : "";
 
+  const openStorefrontDetail = (id) => {
+    const base = window.location.origin.replace(/\/admin.*$/, "");
+    const url = `${base}/apps/vendors/${id}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div style={{ padding: "24px" }}>
       <h1 style={{ fontSize: "28px", fontWeight: "700", marginBottom: "20px" }}>
@@ -86,18 +92,22 @@ export default function VendorStoresPage() {
                 return (
                   <tr key={store.id}>
                     <td style={tdStyle}>
-                      <a
-                        href={`/apps/vendors/${store.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => openStorefrontDetail(store.id)}
                         style={{
+                          padding: 0,
+                          border: "none",
+                          background: "none",
                           color: "#0b57d0",
-                          textDecoration: "none",
+                          textDecoration: "underline",
                           fontWeight: "700",
+                          cursor: "pointer",
+                          fontSize: "inherit",
                         }}
                       >
                         {store.storeName}
-                      </a>
+                      </button>
                     </td>
                     <td style={tdStyle}>{store.ownerName}</td>
                     <td style={tdStyle}>{store.email}</td>
@@ -110,15 +120,7 @@ export default function VendorStoresPage() {
                       {new Date(store.createdAt).toLocaleString("ja-JP")}
                     </td>
                     <td style={tdStyle}>
-                      <Form
-                        method="post"
-                        onSubmit={(e) => {
-                          const ok = window.confirm(
-                            `「${store.storeName}」を削除しますか？`
-                          );
-                          if (!ok) e.preventDefault();
-                        }}
-                      >
+                      <Form method="post">
                         <input type="hidden" name="intent" value="delete" />
                         <input type="hidden" name="id" value={store.id} />
                         <button
@@ -156,12 +158,9 @@ const thStyle = {
   padding: "12px",
   borderBottom: "1px solid #ddd",
   background: "#f7f7f7",
-  whiteSpace: "nowrap",
 };
 
 const tdStyle = {
   padding: "12px",
   borderBottom: "1px solid #eee",
-  verticalAlign: "top",
-  whiteSpace: "nowrap",
 };
