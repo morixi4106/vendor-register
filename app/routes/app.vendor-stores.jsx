@@ -2,8 +2,6 @@ import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { Redirect } from "@shopify/app-bridge/actions";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -44,18 +42,11 @@ export const action = async ({ request }) => {
 export default function VendorStoresPage() {
   const { stores } = useLoaderData();
   const navigation = useNavigation();
-  const app = useAppBridge();
 
   const deletingId =
     navigation.formData?.get("intent") === "delete"
       ? String(navigation.formData?.get("id") || "")
       : "";
-
-  const openStorefrontDetail = (id) => {
-    const url = `${window.location.origin}/apps/vendors/${id}`;
-    const redirect = Redirect.create(app);
-    redirect.dispatch(Redirect.Action.REMOTE, url);
-  };
 
   return (
     <div style={{ padding: "24px" }}>
@@ -95,23 +86,18 @@ export default function VendorStoresPage() {
                 return (
                   <tr key={store.id}>
                     <td style={tdStyle}>
-                      <button
-                        type="button"
-                        onClick={() => openStorefrontDetail(store.id)}
+                      <a
+                        href={`https://oja-immanuel-bacchus.myshopify.com/apps/vendors/${store.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         style={{
-                          padding: 0,
-                          border: "none",
-                          background: "none",
                           color: "#0b57d0",
                           textDecoration: "underline",
                           fontWeight: "700",
-                          cursor: "pointer",
-                          fontSize: "inherit",
-                          fontFamily: "inherit",
                         }}
                       >
                         {store.storeName}
-                      </button>
+                      </a>
                     </td>
                     <td style={tdStyle}>{store.ownerName}</td>
                     <td style={tdStyle}>{store.email}</td>
