@@ -31,13 +31,9 @@ function liquidResponse(markup, status = 200) {
 export const loader = async ({ params }) => {
   const id = String(params.id || "");
 
+  // verifyはここでは処理しない（verify専用ルートに任せる）
   if (id === "verify") {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: "/apps/vendors/verify",
-      },
-    });
+    return liquidResponse("", 404);
   }
 
   if (!id) {
