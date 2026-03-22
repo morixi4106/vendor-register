@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { authenticate } from "../shopify.server";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -9,14 +10,27 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-export const loader = async ({ params }) => {
+function pickFirst(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return String(value);
+    }
+  }
+  return "";
+}
+
+export const loader = async ({ request, params }) => {
+  const { liquid } = await authenticate.public.appProxy(request);
+
   const id = String(params.id || "");
 
   if (!id) {
-    return new Response("店舗IDがありません。", {
-      status: 400,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
+    return liquid(`
+      <section class="page-width" style="padding: 40px 20px 80px;">
+        <h1 style="margin: 0 0 16px; font-size: 32px;">店舗詳細</h1>
+        <p style="margin: 0;">店舗IDがありません。</p>
+      </section>
+    `);
   }
 
   const store = await prisma.vendorStore.findUnique({
@@ -24,209 +38,111 @@ export const loader = async ({ params }) => {
   });
 
   if (!store) {
-    return new Response(
-      `<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>店舗が見つかりません</title>
-  <style>
-    body{
-      margin:0;
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:#fff;
-      color:#111;
-    }
-    .wrap{
-      max-width:1100px;
-      margin:0 auto;
-      padding:48px 24px 80px;
-    }
-    .title{
-      margin:0 0 20px;
-      font-size:42px;
-      font-weight:800;
-    }
-    .text{
-      font-size:18px;
-      line-height:1.8;
-      color:#555;
-    }
-    .back{
-      display:inline-block;
-      margin-top:24px;
-      color:#111;
-      text-decoration:none;
-      font-weight:700;
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1 class="title">店舗が見つかりません</h1>
-    <div class="text">指定された店舗情報は存在しないか、削除されています。</div>
-    <a class="back" href="/pages/%E5%BA%97%E8%88%97%E4%B8%80%E8%A6%A7">← 店舗一覧へ戻る</a>
-  </div>
-</body>
-</html>`,
-      {
-        status: 404,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      }
-    );
+    return liquid(`
+      <section class="page-width" style="padding: 40px 20px 80px;">
+        <h1 style="margin: 0 0 16px; font-size: 32px;">店舗詳細</h1>
+        <p style="margin: 0;">店舗が見つかりません。</p>
+      </section>
+    `);
   }
 
-  const storeName = escapeHtml(store.storeName);
-  const ownerName = escapeHtml(store.ownerName);
-  const email = escapeHtml(store.email);
-  const phone = escapeHtml(store.phone);
-  const address = escapeHtml(store.address);
-  const country = escapeHtml(store.country);
-  const category = escapeHtml(store.category);
-  const note = escapeHtml(store.note || "");
-  const ageCheck = escapeHtml(store.ageCheck);
-  const createdAt = new Date(store.createdAt).toLocaleString("ja-JP");
+  const storeName = escapeHtml(
+    pickFirst(store.storeName, store.store_name, store.name)
+  );
+  const ownerName = escapeHtml(
+    pickFirst(store.ownerName, store.owner_name)
+  );
+  const email = escapeHtml(
+    pickFirst(store.email)
+  );
+  const phone = escapeHtml(
+    pickFirst(store.phone)
+  );
+  const address = escapeHtml(
+    pickFirst(store.address)
+  );
+  const country = escapeHtml(
+    pickFirst(store.country)
+  );
+  const category = escapeHtml(
+    pickFirst(store.category)
+  );
+  const website = escapeHtml(
+    pickFirst(store.website, store.webSite, store.url)
+  );
+  const note = escapeHtml(
+    pickFirst(store.note, store.description)
+  );
 
-  return new Response(
-    `<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${storeName} | 店舗詳細</title>
-  <style>
-    *{
-      box-sizing:border-box;
-    }
-    body{
-      margin:0;
-      background:#fff;
-      color:#111;
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    }
-    .page{
-      padding:40px 0 80px;
-    }
-    .inner{
-      max-width:1280px;
-      margin:0 auto;
-      padding:0 40px;
-    }
-    .back{
-      display:inline-block;
-      margin-bottom:24px;
-      color:#666;
-      text-decoration:none;
-      font-size:15px;
-    }
-    .title{
-      margin:0 0 32px;
-      font-size:42px;
-      line-height:1.15;
-      font-weight:800;
-      color:#111;
-    }
-    .card{
-      border:1px solid #e5e5e5;
-      border-radius:20px;
-      background:#fff;
-      padding:32px;
-    }
-    .grid{
-      display:grid;
-      grid-template-columns:220px 1fr;
-      gap:18px 28px;
-      align-items:start;
-    }
-    .label{
-      font-size:16px;
-      font-weight:700;
-      color:#666;
-    }
-    .value{
-      font-size:18px;
-      line-height:1.8;
-      color:#111;
-      word-break:break-word;
-    }
-    .note{
-      white-space:pre-wrap;
-    }
-    @media screen and (max-width:749px){
-      .page{
-        padding:24px 0 48px;
-      }
-      .inner{
-        padding:0 16px;
-      }
-      .title{
-        font-size:30px;
-        margin-bottom:24px;
-      }
-      .card{
-        padding:20px;
-        border-radius:16px;
-      }
-      .grid{
-        grid-template-columns:1fr;
-        gap:8px 0;
-      }
-      .label{
-        margin-top:10px;
-      }
-      .value{
-        font-size:16px;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="inner">
-      <a class="back" href="/pages/%E5%BA%97%E8%88%97%E4%B8%80%E8%A6%A7">← 店舗一覧へ戻る</a>
-      <h1 class="title">${storeName}</h1>
+  const websiteBlock = website
+    ? `
+      <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+        <dt style="font-weight: 700; margin-bottom: 8px;">Web / SNS</dt>
+        <dd style="margin: 0;">
+          <a href="${website}" target="_blank" rel="noopener noreferrer">${website}</a>
+        </dd>
+      </div>
+    `
+    : "";
 
-      <div class="card">
-        <div class="grid">
-          <div class="label">店舗名</div>
-          <div class="value">${storeName}</div>
+  const noteBlock = note
+    ? `
+      <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+        <dt style="font-weight: 700; margin-bottom: 8px;">備考</dt>
+        <dd style="margin: 0; white-space: pre-wrap;">${note}</dd>
+      </div>
+    `
+    : "";
 
-          <div class="label">氏名 / 法人名</div>
-          <div class="value">${ownerName}</div>
+  return liquid(`
+    <section class="page-width" style="padding: 40px 20px 80px;">
+      <div style="max-width: 960px; margin: 0 auto;">
+        <h1 style="margin: 0 0 28px; font-size: 36px; line-height: 1.3;">
+          ${storeName || "店舗詳細"}
+        </h1>
 
-          <div class="label">カテゴリ</div>
-          <div class="value">${category}</div>
+        <div style="background: #fff; border: 1px solid #e5e5e5; border-radius: 16px; padding: 28px;">
+          <dl style="margin: 0;">
+            <div style="padding: 0 0 18px;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">店舗名</dt>
+              <dd style="margin: 0;">${storeName || "-"}</dd>
+            </div>
 
-          <div class="label">国</div>
-          <div class="value">${country}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">代表者名</dt>
+              <dd style="margin: 0;">${ownerName || "-"}</dd>
+            </div>
 
-          <div class="label">所在地</div>
-          <div class="value">${address}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">メールアドレス</dt>
+              <dd style="margin: 0;">${email || "-"}</dd>
+            </div>
 
-          <div class="label">電話番号</div>
-          <div class="value">${phone}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">電話番号</dt>
+              <dd style="margin: 0;">${phone || "-"}</dd>
+            </div>
 
-          <div class="label">メール</div>
-          <div class="value">${email}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">住所</dt>
+              <dd style="margin: 0;">${address || "-"}</dd>
+            </div>
 
-          <div class="label">年齢確認</div>
-          <div class="value">${ageCheck}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">国</dt>
+              <dd style="margin: 0;">${country || "-"}</dd>
+            </div>
 
-          <div class="label">備考</div>
-          <div class="value note">${note || "なし"}</div>
+            <div style="padding: 18px 0; border-top: 1px solid #e5e5e5;">
+              <dt style="font-weight: 700; margin-bottom: 8px;">カテゴリ</dt>
+              <dd style="margin: 0;">${category || "-"}</dd>
+            </div>
 
-          <div class="label">登録日時</div>
-          <div class="value">${createdAt}</div>
+            ${websiteBlock}
+            ${noteBlock}
+          </dl>
         </div>
       </div>
-    </div>
-  </div>
-</body>
-</html>`,
-    {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    }
-  );
+    </section>
+  `);
 };
