@@ -27,6 +27,6 @@ scopes = "write_customers,read_customers,write_app_proxy"
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/api/auth" ]
 
 [app_proxy]
-url = "https://vendor-register-pbjl.onrender.com/api.vendor-register"
-subpath = "vendor-register"
+url = "https://vendor-register-pbjl.onrender.com/apps/vendors"
+subpath = "vendors"
 prefix = "apps"
