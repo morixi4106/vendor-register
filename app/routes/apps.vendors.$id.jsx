@@ -31,11 +31,6 @@ function liquidResponse(markup, status = 200) {
 export const loader = async ({ params }) => {
   const id = String(params.id || "");
 
-  // verifyはここでは処理しない（verify専用ルートに任せる）
-  if (id === "verify") {
-    return liquidResponse("", 404);
-  }
-
   if (!id) {
     return liquidResponse(`
       <section class="page-width" style="padding: 40px 20px 80px;">
