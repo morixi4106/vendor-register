@@ -1,9 +1,9 @@
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
-import axios from "axios";
 
 export const action = async ({ request }) => {
   console.log("🔥 product create hit");
+
   const formData = await request.formData();
 
   const name = String(formData.get("name") || "").trim();
@@ -22,21 +22,22 @@ export const action = async ({ request }) => {
     },
   });
 
-  // 👇 店舗情報取得
   const store = await prisma.vendorStore.findUnique({
     where: { id: vendorStoreId },
   });
 
-  // 👇 メール送信（Postmark）
   try {
-    await axios.post(
-      "https://api.postmarkapp.com/email",
-      {
+    const response = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        "X-Postmark-Server-Token": process.env.POSTMARK_API_TOKEN || "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         From: process.env.MAIL_FROM,
         To: process.env.ADMIN_EMAIL,
         Subject: `【商品申請】${name}`,
-        TextBody: `
-新しい商品が登録されました。
+        TextBody: `新しい商品が登録されました。
 
 ■ 商品名
 ${name}
@@ -45,21 +46,19 @@ ${name}
 ${price}
 
 ■ 店舗名
-${store?.storeName}
+${store?.storeName || ""}
 
 ■ 店舗メール
-${store?.email}
-        `,
-      },
-      {
-        headers: {
-          "X-Postmark-Server-Token": process.env.POSTMARK_API_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (err) {
-    console.error("Mail send error:", err?.response?.data || err.message);
+${store?.email || ""}
+`,
+      }),
+    });
+
+    const resultText = await response.text();
+    console.log("📨 postmark status:", response.status);
+    console.log("📨 postmark body:", resultText);
+  } catch (error) {
+    console.error("Mail send error:", error);
   }
 
   return json({ success: true, product });
