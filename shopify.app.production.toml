@@ -5,9 +5,6 @@ name = "vendor-register"
 application_url = "https://vendor-register-pbjl.onrender.com"
 embedded = true
 
-[build]
-automatically_update_urls_on_dev = true
-
 [webhooks]
 api_version = "2026-04"
 
@@ -17,3 +14,11 @@ scopes = "read_customers,write_customers"
 
 [auth]
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/auth/callback" ]
+
+[build]
+automatically_update_urls_on_dev = true
+
+[app_proxy]
+url = "https://vendor-register-pbjl.onrender.com/apps/vendors"
+subpath = "vendors"
+prefix = "apps"
