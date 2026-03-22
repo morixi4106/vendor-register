@@ -1,5 +1,4 @@
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -19,18 +18,26 @@ function pickFirst(...values) {
   return "";
 }
 
-export const loader = async ({ request, params }) => {
-  const { liquid } = await authenticate.public.appProxy(request);
+function liquidResponse(markup, status = 200) {
+  return new Response(markup, {
+    status,
+    headers: {
+      "Content-Type": "application/liquid; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
+export const loader = async ({ params }) => {
   const id = String(params.id || "");
 
   if (!id) {
-    return liquid(`
+    return liquidResponse(`
       <section class="page-width" style="padding: 40px 20px 80px;">
         <h1 style="margin: 0 0 16px; font-size: 32px;">店舗詳細</h1>
         <p style="margin: 0;">店舗IDがありません。</p>
       </section>
-    `);
+    `, 400);
   }
 
   const store = await prisma.vendorStore.findUnique({
@@ -38,12 +45,12 @@ export const loader = async ({ request, params }) => {
   });
 
   if (!store) {
-    return liquid(`
+    return liquidResponse(`
       <section class="page-width" style="padding: 40px 20px 80px;">
         <h1 style="margin: 0 0 16px; font-size: 32px;">店舗詳細</h1>
         <p style="margin: 0;">店舗が見つかりません。</p>
       </section>
-    `);
+    `, 404);
   }
 
   const storeName = escapeHtml(
@@ -94,7 +101,7 @@ export const loader = async ({ request, params }) => {
     `
     : "";
 
-  return liquid(`
+  return liquidResponse(`
     <section class="page-width" style="padding: 40px 20px 80px;">
       <div style="max-width: 960px; margin: 0 auto;">
         <h1 style="margin: 0 0 28px; font-size: 36px; line-height: 1.3;">
