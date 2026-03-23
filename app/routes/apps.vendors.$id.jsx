@@ -116,15 +116,19 @@ export const loader = async ({ params }) => {
             const productPrice = Number(product.price || 0);
 
             return `
-              <div style="background: #fff; border: 1px solid #e5e5e5; border-radius: 16px; padding: 20px;">
-                <div style="font-size: 18px; font-weight: 700; line-height: 1.5;">
-                  ${productName || "商品名未設定"}
-                </div>
-                <div style="margin-top: 10px; font-size: 16px; color: #444;">
-                  ¥${productPrice.toLocaleString("ja-JP")}
-                </div>
-              </div>
-            `;
+  <a href="${escapeHtml(product.url || "#")}" target="_blank" rel="noopener noreferrer"
+     style="display:block; background:#fff; border:1px solid #e5e5e5; border-radius:16px; padding:20px; text-decoration:none; color:#111;">
+    
+    <div style="font-size:18px; font-weight:700; line-height:1.5;">
+      ${productName || "商品名未設定"}
+    </div>
+
+    <div style="margin-top:10px; font-size:16px; color:#444;">
+      ¥${productPrice.toLocaleString("ja-JP")}
+    </div>
+
+  </a>
+`;
           }).join("")}
         </div>
       </section>
