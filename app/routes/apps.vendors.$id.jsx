@@ -53,6 +53,11 @@ export const loader = async ({ params }) => {
     `, 404);
   }
 
+  const products = await prisma.product.findMany({
+    where: { vendorStoreId: id },
+    orderBy: { createdAt: "desc" },
+  });
+
   const storeName = escapeHtml(
     pickFirst(store.storeName, store.store_name, store.name)
   );
@@ -100,6 +105,38 @@ export const loader = async ({ params }) => {
       </div>
     `
     : "";
+
+  const productsBlock = products.length
+    ? `
+      <section style="margin-top: 32px;">
+        <h2 style="margin: 0 0 20px; font-size: 28px; line-height: 1.3;">商品一覧</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px;">
+          ${products.map((product) => {
+            const productName = escapeHtml(pickFirst(product.name));
+            const productPrice = Number(product.price || 0);
+
+            return `
+              <div style="background: #fff; border: 1px solid #e5e5e5; border-radius: 16px; padding: 20px;">
+                <div style="font-size: 18px; font-weight: 700; line-height: 1.5;">
+                  ${productName || "商品名未設定"}
+                </div>
+                <div style="margin-top: 10px; font-size: 16px; color: #444;">
+                  ¥${productPrice.toLocaleString("ja-JP")}
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    `
+    : `
+      <section style="margin-top: 32px;">
+        <h2 style="margin: 0 0 20px; font-size: 28px; line-height: 1.3;">商品一覧</h2>
+        <div style="background: #fff; border: 1px solid #e5e5e5; border-radius: 16px; padding: 20px; color: #666;">
+          この店舗の商品はまだありません。
+        </div>
+      </section>
+    `;
 
   return liquidResponse(`
     <section class="page-width" style="padding: 40px 20px 80px;">
@@ -149,6 +186,8 @@ export const loader = async ({ params }) => {
             ${noteBlock}
           </dl>
         </div>
+
+        ${productsBlock}
       </div>
     </section>
   `);
