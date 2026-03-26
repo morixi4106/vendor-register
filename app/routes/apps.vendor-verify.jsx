@@ -1,7 +1,10 @@
 import { json, redirect, createCookie } from "@remix-run/node";
 import { Form, useActionData, useNavigation } from "@remix-run/react";
 import { randomBytes, randomInt } from "crypto";
+import { Resend } from "resend";
 import prisma from "../db.server";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const vendorAdminCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -54,7 +57,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    const code = String(randomInt(100000, 999999));
+    const code = String(randomInt(100000, 1000000));
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     await prisma.vendorLoginCode.create({
@@ -66,10 +69,36 @@ export const action = async ({ request }) => {
       },
     });
 
-    console.log("Vendor verify code:", {
+    try {
+      const { error } = await resend.emails.send({
+        from: process.env.MAIL_FROM,
+        to: [email],
+        subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
+        text:
+          `店舗管理ページの確認コードをお送りします。\n\n` +
+          `確認コード: ${code}\n` +
+          `有効期限: 10分\n\n` +
+          `このメールに心当たりがない場合は、このメールを破棄してください。`,
+      });
+
+      if (error) {
+        console.error("❌ resend error:", error);
+        return json(
+          { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+          { status: 500 },
+        );
+      }
+    } catch (e) {
+      console.error("❌ verify mail error:", e);
+      return json(
+        { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+        { status: 500 },
+      );
+    }
+
+    console.log("Vendor verify code sent:", {
       vendorId: vendor.id,
       email,
-      code,
       expiresAt: expiresAt.toISOString(),
     });
 
