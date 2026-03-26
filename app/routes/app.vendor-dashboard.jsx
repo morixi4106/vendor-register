@@ -1,16 +1,60 @@
+import { useMemo, useState } from "react";
+
 export default function VendorDashboard() {
+  const [query, setQuery] = useState("");
+
   const summaryCards = [
     { title: "本日の売上", value: "¥128,400", sub: "+12.4%" },
+    { title: "月の売上", value: "¥2,843,900", sub: "今月 842点" },
     { title: "未発送注文", value: "18", sub: "要対応 4件" },
     { title: "公開中商品", value: "146", sub: "申請中 7件" },
-    { title: "広告経由売上", value: "¥32,800", sub: "ROAS 4.3" },
   ];
 
-  const orders = [
-    { id: "O-240321", customer: "山田 花子", total: "¥6,560", status: "発送待ち", age: "12分前" },
-    { id: "O-240320", customer: "株式会社 Lumiere", total: "¥12,400", status: "対応要", age: "27分前" },
-    { id: "O-240319", customer: "佐藤 健", total: "¥3,280", status: "発送済み", age: "1時間前" },
-    { id: "O-240318", customer: "高橋 美咲", total: "¥9,940", status: "発送待ち", age: "2時間前" },
+  const priorityOrders = [
+    {
+      id: "O-240321",
+      customer: "山田 花子",
+      product: "NEOBEAUTE 薬用リンクルケアアイシート",
+      quantity: 2,
+      total: "¥6,560",
+      status: "発送待ち",
+      age: "12分前",
+      tracking: "JP-4839-2201",
+      countdownHours: 64,
+    },
+    {
+      id: "O-240320",
+      customer: "株式会社 Lumiere",
+      product: "CICA モイスチャーローション",
+      quantity: 5,
+      total: "¥12,400",
+      status: "対応要",
+      age: "27分前",
+      tracking: "JP-4839-2202",
+      countdownHours: 21,
+    },
+    {
+      id: "O-240319",
+      customer: "佐藤 健",
+      product: "ビタミン美容液 30ml",
+      quantity: 1,
+      total: "¥4,200",
+      status: "発送済み",
+      age: "1時間前",
+      tracking: "JP-4839-2203",
+      countdownHours: 0,
+    },
+    {
+      id: "O-240318",
+      customer: "高橋 美咲",
+      product: "クレンジングバーム",
+      quantity: 3,
+      total: "¥8,940",
+      status: "発送待ち",
+      age: "2時間前",
+      tracking: "JP-4839-2204",
+      countdownHours: 48,
+    },
   ];
 
   const products = [
@@ -22,6 +66,7 @@ export default function VendorDashboard() {
       sales: 312,
       status: "販売中",
       approval: "承認済み",
+      tracking: "JP-TRACK-001",
     },
     {
       name: "CICA モイスチャーローション",
@@ -31,6 +76,7 @@ export default function VendorDashboard() {
       sales: 190,
       status: "在庫少",
       approval: "承認済み",
+      tracking: "JP-TRACK-002",
     },
     {
       name: "ビタミン美容液 30ml",
@@ -40,6 +86,7 @@ export default function VendorDashboard() {
       sales: 88,
       status: "在庫切れ",
       approval: "申請中",
+      tracking: "JP-TRACK-003",
     },
     {
       name: "クレンジングバーム",
@@ -49,14 +96,47 @@ export default function VendorDashboard() {
       sales: 141,
       status: "販売中",
       approval: "要確認",
+      tracking: "JP-TRACK-004",
     },
   ];
+
+  const monthlySales = [
+    { name: "NEOBEAUTE 薬用リンクルケアアイシート", quantity: 312 },
+    { name: "CICA モイスチャーローション", quantity: 190 },
+    { name: "ビタミン美容液 30ml", quantity: 88 },
+    { name: "クレンジングバーム", quantity: 141 },
+  ];
+
+  const filteredProducts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return products;
+
+    return products.filter((product) => {
+      return (
+        product.name.toLowerCase().includes(q) ||
+        product.sku.toLowerCase().includes(q) ||
+        product.tracking.toLowerCase().includes(q)
+      );
+    });
+  }, [query]);
 
   function badgeClass(text) {
     if (text === "対応要" || text === "在庫切れ") return "dash-badge dash-badge-red";
     if (text === "発送待ち" || text === "在庫少" || text === "申請中") return "dash-badge dash-badge-yellow";
     if (text === "承認済み" || text === "販売中" || text === "発送済み") return "dash-badge dash-badge-green";
     return "dash-badge dash-badge-gray";
+  }
+
+  function formatCountdown(hours) {
+    if (hours <= 0) return "期限処理済み";
+    const totalHours = Math.floor(hours);
+    const days = Math.floor(totalHours / 24);
+    const restHours = totalHours % 24;
+    return `${days}日 ${restHours}時間`;
+  }
+
+  function exportMonthlyPdf() {
+    window.print();
   }
 
   return (
@@ -133,10 +213,18 @@ export default function VendorDashboard() {
           cursor:pointer;
         }
 
+        .dash-btn:hover{
+          background:#f9fafb;
+        }
+
         .dash-btn-primary{
           background:#111827;
           color:#fff;
           border-color:#111827;
+        }
+
+        .dash-btn-primary:hover{
+          background:#1f2937;
         }
 
         .dash-layout{
@@ -174,9 +262,17 @@ export default function VendorDashboard() {
           cursor:pointer;
         }
 
+        .dash-menu-item:hover{
+          background:#f9fafb;
+        }
+
         .dash-menu-item-active{
           background:#111827;
           color:#fff;
+        }
+
+        .dash-menu-item-active:hover{
+          background:#111827;
         }
 
         .dash-main{
@@ -195,6 +291,7 @@ export default function VendorDashboard() {
           border:1px solid #e5e7eb;
           border-radius:14px;
           padding:18px;
+          box-sizing:border-box;
         }
 
         .dash-card-title{
@@ -216,6 +313,12 @@ export default function VendorDashboard() {
         }
 
         .dash-grid-2{
+          display:grid;
+          grid-template-columns:2fr 1fr;
+          gap:24px;
+        }
+
+        .dash-grid-3{
           display:grid;
           grid-template-columns:2fr 1fr;
           gap:24px;
@@ -299,12 +402,6 @@ export default function VendorDashboard() {
           line-height:1.7;
         }
 
-        .dash-grid-3{
-          display:grid;
-          grid-template-columns:2fr 1fr;
-          gap:24px;
-        }
-
         .dash-order-list{
           display:grid;
           gap:12px;
@@ -324,6 +421,8 @@ export default function VendorDashboard() {
         .dash-order-main{
           display:grid;
           gap:6px;
+          flex:1;
+          min-width:260px;
         }
 
         .dash-order-title{
@@ -336,6 +435,32 @@ export default function VendorDashboard() {
           font-size:13px;
           color:#6b7280;
           margin:0;
+        }
+
+        .dash-order-right{
+          min-width:170px;
+          text-align:right;
+        }
+
+        .dash-countdown-label{
+          font-size:12px;
+          color:#6b7280;
+        }
+
+        .dash-countdown-box{
+          display:inline-block;
+          margin-top:6px;
+          padding:8px 12px;
+          border-radius:12px;
+          font-size:14px;
+          font-weight:700;
+          background:#f3f4f6;
+          color:#374151;
+        }
+
+        .dash-countdown-box.is-danger{
+          background:#fef2f2;
+          color:#b91c1c;
         }
 
         .dash-quick-list{
@@ -355,13 +480,41 @@ export default function VendorDashboard() {
           cursor:pointer;
         }
 
+        .dash-quick-btn:hover{
+          background:#f9fafb;
+        }
+
+        .dash-pdf-box{
+          border:1px solid #e5e7eb;
+          background:#f9fafb;
+          border-radius:12px;
+          padding:14px;
+          font-size:14px;
+          line-height:1.8;
+        }
+
+        .dash-monthly-list{
+          margin-top:14px;
+          border-top:1px solid #e5e7eb;
+          padding-top:14px;
+        }
+
+        .dash-monthly-row{
+          display:flex;
+          justify-content:space-between;
+          gap:12px;
+          padding:8px 0;
+          font-size:14px;
+          border-bottom:1px solid #f1f5f9;
+        }
+
         .dash-table-wrap{
           overflow-x:auto;
         }
 
         .dash-table{
           width:100%;
-          min-width:860px;
+          min-width:980px;
           border-collapse:collapse;
         }
 
@@ -371,6 +524,7 @@ export default function VendorDashboard() {
           color:#6b7280;
           border-bottom:1px solid #e5e7eb;
           padding:12px 10px;
+          white-space:nowrap;
         }
 
         .dash-table td{
@@ -392,6 +546,7 @@ export default function VendorDashboard() {
           font-weight:700;
           line-height:1;
           border:1px solid transparent;
+          white-space:nowrap;
         }
 
         .dash-badge-red{
@@ -416,6 +571,35 @@ export default function VendorDashboard() {
           background:#f3f4f6;
           color:#374151;
           border-color:#d1d5db;
+        }
+
+        @media print{
+          .dash-sidebar,
+          .dash-top-actions,
+          .dash-search,
+          .dash-quick-list,
+          .dash-btn,
+          .dash-order-right .dash-order-sub{
+            display:none !important;
+          }
+
+          .dash-layout{
+            grid-template-columns:1fr;
+            padding:0;
+          }
+
+          .dash-topbar{
+            padding:0 0 20px;
+            border-bottom:none;
+          }
+
+          .vendor-dashboard{
+            background:#fff;
+          }
+
+          .dash-card{
+            break-inside:avoid;
+          }
         }
 
         @media (max-width: 1100px){
@@ -446,6 +630,11 @@ export default function VendorDashboard() {
           .dash-brand-title{
             font-size:20px;
           }
+
+          .dash-order-right{
+            width:100%;
+            text-align:left;
+          }
         }
       `}</style>
 
@@ -457,12 +646,19 @@ export default function VendorDashboard() {
           </div>
 
           <div className="dash-search">
-            <input type="text" placeholder="商品名・SKU・注文番号で検索" />
+            <input
+              type="text"
+              placeholder="商品名・SKU・追跡番号で検索"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
 
           <div className="dash-top-actions">
             <button className="dash-btn">通知</button>
-            <button className="dash-btn dash-btn-primary">商品を追加</button>
+            <button className="dash-btn dash-btn-primary" onClick={exportMonthlyPdf}>
+              月次PDF出力
+            </button>
           </div>
         </div>
       </div>
@@ -474,7 +670,6 @@ export default function VendorDashboard() {
             <button className="dash-menu-item">注文管理</button>
             <button className="dash-menu-item">商品管理</button>
             <button className="dash-menu-item">在庫</button>
-            <button className="dash-menu-item">広告</button>
             <button className="dash-menu-item">設定</button>
           </div>
         </aside>
@@ -550,7 +745,7 @@ export default function VendorDashboard() {
               </div>
 
               <div className="dash-alert">
-                在庫切れ商品が1件あります。  
+                在庫切れ商品が1件あります。
                 機会損失を防ぐため、在庫補充か公開停止の確認を先にやる想定です。
               </div>
             </div>
@@ -558,35 +753,64 @@ export default function VendorDashboard() {
 
           <section className="dash-grid-3">
             <div className="dash-card">
-              <h2 className="dash-section-title">優先対応の注文</h2>
-              <p className="dash-section-sub">未発送・要確認の注文を上に表示</p>
+              <h2 className="dash-section-title">優先対応の商品・注文</h2>
+              <p className="dash-section-sub">72時間以内に対応したい注文を上に表示</p>
 
               <div className="dash-order-list">
-                {orders.map((order) => (
+                {priorityOrders.map((order) => (
                   <div className="dash-order-item" key={order.id}>
                     <div className="dash-order-main">
                       <p className="dash-order-title">
                         {order.id} <span className={badgeClass(order.status)}>{order.status}</span>
                       </p>
                       <p className="dash-order-sub">
-                        {order.customer} ・ {order.total}
+                        {order.customer} ・ {order.product} ・ {order.quantity}点 ・ {order.total}
+                      </p>
+                      <p className="dash-order-sub">追跡番号: {order.tracking}</p>
+                    </div>
+
+                    <div className="dash-order-right">
+                      <div className="dash-countdown-label">72時間カウントダウン</div>
+                      <div
+                        className={`dash-countdown-box ${
+                          order.countdownHours <= 24 ? "is-danger" : ""
+                        }`}
+                      >
+                        {formatCountdown(order.countdownHours)}
+                      </div>
+                      <p className="dash-order-sub" style={{ marginTop: "8px" }}>
+                        {order.age}
                       </p>
                     </div>
-                    <div className="dash-order-sub">{order.age}</div>
                   </div>
                 ))}
               </div>
             </div>
 
             <div className="dash-card">
-              <h2 className="dash-section-title">すぐ使う操作</h2>
-              <p className="dash-section-sub">店舗運営でよく使う導線</p>
+              <h2 className="dash-section-title">月次PDF出力</h2>
+              <p className="dash-section-sub">月の売れた商品名と個数をワンボタンで出力</p>
 
-              <div className="dash-quick-list">
-                <button className="dash-quick-btn">商品申請を確認</button>
-                <button className="dash-quick-btn">在庫切れ商品を確認</button>
-                <button className="dash-quick-btn">広告キャンペーンを見る</button>
-                <button className="dash-quick-btn">配送設定を編集</button>
+              <div className="dash-pdf-box">
+                <div><strong>出力内容</strong></div>
+                <div>・月の売上合計</div>
+                <div>・商品名ごとの販売数</div>
+                <div>・注文ごとの追跡番号</div>
+              </div>
+
+              <div className="dash-monthly-list">
+                {monthlySales.map((item) => (
+                  <div className="dash-monthly-row" key={item.name}>
+                    <span>{item.name}</span>
+                    <strong>{item.quantity}個</strong>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: "14px" }}>
+                <button className="dash-btn dash-btn-primary" onClick={exportMonthlyPdf}>
+                  月次売上PDFを出力
+                </button>
               </div>
             </div>
           </section>
@@ -594,7 +818,7 @@ export default function VendorDashboard() {
           <section className="dash-card">
             <h2 className="dash-section-title">商品管理</h2>
             <p className="dash-section-sub">
-              Amazonっぽく一覧性を重視したテーブル。あとで実データ接続しやすい形。
+              一覧性重視のテーブル。追跡番号も同じ画面で確認できる形。
             </p>
 
             <div className="dash-table-wrap">
@@ -608,20 +832,28 @@ export default function VendorDashboard() {
                     <th>販売数</th>
                     <th>状態</th>
                     <th>申請</th>
+                    <th>追跡番号</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((product) => (
+                  {filteredProducts.map((product) => (
                     <tr key={product.sku}>
                       <td className="dash-product-name">{product.name}</td>
                       <td>{product.sku}</td>
                       <td>{product.stock}</td>
                       <td>{product.price}</td>
                       <td>{product.sales}</td>
-                      <td><span className={badgeClass(product.status)}>{product.status}</span></td>
-                      <td><span className={badgeClass(product.approval)}>{product.approval}</span></td>
-                      <td><button className="dash-btn">詳細</button></td>
+                      <td>
+                        <span className={badgeClass(product.status)}>{product.status}</span>
+                      </td>
+                      <td>
+                        <span className={badgeClass(product.approval)}>{product.approval}</span>
+                      </td>
+                      <td>{product.tracking}</td>
+                      <td>
+                        <button className="dash-btn">詳細</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
