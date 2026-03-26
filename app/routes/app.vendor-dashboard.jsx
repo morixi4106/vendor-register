@@ -1,111 +1,338 @@
+import { json } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
+import { authenticate } from "../shopify.server";
 
-export default function VendorDashboard() {
-  const [query, setQuery] = useState("");
+function formatYmd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatMoney(amount, currencyCode = "JPY") {
+  const num = Number(amount || 0);
+  try {
+    return new Intl.NumberFormat("ja-JP", {
+      style: "currency",
+      currency: currencyCode,
+      maximumFractionDigits: 0,
+    }).format(num);
+  } catch {
+    return `¥${Math.round(num).toLocaleString("ja-JP")}`;
+  }
+}
+
+function mapApproval(value) {
+  if (!value) return "未設定";
+  if (value === "approved") return "承認済み";
+  if (value === "pending") return "申請中";
+  if (value === "rejected") return "却下";
+  if (value === "review") return "要確認";
+  return value;
+}
+
+function mapProductStatus(value) {
+  if (value === "ACTIVE") return "販売中";
+  if (value === "DRAFT") return "下書き";
+  if (value === "ARCHIVED") return "アーカイブ";
+  return value || "未設定";
+}
+
+function mapFulfillmentStatus(value) {
+  if (!value) return "未発送";
+  if (value === "FULFILLED") return "発送済み";
+  if (value === "PARTIALLY_FULFILLED") return "一部発送";
+  if (value === "UNFULFILLED") return "発送待ち";
+  if (value === "IN_PROGRESS") return "対応中";
+  if (value === "ON_HOLD") return "保留";
+  if (value === "OPEN") return "対応要";
+  return value;
+}
+
+function badgeClass(text) {
+  if (
+    text === "対応要" ||
+    text === "在庫切れ" ||
+    text === "却下" ||
+    text === "保留"
+  ) {
+    return "dash-badge dash-badge-red";
+  }
+  if (
+    text === "発送待ち" ||
+    text === "一部発送" ||
+    text === "在庫少" ||
+    text === "申請中" ||
+    text === "対応中"
+  ) {
+    return "dash-badge dash-badge-yellow";
+  }
+  if (
+    text === "承認済み" ||
+    text === "販売中" ||
+    text === "発送済み"
+  ) {
+    return "dash-badge dash-badge-green";
+  }
+  return "dash-badge dash-badge-gray";
+}
+
+function formatCountdown(hours) {
+  if (hours <= 0) return "期限処理済み";
+  const whole = Math.floor(hours);
+  const days = Math.floor(whole / 24);
+  const rest = whole % 24;
+  return `${days}日 ${rest}時間`;
+}
+
+export const loader = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any`;
+  const productsQuery = `
+    query VendorDashboardProducts {
+      products(first: 50, sortKey: UPDATED_AT, reverse: true) {
+        nodes {
+          id
+          title
+          status
+          totalInventory
+          metafield(namespace: "custom", key: "approval_status") {
+            value
+          }
+          variants(first: 1) {
+            nodes {
+              sku
+              price
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const ordersQuery = `
+    query VendorDashboardOrders($query: String!) {
+      orders(first: 50, sortKey: CREATED_AT, reverse: true, query: $query) {
+        nodes {
+          id
+          name
+          createdAt
+          displayFulfillmentStatus
+          currentTotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          customer {
+            displayName
+          }
+          lineItems(first: 20) {
+            nodes {
+              name
+              quantity
+              variant {
+                sku
+              }
+            }
+          }
+          fulfillments(first: 10) {
+            trackingInfo {
+              number
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const [productsRes, ordersRes] = await Promise.all([
+    admin.graphql(productsQuery),
+    admin.graphql(ordersQuery, {
+      variables: { query: ordersQueryString },
+    }),
+  ]);
+
+  const productsJson = await productsRes.json();
+  const ordersJson = await ordersRes.json();
+
+  if (productsJson.errors || ordersJson.errors) {
+    console.error("products errors", productsJson.errors);
+    console.error("orders errors", ordersJson.errors);
+    throw new Response("Shopifyデータの取得に失敗しました。", { status: 500 });
+  }
+
+  const rawProducts = productsJson?.data?.products?.nodes || [];
+  const rawOrders = ordersJson?.data?.orders?.nodes || [];
+
+  const monthlySalesMap = new Map();
+  let monthSalesAmount = 0;
+  let todaySalesAmount = 0;
+  let monthUnits = 0;
+
+  for (const order of rawOrders) {
+    const money = order?.currentTotalPriceSet?.shopMoney;
+    const amount = Number(money?.amount || 0);
+    const createdAt = new Date(order.createdAt);
+
+    monthSalesAmount += amount;
+
+    if (createdAt >= todayStart) {
+      todaySalesAmount += amount;
+    }
+
+    for (const line of order?.lineItems?.nodes || []) {
+      const key = line?.variant?.sku || line?.name || "UNKNOWN";
+      const current = monthlySalesMap.get(key) || {
+        name: line?.name || "商品名なし",
+        sku: line?.variant?.sku || "-",
+        quantity: 0,
+      };
+      current.quantity += Number(line?.quantity || 0);
+      monthUnits += Number(line?.quantity || 0);
+      monthlySalesMap.set(key, current);
+    }
+  }
+
+  const monthlySales = Array.from(monthlySalesMap.values())
+    .sort((a, b) => b.quantity - a.quantity)
+    .slice(0, 20);
+
+  const monthlySalesBySku = new Map(
+    monthlySales.map((item) => [item.sku, item.quantity])
+  );
+
+  const products = rawProducts.map((product) => {
+    const variant = product?.variants?.nodes?.[0];
+    const stock = Number(product?.totalInventory ?? 0);
+    const sku = variant?.sku || "-";
+    const sales = monthlySalesBySku.get(sku) || 0;
+
+    return {
+      id: product.id,
+      name: product.title,
+      sku,
+      stock,
+      price: formatMoney(variant?.price || 0, "JPY"),
+      sales,
+      status:
+        stock <= 0
+          ? "在庫切れ"
+          : stock <= 20
+            ? "在庫少"
+            : mapProductStatus(product.status),
+      approval: mapApproval(product?.metafield?.value),
+      tracking: "-",
+    };
+  });
+
+  const priorityOrders = rawOrders
+    .map((order) => {
+      const createdAt = new Date(order.createdAt);
+      const diffMs = Date.now() - createdAt.getTime();
+      const elapsedHours = diffMs / (1000 * 60 * 60);
+      const remainingHours = Math.max(0, 72 - elapsedHours);
+
+      const firstLine = order?.lineItems?.nodes?.[0];
+      const trackingNumbers = [];
+
+      for (const fulfillment of order?.fulfillments || []) {
+        for (const info of fulfillment?.trackingInfo || []) {
+          if (info?.number) trackingNumbers.push(info.number);
+        }
+      }
+
+      return {
+        id: order.name,
+        customer: order?.customer?.displayName || "購入者なし",
+        product: firstLine?.name || "商品なし",
+        quantity: firstLine?.quantity || 0,
+        total: formatMoney(
+          order?.currentTotalPriceSet?.shopMoney?.amount || 0,
+          order?.currentTotalPriceSet?.shopMoney?.currencyCode || "JPY"
+        ),
+        status: mapFulfillmentStatus(order?.displayFulfillmentStatus),
+        age: new Intl.DateTimeFormat("ja-JP", {
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(createdAt),
+        tracking:
+          trackingNumbers.length > 0 ? trackingNumbers.join(", ") : "-",
+        countdownHours: remainingHours,
+      };
+    })
+    .sort((a, b) => a.countdownHours - b.countdownHours)
+    .slice(0, 10);
 
   const summaryCards = [
-    { title: "本日の売上", value: "¥128,400", sub: "+12.4%" },
-    { title: "月の売上", value: "¥2,843,900", sub: "今月 842点" },
-    { title: "未発送注文", value: "18", sub: "要対応 4件" },
-    { title: "公開中商品", value: "146", sub: "申請中 7件" },
-  ];
-
-  const priorityOrders = [
     {
-      id: "O-240321",
-      customer: "山田 花子",
-      product: "NEOBEAUTE 薬用リンクルケアアイシート",
-      quantity: 2,
-      total: "¥6,560",
-      status: "発送待ち",
-      age: "12分前",
-      tracking: "JP-4839-2201",
-      countdownHours: 64,
+      title: "本日の売上",
+      value: formatMoney(todaySalesAmount, "JPY"),
+      sub: "本日分の注文合計",
     },
     {
-      id: "O-240320",
-      customer: "株式会社 Lumiere",
-      product: "CICA モイスチャーローション",
-      quantity: 5,
-      total: "¥12,400",
-      status: "対応要",
-      age: "27分前",
-      tracking: "JP-4839-2202",
-      countdownHours: 21,
+      title: "月の売上",
+      value: formatMoney(monthSalesAmount, "JPY"),
+      sub: `今月 ${monthUnits.toLocaleString("ja-JP")}点`,
     },
     {
-      id: "O-240319",
-      customer: "佐藤 健",
-      product: "ビタミン美容液 30ml",
-      quantity: 1,
-      total: "¥4,200",
-      status: "発送済み",
-      age: "1時間前",
-      tracking: "JP-4839-2203",
-      countdownHours: 0,
+      title: "未発送注文",
+      value: String(
+        priorityOrders.filter(
+          (o) => o.status === "発送待ち" || o.status === "一部発送" || o.status === "対応要"
+        ).length
+      ),
+      sub: "72時間対応対象を優先表示",
     },
     {
-      id: "O-240318",
-      customer: "高橋 美咲",
-      product: "クレンジングバーム",
-      quantity: 3,
-      total: "¥8,940",
-      status: "発送待ち",
-      age: "2時間前",
-      tracking: "JP-4839-2204",
-      countdownHours: 48,
+      title: "公開中商品",
+      value: String(products.filter((p) => p.status === "販売中").length),
+      sub: `全${products.length}商品`,
     },
   ];
 
-  const products = [
-    {
-      name: "NEOBEAUTE 薬用リンクルケアアイシート",
-      sku: "SKU-001",
-      stock: 124,
-      price: "¥3,280",
-      sales: 312,
-      status: "販売中",
-      approval: "承認済み",
-      tracking: "JP-TRACK-001",
-    },
-    {
-      name: "CICA モイスチャーローション",
-      sku: "SKU-002",
-      stock: 18,
-      price: "¥2,480",
-      sales: 190,
-      status: "在庫少",
-      approval: "承認済み",
-      tracking: "JP-TRACK-002",
-    },
-    {
-      name: "ビタミン美容液 30ml",
-      sku: "SKU-003",
-      stock: 0,
-      price: "¥4,200",
-      sales: 88,
-      status: "在庫切れ",
-      approval: "申請中",
-      tracking: "JP-TRACK-003",
-    },
-    {
-      name: "クレンジングバーム",
-      sku: "SKU-004",
-      stock: 63,
-      price: "¥2,980",
-      sales: 141,
-      status: "販売中",
-      approval: "要確認",
-      tracking: "JP-TRACK-004",
-    },
-  ];
+  const chartData = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
 
-  const monthlySales = [
-    { name: "NEOBEAUTE 薬用リンクルケアアイシート", quantity: 312 },
-    { name: "CICA モイスチャーローション", quantity: 190 },
-    { name: "ビタミン美容液 30ml", quantity: 88 },
-    { name: "クレンジングバーム", quantity: 141 },
-  ];
+    let amount = 0;
+    for (const order of rawOrders) {
+      const createdAt = new Date(order.createdAt);
+      if (createdAt >= start && createdAt < end) {
+        amount += Number(order?.currentTotalPriceSet?.shopMoney?.amount || 0);
+      }
+    }
+
+    chartData.push({
+      label: `${day.getMonth() + 1}/${day.getDate()}`,
+      amount,
+    });
+  }
+
+  return json({
+    summaryCards,
+    priorityOrders,
+    products,
+    monthlySales,
+    chartData,
+  });
+};
+
+export default function VendorDashboard() {
+  const { summaryCards, priorityOrders, products, monthlySales, chartData } =
+    useLoaderData();
+
+  const [query, setQuery] = useState("");
 
   const filteredProducts = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -113,31 +340,18 @@ export default function VendorDashboard() {
 
     return products.filter((product) => {
       return (
-        product.name.toLowerCase().includes(q) ||
-        product.sku.toLowerCase().includes(q) ||
-        product.tracking.toLowerCase().includes(q)
+        String(product.name || "").toLowerCase().includes(q) ||
+        String(product.sku || "").toLowerCase().includes(q) ||
+        String(product.tracking || "").toLowerCase().includes(q)
       );
     });
-  }, [query]);
-
-  function badgeClass(text) {
-    if (text === "対応要" || text === "在庫切れ") return "dash-badge dash-badge-red";
-    if (text === "発送待ち" || text === "在庫少" || text === "申請中") return "dash-badge dash-badge-yellow";
-    if (text === "承認済み" || text === "販売中" || text === "発送済み") return "dash-badge dash-badge-green";
-    return "dash-badge dash-badge-gray";
-  }
-
-  function formatCountdown(hours) {
-    if (hours <= 0) return "期限処理済み";
-    const totalHours = Math.floor(hours);
-    const days = Math.floor(totalHours / 24);
-    const restHours = totalHours % 24;
-    return `${days}日 ${restHours}時間`;
-  }
+  }, [query, products]);
 
   function exportMonthlyPdf() {
     window.print();
   }
+
+  const chartMax = Math.max(...chartData.map((item) => item.amount), 1);
 
   return (
     <div className="vendor-dashboard">
@@ -148,13 +362,11 @@ export default function VendorDashboard() {
           color:#111827;
           font-family:Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
         }
-
         .dash-topbar{
           background:#ffffff;
           border-bottom:1px solid #e5e7eb;
           padding:16px 24px;
         }
-
         .dash-topbar-inner{
           max-width:1400px;
           margin:0 auto;
@@ -163,28 +375,21 @@ export default function VendorDashboard() {
           gap:16px;
           flex-wrap:wrap;
         }
-
-        .dash-brand{
-          min-width:260px;
-        }
-
+        .dash-brand{ min-width:260px; }
         .dash-brand-sub{
           font-size:12px;
           color:#6b7280;
           margin:0 0 4px;
         }
-
         .dash-brand-title{
           font-size:24px;
           font-weight:700;
           margin:0;
         }
-
         .dash-search{
           flex:1;
           min-width:260px;
         }
-
         .dash-search input{
           width:100%;
           height:44px;
@@ -195,13 +400,11 @@ export default function VendorDashboard() {
           background:#f9fafb;
           box-sizing:border-box;
         }
-
         .dash-top-actions{
           display:flex;
           gap:10px;
           flex-wrap:wrap;
         }
-
         .dash-btn{
           height:44px;
           padding:0 16px;
@@ -212,21 +415,13 @@ export default function VendorDashboard() {
           font-weight:700;
           cursor:pointer;
         }
-
-        .dash-btn:hover{
-          background:#f9fafb;
-        }
-
+        .dash-btn:hover{ background:#f9fafb; }
         .dash-btn-primary{
           background:#111827;
           color:#fff;
           border-color:#111827;
         }
-
-        .dash-btn-primary:hover{
-          background:#1f2937;
-        }
-
+        .dash-btn-primary:hover{ background:#1f2937; }
         .dash-layout{
           max-width:1400px;
           margin:0 auto;
@@ -235,7 +430,6 @@ export default function VendorDashboard() {
           grid-template-columns:260px 1fr;
           gap:24px;
         }
-
         .dash-sidebar{
           background:#fff;
           border:1px solid #e5e7eb;
@@ -243,12 +437,10 @@ export default function VendorDashboard() {
           padding:14px;
           height:fit-content;
         }
-
         .dash-menu{
           display:grid;
           gap:8px;
         }
-
         .dash-menu-item{
           display:block;
           width:100%;
@@ -261,31 +453,21 @@ export default function VendorDashboard() {
           font-weight:700;
           cursor:pointer;
         }
-
-        .dash-menu-item:hover{
-          background:#f9fafb;
-        }
-
+        .dash-menu-item:hover{ background:#f9fafb; }
         .dash-menu-item-active{
           background:#111827;
           color:#fff;
         }
-
-        .dash-menu-item-active:hover{
-          background:#111827;
-        }
-
+        .dash-menu-item-active:hover{ background:#111827; }
         .dash-main{
           display:grid;
           gap:24px;
         }
-
         .dash-cards{
           display:grid;
           grid-template-columns:repeat(4, minmax(0, 1fr));
           gap:16px;
         }
-
         .dash-card{
           background:#fff;
           border:1px solid #e5e7eb;
@@ -293,49 +475,41 @@ export default function VendorDashboard() {
           padding:18px;
           box-sizing:border-box;
         }
-
         .dash-card-title{
           font-size:13px;
           color:#6b7280;
           margin:0 0 10px;
         }
-
         .dash-card-value{
           font-size:30px;
           font-weight:700;
           margin:0 0 8px;
         }
-
         .dash-card-sub{
           font-size:13px;
           color:#6b7280;
           margin:0;
         }
-
         .dash-grid-2{
           display:grid;
           grid-template-columns:2fr 1fr;
           gap:24px;
         }
-
         .dash-grid-3{
           display:grid;
           grid-template-columns:2fr 1fr;
           gap:24px;
         }
-
         .dash-section-title{
           font-size:20px;
           font-weight:700;
           margin:0 0 8px;
         }
-
         .dash-section-sub{
           font-size:13px;
           color:#6b7280;
           margin:0 0 18px;
         }
-
         .dash-chart{
           height:260px;
           display:flex;
@@ -343,41 +517,34 @@ export default function VendorDashboard() {
           gap:14px;
           padding-top:10px;
         }
-
         .dash-bar-wrap{
           flex:1;
           text-align:center;
         }
-
         .dash-bar{
           width:100%;
           border-radius:10px 10px 0 0;
           background:#111827;
           min-height:20px;
         }
-
         .dash-bar-label{
           font-size:12px;
           color:#6b7280;
           margin-top:8px;
         }
-
         .dash-health-list{
           display:grid;
           gap:14px;
         }
-
         .dash-health-row{
           display:grid;
           gap:6px;
         }
-
         .dash-health-head{
           display:flex;
           justify-content:space-between;
           font-size:14px;
         }
-
         .dash-progress{
           width:100%;
           height:10px;
@@ -385,12 +552,10 @@ export default function VendorDashboard() {
           border-radius:999px;
           overflow:hidden;
         }
-
         .dash-progress-fill{
           height:100%;
           background:#111827;
         }
-
         .dash-alert{
           margin-top:18px;
           border:1px solid #f59e0b;
@@ -401,12 +566,10 @@ export default function VendorDashboard() {
           font-size:14px;
           line-height:1.7;
         }
-
         .dash-order-list{
           display:grid;
           gap:12px;
         }
-
         .dash-order-item{
           border:1px solid #e5e7eb;
           border-radius:12px;
@@ -417,36 +580,30 @@ export default function VendorDashboard() {
           align-items:center;
           flex-wrap:wrap;
         }
-
         .dash-order-main{
           display:grid;
           gap:6px;
           flex:1;
           min-width:260px;
         }
-
         .dash-order-title{
           font-size:15px;
           font-weight:700;
           margin:0;
         }
-
         .dash-order-sub{
           font-size:13px;
           color:#6b7280;
           margin:0;
         }
-
         .dash-order-right{
           min-width:170px;
           text-align:right;
         }
-
         .dash-countdown-label{
           font-size:12px;
           color:#6b7280;
         }
-
         .dash-countdown-box{
           display:inline-block;
           margin-top:6px;
@@ -457,33 +614,10 @@ export default function VendorDashboard() {
           background:#f3f4f6;
           color:#374151;
         }
-
         .dash-countdown-box.is-danger{
           background:#fef2f2;
           color:#b91c1c;
         }
-
-        .dash-quick-list{
-          display:grid;
-          gap:10px;
-        }
-
-        .dash-quick-btn{
-          width:100%;
-          text-align:left;
-          background:#fff;
-          border:1px solid #e5e7eb;
-          border-radius:12px;
-          padding:14px;
-          font-size:14px;
-          font-weight:700;
-          cursor:pointer;
-        }
-
-        .dash-quick-btn:hover{
-          background:#f9fafb;
-        }
-
         .dash-pdf-box{
           border:1px solid #e5e7eb;
           background:#f9fafb;
@@ -492,13 +626,11 @@ export default function VendorDashboard() {
           font-size:14px;
           line-height:1.8;
         }
-
         .dash-monthly-list{
           margin-top:14px;
           border-top:1px solid #e5e7eb;
           padding-top:14px;
         }
-
         .dash-monthly-row{
           display:flex;
           justify-content:space-between;
@@ -507,17 +639,12 @@ export default function VendorDashboard() {
           font-size:14px;
           border-bottom:1px solid #f1f5f9;
         }
-
-        .dash-table-wrap{
-          overflow-x:auto;
-        }
-
+        .dash-table-wrap{ overflow-x:auto; }
         .dash-table{
           width:100%;
           min-width:980px;
           border-collapse:collapse;
         }
-
         .dash-table th{
           text-align:left;
           font-size:13px;
@@ -526,18 +653,13 @@ export default function VendorDashboard() {
           padding:12px 10px;
           white-space:nowrap;
         }
-
         .dash-table td{
           padding:16px 10px;
           border-bottom:1px solid #f1f5f9;
           font-size:14px;
           vertical-align:middle;
         }
-
-        .dash-product-name{
-          font-weight:700;
-        }
-
+        .dash-product-name{ font-weight:700; }
         .dash-badge{
           display:inline-block;
           padding:5px 10px;
@@ -548,25 +670,21 @@ export default function VendorDashboard() {
           border:1px solid transparent;
           white-space:nowrap;
         }
-
         .dash-badge-red{
           background:#fef2f2;
           color:#b91c1c;
           border-color:#fecaca;
         }
-
         .dash-badge-yellow{
           background:#fffbeb;
           color:#92400e;
           border-color:#fde68a;
         }
-
         .dash-badge-green{
           background:#ecfdf5;
           color:#047857;
           border-color:#a7f3d0;
         }
-
         .dash-badge-gray{
           background:#f3f4f6;
           color:#374151;
@@ -577,40 +695,27 @@ export default function VendorDashboard() {
           .dash-sidebar,
           .dash-top-actions,
           .dash-search,
-          .dash-quick-list,
           .dash-btn,
           .dash-order-right .dash-order-sub{
             display:none !important;
           }
-
           .dash-layout{
             grid-template-columns:1fr;
             padding:0;
           }
-
           .dash-topbar{
             padding:0 0 20px;
             border-bottom:none;
           }
-
-          .vendor-dashboard{
-            background:#fff;
-          }
-
-          .dash-card{
-            break-inside:avoid;
-          }
+          .vendor-dashboard{ background:#fff; }
+          .dash-card{ break-inside:avoid; }
         }
 
         @media (max-width: 1100px){
-          .dash-layout{
-            grid-template-columns:1fr;
-          }
-
+          .dash-layout{ grid-template-columns:1fr; }
           .dash-cards{
             grid-template-columns:repeat(2, minmax(0, 1fr));
           }
-
           .dash-grid-2,
           .dash-grid-3{
             grid-template-columns:1fr;
@@ -618,19 +723,12 @@ export default function VendorDashboard() {
         }
 
         @media (max-width: 700px){
-          .dash-cards{
-            grid-template-columns:1fr;
-          }
-
+          .dash-cards{ grid-template-columns:1fr; }
           .dash-topbar,
           .dash-layout{
             padding:16px;
           }
-
-          .dash-brand-title{
-            font-size:20px;
-          }
-
+          .dash-brand-title{ font-size:20px; }
           .dash-order-right{
             width:100%;
             text-align:left;
@@ -655,7 +753,6 @@ export default function VendorDashboard() {
           </div>
 
           <div className="dash-top-actions">
-            <button className="dash-btn">通知</button>
             <button className="dash-btn dash-btn-primary" onClick={exportMonthlyPdf}>
               月次PDF出力
             </button>
@@ -691,20 +788,15 @@ export default function VendorDashboard() {
               <p className="dash-section-sub">過去7日間の注文売上</p>
 
               <div className="dash-chart">
-                {[
-                  { label: "月", height: 120 },
-                  { label: "火", height: 150 },
-                  { label: "水", height: 100 },
-                  { label: "木", height: 180 },
-                  { label: "金", height: 220 },
-                  { label: "土", height: 190 },
-                  { label: "日", height: 130 },
-                ].map((item) => (
-                  <div className="dash-bar-wrap" key={item.label}>
-                    <div className="dash-bar" style={{ height: `${item.height}px` }} />
-                    <div className="dash-bar-label">{item.label}</div>
-                  </div>
-                ))}
+                {chartData.map((item) => {
+                  const h = Math.max(20, Math.round((item.amount / chartMax) * 220));
+                  return (
+                    <div className="dash-bar-wrap" key={item.label}>
+                      <div className="dash-bar" style={{ height: `${h}px` }} />
+                      <div className="dash-bar-label">{item.label}</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -715,38 +807,82 @@ export default function VendorDashboard() {
               <div className="dash-health-list">
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>注文不良率</span>
-                    <span>0.4%</span>
+                    <span>72時間超過リスク注文</span>
+                    <span>
+                      {
+                        priorityOrders.filter(
+                          (order) => order.countdownHours > 0 && order.countdownHours <= 24
+                        ).length
+                      }件
+                    </span>
                   </div>
                   <div className="dash-progress">
-                    <div className="dash-progress-fill" style={{ width: "18%" }} />
+                    <div
+                      className="dash-progress-fill"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          priorityOrders.length === 0
+                            ? 0
+                            : (priorityOrders.filter(
+                                (order) =>
+                                  order.countdownHours > 0 && order.countdownHours <= 24
+                              ).length /
+                                priorityOrders.length) *
+                                100
+                        )}%`,
+                      }}
+                    />
                   </div>
                 </div>
 
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>出荷遅延率</span>
-                    <span>1.2%</span>
+                    <span>在庫少商品</span>
+                    <span>{products.filter((p) => p.status === "在庫少").length}件</span>
                   </div>
                   <div className="dash-progress">
-                    <div className="dash-progress-fill" style={{ width: "28%" }} />
+                    <div
+                      className="dash-progress-fill"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          products.length === 0
+                            ? 0
+                            : (products.filter((p) => p.status === "在庫少").length /
+                                products.length) *
+                                100
+                        )}%`,
+                      }}
+                    />
                   </div>
                 </div>
 
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>キャンセル率</span>
-                    <span>0.3%</span>
+                    <span>在庫切れ商品</span>
+                    <span>{products.filter((p) => p.status === "在庫切れ").length}件</span>
                   </div>
                   <div className="dash-progress">
-                    <div className="dash-progress-fill" style={{ width: "12%" }} />
+                    <div
+                      className="dash-progress-fill"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          products.length === 0
+                            ? 0
+                            : (products.filter((p) => p.status === "在庫切れ").length /
+                                products.length) *
+                                100
+                        )}%`,
+                      }}
+                    />
                   </div>
                 </div>
               </div>
 
               <div className="dash-alert">
-                在庫切れ商品が1件あります。
-                機会損失を防ぐため、在庫補充か公開停止の確認を先にやる想定です。
+                注文・在庫・月次売上は Shopify 実データから表示中です。
               </div>
             </div>
           </section>
@@ -773,7 +909,9 @@ export default function VendorDashboard() {
                       <div className="dash-countdown-label">72時間カウントダウン</div>
                       <div
                         className={`dash-countdown-box ${
-                          order.countdownHours <= 24 ? "is-danger" : ""
+                          order.countdownHours <= 24 && order.countdownHours > 0
+                            ? "is-danger"
+                            : ""
                         }`}
                       >
                         {formatCountdown(order.countdownHours)}
@@ -800,7 +938,7 @@ export default function VendorDashboard() {
 
               <div className="dash-monthly-list">
                 {monthlySales.map((item) => (
-                  <div className="dash-monthly-row" key={item.name}>
+                  <div className="dash-monthly-row" key={`${item.sku}-${item.name}`}>
                     <span>{item.name}</span>
                     <strong>{item.quantity}個</strong>
                   </div>
@@ -818,7 +956,7 @@ export default function VendorDashboard() {
           <section className="dash-card">
             <h2 className="dash-section-title">商品管理</h2>
             <p className="dash-section-sub">
-              一覧性重視のテーブル。追跡番号も同じ画面で確認できる形。
+              Shopify 商品データから表示。月間販売数も同じ画面で確認。
             </p>
 
             <div className="dash-table-wrap">
@@ -829,7 +967,7 @@ export default function VendorDashboard() {
                     <th>SKU</th>
                     <th>在庫</th>
                     <th>価格</th>
-                    <th>販売数</th>
+                    <th>月販売数</th>
                     <th>状態</th>
                     <th>申請</th>
                     <th>追跡番号</th>
@@ -838,7 +976,7 @@ export default function VendorDashboard() {
                 </thead>
                 <tbody>
                   {filteredProducts.map((product) => (
-                    <tr key={product.sku}>
+                    <tr key={product.id}>
                       <td className="dash-product-name">{product.name}</td>
                       <td>{product.sku}</td>
                       <td>{product.stock}</td>
