@@ -2,7 +2,7 @@ import { json, redirect, createCookie } from "@remix-run/node";
 import { Form, useActionData, useNavigation } from "@remix-run/react";
 import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
-import prisma from "./db.server";
+import prisma from "../db.server";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
