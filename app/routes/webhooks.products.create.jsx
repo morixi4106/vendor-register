@@ -8,26 +8,24 @@ function verifyShopifyWebhook(rawBody, hmacHeader) {
 
   if (!secret || !hmacHeader) return false;
 
-  const digest = crypto
+  const calculatedHmac = crypto
     .createHmac("sha256", secret)
     .update(rawBody, "utf8")
     .digest("base64");
 
-  const digestBuffer = Buffer.from(digest, "utf8");
-  const hmacBuffer = Buffer.from(hmacHeader, "utf8");
+  const calculatedBuffer = Buffer.from(calculatedHmac, "base64");
+  const headerBuffer = Buffer.from(hmacHeader, "base64");
 
-  if (digestBuffer.length !== hmacBuffer.length) return false;
+  if (calculatedBuffer.length !== headerBuffer.length) return false;
 
-  return crypto.timingSafeEqual(digestBuffer, hmacBuffer);
+  return crypto.timingSafeEqual(calculatedBuffer, headerBuffer);
 }
 
 export const action = async ({ request }) => {
   const rawBody = await request.text();
   const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
 
-  const isValid = verifyShopifyWebhook(rawBody, hmacHeader);
-
-  if (!isValid) {
+  if (!verifyShopifyWebhook(rawBody, hmacHeader)) {
     console.error("❌ Invalid webhook signature");
     return new Response("Unauthorized", { status: 401 });
   }
