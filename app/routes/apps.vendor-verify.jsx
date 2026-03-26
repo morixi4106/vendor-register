@@ -83,6 +83,7 @@ export const action = async ({ request }) => {
 
       if (error) {
         console.error("❌ resend error:", error);
+
         return json(
           { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
           { status: 500 },
@@ -90,6 +91,7 @@ export const action = async ({ request }) => {
       }
     } catch (e) {
       console.error("❌ verify mail error:", e);
+
       return json(
         { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
         { status: 500 },
