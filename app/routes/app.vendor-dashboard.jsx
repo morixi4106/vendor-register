@@ -87,245 +87,258 @@ function formatCountdown(hours) {
 }
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  try {
+    const { admin, session } = await authenticate.admin(request);
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    console.log("=== vendor-dashboard loader start ===");
+    console.log("session shop:", session?.shop);
+    console.log("request url:", request.url);
 
-  const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any`;
-  const productsQuery = `
-    query VendorDashboardProducts {
-      products(first: 50, sortKey: UPDATED_AT, reverse: true) {
-        nodes {
-          id
-          title
-          status
-          totalInventory
-          metafield(namespace: "custom", key: "approval_status") {
-            value
-          }
-          variants(first: 1) {
-            nodes {
-              sku
-              price
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any`;
+
+    const productsQuery = `
+      query VendorDashboardProducts {
+        products(first: 50, sortKey: UPDATED_AT, reverse: true) {
+          nodes {
+            id
+            title
+            status
+            totalInventory
+            metafield(namespace: "custom", key: "approval_status") {
+              value
             }
-          }
-        }
-      }
-    }
-  `;
-
-  const ordersQuery = `
-    query VendorDashboardOrders($query: String!) {
-      orders(first: 50, sortKey: CREATED_AT, reverse: true, query: $query) {
-        nodes {
-          id
-          name
-          createdAt
-          displayFulfillmentStatus
-          currentTotalPriceSet {
-            shopMoney {
-              amount
-              currencyCode
-            }
-          }
-          customer {
-            displayName
-          }
-          lineItems(first: 20) {
-            nodes {
-              name
-              quantity
-              variant {
+            variants(first: 1) {
+              nodes {
                 sku
+                price
               }
             }
           }
-          fulfillments(first: 10) {
-            trackingInfo {
-              number
+        }
+      }
+    `;
+
+    const ordersQuery = `
+      query VendorDashboardOrders($query: String!) {
+        orders(first: 50, sortKey: CREATED_AT, reverse: true, query: $query) {
+          nodes {
+            id
+            name
+            createdAt
+            displayFulfillmentStatus
+            currentTotalPriceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+            customer {
+              displayName
+            }
+            lineItems(first: 20) {
+              nodes {
+                name
+                quantity
+                variant {
+                  sku
+                }
+              }
+            }
+            fulfillments(first: 10) {
+              trackingInfo {
+                number
+              }
             }
           }
         }
       }
-    }
-  `;
+    `;
 
-  const [productsRes, ordersRes] = await Promise.all([
-    admin.graphql(productsQuery),
-    admin.graphql(ordersQuery, {
-      variables: { query: ordersQueryString },
-    }),
-  ]);
+    const [productsRes, ordersRes] = await Promise.all([
+      admin.graphql(productsQuery),
+      admin.graphql(ordersQuery, {
+        variables: { query: ordersQueryString },
+      }),
+    ]);
 
-  const productsJson = await productsRes.json();
-  const ordersJson = await ordersRes.json();
+    const productsJson = await productsRes.json();
+    const ordersJson = await ordersRes.json();
 
-  if (productsJson.errors || ordersJson.errors) {
-    console.error("products errors", productsJson.errors);
-    console.error("orders errors", ordersJson.errors);
-    throw new Response("Shopifyデータの取得に失敗しました。", { status: 500 });
-  }
+    console.log("productsJson:", JSON.stringify(productsJson, null, 2));
+    console.log("ordersJson:", JSON.stringify(ordersJson, null, 2));
 
-  const rawProducts = productsJson?.data?.products?.nodes || [];
-  const rawOrders = ordersJson?.data?.orders?.nodes || [];
-
-  const monthlySalesMap = new Map();
-  let monthSalesAmount = 0;
-  let todaySalesAmount = 0;
-  let monthUnits = 0;
-
-  for (const order of rawOrders) {
-    const money = order?.currentTotalPriceSet?.shopMoney;
-    const amount = Number(money?.amount || 0);
-    const createdAt = new Date(order.createdAt);
-
-    monthSalesAmount += amount;
-
-    if (createdAt >= todayStart) {
-      todaySalesAmount += amount;
+    if (productsJson.errors || ordersJson.errors) {
+      console.error("products errors:", JSON.stringify(productsJson.errors, null, 2));
+      console.error("orders errors:", JSON.stringify(ordersJson.errors, null, 2));
+      throw new Error("GraphQL errors detected");
     }
 
-    for (const line of order?.lineItems?.nodes || []) {
-      const key = line?.variant?.sku || line?.name || "UNKNOWN";
-      const current = monthlySalesMap.get(key) || {
-        name: line?.name || "商品名なし",
-        sku: line?.variant?.sku || "-",
-        quantity: 0,
-      };
-      current.quantity += Number(line?.quantity || 0);
-      monthUnits += Number(line?.quantity || 0);
-      monthlySalesMap.set(key, current);
-    }
-  }
+    const rawProducts = productsJson?.data?.products?.nodes || [];
+    const rawOrders = ordersJson?.data?.orders?.nodes || [];
 
-  const monthlySales = Array.from(monthlySalesMap.values())
-    .sort((a, b) => b.quantity - a.quantity)
-    .slice(0, 20);
+    const monthlySalesMap = new Map();
+    let monthSalesAmount = 0;
+    let todaySalesAmount = 0;
+    let monthUnits = 0;
 
-  const monthlySalesBySku = new Map(
-    monthlySales.map((item) => [item.sku, item.quantity])
-  );
-
-  const products = rawProducts.map((product) => {
-    const variant = product?.variants?.nodes?.[0];
-    const stock = Number(product?.totalInventory ?? 0);
-    const sku = variant?.sku || "-";
-    const sales = monthlySalesBySku.get(sku) || 0;
-
-    return {
-      id: product.id,
-      name: product.title,
-      sku,
-      stock,
-      price: formatMoney(variant?.price || 0, "JPY"),
-      sales,
-      status:
-        stock <= 0
-          ? "在庫切れ"
-          : stock <= 20
-            ? "在庫少"
-            : mapProductStatus(product.status),
-      approval: mapApproval(product?.metafield?.value),
-      tracking: "-",
-    };
-  });
-
-  const priorityOrders = rawOrders
-    .map((order) => {
+    for (const order of rawOrders) {
+      const money = order?.currentTotalPriceSet?.shopMoney;
+      const amount = Number(money?.amount || 0);
       const createdAt = new Date(order.createdAt);
-      const diffMs = Date.now() - createdAt.getTime();
-      const elapsedHours = diffMs / (1000 * 60 * 60);
-      const remainingHours = Math.max(0, 72 - elapsedHours);
 
-      const firstLine = order?.lineItems?.nodes?.[0];
-      const trackingNumbers = [];
+      monthSalesAmount += amount;
 
-      for (const fulfillment of order?.fulfillments || []) {
-        for (const info of fulfillment?.trackingInfo || []) {
-          if (info?.number) trackingNumbers.push(info.number);
+      if (createdAt >= todayStart) {
+        todaySalesAmount += amount;
+      }
+
+      for (const line of order?.lineItems?.nodes || []) {
+        const key = line?.variant?.sku || line?.name || "UNKNOWN";
+        const current = monthlySalesMap.get(key) || {
+          name: line?.name || "商品名なし",
+          sku: line?.variant?.sku || "-",
+          quantity: 0,
+        };
+        current.quantity += Number(line?.quantity || 0);
+        monthUnits += Number(line?.quantity || 0);
+        monthlySalesMap.set(key, current);
+      }
+    }
+
+    const monthlySales = Array.from(monthlySalesMap.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 20);
+
+    const monthlySalesBySku = new Map(
+      monthlySales.map((item) => [item.sku, item.quantity])
+    );
+
+    const products = rawProducts.map((product) => {
+      const variant = product?.variants?.nodes?.[0];
+      const stock = Number(product?.totalInventory ?? 0);
+      const sku = variant?.sku || "-";
+      const sales = monthlySalesBySku.get(sku) || 0;
+
+      return {
+        id: product.id,
+        name: product.title,
+        sku,
+        stock,
+        price: formatMoney(variant?.price || 0, "JPY"),
+        sales,
+        status:
+          stock <= 0
+            ? "在庫切れ"
+            : stock <= 20
+              ? "在庫少"
+              : mapProductStatus(product.status),
+        approval: mapApproval(product?.metafield?.value),
+        tracking: "-",
+      };
+    });
+
+    const priorityOrders = rawOrders
+      .map((order) => {
+        const createdAt = new Date(order.createdAt);
+        const diffMs = Date.now() - createdAt.getTime();
+        const elapsedHours = diffMs / (1000 * 60 * 60);
+        const remainingHours = Math.max(0, 72 - elapsedHours);
+
+        const firstLine = order?.lineItems?.nodes?.[0];
+        const trackingNumbers = [];
+
+        for (const fulfillment of order?.fulfillments || []) {
+          for (const info of fulfillment?.trackingInfo || []) {
+            if (info?.number) trackingNumbers.push(info.number);
+          }
+        }
+
+        return {
+          id: order.name,
+          customer: order?.customer?.displayName || "購入者なし",
+          product: firstLine?.name || "商品なし",
+          quantity: firstLine?.quantity || 0,
+          total: formatMoney(
+            order?.currentTotalPriceSet?.shopMoney?.amount || 0,
+            order?.currentTotalPriceSet?.shopMoney?.currencyCode || "JPY"
+          ),
+          status: mapFulfillmentStatus(order?.displayFulfillmentStatus),
+          age: new Intl.DateTimeFormat("ja-JP", {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          }).format(createdAt),
+          tracking:
+            trackingNumbers.length > 0 ? trackingNumbers.join(", ") : "-",
+          countdownHours: remainingHours,
+        };
+      })
+      .sort((a, b) => a.countdownHours - b.countdownHours)
+      .slice(0, 10);
+
+    const summaryCards = [
+      {
+        title: "本日の売上",
+        value: formatMoney(todaySalesAmount, "JPY"),
+        sub: "本日分の注文合計",
+      },
+      {
+        title: "月の売上",
+        value: formatMoney(monthSalesAmount, "JPY"),
+        sub: `今月 ${monthUnits.toLocaleString("ja-JP")}点`,
+      },
+      {
+        title: "未発送注文",
+        value: String(
+          priorityOrders.filter(
+            (o) => o.status === "発送待ち" || o.status === "一部発送" || o.status === "対応要"
+          ).length
+        ),
+        sub: "72時間対応対象を優先表示",
+      },
+      {
+        title: "公開中商品",
+        value: String(products.filter((p) => p.status === "販売中").length),
+        sub: `全${products.length}商品`,
+      },
+    ];
+
+    const chartData = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+      const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+
+      let amount = 0;
+      for (const order of rawOrders) {
+        const createdAt = new Date(order.createdAt);
+        if (createdAt >= start && createdAt < end) {
+          amount += Number(order?.currentTotalPriceSet?.shopMoney?.amount || 0);
         }
       }
 
-      return {
-        id: order.name,
-        customer: order?.customer?.displayName || "購入者なし",
-        product: firstLine?.name || "商品なし",
-        quantity: firstLine?.quantity || 0,
-        total: formatMoney(
-          order?.currentTotalPriceSet?.shopMoney?.amount || 0,
-          order?.currentTotalPriceSet?.shopMoney?.currencyCode || "JPY"
-        ),
-        status: mapFulfillmentStatus(order?.displayFulfillmentStatus),
-        age: new Intl.DateTimeFormat("ja-JP", {
-          month: "numeric",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        }).format(createdAt),
-        tracking:
-          trackingNumbers.length > 0 ? trackingNumbers.join(", ") : "-",
-        countdownHours: remainingHours,
-      };
-    })
-    .sort((a, b) => a.countdownHours - b.countdownHours)
-    .slice(0, 10);
-
-  const summaryCards = [
-    {
-      title: "本日の売上",
-      value: formatMoney(todaySalesAmount, "JPY"),
-      sub: "本日分の注文合計",
-    },
-    {
-      title: "月の売上",
-      value: formatMoney(monthSalesAmount, "JPY"),
-      sub: `今月 ${monthUnits.toLocaleString("ja-JP")}点`,
-    },
-    {
-      title: "未発送注文",
-      value: String(
-        priorityOrders.filter(
-          (o) => o.status === "発送待ち" || o.status === "一部発送" || o.status === "対応要"
-        ).length
-      ),
-      sub: "72時間対応対象を優先表示",
-    },
-    {
-      title: "公開中商品",
-      value: String(products.filter((p) => p.status === "販売中").length),
-      sub: `全${products.length}商品`,
-    },
-  ];
-
-  const chartData = [];
-  for (let i = 6; i >= 0; i -= 1) {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
-
-    let amount = 0;
-    for (const order of rawOrders) {
-      const createdAt = new Date(order.createdAt);
-      if (createdAt >= start && createdAt < end) {
-        amount += Number(order?.currentTotalPriceSet?.shopMoney?.amount || 0);
-      }
+      chartData.push({
+        label: `${day.getMonth() + 1}/${day.getDate()}`,
+        amount,
+      });
     }
 
-    chartData.push({
-      label: `${day.getMonth() + 1}/${day.getDate()}`,
-      amount,
+    return json({
+      summaryCards,
+      priorityOrders,
+      products,
+      monthlySales,
+      chartData,
     });
+  } catch (error) {
+    console.error("vendor-dashboard loader error:", error);
+    throw error;
   }
-
-  return json({
-    summaryCards,
-    priorityOrders,
-    products,
-    monthlySales,
-    chartData,
-  });
 };
 
 export default function VendorDashboard() {
