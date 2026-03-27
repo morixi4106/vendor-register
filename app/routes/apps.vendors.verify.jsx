@@ -1,7 +1,10 @@
 import { json, redirect, createCookie } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { useActionData, useNavigation } from "@remix-run/react";
 import { randomBytes, randomInt } from "crypto";
+import { Resend } from "resend";
 import prisma from "../db.server";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const vendorAdminCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -15,29 +18,18 @@ export const loader = async ({ request }) => {
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminCookie.parse(cookieHeader);
 
-  if (!sessionToken) {
-    return json({ ok: true });
+  if (sessionToken) {
+    const session = await prisma.vendorAdminSession.findUnique({
+      where: { sessionToken },
+      include: { vendor: true },
+    });
+
+    if (session && session.expiresAt > new Date()) {
+      return redirect(`/apps/vendors/dashboard?vendor=${session.vendorId}`);
+    }
   }
 
-  const session = await prisma.vendorAdminSession.findUnique({
-    where: { sessionToken },
-    include: { vendor: true },
-  });
-
-  if (!session || session.expiresAt <= new Date()) {
-    return json(
-      { ok: true },
-      {
-        headers: {
-          "Set-Cookie": await vendorAdminCookie.serialize("", {
-            maxAge: 0,
-          }),
-        },
-      }
-    );
-  }
-
-  return redirect(`/apps/vendors/dashboard?vendor=${session.vendorId}`);
+  return json({});
 };
 
 export const action = async ({ request }) => {
@@ -48,7 +40,10 @@ export const action = async ({ request }) => {
     const email = String(formData.get("email") || "").trim().toLowerCase();
 
     if (!email) {
-      return json({ ok: false, error: "メールアドレスを入力してください。" }, { status: 400 });
+      return json(
+        { ok: false, step: "email", error: "メールアドレスを入力してください。" },
+        { status: 400 }
+      );
     }
 
     const vendor = await prisma.vendor.findFirst({
@@ -60,7 +55,7 @@ export const action = async ({ request }) => {
 
     if (!vendor) {
       return json(
-        { ok: false, error: "該当する店舗が見つかりません。" },
+        { ok: false, step: "email", error: "このメールアドレスは管理用メールとして登録されていません。" },
         { status: 404 }
       );
     }
@@ -77,64 +72,87 @@ export const action = async ({ request }) => {
       },
     });
 
-    console.log("Vendor verify code:", {
-      vendorId: vendor.id,
-      email,
-      code,
-      expiresAt: expiresAt.toISOString(),
-    });
+    try {
+      const { error } = await resend.emails.send({
+        from: process.env.MAIL_FROM,
+        to: [email],
+        subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
+        text:
+          `店舗管理ページの確認コードをお送りします。\n\n` +
+          `確認コード: ${code}\n` +
+          `有効期限: 10分\n\n` +
+          `このメールに心当たりがない場合は、このメールを破棄してください。`,
+      });
+
+      if (error) {
+        console.error("❌ resend error:", error);
+
+        return json(
+          { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+          { status: 500 }
+        );
+      }
+    } catch (e) {
+      console.error("❌ verify mail error:", e);
+
+      return json(
+        { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+        { status: 500 }
+      );
+    }
 
     return json({
       ok: true,
-      step: "code-sent",
-      message: "確認コードを発行しました。",
+      step: "code",
+      message: "確認コードを送信しました。",
       email,
+      vendorId: vendor.id,
     });
   }
 
   if (intent === "verify-code") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
+    const vendorId = String(formData.get("vendorId") || "").trim();
     const code = String(formData.get("code") || "").trim();
 
-    if (!email || !code) {
+    if (!email || !vendorId || !code) {
       return json(
-        { ok: false, error: "メールアドレスと確認コードを入力してください。" },
+        {
+          ok: false,
+          step: "code",
+          error: "必要な情報が不足しています。もう一度やり直してください。",
+          email,
+          vendorId,
+        },
         { status: 400 }
       );
     }
 
-    const vendor = await prisma.vendor.findFirst({
-      where: {
-        managementEmail: email,
-        status: "active",
-      },
+    const vendor = await prisma.vendor.findUnique({
+      where: { id: vendorId },
     });
 
-    if (!vendor) {
+    if (!vendor || vendor.managementEmail.toLowerCase() !== email || vendor.status !== "active") {
       return json(
-        { ok: false, error: "該当する店舗が見つかりません。" },
+        { ok: false, step: "code", error: "管理対象の店舗が見つかりません。", email, vendorId },
         { status: 404 }
       );
     }
 
     const loginCode = await prisma.vendorLoginCode.findFirst({
       where: {
-        vendorId: vendor.id,
+        vendorId,
         email,
         code,
         usedAt: null,
-        expiresAt: {
-          gt: new Date(),
-        },
+        expiresAt: { gt: new Date() },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
 
     if (!loginCode) {
       return json(
-        { ok: false, error: "確認コードが正しくないか、有効期限切れです。" },
+        { ok: false, step: "code", error: "確認コードが違うか、有効期限が切れています。", email, vendorId },
         { status: 400 }
       );
     }
@@ -149,146 +167,175 @@ export const action = async ({ request }) => {
 
     await prisma.vendorAdminSession.create({
       data: {
-        vendorId: vendor.id,
+        vendorId,
         sessionToken,
         expiresAt,
       },
     });
 
-    return redirect(`/apps/vendors/dashboard?vendor=${vendor.id}`, {
+    return redirect(`/apps/vendors/dashboard?vendor=${vendorId}`, {
       headers: {
         "Set-Cookie": await vendorAdminCookie.serialize(sessionToken),
       },
     });
   }
 
-  return json({ ok: false, error: "不正なリクエストです。" }, { status: 400 });
+  return json({ ok: false, step: "email", error: "不正な操作です。" }, { status: 400 });
 };
 
 export default function VendorVerifyPage() {
-  const loaderData = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
 
-  const isSubmitting = navigation.state === "submitting";
-  const sentEmail = actionData?.email || "";
+  const isSending = navigation.state === "submitting";
+
+  const step = actionData?.step === "code" ? "code" : "email";
+  const email = actionData?.email || "";
+  const vendorId = actionData?.vendorId || "";
 
   return (
-    <div
-      style={{
-        maxWidth: "560px",
-        margin: "60px auto",
-        padding: "24px",
-        fontFamily: "sans-serif",
-      }}
-    >
-      <h1 style={{ fontSize: "28px", fontWeight: "700", marginBottom: "24px" }}>
-        店舗管理者ログイン
-      </h1>
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>店舗管理ページ確認</h1>
+        <p style={styles.lead}>
+          管理用メールアドレスに確認コードを送信します。
+          <br />
+          メールを受け取れる方のみ先へ進めます。
+        </p>
 
-      <div
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-          padding: "20px",
-          marginBottom: "20px",
-        }}
-      >
-        <h2 style={{ fontSize: "18px", marginBottom: "12px" }}>確認コード送信</h2>
+        {actionData?.error ? <div style={styles.error}>{actionData.error}</div> : null}
+        {actionData?.message ? <div style={styles.success}>{actionData.message}</div> : null}
 
-        <Form method="post">
-          <input type="hidden" name="intent" value="send-code" />
-          <div style={{ marginBottom: "12px" }}>
-            <input
-              type="email"
-              name="email"
-              placeholder="管理用メールアドレス"
-              defaultValue={sentEmail}
-              style={{
-                width: "100%",
-                padding: "12px",
-                border: "1px solid #ccc",
-                borderRadius: "8px",
-              }}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              width: "100%",
-              padding: "12px",
-              border: "none",
-              borderRadius: "8px",
-              cursor: "pointer",
-            }}
-          >
-            {isSubmitting ? "送信中..." : "確認コードを送信"}
-          </button>
-        </Form>
+        {step === "email" ? (
+          <form method="post" action="" style={styles.form}>
+            <input type="hidden" name="intent" value="send-code" />
+
+            <label style={styles.label}>
+              管理用メールアドレス
+              <input
+                type="email"
+                name="email"
+                placeholder="example@shop.com"
+                required
+                style={styles.input}
+              />
+            </label>
+
+            <button type="submit" style={styles.button} disabled={isSending}>
+              {isSending ? "送信中..." : "確認コードを送る"}
+            </button>
+          </form>
+        ) : (
+          <form method="post" action="" style={styles.form}>
+            <input type="hidden" name="intent" value="verify-code" />
+            <input type="hidden" name="email" value={email} />
+            <input type="hidden" name="vendorId" value={vendorId} />
+
+            <label style={styles.label}>
+              確認コード
+              <input
+                type="text"
+                name="code"
+                placeholder="6桁コード"
+                inputMode="numeric"
+                maxLength={6}
+                required
+                style={styles.input}
+              />
+            </label>
+
+            <div style={styles.note}>送信先: {email}</div>
+
+            <button type="submit" style={styles.button} disabled={isSending}>
+              {isSending ? "確認中..." : "店舗管理ページへ進む"}
+            </button>
+          </form>
+        )}
       </div>
-
-      <div
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-          padding: "20px",
-        }}
-      >
-        <h2 style={{ fontSize: "18px", marginBottom: "12px" }}>確認コード入力</h2>
-
-        <Form method="post">
-          <input type="hidden" name="intent" value="verify-code" />
-          <div style={{ marginBottom: "12px" }}>
-            <input
-              type="email"
-              name="email"
-              placeholder="管理用メールアドレス"
-              defaultValue={sentEmail}
-              style={{
-                width: "100%",
-                padding: "12px",
-                border: "1px solid #ccc",
-                borderRadius: "8px",
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: "12px" }}>
-            <input
-              type="text"
-              name="code"
-              placeholder="6桁コード"
-              style={{
-                width: "100%",
-                padding: "12px",
-                border: "1px solid #ccc",
-                borderRadius: "8px",
-              }}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              width: "100%",
-              padding: "12px",
-              border: "none",
-              borderRadius: "8px",
-              cursor: "pointer",
-            }}
-          >
-            {isSubmitting ? "確認中..." : "ログイン"}
-          </button>
-        </Form>
-      </div>
-
-      {actionData?.message ? (
-        <p style={{ marginTop: "16px" }}>{actionData.message}</p>
-      ) : null}
-
-      {actionData?.error ? (
-        <p style={{ marginTop: "16px", color: "red" }}>{actionData.error}</p>
-      ) : null}
     </div>
   );
 }
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    background: "#f6f6f6",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "24px",
+  },
+  card: {
+    width: "100%",
+    maxWidth: "560px",
+    background: "#ffffff",
+    border: "1px solid #d9d9d9",
+    borderRadius: "20px",
+    padding: "32px",
+    boxSizing: "border-box",
+  },
+  title: {
+    margin: "0 0 16px",
+    fontSize: "32px",
+    fontWeight: 700,
+    color: "#111111",
+  },
+  lead: {
+    margin: "0 0 24px",
+    fontSize: "16px",
+    lineHeight: 1.8,
+    color: "#333333",
+  },
+  form: {
+    display: "grid",
+    gap: "18px",
+  },
+  label: {
+    display: "grid",
+    gap: "10px",
+    fontSize: "15px",
+    fontWeight: 600,
+    color: "#111111",
+  },
+  input: {
+    width: "100%",
+    height: "52px",
+    borderRadius: "12px",
+    border: "1px solid #cfcfcf",
+    padding: "0 16px",
+    fontSize: "16px",
+    boxSizing: "border-box",
+  },
+  button: {
+    height: "56px",
+    border: "none",
+    borderRadius: "999px",
+    background: "#111111",
+    color: "#ffffff",
+    fontSize: "20px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  error: {
+    marginBottom: "16px",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    background: "#fff1f1",
+    border: "1px solid #f0b7b7",
+    color: "#b42318",
+    fontSize: "14px",
+  },
+  success: {
+    marginBottom: "16px",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    background: "#f0fff4",
+    border: "1px solid #a6d8b8",
+    color: "#166534",
+    fontSize: "14px",
+  },
+  note: {
+    fontSize: "14px",
+    color: "#555555",
+  },
+};
