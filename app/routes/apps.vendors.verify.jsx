@@ -40,7 +40,10 @@ export const action = async ({ request }) => {
     const email = String(formData.get("email") || "").trim().toLowerCase();
 
     if (!email) {
-      return json({ ok: false, step: "email", error: "メールアドレスを入力してください。" }, { status: 400 });
+      return json(
+        { ok: false, step: "email", error: "メールアドレスを入力してください。" },
+        { status: 400 }
+      );
     }
 
     const vendor = await prisma.vendor.findFirst({
@@ -53,7 +56,7 @@ export const action = async ({ request }) => {
     if (!vendor) {
       return json(
         { ok: false, step: "email", error: "このメールアドレスは管理用メールとして登録されていません。" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -70,33 +73,41 @@ export const action = async ({ request }) => {
     });
 
     try {
-  const { error } = await resend.emails.send({
-    from: process.env.MAIL_FROM,
-    to: [email],
-    subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
-    text:
-      `店舗管理ページの確認コードをお送りします。\n\n` +
-      `確認コード: ${code}\n` +
-      `有効期限: 10分\n\n` +
-      `このメールに心当たりがない場合は、このメールを破棄してください。`,
-  });
+      const { error } = await resend.emails.send({
+        from: process.env.MAIL_FROM,
+        to: [email],
+        subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
+        text:
+          `店舗管理ページの確認コードをお送りします。\n\n` +
+          `確認コード: ${code}\n` +
+          `有効期限: 10分\n\n` +
+          `このメールに心当たりがない場合は、このメールを破棄してください。`,
+      });
 
-  if (error) {
-    console.error("❌ resend error:", error);
+      if (error) {
+        console.error("❌ resend error:", error);
 
-    return json(
-      { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
-      { status: 500 },
-    );
-  }
-} catch (e) {
-  console.error("❌ verify mail error:", e);
+        return json(
+          { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+          { status: 500 }
+        );
+      }
+    } catch (e) {
+      console.error("❌ verify mail error:", e);
 
-  return json(
-    { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
-    { status: 500 },
-  );
-}
+      return json(
+        { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+        { status: 500 }
+      );
+    }
+
+    return json({
+      ok: true,
+      step: "code",
+      message: "確認コードを送信しました。",
+      email,
+      vendorId: vendor.id,
+    });
   }
 
   if (intent === "verify-code") {
@@ -106,8 +117,14 @@ export const action = async ({ request }) => {
 
     if (!email || !vendorId || !code) {
       return json(
-        { ok: false, step: "code", error: "必要な情報が不足しています。もう一度やり直してください。", email, vendorId },
-        { status: 400 },
+        {
+          ok: false,
+          step: "code",
+          error: "必要な情報が不足しています。もう一度やり直してください。",
+          email,
+          vendorId,
+        },
+        { status: 400 }
       );
     }
 
@@ -118,7 +135,7 @@ export const action = async ({ request }) => {
     if (!vendor || vendor.managementEmail.toLowerCase() !== email || vendor.status !== "active") {
       return json(
         { ok: false, step: "code", error: "管理対象の店舗が見つかりません。", email, vendorId },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -136,7 +153,7 @@ export const action = async ({ request }) => {
     if (!loginCode) {
       return json(
         { ok: false, step: "code", error: "確認コードが違うか、有効期限が切れています。", email, vendorId },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -209,7 +226,7 @@ export default function VendorVerifyPage() {
             </button>
           </form>
         ) : (
-          <form method="post" style={styles.form}>
+          <form method="post" action="" style={styles.form}>
             <input type="hidden" name="intent" value="verify-code" />
             <input type="hidden" name="email" value={email} />
             <input type="hidden" name="vendorId" value={vendorId} />
