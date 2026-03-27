@@ -14,7 +14,7 @@ export const loader = async ({ request }) => {
   const sessionToken = await vendorAdminCookie.parse(cookieHeader);
 
   if (!sessionToken) {
-    throw redirect("/apps/vendor-verify");
+    throw redirect("/apps/vendors/verify");
   }
 
   const session = await prisma.vendorAdminSession.findUnique({
@@ -23,7 +23,7 @@ export const loader = async ({ request }) => {
   });
 
   if (!session || session.expiresAt <= new Date()) {
-    throw redirect("/apps/vendor-verify", {
+    throw redirect("/apps/vendors/verify", {
       headers: {
         "Set-Cookie": await vendorAdminCookie.serialize("", {
           maxAge: 0,
