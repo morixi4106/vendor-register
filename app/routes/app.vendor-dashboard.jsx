@@ -1,7 +1,15 @@
-import { json } from "@remix-run/node";
+import { createCookie, json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
+import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
+
+const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
+  httpOnly: true,
+  sameSite: "lax",
+  path: "/",
+  secure: process.env.NODE_ENV === "production",
+});
 
 function formatYmd(date) {
   const y = date.getFullYear();
@@ -86,6 +94,13 @@ function formatCountdown(hours) {
   return `${days}日 ${rest}時間`;
 }
 
+function escapeShopifySearchValue(value) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .trim();
+}
+
 export const loader = async ({ request }) => {
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -94,18 +109,63 @@ export const loader = async ({ request }) => {
     console.log("session shop:", session?.shop);
     console.log("request url:", request.url);
 
+    const cookieHeader = request.headers.get("Cookie");
+    const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
+
+    if (!sessionToken) {
+      throw redirect("/apps/vendor-verify");
+    }
+
+    const vendorSession = await prisma.vendorAdminSession.findUnique({
+      where: { sessionToken },
+      include: {
+        vendor: {
+          include: {
+            vendorStore: true,
+          },
+        },
+      },
+    });
+
+    if (!vendorSession || vendorSession.expiresAt < new Date()) {
+      throw redirect("/apps/vendor-verify", {
+        headers: {
+          "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
+            maxAge: 0,
+          }),
+        },
+      });
+    }
+
+    const vendor = vendorSession.vendor;
+    const store = vendor?.vendorStore;
+
+    if (!vendor || !store) {
+      throw new Response("店舗情報が見つかりません。", { status: 404 });
+    }
+
+    const vendorName = store.storeName || vendor.storeName || "";
+    const escapedVendorName = escapeShopifySearchValue(vendorName);
+
+    if (!escapedVendorName) {
+      throw new Response("店舗名が見つかりません。", { status: 400 });
+    }
+
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any`;
+    const vendorFilter = `vendor:"${escapedVendorName}"`;
+    const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any ${vendorFilter}`;
+    const productsQueryString = vendorFilter;
 
     const productsQuery = `
-      query VendorDashboardProducts {
-        products(first: 50, sortKey: UPDATED_AT, reverse: true) {
+      query VendorDashboardProducts($query: String!) {
+        products(first: 50, sortKey: UPDATED_AT, reverse: true, query: $query) {
           nodes {
             id
             title
+            vendor
             status
             totalInventory
             metafield(namespace: "custom", key: "approval_status") {
@@ -148,7 +208,7 @@ export const loader = async ({ request }) => {
                 }
               }
             }
-            fulfillments(first: 10) {
+            fulfillments {
               trackingInfo {
                 number
               }
@@ -159,7 +219,9 @@ export const loader = async ({ request }) => {
     `;
 
     const [productsRes, ordersRes] = await Promise.all([
-      admin.graphql(productsQuery),
+      admin.graphql(productsQuery, {
+        variables: { query: productsQueryString },
+      }),
       admin.graphql(ordersQuery, {
         variables: { query: ordersQueryString },
       }),
@@ -168,6 +230,9 @@ export const loader = async ({ request }) => {
     const productsJson = await productsRes.json();
     const ordersJson = await ordersRes.json();
 
+    console.log("vendorName:", vendorName);
+    console.log("productsQueryString:", productsQueryString);
+    console.log("ordersQueryString:", ordersQueryString);
     console.log("productsJson:", JSON.stringify(productsJson, null, 2));
     console.log("ordersJson:", JSON.stringify(ordersJson, null, 2));
 
@@ -228,6 +293,7 @@ export const loader = async ({ request }) => {
       return {
         id: product.id,
         name: product.title,
+        vendor: product.vendor || vendorName,
         sku,
         stock,
         price: formatMoney(variant?.price || 0, "JPY"),
@@ -331,6 +397,22 @@ export const loader = async ({ request }) => {
     }
 
     return json({
+      vendor: {
+        id: vendor.id,
+        storeName: vendor.storeName,
+        managementEmail: vendor.managementEmail,
+        status: vendor.status,
+      },
+      store: {
+        id: store.id,
+        storeName: store.storeName,
+        ownerName: store.ownerName,
+        email: store.email,
+        phone: store.phone,
+        address: store.address,
+        country: store.country,
+        category: store.category,
+      },
       summaryCards,
       priorityOrders,
       products,
@@ -357,7 +439,7 @@ export const loader = async ({ request }) => {
 };
 
 export default function VendorDashboard() {
-  const { summaryCards, priorityOrders, products, monthlySales, chartData } =
+  const { summaryCards, priorityOrders, products, monthlySales, chartData, store } =
     useLoaderData();
 
   const [query, setQuery] = useState("");
@@ -768,7 +850,9 @@ export default function VendorDashboard() {
         <div className="dash-topbar-inner">
           <div className="dash-brand">
             <p className="dash-brand-sub">店舗管理</p>
-            <h1 className="dash-brand-title">Oja Immanuel Bacchus Seller Center</h1>
+            <h1 className="dash-brand-title">
+              {store?.storeName || "Oja Immanuel Bacchus Seller Center"}
+            </h1>
           </div>
 
           <div className="dash-search">
