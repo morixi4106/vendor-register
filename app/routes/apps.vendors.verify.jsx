@@ -1,5 +1,5 @@
 import { json, redirect, createCookie } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { useActionData, useNavigation } from "@remix-run/react";
 import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
 import prisma from "../db.server";
@@ -69,33 +69,34 @@ export const action = async ({ request }) => {
       },
     });
 
-    // メール送信（ここ復活）
     try {
-      const { error } = await resend.emails.send({
-        from: process.env.MAIL_FROM,
-        to: [email],
-        subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
-        text:
-          `店舗管理ページの確認コードをお送りします。\n\n` +
-          `確認コード: ${code}\n` +
-          `有効期限: 10分\n\n` +
-          `このメールに心当たりがない場合は、このメールを破棄してください。`,
-      });
+  const { error } = await resend.emails.send({
+    from: process.env.MAIL_FROM,
+    to: [email],
+    subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
+    text:
+      `店舗管理ページの確認コードをお送りします。\n\n` +
+      `確認コード: ${code}\n` +
+      `有効期限: 10分\n\n` +
+      `このメールに心当たりがない場合は、このメールを破棄してください。`,
+  });
 
-      if (error) {
-        console.error("❌ resend error:", error);
-      }
-    } catch (e) {
-      console.error("❌ verify mail error:", e);
-    }
+  if (error) {
+    console.error("❌ resend error:", error);
 
-    return json({
-      ok: true,
-      step: "code",
-      message: "確認コードを送信しました。",
-      email,
-      vendorId: vendor.id,
-    });
+    return json(
+      { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+      { status: 500 },
+    );
+  }
+} catch (e) {
+  console.error("❌ verify mail error:", e);
+
+  return json(
+    { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+    { status: 500 },
+  );
+}
   }
 
   if (intent === "verify-code") {
@@ -189,7 +190,7 @@ export default function VendorVerifyPage() {
         {actionData?.message ? <div style={styles.success}>{actionData.message}</div> : null}
 
         {step === "email" ? (
-          <Form method="post" style={styles.form}>
+          <form method="post" action="" style={styles.form}>
             <input type="hidden" name="intent" value="send-code" />
 
             <label style={styles.label}>
@@ -206,9 +207,9 @@ export default function VendorVerifyPage() {
             <button type="submit" style={styles.button} disabled={isSending}>
               {isSending ? "送信中..." : "確認コードを送る"}
             </button>
-          </Form>
+          </form>
         ) : (
-          <Form method="post" style={styles.form}>
+          <form method="post" style={styles.form}>
             <input type="hidden" name="intent" value="verify-code" />
             <input type="hidden" name="email" value={email} />
             <input type="hidden" name="vendorId" value={vendorId} />
@@ -231,7 +232,7 @@ export default function VendorVerifyPage() {
             <button type="submit" style={styles.button} disabled={isSending}>
               {isSending ? "確認中..." : "店舗管理ページへ進む"}
             </button>
-          </Form>
+          </form>
         )}
       </div>
     </div>
