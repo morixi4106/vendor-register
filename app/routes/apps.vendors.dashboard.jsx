@@ -32,7 +32,7 @@ export const loader = async ({ request }) => {
     });
   }
 
-  throw redirect(`/app/vendor-dashboard?vendor=${session.vendorId}`);
+  throw redirect(`https://vendor-register-pbjl.onrender.com/app/vendor-dashboard?vendor=${session.vendorId}`);
 };
 
 export default function AppsVendorsDashboardEntry() {

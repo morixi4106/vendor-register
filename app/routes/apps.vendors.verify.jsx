@@ -25,7 +25,7 @@ export const loader = async ({ request }) => {
     });
 
     if (session && session.expiresAt > new Date()) {
-      return redirect(`/app/vendor-dashboard?vendor=${session.vendorId}`);
+      return redirect(`/apps/vendors/dashboard?vendor=${session.vendorId}`);
     }
   }
 
@@ -173,7 +173,7 @@ export const action = async ({ request }) => {
       },
     });
 
-    return redirect(`/app/vendor-dashboard?vendor=${vendorId}`, {
+    return redirect(`/apps/vendors/dashboard?vendor=${vendorId}`, {
       headers: {
         "Set-Cookie": await vendorAdminCookie.serialize(sessionToken),
       },
