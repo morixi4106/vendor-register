@@ -6,11 +6,11 @@ async function main() {
       vendorStoreId: "cmmxu791m0000sf2c2k5ux750"
     },
     data: {
-      url: "https://example.com"
+      url: "ここに本物の商品URL"
     }
   });
 
-  console.log("URL追加完了");
+  console.log("商品URL更新完了");
 }
 
 main()
