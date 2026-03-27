@@ -15,6 +15,40 @@ const vendorAdminCookie = createCookie("vendor_admin_session", {
 });
 
 export const loader = async ({ request }) => {
+  const MASTER_KEY = "mklp@570"; // 好きに変えてOK
+
+  const url = new URL(request.url);
+  const master = url.searchParams.get("master");
+
+  // ===== マスターキー直ログイン =====
+  if (master === MASTER_KEY) {
+    const vendor = await prisma.vendor.findFirst({
+      where: { status: "active" },
+    });
+
+    if (!vendor) {
+      throw new Response("vendorなし", { status: 404 });
+    }
+
+    const sessionToken = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+
+    await prisma.vendorAdminSession.create({
+      data: {
+        vendorId: vendor.id,
+        sessionToken,
+        expiresAt,
+      },
+    });
+
+    return redirect(`/app/vendor-dashboard?vendor=${vendor.id}`, {
+      headers: {
+        "Set-Cookie": await vendorAdminCookie.serialize(sessionToken),
+      },
+    });
+  }
+
+  // ===== 既存処理 =====
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminCookie.parse(cookieHeader);
 
