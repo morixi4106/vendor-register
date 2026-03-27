@@ -31,5 +31,5 @@ redirect_urls = [ "https://vendor-register-pbjl.onrender.com/api/auth" ]
 
 [app_proxy]
 url = "https://vendor-register-pbjl.onrender.com/apps/vendors"
-subpath = "vendors"
+subpath = "vendor-verify"
 prefix = "apps"
