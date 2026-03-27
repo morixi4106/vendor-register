@@ -2,7 +2,6 @@ import { createCookie, json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -11,13 +10,6 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   secure: process.env.NODE_ENV === "production",
   maxAge: 60 * 60 * 8,
 });
-
-function formatYmd(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
 
 function formatMoney(amount, currencyCode = "JPY") {
   const num = Number(amount || 0);
@@ -38,24 +30,6 @@ function mapApproval(value) {
   if (value === "pending") return "申請中";
   if (value === "rejected") return "却下";
   if (value === "review") return "要確認";
-  return value;
-}
-
-function mapProductStatus(value) {
-  if (value === "ACTIVE") return "販売中";
-  if (value === "DRAFT") return "下書き";
-  if (value === "ARCHIVED") return "アーカイブ";
-  return value || "未設定";
-}
-
-function mapFulfillmentStatus(value) {
-  if (!value) return "未発送";
-  if (value === "FULFILLED") return "発送済み";
-  if (value === "PARTIALLY_FULFILLED") return "一部発送";
-  if (value === "UNFULFILLED") return "発送待ち";
-  if (value === "IN_PROGRESS") return "対応中";
-  if (value === "ON_HOLD") return "保留";
-  if (value === "OPEN") return "対応要";
   return value;
 }
 
@@ -90,352 +64,134 @@ function badgeClass(text) {
   return "dash-badge dash-badge-gray";
 }
 
-function formatCountdown(hours) {
-  if (hours <= 0) return "期限処理済み";
-  const whole = Math.floor(hours);
-  const days = Math.floor(whole / 24);
-  const rest = whole % 24;
-  return `${days}日 ${rest}時間`;
-}
-
-function escapeShopifySearchValue(value) {
-  return String(value ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .trim();
-}
-
 export const loader = async ({ request }) => {
-  try {
-    const cookieHeader = request.headers.get("Cookie");
-    const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
+  const cookieHeader = request.headers.get("Cookie");
+  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
-    if (!sessionToken) {
-      throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify");
-    }
+  if (!sessionToken) {
+    throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify");
+  }
 
-    const vendorSession = await prisma.vendorAdminSession.findUnique({
-      where: { sessionToken },
-      include: {
-        vendor: {
-          include: {
-            vendorStore: true,
+  const vendorSession = await prisma.vendorAdminSession.findUnique({
+    where: { sessionToken },
+    include: {
+      vendor: {
+        include: {
+          vendorStore: {
+            include: {
+              products: {
+                orderBy: {
+                  createdAt: "desc",
+                },
+              },
+            },
           },
         },
       },
+    },
+  });
+
+  if (!vendorSession || vendorSession.expiresAt < new Date()) {
+    throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify", {
+      headers: {
+        "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
+          maxAge: 0,
+        }),
+      },
     });
-
-    if (!vendorSession || vendorSession.expiresAt < new Date()) {
-      throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify", {
-        headers: {
-          "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
-            maxAge: 0,
-          }),
-        },
-      });
-    }
-
-    const vendor = vendorSession.vendor;
-    const store = vendor?.vendorStore;
-
-    if (!vendor || !store) {
-      throw new Response("店舗情報が見つかりません。", { status: 404 });
-    }
-
-    const { admin } = await authenticate.admin(request);
-
-    const vendorName = store.storeName || vendor.storeName || "";
-    const escapedVendorName = escapeShopifySearchValue(vendorName);
-
-    if (!escapedVendorName) {
-      throw new Response("店舗名が見つかりません。", { status: 400 });
-    }
-
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const vendorFilter = `vendor:"${escapedVendorName}"`;
-    const ordersQueryString = `created_at:>=${formatYmd(monthStart)} status:any ${vendorFilter}`;
-    const productsQueryString = vendorFilter;
-
-    const productsQuery = `
-      query VendorDashboardProducts($query: String!) {
-        products(first: 50, sortKey: UPDATED_AT, reverse: true, query: $query) {
-          nodes {
-            id
-            title
-            vendor
-            status
-            totalInventory
-            metafield(namespace: "custom", key: "approval_status") {
-              value
-            }
-            variants(first: 1) {
-              nodes {
-                sku
-                price
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const ordersQuery = `
-      query VendorDashboardOrders($query: String!) {
-        orders(first: 50, sortKey: CREATED_AT, reverse: true, query: $query) {
-          nodes {
-            id
-            name
-            createdAt
-            displayFulfillmentStatus
-            currentTotalPriceSet {
-              shopMoney {
-                amount
-                currencyCode
-              }
-            }
-            customer {
-              displayName
-            }
-            lineItems(first: 20) {
-              nodes {
-                name
-                quantity
-                variant {
-                  sku
-                }
-              }
-            }
-            fulfillments {
-              trackingInfo {
-                number
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const [productsRes, ordersRes] = await Promise.all([
-      admin.graphql(productsQuery, {
-        variables: { query: productsQueryString },
-      }),
-      admin.graphql(ordersQuery, {
-        variables: { query: ordersQueryString },
-      }),
-    ]);
-
-    const productsJson = await productsRes.json();
-    const ordersJson = await ordersRes.json();
-
-    console.log("vendorName:", vendorName);
-    console.log("productsQueryString:", productsQueryString);
-    console.log("ordersQueryString:", ordersQueryString);
-    console.log("productsJson:", JSON.stringify(productsJson, null, 2));
-    console.log("ordersJson:", JSON.stringify(ordersJson, null, 2));
-
-    if (productsJson.errors || ordersJson.errors) {
-      console.error("products errors raw:", JSON.stringify(productsJson.errors, null, 2));
-      console.error("orders errors raw:", JSON.stringify(ordersJson.errors, null, 2));
-      console.error("products full raw:", JSON.stringify(productsJson, null, 2));
-      console.error("orders full raw:", JSON.stringify(ordersJson, null, 2));
-      throw new Error("GraphQL errors detected");
-    }
-
-    const rawProducts = productsJson?.data?.products?.nodes || [];
-    const rawOrders = ordersJson?.data?.orders?.nodes || [];
-
-    const monthlySalesMap = new Map();
-    let monthSalesAmount = 0;
-    let todaySalesAmount = 0;
-    let monthUnits = 0;
-
-    for (const order of rawOrders) {
-      const money = order?.currentTotalPriceSet?.shopMoney;
-      const amount = Number(money?.amount || 0);
-      const createdAt = new Date(order.createdAt);
-
-      monthSalesAmount += amount;
-
-      if (createdAt >= todayStart) {
-        todaySalesAmount += amount;
-      }
-
-      for (const line of order?.lineItems?.nodes || []) {
-        const key = line?.variant?.sku || line?.name || "UNKNOWN";
-        const current = monthlySalesMap.get(key) || {
-          name: line?.name || "商品名なし",
-          sku: line?.variant?.sku || "-",
-          quantity: 0,
-        };
-        current.quantity += Number(line?.quantity || 0);
-        monthUnits += Number(line?.quantity || 0);
-        monthlySalesMap.set(key, current);
-      }
-    }
-
-    const monthlySales = Array.from(monthlySalesMap.values())
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 20);
-
-    const monthlySalesBySku = new Map(
-      monthlySales.map((item) => [item.sku, item.quantity])
-    );
-
-    const products = rawProducts.map((product) => {
-      const variant = product?.variants?.nodes?.[0];
-      const stock = Number(product?.totalInventory ?? 0);
-      const sku = variant?.sku || "-";
-      const sales = monthlySalesBySku.get(sku) || 0;
-
-      return {
-        id: product.id,
-        name: product.title,
-        vendor: product.vendor || vendorName,
-        sku,
-        stock,
-        price: formatMoney(variant?.price || 0, "JPY"),
-        sales,
-        status:
-          stock <= 0
-            ? "在庫切れ"
-            : stock <= 20
-              ? "在庫少"
-              : mapProductStatus(product.status),
-        approval: mapApproval(product?.metafield?.value),
-        tracking: "-",
-      };
-    });
-
-    const priorityOrders = rawOrders
-      .map((order) => {
-        const createdAt = new Date(order.createdAt);
-        const diffMs = Date.now() - createdAt.getTime();
-        const elapsedHours = diffMs / (1000 * 60 * 60);
-        const remainingHours = Math.max(0, 72 - elapsedHours);
-
-        const firstLine = order?.lineItems?.nodes?.[0];
-        const trackingNumbers = [];
-
-        for (const fulfillment of order?.fulfillments || []) {
-          for (const info of fulfillment?.trackingInfo || []) {
-            if (info?.number) trackingNumbers.push(info.number);
-          }
-        }
-
-        return {
-          id: order.name,
-          customer: order?.customer?.displayName || "購入者なし",
-          product: firstLine?.name || "商品なし",
-          quantity: firstLine?.quantity || 0,
-          total: formatMoney(
-            order?.currentTotalPriceSet?.shopMoney?.amount || 0,
-            order?.currentTotalPriceSet?.shopMoney?.currencyCode || "JPY"
-          ),
-          status: mapFulfillmentStatus(order?.displayFulfillmentStatus),
-          age: new Intl.DateTimeFormat("ja-JP", {
-            month: "numeric",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          }).format(createdAt),
-          tracking:
-            trackingNumbers.length > 0 ? trackingNumbers.join(", ") : "-",
-          countdownHours: remainingHours,
-        };
-      })
-      .sort((a, b) => a.countdownHours - b.countdownHours)
-      .slice(0, 10);
-
-    const summaryCards = [
-      {
-        title: "本日の売上",
-        value: formatMoney(todaySalesAmount, "JPY"),
-        sub: "本日分の注文合計",
-      },
-      {
-        title: "月の売上",
-        value: formatMoney(monthSalesAmount, "JPY"),
-        sub: `今月 ${monthUnits.toLocaleString("ja-JP")}点`,
-      },
-      {
-        title: "未発送注文",
-        value: String(
-          priorityOrders.filter(
-            (o) => o.status === "発送待ち" || o.status === "一部発送" || o.status === "対応要"
-          ).length
-        ),
-        sub: "72時間対応対象を優先表示",
-      },
-      {
-        title: "公開中商品",
-        value: String(products.filter((p) => p.status === "販売中").length),
-        sub: `全${products.length}商品`,
-      },
-    ];
-
-    const chartData = [];
-    for (let i = 6; i >= 0; i -= 1) {
-      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-      const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
-
-      let amount = 0;
-      for (const order of rawOrders) {
-        const createdAt = new Date(order.createdAt);
-        if (createdAt >= start && createdAt < end) {
-          amount += Number(order?.currentTotalPriceSet?.shopMoney?.amount || 0);
-        }
-      }
-
-      chartData.push({
-        label: `${day.getMonth() + 1}/${day.getDate()}`,
-        amount,
-      });
-    }
-
-    return json({
-      vendor: {
-        id: vendor.id,
-        storeName: vendor.storeName,
-        managementEmail: vendor.managementEmail,
-        status: vendor.status,
-      },
-      store: {
-        id: store.id,
-        storeName: store.storeName,
-        ownerName: store.ownerName,
-        email: store.email,
-        phone: store.phone,
-        address: store.address,
-        country: store.country,
-        category: store.category,
-      },
-      summaryCards,
-      priorityOrders,
-      products,
-      monthlySales,
-      chartData,
-    });
-  } catch (error) {
-    console.error("vendor-dashboard loader error full:", error);
-
-    if (error?.body) {
-      console.error("error.body:", JSON.stringify(error.body, null, 2));
-    }
-
-    if (error?.graphQLErrors) {
-      console.error("error.graphQLErrors:", JSON.stringify(error.graphQLErrors, null, 2));
-    }
-
-    if (error?.response) {
-      console.error("error.response:", JSON.stringify(error.response, null, 2));
-    }
-
-    throw error;
   }
+
+  const vendor = vendorSession.vendor;
+  const store = vendor?.vendorStore;
+
+  if (!vendor || !store) {
+    throw new Response("店舗情報が見つかりません。", { status: 404 });
+  }
+
+  const rawProducts = Array.isArray(store.products) ? store.products : [];
+
+  const products = rawProducts.map((product) => {
+    const stock = 0;
+    const sales = 0;
+
+    return {
+      id: product.id,
+      name: product.name || "商品名なし",
+      vendor: store.storeName || vendor.storeName || "-",
+      sku: "-",
+      stock,
+      price: formatMoney(product.price || 0, "JPY"),
+      sales,
+      status: "未連携",
+      approval: mapApproval("pending"),
+      tracking: "-",
+    };
+  });
+
+  const summaryCards = [
+    {
+      title: "本日の売上",
+      value: formatMoney(0, "JPY"),
+      sub: "注文連携前",
+    },
+    {
+      title: "月の売上",
+      value: formatMoney(0, "JPY"),
+      sub: "注文連携前",
+    },
+    {
+      title: "未発送注文",
+      value: "0",
+      sub: "注文連携前",
+    },
+    {
+      title: "登録商品数",
+      value: String(products.length),
+      sub: `店舗登録済み商品`,
+    },
+  ];
+
+  const priorityOrders = [];
+
+  const monthlySales = products.map((product) => ({
+    name: product.name,
+    sku: product.sku,
+    quantity: 0,
+  }));
+
+  const chartData = [
+    { label: "7日前", amount: 0 },
+    { label: "6日前", amount: 0 },
+    { label: "5日前", amount: 0 },
+    { label: "4日前", amount: 0 },
+    { label: "3日前", amount: 0 },
+    { label: "2日前", amount: 0 },
+    { label: "今日", amount: 0 },
+  ];
+
+  return json({
+    vendor: {
+      id: vendor.id,
+      storeName: vendor.storeName,
+      managementEmail: vendor.managementEmail,
+      status: vendor.status,
+    },
+    store: {
+      id: store.id,
+      storeName: store.storeName,
+      ownerName: store.ownerName,
+      email: store.email,
+      phone: store.phone,
+      address: store.address,
+      country: store.country,
+      category: store.category,
+    },
+    summaryCards,
+    priorityOrders,
+    products,
+    monthlySales,
+    chartData,
+  });
 };
 
 export default function VendorDashboard() {
@@ -689,53 +445,13 @@ export default function VendorDashboard() {
           display:grid;
           gap:12px;
         }
-        .dash-order-item{
-          border:1px solid #e5e7eb;
+        .dash-order-empty{
+          border:1px dashed #d1d5db;
           border-radius:12px;
-          padding:14px;
-          display:flex;
-          justify-content:space-between;
-          gap:16px;
-          align-items:center;
-          flex-wrap:wrap;
-        }
-        .dash-order-main{
-          display:grid;
-          gap:6px;
-          flex:1;
-          min-width:260px;
-        }
-        .dash-order-title{
-          font-size:15px;
-          font-weight:700;
-          margin:0;
-        }
-        .dash-order-sub{
-          font-size:13px;
-          color:#6b7280;
-          margin:0;
-        }
-        .dash-order-right{
-          min-width:170px;
-          text-align:right;
-        }
-        .dash-countdown-label{
-          font-size:12px;
-          color:#6b7280;
-        }
-        .dash-countdown-box{
-          display:inline-block;
-          margin-top:6px;
-          padding:8px 12px;
-          border-radius:12px;
+          padding:20px;
           font-size:14px;
-          font-weight:700;
-          background:#f3f4f6;
-          color:#374151;
-        }
-        .dash-countdown-box.is-danger{
-          background:#fef2f2;
-          color:#b91c1c;
+          color:#6b7280;
+          background:#f9fafb;
         }
         .dash-pdf-box{
           border:1px solid #e5e7eb;
@@ -847,10 +563,6 @@ export default function VendorDashboard() {
             padding:16px;
           }
           .dash-brand-title{ font-size:20px; }
-          .dash-order-right{
-            width:100%;
-            text-align:left;
-          }
         }
       `}</style>
 
@@ -924,7 +636,7 @@ export default function VendorDashboard() {
           <section className="dash-grid-2">
             <div className="dash-card">
               <h2 className="dash-section-title">売上推移</h2>
-              <p className="dash-section-sub">過去7日間の注文売上</p>
+              <p className="dash-section-sub">注文連携後にここへ反映されます</p>
 
               <div className="dash-chart">
                 {chartData.map((item) => {
@@ -941,44 +653,26 @@ export default function VendorDashboard() {
 
             <div className="dash-card">
               <h2 className="dash-section-title">アカウント健全性</h2>
-              <p className="dash-section-sub">警告が出る前に確認</p>
+              <p className="dash-section-sub">今は商品登録ベースで表示中</p>
 
               <div className="dash-health-list">
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>72時間超過リスク注文</span>
-                    <span>
-                      {
-                        priorityOrders.filter(
-                          (order) => order.countdownHours > 0 && order.countdownHours <= 24
-                        ).length
-                      }件
-                    </span>
+                    <span>登録商品数</span>
+                    <span>{products.length}件</span>
                   </div>
                   <div className="dash-progress">
                     <div
                       className="dash-progress-fill"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          priorityOrders.length === 0
-                            ? 0
-                            : (priorityOrders.filter(
-                                (order) =>
-                                  order.countdownHours > 0 && order.countdownHours <= 24
-                              ).length /
-                                priorityOrders.length) *
-                                100
-                        )}%`,
-                      }}
+                      style={{ width: `${products.length > 0 ? 100 : 0}%` }}
                     />
                   </div>
                 </div>
 
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>在庫少商品</span>
-                    <span>{products.filter((p) => p.status === "在庫少").length}件</span>
+                    <span>申請中商品</span>
+                    <span>{products.filter((p) => p.approval === "申請中").length}件</span>
                   </div>
                   <div className="dash-progress">
                     <div
@@ -988,7 +682,7 @@ export default function VendorDashboard() {
                           100,
                           products.length === 0
                             ? 0
-                            : (products.filter((p) => p.status === "在庫少").length /
+                            : (products.filter((p) => p.approval === "申請中").length /
                                 products.length) *
                                 100
                         )}%`,
@@ -999,8 +693,8 @@ export default function VendorDashboard() {
 
                 <div className="dash-health-row">
                   <div className="dash-health-head">
-                    <span>在庫切れ商品</span>
-                    <span>{products.filter((p) => p.status === "在庫切れ").length}件</span>
+                    <span>承認済み商品</span>
+                    <span>{products.filter((p) => p.approval === "承認済み").length}件</span>
                   </div>
                   <div className="dash-progress">
                     <div
@@ -1010,7 +704,7 @@ export default function VendorDashboard() {
                           100,
                           products.length === 0
                             ? 0
-                            : (products.filter((p) => p.status === "在庫切れ").length /
+                            : (products.filter((p) => p.approval === "承認済み").length /
                                 products.length) *
                                 100
                         )}%`,
@@ -1021,7 +715,7 @@ export default function VendorDashboard() {
               </div>
 
               <div className="dash-alert">
-                注文・在庫・月次売上は Shopify 実データから表示中です。
+                この画面は vendor メール認証だけで表示しています。注文・売上・在庫の Shopify 連携は次段階で追加します。
               </div>
             </div>
           </section>
@@ -1029,50 +723,25 @@ export default function VendorDashboard() {
           <section className="dash-grid-3">
             <div className="dash-card">
               <h2 className="dash-section-title">優先対応の商品・注文</h2>
-              <p className="dash-section-sub">72時間以内に対応したい注文を上に表示</p>
+              <p className="dash-section-sub">注文連携前のため、まだ表示はありません</p>
 
               <div className="dash-order-list">
-                {priorityOrders.map((order) => (
-                  <div className="dash-order-item" key={order.id}>
-                    <div className="dash-order-main">
-                      <p className="dash-order-title">
-                        {order.id} <span className={badgeClass(order.status)}>{order.status}</span>
-                      </p>
-                      <p className="dash-order-sub">
-                        {order.customer} ・ {order.product} ・ {order.quantity}点 ・ {order.total}
-                      </p>
-                      <p className="dash-order-sub">追跡番号: {order.tracking}</p>
-                    </div>
-
-                    <div className="dash-order-right">
-                      <div className="dash-countdown-label">72時間カウントダウン</div>
-                      <div
-                        className={`dash-countdown-box ${
-                          order.countdownHours <= 24 && order.countdownHours > 0
-                            ? "is-danger"
-                            : ""
-                        }`}
-                      >
-                        {formatCountdown(order.countdownHours)}
-                      </div>
-                      <p className="dash-order-sub" style={{ marginTop: "8px" }}>
-                        {order.age}
-                      </p>
-                    </div>
+                {priorityOrders.length === 0 ? (
+                  <div className="dash-order-empty">
+                    まだ注文データは連携されていません。
                   </div>
-                ))}
+                ) : null}
               </div>
             </div>
 
             <div className="dash-card">
               <h2 className="dash-section-title">月次PDF出力</h2>
-              <p className="dash-section-sub">月の売れた商品名と個数をワンボタンで出力</p>
+              <p className="dash-section-sub">現時点では登録商品一覧ベースで出力</p>
 
               <div className="dash-pdf-box">
                 <div><strong>出力内容</strong></div>
-                <div>・月の売上合計</div>
-                <div>・商品名ごとの販売数</div>
-                <div>・注文ごとの追跡番号</div>
+                <div>・登録商品一覧</div>
+                <div>・画面表示中のダッシュボード</div>
               </div>
 
               <div className="dash-monthly-list">
@@ -1095,7 +764,7 @@ export default function VendorDashboard() {
           <section className="dash-card">
             <h2 className="dash-section-title">商品管理</h2>
             <p className="dash-section-sub">
-              Shopify 商品データから表示。月間販売数も同じ画面で確認。
+              今はDBに保存されている vendor 商品を表示しています。
             </p>
 
             <div className="dash-table-wrap">
@@ -1114,25 +783,35 @@ export default function VendorDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProducts.map((product) => (
-                    <tr key={product.id}>
-                      <td className="dash-product-name">{product.name}</td>
-                      <td>{product.sku}</td>
-                      <td>{product.stock}</td>
-                      <td>{product.price}</td>
-                      <td>{product.sales}</td>
-                      <td>
-                        <span className={badgeClass(product.status)}>{product.status}</span>
-                      </td>
-                      <td>
-                        <span className={badgeClass(product.approval)}>{product.approval}</span>
-                      </td>
-                      <td>{product.tracking}</td>
-                      <td>
-                        <button className="dash-btn" type="button">詳細</button>
+                  {filteredProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ color: "#6b7280" }}>
+                        まだ商品がありません。
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    filteredProducts.map((product) => (
+                      <tr key={product.id}>
+                        <td className="dash-product-name">{product.name}</td>
+                        <td>{product.sku}</td>
+                        <td>{product.stock}</td>
+                        <td>{product.price}</td>
+                        <td>{product.sales}</td>
+                        <td>
+                          <span className={badgeClass(product.status)}>{product.status}</span>
+                        </td>
+                        <td>
+                          <span className={badgeClass(product.approval)}>{product.approval}</span>
+                        </td>
+                        <td>{product.tracking}</td>
+                        <td>
+                          <button className="dash-btn" type="button">
+                            詳細
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
