@@ -172,8 +172,10 @@ export const loader = async ({ request }) => {
     console.log("ordersJson:", JSON.stringify(ordersJson, null, 2));
 
     if (productsJson.errors || ordersJson.errors) {
-      console.error("products errors:", JSON.stringify(productsJson.errors, null, 2));
-      console.error("orders errors:", JSON.stringify(ordersJson.errors, null, 2));
+      console.error("products errors raw:", JSON.stringify(productsJson.errors, null, 2));
+      console.error("orders errors raw:", JSON.stringify(ordersJson.errors, null, 2));
+      console.error("products full raw:", JSON.stringify(productsJson, null, 2));
+      console.error("orders full raw:", JSON.stringify(ordersJson, null, 2));
       throw new Error("GraphQL errors detected");
     }
 
@@ -336,7 +338,20 @@ export const loader = async ({ request }) => {
       chartData,
     });
   } catch (error) {
-    console.error("vendor-dashboard loader error:", error);
+    console.error("vendor-dashboard loader error full:", error);
+
+    if (error?.body) {
+      console.error("error.body:", JSON.stringify(error.body, null, 2));
+    }
+
+    if (error?.graphQLErrors) {
+      console.error("error.graphQLErrors:", JSON.stringify(error.graphQLErrors, null, 2));
+    }
+
+    if (error?.response) {
+      console.error("error.response:", JSON.stringify(error.response, null, 2));
+    }
+
     throw error;
   }
 };
