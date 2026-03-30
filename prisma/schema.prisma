@@ -46,17 +46,18 @@ model VendorStore {
 }
 
 model Product {
-  id              String      @id @default(cuid())
-  name            String
-  price           Int
-  url             String?
-  vendorStoreId   String
-  approvalStatus  String      @default("pending")
+  id               String      @id @default(cuid())
+  name             String
+  description      String?
+  price            Int
+  url              String?
+  vendorStoreId    String
+  approvalStatus   String      @default("pending")
   shopifyProductId String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  vendorStore     VendorStore @relation(fields: [vendorStoreId], references: [id])
+  vendorStore      VendorStore @relation(fields: [vendorStoreId], references: [id])
 }
 
 model Vendor {
