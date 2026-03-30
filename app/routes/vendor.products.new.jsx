@@ -113,6 +113,7 @@ export const action = async ({ request }) => {
       name,
       price,
       vendorStoreId: store.id,
+      approvalStatus: "pending",
     },
   });
 

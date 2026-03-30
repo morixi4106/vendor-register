@@ -129,7 +129,7 @@ export const loader = async ({ request }) => {
       price: formatMoney(product.price || 0, "JPY"),
       sales,
       status: "未連携",
-      approval: mapApproval("pending"),
+      approval: mapApproval(product.approvalStatus),
       tracking: "-",
     };
   });
@@ -868,7 +868,7 @@ export default function VendorDashboard() {
                               className="dash-btn"
                               href={`https://vendor-register-pbjl.onrender.com/vendor/products/${product.id}/edit`}
                             >
-                            編集
+                              編集
                             </a>
 
                             <Form method="post" className="dash-inline-form">
