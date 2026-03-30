@@ -62,6 +62,7 @@ export const action = async ({ request }) => {
 
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
+  const imageUrl = String(formData.get("imageUrl") || "").trim();
   const priceRaw = String(formData.get("price") || "").trim();
   const url = String(formData.get("url") || "").trim();
 
@@ -88,10 +89,23 @@ export const action = async ({ request }) => {
     );
   }
 
+  if (imageUrl) {
+    const isHttpUrl =
+      imageUrl.startsWith("http://") || imageUrl.startsWith("https://");
+
+    if (!isHttpUrl) {
+      return json(
+        { ok: false, error: "画像URLは http:// または https:// から始めてください。" },
+        { status: 400 }
+      );
+    }
+  }
+
   await prisma.product.create({
     data: {
       name,
       description: description || null,
+      imageUrl: imageUrl || null,
       price,
       url: url || null,
       vendorStoreId: store.id,
@@ -225,6 +239,36 @@ export default function VendorProductsNew() {
                   lineHeight: 1.8,
                   boxSizing: "border-box",
                   resize: "vertical",
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="imageUrl"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                画像URL
+              </label>
+              <input
+                id="imageUrl"
+                name="imageUrl"
+                type="text"
+                placeholder="https://example.com/image.jpg"
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
                 }}
               />
             </div>
