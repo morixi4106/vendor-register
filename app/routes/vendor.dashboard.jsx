@@ -1,5 +1,5 @@
 import { createCookie, json, redirect } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { Form, useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import prisma from "../db.server";
 
@@ -64,7 +64,7 @@ function badgeClass(text) {
   return "dash-badge dash-badge-gray";
 }
 
-export const loader = async ({ request }) => {
+async function getVendorSessionOrRedirect(request) {
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
@@ -100,6 +100,12 @@ export const loader = async ({ request }) => {
       },
     });
   }
+
+  return vendorSession;
+}
+
+export const loader = async ({ request }) => {
+  const vendorSession = await getVendorSessionOrRedirect(request);
 
   const vendor = vendorSession.vendor;
   const store = vendor?.vendorStore;
@@ -192,6 +198,42 @@ export const loader = async ({ request }) => {
     monthlySales,
     chartData,
   });
+};
+
+export const action = async ({ request }) => {
+  const vendorSession = await getVendorSessionOrRedirect(request);
+  const store = vendorSession.vendor?.vendorStore;
+
+  if (!store) {
+    throw new Response("店舗情報が見つかりません。", { status: 404 });
+  }
+
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+
+  if (intent === "delete") {
+    const productId = String(formData.get("productId") || "").trim();
+
+    if (!productId) {
+      return null;
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product || product.vendorStoreId !== store.id) {
+      return null;
+    }
+
+    await prisma.product.delete({
+      where: { id: productId },
+    });
+
+    return null;
+  }
+
+  return null;
 };
 
 export default function VendorDashboard() {
@@ -294,6 +336,9 @@ export default function VendorDashboard() {
           border-color:#111827;
         }
         .dash-btn-primary:hover{ background:#1f2937; }
+        .dash-btn-danger{
+          color:#b91c1c;
+        }
         .dash-layout{
           max-width:1400px;
           margin:0 auto;
@@ -495,6 +540,18 @@ export default function VendorDashboard() {
           vertical-align:middle;
         }
         .dash-product-name{ font-weight:700; }
+        .dash-table-actions{
+          display:flex;
+          gap:8px;
+          align-items:center;
+          flex-wrap:wrap;
+        }
+        .dash-inline-form{
+          margin:0;
+        }
+        .dash-inline-form button{
+          margin:0;
+        }
         .dash-badge{
           display:inline-block;
           padding:5px 10px;
@@ -530,7 +587,8 @@ export default function VendorDashboard() {
           .dash-sidebar,
           .dash-top-actions,
           .dash-search,
-          .dash-btn{
+          .dash-btn,
+          .dash-inline-form{
             display:none !important;
           }
           .dash-layout{
@@ -805,9 +863,27 @@ export default function VendorDashboard() {
                         </td>
                         <td>{product.tracking}</td>
                         <td>
-                          <button className="dash-btn" type="button">
-                            詳細
-                          </button>
+                          <div className="dash-table-actions">
+                            <button className="dash-btn" type="button">
+                              詳細
+                            </button>
+
+                            <Form method="post" className="dash-inline-form">
+                              <input type="hidden" name="intent" value="delete" />
+                              <input type="hidden" name="productId" value={product.id} />
+                              <button
+                                className="dash-btn dash-btn-danger"
+                                type="submit"
+                                onClick={(e) => {
+                                  if (!window.confirm("この商品を削除しますか？")) {
+                                    e.preventDefault();
+                                  }
+                                }}
+                              >
+                                削除
+                              </button>
+                            </Form>
+                          </div>
                         </td>
                       </tr>
                     ))
