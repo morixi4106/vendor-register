@@ -1,8 +1,11 @@
 import { json } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import { Form, Link, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
+  await authenticate.admin(request);
+
   const url = new URL(request.url);
   const replyType = url.searchParams.get("replyType") || "";
   const q = url.searchParams.get("q") || "";
@@ -39,7 +42,7 @@ export const loader = async ({ request }) => {
   });
 };
 
-function FilterLink({ replyType, q, value, label, currentReplyType }) {
+function FilterLink({ q, value, label, currentReplyType }) {
   const params = new URLSearchParams();
 
   if (value) {
@@ -50,12 +53,15 @@ function FilterLink({ replyType, q, value, label, currentReplyType }) {
     params.set("q", q);
   }
 
-  const href = params.toString() ? `?${params.toString()}` : "/app/contact-inquiries";
+  const to = params.toString()
+    ? `/app/contact-inquiries?${params.toString()}`
+    : "/app/contact-inquiries";
+
   const isActive = currentReplyType === value;
 
   return (
-    <a
-      href={href}
+    <Link
+      to={to}
       style={{
         display: "inline-block",
         padding: "10px 14px",
@@ -67,7 +73,7 @@ function FilterLink({ replyType, q, value, label, currentReplyType }) {
       }}
     >
       {label}
-    </a>
+    </Link>
   );
 }
 
@@ -119,8 +125,8 @@ export default function ContactInquiriesPage() {
           検索
         </button>
 
-        <a
-          href="/app/contact-inquiries"
+        <Link
+          to="/app/contact-inquiries"
           style={{
             padding: "10px 14px",
             borderRadius: "8px",
@@ -131,12 +137,11 @@ export default function ContactInquiriesPage() {
           }}
         >
           クリア
-        </a>
+        </Link>
       </Form>
 
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
         <FilterLink
-          replyType={replyType}
           q={q}
           value=""
           label="すべて"
@@ -144,7 +149,6 @@ export default function ContactInquiriesPage() {
         />
 
         <FilterLink
-          replyType={replyType}
           q={q}
           value="fixed"
           label="固定返信"
@@ -152,7 +156,6 @@ export default function ContactInquiriesPage() {
         />
 
         <FilterLink
-          replyType={replyType}
           q={q}
           value="ai"
           label="AI返信"
@@ -160,7 +163,6 @@ export default function ContactInquiriesPage() {
         />
 
         <FilterLink
-          replyType={replyType}
           q={q}
           value="escalation"
           label="人対応"
