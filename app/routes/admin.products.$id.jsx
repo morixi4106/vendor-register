@@ -63,6 +63,7 @@ async function createShopifyProductFromDbProduct(product) {
           id
           title
           status
+          descriptionHtml
           variants(first: 1) {
             nodes {
               id
@@ -81,6 +82,7 @@ async function createShopifyProductFromDbProduct(product) {
   const createVariables = {
     product: {
       title: product.name,
+      descriptionHtml: product.description || "",
       vendor: product.vendorStore?.storeName || "Vendor",
       status: "ACTIVE",
     },
