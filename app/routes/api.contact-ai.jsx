@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Resend } from "resend";
+import prisma from "../db.server";
 
 // =========================
 // CORS対応
@@ -23,7 +24,6 @@ export const loader = async ({ request }) => {
 
 // =========================
 // 固定ルール定義
-// 今後はここを増やしていく
 // =========================
 const FIXED_REPLY_RULES = [
   {
@@ -84,7 +84,6 @@ Oja Immanuel Bacchus サポート`,
 
 // =========================
 // 危険ワード定義
-// ここに追加していけばOK
 // =========================
 const ESCALATION_KEYWORDS = [
   "返品",
@@ -116,7 +115,9 @@ function normalizeText(value) {
 }
 
 function includesAny(text, keywords) {
-  return keywords.some((keyword) => text.includes(String(keyword).toLowerCase()));
+  return keywords.some((keyword) =>
+    text.includes(String(keyword).toLowerCase())
+  );
 }
 
 function buildEscalationReply({ name }) {
@@ -137,7 +138,6 @@ Oja Immanuel Bacchus サポート`;
 
 function findFixedReplyRule(message) {
   const text = normalizeText(message);
-
   return FIXED_REPLY_RULES.find((rule) => includesAny(text, rule.keywords)) || null;
 }
 
@@ -325,6 +325,18 @@ export const action = async ({ request }) => {
         "返信文:",
         replyText,
       ].join("\n"),
+    });
+
+    await prisma.contactInquiry.create({
+      data: {
+        name,
+        email,
+        phone: phone || null,
+        message,
+        replyText,
+        replyType,
+        matchedRuleId,
+      },
     });
 
     return json(

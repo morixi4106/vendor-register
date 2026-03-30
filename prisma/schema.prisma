@@ -103,3 +103,15 @@ model VendorAdminSession {
   @@index([vendorId])
   @@index([expiresAt])
 }
+
+model ContactInquiry {
+  id            String   @id @default(cuid())
+  name          String
+  email         String
+  phone         String?
+  message       String
+  replyText     String
+  replyType     String
+  matchedRuleId String?
+  createdAt     DateTime @default(now())
+}
