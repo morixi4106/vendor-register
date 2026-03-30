@@ -2,7 +2,7 @@ import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
 
-const SHOPIFY_SHOP_DOMAIN = "oja-immanuel-bacchus.myshopify.com";
+const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
 
 async function getOfflineAccessToken() {
