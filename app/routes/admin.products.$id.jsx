@@ -296,7 +296,7 @@ export default function AdminProductDetail() {
         <div>
           <h3>商品説明</h3>
           <div style={{ whiteSpace: "pre-wrap" }}>
-            説明項目はまだDB未保存のため、次で追加
+            {product.description || "説明なし"}
           </div>
         </div>
 
