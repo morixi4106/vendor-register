@@ -1,3 +1,9 @@
+import { json } from "@remix-run/node";
+import { Resend } from "resend";
+
+// =========================
+// CORS対応（OPTIONS）
+// =========================
 export const loader = async ({ request }) => {
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -13,9 +19,9 @@ export const loader = async ({ request }) => {
   return new Response("Not Found", { status: 404 });
 };
 
-import { json } from "@remix-run/node";
-import { Resend } from "resend";
-
+// =========================
+// プロンプト生成
+// =========================
 function buildPrompt({ name, email, phone, message }) {
   return `
 あなたは EC サイト「Oja Immanuel Bacchus」のカスタマーサポート担当です。
@@ -45,6 +51,9 @@ ${message || "未入力"}
 `.trim();
 }
 
+// =========================
+// Claude 呼び出し
+// =========================
 async function createClaudeReply({ name, email, phone, message }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -54,7 +63,7 @@ async function createClaudeReply({ name, email, phone, message }) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022",
+      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-5", // ←修正済み
       max_tokens: 700,
       messages: [
         {
@@ -80,9 +89,18 @@ async function createClaudeReply({ name, email, phone, message }) {
   return reply;
 }
 
+// =========================
+// メイン処理
+// =========================
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
-    return json({ ok: false, error: "Method not allowed" }, { status: 405 });
+    return json(
+      { ok: false, error: "Method not allowed" },
+      {
+        status: 405,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      }
+    );
   }
 
   try {
@@ -90,7 +108,10 @@ export const action = async ({ request }) => {
     if (!contentType.includes("application/json")) {
       return json(
         { ok: false, error: "Content-Type must be application/json" },
-        { status: 400 },
+        {
+          status: 400,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        }
       );
     }
 
@@ -104,7 +125,10 @@ export const action = async ({ request }) => {
     if (!name || !email || !message) {
       return json(
         { ok: false, error: "name, email, message are required" },
-        { status: 400 },
+        {
+          status: 400,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        }
       );
     }
 
@@ -116,14 +140,23 @@ export const action = async ({ request }) => {
     ) {
       return json(
         { ok: false, error: "Server env is not configured" },
-        { status: 500 },
+        {
+          status: 500,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        }
       );
     }
 
+    // =========================
+    // AI生成
+    // =========================
     const aiReply = await createClaudeReply({ name, email, phone, message });
 
     const resend = new Resend(process.env.RESEND_API_KEY);
 
+    // =========================
+    // ユーザー返信
+    // =========================
     await resend.emails.send({
       from: process.env.MAIL_FROM,
       to: email,
@@ -131,6 +164,9 @@ export const action = async ({ request }) => {
       text: aiReply,
     });
 
+    // =========================
+    // 管理者通知
+    // =========================
     await resend.emails.send({
       from: process.env.MAIL_FROM,
       to: process.env.ADMIN_EMAIL,
@@ -151,24 +187,20 @@ export const action = async ({ request }) => {
     });
 
     return json(
-  { ok: true },
-  {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-    },
-  }
-);
+      { ok: true },
+      {
+        headers: { "Access-Control-Allow-Origin": "*" },
+      }
+    );
   } catch (error) {
     console.error("api.contact-ai error:", error);
 
     return json(
-  { ok: false, error: "Internal server error" },
-  {
-    status: 500,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-    },
-  }
-);
+      { ok: false, error: "Internal server error" },
+      {
+        status: 500,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      }
+    );
   }
 };
