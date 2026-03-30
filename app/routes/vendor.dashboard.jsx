@@ -864,9 +864,12 @@ export default function VendorDashboard() {
                         <td>{product.tracking}</td>
                         <td>
                           <div className="dash-table-actions">
-                            <button className="dash-btn" type="button">
-                              詳細
-                            </button>
+                            <a
+                              className="dash-btn"
+                              href={`https://vendor-register-pbjl.onrender.com/vendor/products/${product.id}/edit`}
+                            >
+                            編集
+                            </a>
 
                             <Form method="post" className="dash-inline-form">
                               <input type="hidden" name="intent" value="delete" />
