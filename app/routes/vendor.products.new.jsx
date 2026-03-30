@@ -1,5 +1,5 @@
 import { createCookie, json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { Form, useActionData } from "@remix-run/react";
 import prisma from "../db.server";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
@@ -10,7 +10,7 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
-async function getVendorFromRequest(request) {
+async function getVendorSessionOrRedirect(request) {
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
@@ -39,58 +39,42 @@ async function getVendorFromRequest(request) {
     });
   }
 
-  const vendor = vendorSession.vendor;
-  const store = vendor?.vendorStore;
-
-  if (!vendor || !store) {
-    throw new Response("店舗情報が見つかりません。", { status: 404 });
-  }
-
-  return { vendor, store };
+  return vendorSession;
 }
 
 export const loader = async ({ request }) => {
-  const { vendor, store } = await getVendorFromRequest(request);
-
-  return json({
-    ok: true,
-    vendor: {
-      id: vendor.id,
-      storeName: vendor.storeName,
-      managementEmail: vendor.managementEmail,
-    },
-    store: {
-      id: store.id,
-      storeName: store.storeName,
-    },
-  });
+  await getVendorSessionOrRedirect(request);
+  return json({ ok: true });
 };
 
 export const action = async ({ request }) => {
-  const { store } = await getVendorFromRequest(request);
+  const vendorSession = await getVendorSessionOrRedirect(request);
+  const store = vendorSession.vendor?.vendorStore;
+
+  if (!store) {
+    return json(
+      { ok: false, error: "店舗情報が見つかりません。" },
+      { status: 404 }
+    );
+  }
+
   const formData = await request.formData();
 
   const name = String(formData.get("name") || "").trim();
+  const description = String(formData.get("description") || "").trim();
   const priceRaw = String(formData.get("price") || "").trim();
+  const url = String(formData.get("url") || "").trim();
 
   if (!name) {
     return json(
-      {
-        ok: false,
-        error: "商品名を入力してください。",
-        values: { name, price: priceRaw },
-      },
+      { ok: false, error: "商品名を入力してください。" },
       { status: 400 }
     );
   }
 
   if (!priceRaw) {
     return json(
-      {
-        ok: false,
-        error: "価格を入力してください。",
-        values: { name, price: priceRaw },
-      },
+      { ok: false, error: "価格を入力してください。" },
       { status: 400 }
     );
   }
@@ -99,11 +83,7 @@ export const action = async ({ request }) => {
 
   if (!Number.isInteger(price) || price < 0) {
     return json(
-      {
-        ok: false,
-        error: "価格は0以上の整数で入力してください。",
-        values: { name, price: priceRaw },
-      },
+      { ok: false, error: "価格は0以上の整数で入力してください。" },
       { status: 400 }
     );
   }
@@ -111,7 +91,9 @@ export const action = async ({ request }) => {
   await prisma.product.create({
     data: {
       name,
+      description: description || null,
       price,
+      url: url || null,
       vendorStoreId: store.id,
       approvalStatus: "pending",
     },
@@ -120,203 +102,242 @@ export const action = async ({ request }) => {
   return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
 };
 
-export default function VendorProductsNewPage() {
+export default function VendorProductsNew() {
   const actionData = useActionData();
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
-
-  const values = actionData?.values || {
-    name: "",
-    price: "",
-  };
 
   return (
-    <div className="vendor-product-new-page">
-      <style>{`
-        .vendor-product-new-page{
-          min-height:100vh;
-          background:#f3f4f6;
-          padding:32px 16px;
-          box-sizing:border-box;
-          font-family:Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-          color:#111827;
-        }
-        .vendor-product-new-wrap{
-          max-width:760px;
-          margin:0 auto;
-        }
-        .vendor-product-new-card{
-          background:#ffffff;
-          border:1px solid #e5e7eb;
-          border-radius:18px;
-          padding:28px;
-          box-sizing:border-box;
-        }
-        .vendor-product-new-sub{
-          font-size:12px;
-          color:#6b7280;
-          margin:0 0 6px;
-        }
-        .vendor-product-new-title{
-          font-size:32px;
-          line-height:1.3;
-          font-weight:700;
-          margin:0 0 10px;
-        }
-        .vendor-product-new-lead{
-          font-size:14px;
-          color:#6b7280;
-          margin:0 0 24px;
-          line-height:1.8;
-        }
-        .vendor-product-new-error{
-          margin-bottom:18px;
-          border:1px solid #fecaca;
-          background:#fef2f2;
-          color:#b91c1c;
-          border-radius:12px;
-          padding:14px 16px;
-          font-size:14px;
-        }
-        .vendor-product-new-form{
-          display:grid;
-          gap:18px;
-        }
-        .vendor-product-new-label{
-          display:grid;
-          gap:10px;
-          font-size:14px;
-          font-weight:700;
-        }
-        .vendor-product-new-input{
-          width:100%;
-          height:52px;
-          border:1px solid #d1d5db;
-          border-radius:12px;
-          padding:0 16px;
-          font-size:16px;
-          box-sizing:border-box;
-          background:#fff;
-        }
-        .vendor-product-new-note{
-          font-size:12px;
-          color:#6b7280;
-          margin-top:2px;
-          line-height:1.6;
-        }
-        .vendor-product-new-actions{
-          display:flex;
-          gap:12px;
-          flex-wrap:wrap;
-          margin-top:8px;
-        }
-        .vendor-product-new-btn{
-          min-width:180px;
-          height:52px;
-          border-radius:12px;
-          border:1px solid #d1d5db;
-          background:#fff;
-          color:#111827;
-          font-size:15px;
-          font-weight:700;
-          text-decoration:none;
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          box-sizing:border-box;
-          cursor:pointer;
-        }
-        .vendor-product-new-btn-primary{
-          background:#111827;
-          color:#fff;
-          border-color:#111827;
-        }
-        .vendor-product-new-btn:disabled{
-          opacity:0.6;
-          cursor:not-allowed;
-        }
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f3f4f6",
+        padding: "40px 20px",
+        boxSizing: "border-box",
+        fontFamily: 'Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "760px",
+          margin: "0 auto",
+          background: "#ffffff",
+          border: "1px solid #e5e7eb",
+          borderRadius: "16px",
+          padding: "28px",
+          boxSizing: "border-box",
+        }}
+      >
+        <h1
+          style={{
+            margin: "0 0 8px",
+            fontSize: "32px",
+            fontWeight: 700,
+            color: "#111827",
+          }}
+        >
+          新規商品登録
+        </h1>
 
-        @media (max-width: 640px){
-          .vendor-product-new-page{
-            padding:20px 12px;
-          }
-          .vendor-product-new-card{
-            padding:20px;
-          }
-          .vendor-product-new-title{
-            font-size:26px;
-          }
-          .vendor-product-new-actions{
-            display:grid;
-          }
-          .vendor-product-new-btn{
-            width:100%;
-          }
-        }
-      `}</style>
+        <p
+          style={{
+            margin: "0 0 24px",
+            color: "#6b7280",
+            fontSize: "14px",
+            lineHeight: 1.8,
+          }}
+        >
+          登録した商品は申請中として保存され、管理者承認後にShopifyへ反映されます。
+        </p>
 
-      <div className="vendor-product-new-wrap">
-        <div className="vendor-product-new-card">
-          <p className="vendor-product-new-sub">店舗管理 / 商品登録</p>
-          <h1 className="vendor-product-new-title">新規商品登録</h1>
-          <p className="vendor-product-new-lead">
-            まずは商品名と価格だけ登録します。
-            <br />
-            登録後、ダッシュボードの商品一覧に反映されます。
-          </p>
+        {actionData?.error ? (
+          <div
+            style={{
+              marginBottom: "20px",
+              padding: "14px 16px",
+              borderRadius: "10px",
+              border: "1px solid #fecaca",
+              background: "#fef2f2",
+              color: "#b91c1c",
+              fontSize: "14px",
+              lineHeight: 1.7,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {actionData.error}
+          </div>
+        ) : null}
 
-          {actionData?.error ? (
-            <div className="vendor-product-new-error">{actionData.error}</div>
-          ) : null}
-
-          <Form method="post" className="vendor-product-new-form">
-            <label className="vendor-product-new-label">
-              商品名
+        <Form method="post">
+          <div style={{ display: "grid", gap: "20px" }}>
+            <div>
+              <label
+                htmlFor="name"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                商品名
+              </label>
               <input
-                className="vendor-product-new-input"
-                type="text"
+                id="name"
                 name="name"
-                defaultValue={values.name}
-                placeholder="例: 薬用リンクルケアアイシート"
-                required
+                type="text"
+                placeholder="例：NEOBEAUTE バランシングローション"
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                }}
               />
-            </label>
+            </div>
 
-            <label className="vendor-product-new-label">
-              価格
+            <div>
+              <label
+                htmlFor="description"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                商品説明
+              </label>
+              <textarea
+                id="description"
+                name="description"
+                rows={8}
+                placeholder="商品説明を入力してください"
+                style={{
+                  width: "100%",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "14px",
+                  fontSize: "14px",
+                  lineHeight: 1.8,
+                  boxSizing: "border-box",
+                  resize: "vertical",
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="price"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                価格
+              </label>
               <input
-                className="vendor-product-new-input"
-                type="number"
+                id="price"
                 name="price"
-                defaultValue={values.price}
-                placeholder="例: 2980"
+                type="number"
                 min="0"
                 step="1"
-                required
+                placeholder="1000"
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                }}
               />
-              <div className="vendor-product-new-note">
-                半角数字、税込の想定で入力。
-              </div>
-            </label>
+            </div>
 
-            <div className="vendor-product-new-actions">
+            <div>
+              <label
+                htmlFor="url"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                参考URL（任意）
+              </label>
+              <input
+                id="url"
+                name="url"
+                type="text"
+                placeholder="https://..."
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                flexWrap: "wrap",
+                marginTop: "8px",
+              }}
+            >
+              <button
+                type="submit"
+                style={{
+                  height: "46px",
+                  padding: "0 18px",
+                  borderRadius: "10px",
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#ffffff",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                商品を登録する
+              </button>
+
               <a
-                className="vendor-product-new-btn"
                 href="https://vendor-register-pbjl.onrender.com/vendor/dashboard"
+                style={{
+                  height: "46px",
+                  padding: "0 18px",
+                  borderRadius: "10px",
+                  border: "1px solid #d1d5db",
+                  background: "#ffffff",
+                  color: "#111827",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  boxSizing: "border-box",
+                }}
               >
                 ダッシュボードへ戻る
               </a>
-
-              <button
-                className="vendor-product-new-btn vendor-product-new-btn-primary"
-                type="submit"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? "登録中..." : "商品を登録する"}
-              </button>
             </div>
-          </Form>
-        </div>
+          </div>
+        </Form>
       </div>
     </div>
   );
