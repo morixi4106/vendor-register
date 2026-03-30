@@ -159,6 +159,57 @@ async function createShopifyProductFromDbProduct(product) {
     );
   }
 
+  if (product.imageUrl) {
+    const createMediaMutation = `
+      mutation CreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+        productCreateMedia(productId: $productId, media: $media) {
+          media {
+            alt
+            mediaContentType
+            status
+          }
+          mediaUserErrors {
+            field
+            message
+          }
+          product {
+            id
+          }
+        }
+      }
+    `;
+
+    const createMediaVariables = {
+      productId: createdProduct.id,
+      media: [
+        {
+          alt: product.name || "Product image",
+          mediaContentType: "IMAGE",
+          originalSource: product.imageUrl,
+        },
+      ],
+    };
+
+    const createMediaResult = await shopifyGraphQL(
+      createMediaMutation,
+      createMediaVariables
+    );
+
+    const createMediaPayload = createMediaResult?.productCreateMedia;
+
+    if (!createMediaPayload) {
+      throw new Error("Shopify productCreateMedia response is empty");
+    }
+
+    if (createMediaPayload.mediaUserErrors?.length) {
+      throw new Error(
+        `productCreateMedia mediaUserErrors: ${JSON.stringify(
+          createMediaPayload.mediaUserErrors
+        )}`
+      );
+    }
+  }
+
   return {
     shopifyProductId: createdProduct.id,
   };
@@ -305,8 +356,25 @@ export default function AdminProductDetail() {
         <div>
           <h3>追加情報</h3>
           <p>カテゴリ: まだ未保存</p>
-          <p>画像: まだ未保存</p>
+          <p>画像URL: {product.imageUrl || "なし"}</p>
         </div>
+
+        {product.imageUrl ? (
+          <div>
+            <h3>商品画像</h3>
+            <img
+              src={product.imageUrl}
+              alt={product.name}
+              style={{
+                width: "320px",
+                maxWidth: "100%",
+                border: "1px solid #e5e7eb",
+                borderRadius: "12px",
+                display: "block",
+              }}
+            />
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
           <Form method="post">
