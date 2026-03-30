@@ -128,7 +128,7 @@ export const loader = async ({ request }) => {
     });
 
     if (!vendorSession || vendorSession.expiresAt < new Date()) {
-      throw redirect("/apps/vendors/verify", {
+      throw redirect("/apps/vendorverify", {
         headers: {
           "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
             maxAge: 0,

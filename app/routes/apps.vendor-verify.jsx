@@ -1,10 +1,6 @@
 import { json, redirect, createCookie } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
-import { randomBytes, randomInt } from "crypto";
-import { Resend } from "resend";
+import { useLoaderData, Link } from "@remix-run/react";
 import prisma from "../db.server";
-
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 const vendorAdminCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -14,325 +10,112 @@ const vendorAdminCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request, url }) => {
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminCookie.parse(cookieHeader);
 
-  if (sessionToken) {
-    const session = await prisma.vendorAdminSession.findUnique({
-      where: { sessionToken },
-      include: { vendor: true },
-    });
-
-    if (session && session.expiresAt > new Date()) {
-      return redirect(`/app/vendor-dashboard?vendor=${session.vendorId}`);
-    }
+  if (!sessionToken) {
+    throw redirect("/apps/vendors/verify");
   }
 
-  return json({});
-};
-
-export const action = async ({ request }) => {
-  const formData = await request.formData();
-  const intent = String(formData.get("intent") || "");
-
-  if (intent === "send-code") {
-    const email = String(formData.get("email") || "").trim().toLowerCase();
-
-    if (!email) {
-      return json({ ok: false, step: "email", error: "メールアドレスを入力してください。" }, { status: 400 });
-    }
-
-    const vendor = await prisma.vendor.findFirst({
-      where: {
-        managementEmail: email,
-        status: "active",
+  const session = await prisma.vendorAdminSession.findUnique({
+    where: { sessionToken },
+    include: {
+      vendor: {
+        include: {
+          vendorStore: true,
+        },
       },
-    });
+    },
+  });
 
-    if (!vendor) {
-      return json(
-        { ok: false, step: "email", error: "このメールアドレスは管理用メールとして登録されていません。" },
-        { status: 404 },
-      );
-    }
-
-    const code = String(randomInt(100000, 1000000));
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    await prisma.vendorLoginCode.create({
-      data: {
-        vendorId: vendor.id,
-        email,
-        code,
-        expiresAt,
-      },
-    });
-
-    try {
-      const { error } = await resend.emails.send({
-        from: process.env.MAIL_FROM,
-        to: [email],
-        subject: "【Oja Immanuel Bacchus】確認コードのお知らせ",
-        text:
-          `店舗管理ページの確認コードをお送りします。\n\n` +
-          `確認コード: ${code}\n` +
-          `有効期限: 10分\n\n` +
-          `このメールに心当たりがない場合は、このメールを破棄してください。`,
-      });
-
-      if (error) {
-        console.error("❌ resend error:", error);
-
-        return json(
-          { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
-          { status: 500 },
-        );
-      }
-    } catch (e) {
-      console.error("❌ verify mail error:", e);
-
-      return json(
-        { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
-        { status: 500 },
-      );
-    }
-
-    console.log("Vendor verify code sent:", {
-      vendorId: vendor.id,
-      email,
-      expiresAt: expiresAt.toISOString(),
-    });
-
-    return json({
-      ok: true,
-      step: "code",
-      message: "確認コードを送信しました。",
-      email,
-      vendorId: vendor.id,
-    });
-  }
-
-  if (intent === "verify-code") {
-    const email = String(formData.get("email") || "").trim().toLowerCase();
-    const vendorId = String(formData.get("vendorId") || "").trim();
-    const code = String(formData.get("code") || "").trim();
-
-    if (!email || !vendorId || !code) {
-      return json(
-        { ok: false, step: "code", error: "必要な情報が不足しています。もう一度やり直してください。", email, vendorId },
-        { status: 400 },
-      );
-    }
-
-    const vendor = await prisma.vendor.findUnique({
-      where: { id: vendorId },
-    });
-
-    if (!vendor || vendor.managementEmail.toLowerCase() !== email || vendor.status !== "active") {
-      return json(
-        { ok: false, step: "code", error: "管理対象の店舗が見つかりません。", email, vendorId },
-        { status: 404 },
-      );
-    }
-
-    const loginCode = await prisma.vendorLoginCode.findFirst({
-      where: {
-        vendorId,
-        email,
-        code,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (!loginCode) {
-      return json(
-        { ok: false, step: "code", error: "確認コードが違うか、有効期限が切れています。", email, vendorId },
-        { status: 400 },
-      );
-    }
-
-    await prisma.vendorLoginCode.update({
-      where: { id: loginCode.id },
-      data: { usedAt: new Date() },
-    });
-
-    const sessionToken = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-
-    await prisma.vendorAdminSession.create({
-      data: {
-        vendorId,
-        sessionToken,
-        expiresAt,
-      },
-    });
-
-    return redirect(`/app/vendor-dashboard?vendor=${vendorId}`, {
+  if (!session || session.expiresAt <= new Date()) {
+    throw redirect("/apps/vendors/verify", {
       headers: {
-        "Set-Cookie": await vendorAdminCookie.serialize(sessionToken),
+        "Set-Cookie": await vendorAdminCookie.serialize("", {
+          maxAge: 0,
+        }),
       },
     });
   }
 
-  return json({ ok: false, step: "email", error: "不正な操作です。" }, { status: 400 });
+  return json({
+    ok: true,
+    vendorId: session.vendorId,
+    vendor: session.vendor,
+    store: session.vendor?.vendorStore || null,
+  });
 };
 
-export default function VendorVerifyPage() {
-  const actionData = useActionData();
-  const navigation = useNavigation();
-
-  const isSending = navigation.state === "submitting";
-
-  const step = actionData?.step === "code" ? "code" : "email";
-  const email = actionData?.email || "";
-  const vendorId = actionData?.vendorId || "";
+export default function VendorDashboardPage() {
+  const data = useLoaderData();
 
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>店舗管理ページ確認</h1>
-        <p style={styles.lead}>
-          管理用メールアドレスに確認コードを送信します。
-          <br />
-          メールを受け取れる方のみ先へ進めます。
-        </p>
+    <div
+      style={{
+        maxWidth: "960px",
+        margin: "40px auto",
+        padding: "24px",
+        fontFamily: "sans-serif",
+      }}
+    >
+      <h1 style={{ fontSize: "28px", fontWeight: "700", marginBottom: "24px" }}>
+        ベンダーダッシュボード
+      </h1>
 
-        {actionData?.error ? <div style={styles.error}>{actionData.error}</div> : null}
-        {actionData?.message ? <div style={styles.success}>{actionData.message}</div> : null}
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+          padding: "20px",
+          marginBottom: "20px",
+        }}
+      >
+        <h2 style={{ fontSize: "20px", marginBottom: "12px" }}>店舗情報</h2>
+        <p><strong>vendorId:</strong> {data.vendorId}</p>
+        <p><strong>店舗名:</strong> {data.store?.storeName || data.vendor?.storeName || "-"}</p>
+        <p><strong>管理メール:</strong> {data.vendor?.managementEmail || "-"}</p>
+        <p><strong>ステータス:</strong> {data.vendor?.status || "-"}</p>
+      </div>
 
-        {step === "email" ? (
-          <Form method="post" style={styles.form}>
-            <input type="hidden" name="intent" value="send-code" />
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+          padding: "20px",
+        }}
+      >
+        <h2 style={{ fontSize: "20px", marginBottom: "12px" }}>メニュー</h2>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          <a
+            href={`/apps/vendors/dashboard?vendor=${data.vendorId}`}
+            style={{
+              display: "inline-block",
+              padding: "10px 16px",
+              border: "1px solid #ccc",
+              borderRadius: "8px",
+              textDecoration: "none",
+              color: "inherit",
+            }}
+          >
+            ダッシュボード
+          </a>
 
-            <label style={styles.label}>
-              管理用メールアドレス
-              <input
-                type="email"
-                name="email"
-                placeholder="example@shop.com"
-                required
-                style={styles.input}
-              />
-            </label>
-
-            <button type="submit" style={styles.button} disabled={isSending}>
-              {isSending ? "送信中..." : "確認コードを送る"}
-            </button>
-          </Form>
-        ) : (
-          <Form method="post" style={styles.form}>
-            <input type="hidden" name="intent" value="verify-code" />
-            <input type="hidden" name="email" value={email} />
-            <input type="hidden" name="vendorId" value={vendorId} />
-
-            <label style={styles.label}>
-              確認コード
-              <input
-                type="text"
-                name="code"
-                placeholder="6桁コード"
-                inputMode="numeric"
-                maxLength={6}
-                required
-                style={styles.input}
-              />
-            </label>
-
-            <div style={styles.note}>送信先: {email}</div>
-
-            <button type="submit" style={styles.button} disabled={isSending}>
-              {isSending ? "確認中..." : "店舗管理ページへ進む"}
-            </button>
-          </Form>
-        )}
+          <a
+            href={`/apps/vendors/products/new?vendor=${data.vendorId}`}
+            style={{
+              display: "inline-block",
+              padding: "10px 16px",
+              border: "1px solid #ccc",
+              borderRadius: "8px",
+              textDecoration: "none",
+              color: "inherit",
+            }}
+          >
+            新規商品登録
+          </a>
+        </div>
       </div>
     </div>
   );
 }
-
-const styles = {
-  page: {
-    minHeight: "100vh",
-    background: "#f6f6f6",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "24px",
-  },
-  card: {
-    width: "100%",
-    maxWidth: "560px",
-    background: "#ffffff",
-    border: "1px solid #d9d9d9",
-    borderRadius: "20px",
-    padding: "32px",
-    boxSizing: "border-box",
-  },
-  title: {
-    margin: "0 0 16px",
-    fontSize: "32px",
-    fontWeight: 700,
-    color: "#111111",
-  },
-  lead: {
-    margin: "0 0 24px",
-    fontSize: "16px",
-    lineHeight: 1.8,
-    color: "#333333",
-  },
-  form: {
-    display: "grid",
-    gap: "18px",
-  },
-  label: {
-    display: "grid",
-    gap: "10px",
-    fontSize: "15px",
-    fontWeight: 600,
-    color: "#111111",
-  },
-  input: {
-    width: "100%",
-    height: "52px",
-    borderRadius: "12px",
-    border: "1px solid #cfcfcf",
-    padding: "0 16px",
-    fontSize: "16px",
-    boxSizing: "border-box",
-  },
-  button: {
-    height: "56px",
-    border: "none",
-    borderRadius: "999px",
-    background: "#111111",
-    color: "#ffffff",
-    fontSize: "20px",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  error: {
-    marginBottom: "16px",
-    padding: "14px 16px",
-    borderRadius: "12px",
-    background: "#fff1f1",
-    border: "1px solid #f0b7b7",
-    color: "#b42318",
-    fontSize: "14px",
-  },
-  success: {
-    marginBottom: "16px",
-    padding: "14px 16px",
-    borderRadius: "12px",
-    background: "#f0fff4",
-    border: "1px solid #a6d8b8",
-    color: "#166534",
-    fontSize: "14px",
-  },
-  note: {
-    fontSize: "14px",
-    color: "#555555",
-  },
-};

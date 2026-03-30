@@ -14,7 +14,7 @@ export const loader = async ({ request }) => {
   const sessionToken = await vendorAdminCookie.parse(cookieHeader);
 
   if (!sessionToken) {
-    throw redirect("/apps/vendors/verify");
+    throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify");
   }
 
   const session = await prisma.vendorAdminSession.findUnique({
@@ -32,7 +32,7 @@ export const loader = async ({ request }) => {
     });
   }
 
-  throw redirect(`/app/vendor-dashboard?vendor=${session.vendorId}`);
+  throw redirect(`/apps/vendors/dashboard?vendor=${session.vendorId}`);
 };
 
 export default function AppsVendorDashboardEntry() {
