@@ -159,56 +159,56 @@ async function createShopifyProductFromDbProduct(product) {
     );
   }
 
-  if (product.imageUrl) {
-    const createMediaMutation = `
-      mutation CreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-        productCreateMedia(productId: $productId, media: $media) {
-          media {
-            alt
-            mediaContentType
-            status
-          }
-          mediaUserErrors {
-            field
-            message
-          }
-          product {
-            id
-          }
-        }
-      }
-    `;
+//   if (product.imageUrl) {
+//     const createMediaMutation = `
+//       mutation CreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+//         productCreateMedia(productId: $productId, media: $media) {
+//           media {
+//             alt
+//             mediaContentType
+//             status
+//           }
+//           mediaUserErrors {
+//             field
+//             message
+//           }
+//           product {
+//             id
+//           }
+//         }
+//       }
+//     `;
 
-    const createMediaVariables = {
-      productId: createdProduct.id,
-      media: [
-        {
-          alt: product.name || "Product image",
-          mediaContentType: "IMAGE",
-          originalSource: product.imageUrl,
-        },
-      ],
-    };
+//     const createMediaVariables = {
+//       productId: createdProduct.id,
+//       media: [
+//         {
+//           alt: product.name || "Product image",
+//           mediaContentType: "IMAGE",
+//           originalSource: product.imageUrl,
+//         },
+//       ],
+//     };
 
-    const createMediaResult = await shopifyGraphQL(
-      createMediaMutation,
-      createMediaVariables
-    );
+//     const createMediaResult = await shopifyGraphQL(
+//       createMediaMutation,
+//       createMediaVariables
+//     );
 
-    const createMediaPayload = createMediaResult?.productCreateMedia;
+//     const createMediaPayload = createMediaResult?.productCreateMedia;
 
-    if (!createMediaPayload) {
-      throw new Error("Shopify productCreateMedia response is empty");
-    }
+//     if (!createMediaPayload) {
+//       throw new Error("Shopify productCreateMedia response is empty");
+//     }
 
-    if (createMediaPayload.mediaUserErrors?.length) {
-      throw new Error(
-        `productCreateMedia mediaUserErrors: ${JSON.stringify(
-          createMediaPayload.mediaUserErrors
-        )}`
-      );
-    }
-  }
+//     if (createMediaPayload.mediaUserErrors?.length) {
+//       throw new Error(
+//         `productCreateMedia mediaUserErrors: ${JSON.stringify(
+//           createMediaPayload.mediaUserErrors
+//         )}`
+//       );
+//     }
+//   }
 
   return {
     shopifyProductId: createdProduct.id,
