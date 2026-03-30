@@ -63,6 +63,7 @@ export const action = async ({ request }) => {
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const imageUrl = String(formData.get("imageUrl") || "").trim();
+  const category = String(formData.get("category") || "").trim();
   const priceRaw = String(formData.get("price") || "").trim();
   const url = String(formData.get("url") || "").trim();
 
@@ -106,6 +107,7 @@ export const action = async ({ request }) => {
       name,
       description: description || null,
       imageUrl: imageUrl || null,
+      category: category || null,
       price,
       url: url || null,
       vendorStoreId: store.id,
@@ -261,6 +263,36 @@ export default function VendorProductsNew() {
                 name="imageUrl"
                 type="text"
                 placeholder="https://example.com/image.jpg"
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="category"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                カテゴリ
+              </label>
+              <input
+                id="category"
+                name="category"
+                type="text"
+                placeholder="例：スキンケア"
                 style={{
                   width: "100%",
                   height: "48px",
