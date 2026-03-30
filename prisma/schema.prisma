@@ -50,6 +50,7 @@ model Product {
   name             String
   description      String?
   imageUrl         String?
+  category         String?
   price            Int
   url              String?
   vendorStoreId    String
