@@ -46,14 +46,15 @@ model VendorStore {
 }
 
 model Product {
-  id              String   @id @default(cuid())
+  id              String      @id @default(cuid())
   name            String
   price           Int
   url             String?
   vendorStoreId   String
-  approvalStatus  String   @default("pending") // 👈 追加
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  approvalStatus  String      @default("pending")
+  shopifyProductId String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   vendorStore     VendorStore @relation(fields: [vendorStoreId], references: [id])
 }
@@ -68,7 +69,7 @@ model Vendor {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  vendorStore   VendorStore         @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
+  vendorStore   VendorStore          @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
   loginCodes    VendorLoginCode[]
   adminSessions VendorAdminSession[]
 }
