@@ -93,6 +93,10 @@ export default function AdminProducts() {
                 <button type="submit">却下</button>
               </Form>
 
+              <a href={`/admin/products/${product.id}`}>
+                詳細
+              </a>
+
               {/* Shopify確認（あとで使う） */}
               <a
                 href={`https://admin.shopify.com/store/oja-immanuel-bacchus/products`}
