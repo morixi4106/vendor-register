@@ -25,7 +25,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_products,write_customers,read_orders"
+scopes = "read_customers,read_products,write_products,write_customers,read_orders"
 
 [auth]
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/auth/callback" ]
