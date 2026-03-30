@@ -1,14 +1,27 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { Form, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
-  const replyType = url.searchParams.get("replyType");
+  const replyType = url.searchParams.get("replyType") || "";
+  const q = url.searchParams.get("q") || "";
 
   const where = {};
+
   if (replyType && ["fixed", "ai", "escalation"].includes(replyType)) {
     where.replyType = replyType;
+  }
+
+  if (q.trim()) {
+    where.OR = [
+      { name: { contains: q.trim() } },
+      { email: { contains: q.trim() } },
+      { phone: { contains: q.trim() } },
+      { message: { contains: q.trim() } },
+      { replyText: { contains: q.trim() } },
+      { matchedRuleId: { contains: q.trim() } },
+    ];
   }
 
   const inquiries = await prisma.contactInquiry.findMany({
@@ -19,24 +32,47 @@ export const loader = async ({ request }) => {
     take: 100,
   });
 
-  return json({ inquiries, replyType: replyType || "" });
+  return json({
+    inquiries,
+    replyType,
+    q,
+  });
 };
 
-export default function ContactInquiriesPage() {
-  const { inquiries, replyType } = useLoaderData();
-  const [searchParams, setSearchParams] = useSearchParams();
+function FilterLink({ replyType, q, value, label, currentReplyType }) {
+  const params = new URLSearchParams();
 
-  function handleFilterChange(nextReplyType) {
-    const nextParams = new URLSearchParams(searchParams);
-
-    if (nextReplyType) {
-      nextParams.set("replyType", nextReplyType);
-    } else {
-      nextParams.delete("replyType");
-    }
-
-    setSearchParams(nextParams);
+  if (value) {
+    params.set("replyType", value);
   }
+
+  if (q) {
+    params.set("q", q);
+  }
+
+  const href = params.toString() ? `?${params.toString()}` : "/app/contact-inquiries";
+  const isActive = currentReplyType === value;
+
+  return (
+    <a
+      href={href}
+      style={{
+        display: "inline-block",
+        padding: "10px 14px",
+        borderRadius: "8px",
+        border: "1px solid #ccc",
+        background: isActive ? "#111" : "#fff",
+        color: isActive ? "#fff" : "#111",
+        textDecoration: "none",
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+export default function ContactInquiriesPage() {
+  const { inquiries, replyType, q } = useLoaderData();
 
   return (
     <div style={{ padding: "24px" }}>
@@ -44,66 +80,98 @@ export default function ContactInquiriesPage() {
         問い合わせ一覧
       </h1>
 
+      <Form
+        method="get"
+        style={{
+          display: "flex",
+          gap: "12px",
+          marginBottom: "20px",
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        <input type="hidden" name="replyType" value={replyType} />
+
+        <input
+          type="text"
+          name="q"
+          defaultValue={q}
+          placeholder="キーワード検索（例: 配送 / 返品 / morixi）"
+          style={{
+            minWidth: "320px",
+            padding: "10px 12px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+          }}
+        />
+
+        <button
+          type="submit"
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+            background: "#111",
+            color: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          検索
+        </button>
+
+        <a
+          href="/app/contact-inquiries"
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+            background: "#fff",
+            color: "#111",
+            textDecoration: "none",
+          }}
+        >
+          クリア
+        </a>
+      </Form>
+
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={() => handleFilterChange("")}
-          style={{
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-            background: replyType === "" ? "#111" : "#fff",
-            color: replyType === "" ? "#fff" : "#111",
-            cursor: "pointer",
-          }}
-        >
-          すべて
-        </button>
+        <FilterLink
+          replyType={replyType}
+          q={q}
+          value=""
+          label="すべて"
+          currentReplyType={replyType}
+        />
 
-        <button
-          type="button"
-          onClick={() => handleFilterChange("fixed")}
-          style={{
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-            background: replyType === "fixed" ? "#111" : "#fff",
-            color: replyType === "fixed" ? "#fff" : "#111",
-            cursor: "pointer",
-          }}
-        >
-          固定返信
-        </button>
+        <FilterLink
+          replyType={replyType}
+          q={q}
+          value="fixed"
+          label="固定返信"
+          currentReplyType={replyType}
+        />
 
-        <button
-          type="button"
-          onClick={() => handleFilterChange("ai")}
-          style={{
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-            background: replyType === "ai" ? "#111" : "#fff",
-            color: replyType === "ai" ? "#fff" : "#111",
-            cursor: "pointer",
-          }}
-        >
-          AI返信
-        </button>
+        <FilterLink
+          replyType={replyType}
+          q={q}
+          value="ai"
+          label="AI返信"
+          currentReplyType={replyType}
+        />
 
-        <button
-          type="button"
-          onClick={() => handleFilterChange("escalation")}
-          style={{
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-            background: replyType === "escalation" ? "#111" : "#fff",
-            color: replyType === "escalation" ? "#fff" : "#111",
-            cursor: "pointer",
-          }}
-        >
-          人対応
-        </button>
+        <FilterLink
+          replyType={replyType}
+          q={q}
+          value="escalation"
+          label="人対応"
+          currentReplyType={replyType}
+        />
+      </div>
+
+      <div style={{ marginBottom: "20px", color: "#666" }}>
+        件数: {inquiries.length}
+        {q ? ` / 検索語: ${q}` : ""}
+        {replyType ? ` / 種別: ${replyType}` : ""}
       </div>
 
       {inquiries.length === 0 ? (
