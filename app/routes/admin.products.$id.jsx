@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
+import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
 
 const SHOPIFY_SHOP_DOMAIN = "oja-immanuel-bacchus.myshopify.com";
@@ -162,7 +162,6 @@ async function createShopifyProductFromDbProduct(product) {
   };
 }
 
-// loader
 export const loader = async ({ params }) => {
   const id = String(params.id || "");
 
@@ -184,69 +183,81 @@ export const loader = async ({ params }) => {
   return json({ product });
 };
 
-// action
 export const action = async ({ request }) => {
-  const formData = await request.formData();
+  try {
+    const formData = await request.formData();
 
-  const intent = String(formData.get("intent") || "");
-  const productId = String(formData.get("productId") || "");
+    const intent = String(formData.get("intent") || "");
+    const productId = String(formData.get("productId") || "");
 
-  if (!productId) {
-    return null;
-  }
+    if (!productId) {
+      return json({ ok: false, error: "productId がありません" }, { status: 400 });
+    }
 
-  const product = await prisma.product.findUnique({
-    where: { id: productId },
-    include: {
-      vendorStore: true,
-    },
-  });
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      include: {
+        vendorStore: true,
+      },
+    });
 
-  if (!product) {
-    throw new Response("商品が見つかりません", { status: 404 });
-  }
+    if (!product) {
+      return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
+    }
 
-  if (intent === "approve") {
-    if (product.shopifyProductId) {
+    if (intent === "approve") {
+      if (product.shopifyProductId) {
+        await prisma.product.update({
+          where: { id: productId },
+          data: {
+            approvalStatus: "approved",
+          },
+        });
+
+        return redirect(`/admin/products/${productId}`);
+      }
+
+      const result = await createShopifyProductFromDbProduct(product);
+
       await prisma.product.update({
         where: { id: productId },
         data: {
           approvalStatus: "approved",
+          shopifyProductId: result.shopifyProductId,
         },
       });
 
       return redirect(`/admin/products/${productId}`);
     }
 
-    const result = await createShopifyProductFromDbProduct(product);
+    if (intent === "reject") {
+      await prisma.product.update({
+        where: { id: productId },
+        data: {
+          approvalStatus: "rejected",
+        },
+      });
 
-    await prisma.product.update({
-      where: { id: productId },
-      data: {
-        approvalStatus: "approved",
-        shopifyProductId: result.shopifyProductId,
+      return redirect(`/admin/products/${productId}`);
+    }
+
+    return json({ ok: false, error: "不明な intent です" }, { status: 400 });
+  } catch (error) {
+    console.error("admin approve error:", error);
+
+    return json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "不明なエラーです",
       },
-    });
-
-    return redirect(`/admin/products/${productId}`);
+      { status: 500 }
+    );
   }
-
-  if (intent === "reject") {
-    await prisma.product.update({
-      where: { id: productId },
-      data: {
-        approvalStatus: "rejected",
-      },
-    });
-
-    return redirect(`/admin/products/${productId}`);
-  }
-
-  return null;
 };
 
 export default function AdminProductDetail() {
   const { product } = useLoaderData();
+  const actionData = useActionData();
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -255,6 +266,24 @@ export default function AdminProductDetail() {
       <p style={{ color: "#666" }}>
         店舗: {product.vendorStore?.storeName || "-"}
       </p>
+
+      {actionData?.error ? (
+        <div
+          style={{
+            marginTop: "20px",
+            marginBottom: "20px",
+            padding: "14px",
+            borderRadius: "8px",
+            background: "#fff1f2",
+            border: "1px solid #fecdd3",
+            color: "#9f1239",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <strong>エラー:</strong>
+          <div style={{ marginTop: "8px" }}>{actionData.error}</div>
+        </div>
+      ) : null}
 
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
