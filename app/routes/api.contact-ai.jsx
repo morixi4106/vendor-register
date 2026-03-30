@@ -2,17 +2,19 @@ import { json } from "@remix-run/node";
 import { Resend } from "resend";
 
 // =========================
-// CORS対応（OPTIONS）
+// CORS対応
 // =========================
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 export const loader = async ({ request }) => {
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
+      headers: CORS_HEADERS,
     });
   }
 
@@ -20,24 +22,14 @@ export const loader = async ({ request }) => {
 };
 
 // =========================
-// キーワード判定
+// 固定ルール定義
+// 今後はここを増やしていく
 // =========================
-function normalizeText(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function includesAny(text, keywords) {
-  return keywords.some((keyword) => text.includes(keyword));
-}
-
-// =========================
-// 固定返信
-// =========================
-function getFixedReply({ name, message }) {
-  const text = normalizeText(message);
-
-  if (includesAny(text, ["配送", "発送", "届く", "到着", "何日", "納期"])) {
-    return `${name} 様
+const FIXED_REPLY_RULES = [
+  {
+    id: "shipping_days",
+    keywords: ["配送", "発送", "届く", "到着", "何日", "納期"],
+    reply: ({ name }) => `${name} 様
 
 お問い合わせいただきありがとうございます。
 Oja Immanuel Bacchus サポートでございます。
@@ -50,11 +42,12 @@ Oja Immanuel Bacchus サポートでございます。
 
 何卒よろしくお願い申し上げます。
 
-Oja Immanuel Bacchus サポート`;
-  }
-
-  if (includesAny(text, ["営業時間", "営業日", "何時", "休み", "定休日"])) {
-    return `${name} 様
+Oja Immanuel Bacchus サポート`,
+  },
+  {
+    id: "business_hours",
+    keywords: ["営業時間", "営業日", "何時", "休み", "定休日"],
+    reply: ({ name }) => `${name} 様
 
 お問い合わせいただきありがとうございます。
 Oja Immanuel Bacchus サポートでございます。
@@ -67,11 +60,12 @@ Oja Immanuel Bacchus サポートでございます。
 
 何卒よろしくお願い申し上げます。
 
-Oja Immanuel Bacchus サポート`;
-  }
-
-  if (includesAny(text, ["出店", "申請", "審査", "ベンダー", "店舗登録"])) {
-    return `${name} 様
+Oja Immanuel Bacchus サポート`,
+  },
+  {
+    id: "vendor_application",
+    keywords: ["出店", "申請", "審査", "ベンダー", "店舗登録"],
+    reply: ({ name }) => `${name} 様
 
 お問い合わせいただきありがとうございます。
 Oja Immanuel Bacchus サポートでございます。
@@ -84,16 +78,48 @@ Oja Immanuel Bacchus サポートでございます。
 
 何卒よろしくお願い申し上げます。
 
-Oja Immanuel Bacchus サポート`;
-  }
+Oja Immanuel Bacchus サポート`,
+  },
+];
 
-  return null;
+// =========================
+// 危険ワード定義
+// ここに追加していけばOK
+// =========================
+const ESCALATION_KEYWORDS = [
+  "返品",
+  "返金",
+  "交換",
+  "クレーム",
+  "苦情",
+  "破損",
+  "届かない",
+  "未着",
+  "トラブル",
+  "訴訟",
+  "違法",
+  "責任",
+  "副作用",
+  "肌荒れ",
+  "治る",
+  "効能",
+  "効果",
+  "アレルギー",
+  "炎症",
+];
+
+// =========================
+// 共通関数
+// =========================
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
-// =========================
-// 危険系は人対応へ
-// =========================
-function getEscalationReply({ name }) {
+function includesAny(text, keywords) {
+  return keywords.some((keyword) => text.includes(String(keyword).toLowerCase()));
+}
+
+function buildEscalationReply({ name }) {
   return `${name} 様
 
 お問い合わせいただきありがとうございます。
@@ -109,30 +135,15 @@ Oja Immanuel Bacchus サポートでございます。
 Oja Immanuel Bacchus サポート`;
 }
 
-function shouldEscalate(message) {
+function findFixedReplyRule(message) {
   const text = normalizeText(message);
 
-  return includesAny(text, [
-    "返品",
-    "返金",
-    "交換",
-    "クレーム",
-    "苦情",
-    "破損",
-    "届かない",
-    "未着",
-    "トラブル",
-    "訴訟",
-    "違法",
-    "責任",
-    "副作用",
-    "肌荒れ",
-    "治る",
-    "効能",
-    "効果",
-    "アレルギー",
-    "炎症",
-  ]);
+  return FIXED_REPLY_RULES.find((rule) => includesAny(text, rule.keywords)) || null;
+}
+
+function shouldEscalate(message) {
+  const text = normalizeText(message);
+  return includesAny(text, ESCALATION_KEYWORDS);
 }
 
 // =========================
@@ -169,7 +180,7 @@ ${message || "未入力"}
 }
 
 // =========================
-// Claude 呼び出し
+// Claude呼び出し
 // =========================
 async function createClaudeReply({ name, email, phone, message }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -215,7 +226,7 @@ export const action = async ({ request }) => {
       { ok: false, error: "Method not allowed" },
       {
         status: 405,
-        headers: { "Access-Control-Allow-Origin": "*" },
+        headers: CORS_HEADERS,
       }
     );
   }
@@ -227,7 +238,7 @@ export const action = async ({ request }) => {
         { ok: false, error: "Content-Type must be application/json" },
         {
           status: 400,
-          headers: { "Access-Control-Allow-Origin": "*" },
+          headers: CORS_HEADERS,
         }
       );
     }
@@ -244,7 +255,7 @@ export const action = async ({ request }) => {
         { ok: false, error: "name, email, message are required" },
         {
           status: 400,
-          headers: { "Access-Control-Allow-Origin": "*" },
+          headers: CORS_HEADERS,
         }
       );
     }
@@ -254,32 +265,36 @@ export const action = async ({ request }) => {
         { ok: false, error: "Server env is not configured" },
         {
           status: 500,
-          headers: { "Access-Control-Allow-Origin": "*" },
+          headers: CORS_HEADERS,
         }
       );
     }
 
     let replyType = "fixed";
-    let aiReply = getFixedReply({ name, message });
+    let matchedRuleId = null;
+    let replyText = null;
 
-    if (!aiReply && shouldEscalate(message)) {
+    const matchedRule = findFixedReplyRule(message);
+
+    if (matchedRule) {
+      matchedRuleId = matchedRule.id;
+      replyText = matchedRule.reply({ name, email, phone, message });
+    } else if (shouldEscalate(message)) {
       replyType = "escalation";
-      aiReply = getEscalationReply({ name });
-    }
-
-    if (!aiReply) {
+      replyText = buildEscalationReply({ name });
+    } else {
       if (!process.env.CLAUDE_API_KEY) {
         return json(
           { ok: false, error: "CLAUDE_API_KEY is not configured" },
           {
             status: 500,
-            headers: { "Access-Control-Allow-Origin": "*" },
+            headers: CORS_HEADERS,
           }
         );
       }
 
       replyType = "ai";
-      aiReply = await createClaudeReply({ name, email, phone, message });
+      replyText = await createClaudeReply({ name, email, phone, message });
     }
 
     const resend = new Resend(process.env.RESEND_API_KEY);
@@ -288,7 +303,7 @@ export const action = async ({ request }) => {
       from: process.env.MAIL_FROM,
       to: email,
       subject: "お問い合わせありがとうございます",
-      text: aiReply,
+      text: replyText,
     });
 
     await resend.emails.send({
@@ -299,6 +314,7 @@ export const action = async ({ request }) => {
         "お問い合わせ内容を受信しました。",
         "",
         `返信種別: ${replyType}`,
+        `一致ルールID: ${matchedRuleId || "なし"}`,
         `名前: ${name}`,
         `メール: ${email}`,
         `電話番号: ${phone || "未入力"}`,
@@ -307,14 +323,18 @@ export const action = async ({ request }) => {
         message,
         "",
         "返信文:",
-        aiReply,
+        replyText,
       ].join("\n"),
     });
 
     return json(
-      { ok: true, replyType },
       {
-        headers: { "Access-Control-Allow-Origin": "*" },
+        ok: true,
+        replyType,
+        matchedRuleId,
+      },
+      {
+        headers: CORS_HEADERS,
       }
     );
   } catch (error) {
@@ -324,7 +344,7 @@ export const action = async ({ request }) => {
       { ok: false, error: "Internal server error" },
       {
         status: 500,
-        headers: { "Access-Control-Allow-Origin": "*" },
+        headers: CORS_HEADERS,
       }
     );
   }
