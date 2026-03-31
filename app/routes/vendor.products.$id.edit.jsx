@@ -6,6 +6,7 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import prisma from "../db.server";
+import { authenticate } from "../shopify.server";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -202,55 +203,37 @@ export const action = async ({ request, params }) => {
     });
 
     if (product.shopifyProductId) {
-      const shop = process.env.SHOPIFY_SHOP;
-      const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+      const { admin } = await authenticate.admin(request);
 
-      console.log("SHOPIFY_SHOP =", shop);
-      console.log("SHOPIFY_ADMIN_ACCESS_TOKEN exists =", Boolean(token));
-      console.log("SHOPIFY_ADMIN_ACCESS_TOKEN prefix =", token ? token.slice(0, 8) : "none");
-      console.log("shopifyProductId =", product.shopifyProductId);
-
-      const res = await fetch(
-        `https://${shop}/admin/api/2026-04/graphql.json`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Shopify-Access-Token": token,
-          },
-          body: JSON.stringify({
-            query: `
-              mutation productUpdate($input: ProductInput!) {
-                productUpdate(input: $input) {
-                  product {
-                    id
-                    status
-                  }
-                  userErrors {
-                    field
-                    message
-                  }
-                }
+      const response = await admin.graphql(
+        `
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                status
               }
-            `,
-            variables: {
-              input: {
-                id: product.shopifyProductId,
-                title: updatedProduct.name,
-                descriptionHtml: updatedProduct.description || "",
-                productType: updatedProduct.category || "",
-                status: "DRAFT",
-              },
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `,
+        {
+          variables: {
+            input: {
+              id: product.shopifyProductId,
+              title: updatedProduct.name,
+              descriptionHtml: updatedProduct.description || "",
+              productType: updatedProduct.category || "",
+              status: "DRAFT",
             },
-          }),
+          },
         }
       );
 
-      console.log("Shopify response status =", res.status);
-      console.log("Shopify response ok =", res.ok);
-
-      const jsonRes = await res.json();
-      console.log("Shopify raw response =", JSON.stringify(jsonRes));
+      const jsonRes = await response.json();
 
       if (jsonRes.errors) {
         console.error("Shopify error:", jsonRes.errors);
