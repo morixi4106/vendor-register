@@ -300,10 +300,18 @@ export const action = async ({ request }) => {
   } catch (error) {
     console.error("admin approve error:", error);
 
+    const message =
+      error instanceof Error ? error.message : "不明なエラーです";
+
+    const needsReconnect =
+      message.includes("Invalid API key or access token") ||
+      message.includes("401");
+
     return json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "不明なエラーです",
+        error: message,
+        needsReconnect,
       },
       { status: 500 }
     );
@@ -337,6 +345,33 @@ export default function AdminProductDetail() {
         >
           <strong>エラー:</strong>
           <div style={{ marginTop: "8px" }}>{actionData.error}</div>
+
+          {actionData?.needsReconnect ? (
+            <div style={{ marginTop: "14px" }}>
+              <div style={{ marginBottom: "10px" }}>
+                Shopify接続が切れています。再接続してください。
+              </div>
+
+              <Form method="post" action="/admin/shopify-reconnect">
+                <input type="hidden" name="returnTo" value={`/admin/products/${product.id}`} />
+                <button
+                  type="submit"
+                  style={{
+                    height: "40px",
+                    padding: "0 14px",
+                    borderRadius: "8px",
+                    border: "1px solid #111827",
+                    background: "#111827",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  Shopify再接続
+                </button>
+              </Form>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
