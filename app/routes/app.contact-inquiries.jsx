@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Form, Link, useLoaderData } from "@remix-run/react";
+import { useState } from "react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 
@@ -77,8 +78,36 @@ function FilterLink({ q, value, label, currentReplyType }) {
   );
 }
 
+function shortenText(text, max = 60) {
+  const value = String(text || "");
+  if (value.length <= max) return value;
+  return value.slice(0, max) + "...";
+}
+
+function formatDate(value) {
+  try {
+    return new Date(value).toLocaleString("ja-JP", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function replyTypeLabel(value) {
+  if (value === "fixed") return "固定返信";
+  if (value === "ai") return "AI返信";
+  if (value === "escalation") return "人対応";
+  return value;
+}
+
 export default function ContactInquiriesPage() {
   const { inquiries, replyType, q } = useLoaderData();
+  const [openId, setOpenId] = useState(null);
 
   return (
     <div style={{ padding: "24px" }}>
@@ -179,99 +208,143 @@ export default function ContactInquiriesPage() {
       {inquiries.length === 0 ? (
         <div>該当する問い合わせはありません。</div>
       ) : (
-        <div style={{ display: "grid", gap: "16px" }}>
-          {inquiries.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: "12px",
-                padding: "16px",
-                background: "#fff",
-              }}
-            >
-              <div style={{ marginBottom: "8px" }}>
-                <strong>名前:</strong> {item.name}
-              </div>
+        <div style={{ display: "grid", gap: "12px" }}>
+          {inquiries.map((item) => {
+            const isOpen = openId === item.id;
 
-              <div style={{ marginBottom: "8px" }}>
-                <strong>メール:</strong> {item.email}
-              </div>
-
-              <div style={{ marginBottom: "8px" }}>
-                <strong>電話番号:</strong> {item.phone || "未入力"}
-              </div>
-
-              <div style={{ marginBottom: "8px" }}>
-                <strong>返信種別:</strong> {item.replyType}
-              </div>
-
-              <div style={{ marginBottom: "8px" }}>
-                <strong>一致ルールID:</strong> {item.matchedRuleId || "なし"}
-              </div>
-
-              <div style={{ marginBottom: "8px" }}>
-                <strong>受信日時:</strong>{" "}
-                {new Date(item.createdAt).toLocaleString("ja-JP")}
-              </div>
-
-              <div style={{ marginBottom: "8px" }}>
-                <strong>問い合わせ本文:</strong>
+            return (
+              <div
+                key={item.id}
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: "12px",
+                  padding: "16px",
+                  background: "#fff",
+                }}
+              >
                 <div
-                  style={{
-                    marginTop: "6px",
-                    whiteSpace: "pre-wrap",
-                    background: "#f7f7f7",
-                    padding: "12px",
-                    borderRadius: "8px",
+                  onClick={() => {
+                    setOpenId(isOpen ? null : item.id);
                   }}
+                  style={{ cursor: "pointer" }}
                 >
-                  {item.message}
-                </div>
-              </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "12px",
+                      marginBottom: "8px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={{ fontWeight: "700" }}>
+                      {item.name} / {replyTypeLabel(item.replyType)}
+                    </div>
 
-              <div>
-                <strong>返信文:</strong>
-                <div
-                  style={{
-                    marginTop: "6px",
-                    whiteSpace: "pre-wrap",
-                    background: "#f7f7f7",
-                    padding: "12px",
-                    borderRadius: "8px",
-                  }}
-                >
-                  {item.replyText}
-                </div>
-              </div>
-              <button
-  onClick={async () => {
-    await fetch("/api/fixed-candidate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: item.message,
-        replyText: item.replyText,
-      }),
-    });
+                    <div style={{ color: "#666", fontSize: "14px" }}>
+                      {isOpen ? "閉じる" : "開く"}
+                    </div>
+                  </div>
 
-    alert("固定文候補に追加した");
-  }}
-  style={{
-    marginTop: "10px",
-    padding: "8px 12px",
-    borderRadius: "8px",
-    border: "1px solid #ccc",
-    background: "#eee",
-    cursor: "pointer",
-  }}
->
-  固定文候補にする
-</button>
-            </div>
-          ))}
+                  <div style={{ color: "#666", fontSize: "14px", marginBottom: "6px" }}>
+                    {formatDate(item.createdAt)}
+                  </div>
+
+                  <div style={{ color: "#333" }}>
+                    {shortenText(item.message, 90)}
+                  </div>
+                </div>
+
+                {isOpen ? (
+                  <div style={{ marginTop: "16px" }}>
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>名前:</strong> {item.name}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>メール:</strong> {item.email}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>電話番号:</strong> {item.phone || "未入力"}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>返信種別:</strong> {item.replyType}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>一致ルールID:</strong> {item.matchedRuleId || "なし"}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>受信日時:</strong> {new Date(item.createdAt).toLocaleString("ja-JP")}
+                    </div>
+
+                    <div style={{ marginBottom: "8px" }}>
+                      <strong>問い合わせ本文:</strong>
+                      <div
+                        style={{
+                          marginTop: "6px",
+                          whiteSpace: "pre-wrap",
+                          background: "#f7f7f7",
+                          padding: "12px",
+                          borderRadius: "8px",
+                        }}
+                      >
+                        {item.message}
+                      </div>
+                    </div>
+
+                    <div>
+                      <strong>返信文:</strong>
+                      <div
+                        style={{
+                          marginTop: "6px",
+                          whiteSpace: "pre-wrap",
+                          background: "#f7f7f7",
+                          padding: "12px",
+                          borderRadius: "8px",
+                        }}
+                      >
+                        {item.replyText}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+
+                        await fetch("/api/fixed-candidate", {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                          },
+                          body: JSON.stringify({
+                            message: item.message,
+                            replyText: item.replyText,
+                          }),
+                        });
+
+                        alert("固定文候補に追加した");
+                      }}
+                      style={{
+                        marginTop: "10px",
+                        padding: "8px 12px",
+                        borderRadius: "8px",
+                        border: "1px solid #ccc",
+                        background: "#eee",
+                        cursor: "pointer",
+                      }}
+                    >
+                      固定文候補にする
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
