@@ -84,6 +84,7 @@ async function createShopifyProductFromDbProduct(product) {
       title: product.name,
       descriptionHtml: product.description || "",
       vendor: product.vendorStore?.storeName || "Vendor",
+      productType: product.category || "",
       status: "ACTIVE",
     },
   };
@@ -355,7 +356,7 @@ export default function AdminProductDetail() {
 
         <div>
           <h3>追加情報</h3>
-          <p>カテゴリ: まだ未保存</p>
+          <p>カテゴリ: {product.category || "未設定"}</p>
           <p>画像URL: {product.imageUrl || "なし"}</p>
         </div>
 
