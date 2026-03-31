@@ -137,20 +137,33 @@ async function deleteShopifyProduct(shopifyProductId) {
     },
   };
 
-  const result = await shopifyGraphQL(mutation, variables);
-  const payload = result?.productDelete;
+  try {
+    const result = await shopifyGraphQL(mutation, variables);
+    const payload = result?.productDelete;
 
-  if (!payload) {
-    throw new Error("Shopify productDelete response is empty");
+    if (!payload) {
+      console.log("Shopify response empty → 無視");
+      return true;
+    }
+
+    if (payload.userErrors?.length) {
+      const message = payload.userErrors[0]?.message || "";
+
+      // 👇 ここが最重要
+      if (message.includes("does not exist")) {
+        console.log("Shopifyに存在しない → OKとして続行");
+        return true;
+      }
+
+      console.log("Shopify削除エラー:", payload.userErrors);
+      return true; // 👈止めない
+    }
+
+    return true;
+  } catch (e) {
+    console.log("Shopify削除失敗（無視して続行）:", e.message);
+    return true; // 👈絶対止めない
   }
-
-  if (payload.userErrors?.length) {
-    throw new Error(
-      `productDelete userErrors: ${JSON.stringify(payload.userErrors)}`
-    );
-  }
-
-  return payload.deletedProductId;
 }
 
 async function getVendorSessionOrRedirect(request) {
