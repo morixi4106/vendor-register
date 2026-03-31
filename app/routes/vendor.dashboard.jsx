@@ -11,6 +11,9 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
+const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
+const SHOPIFY_API_VERSION = "2026-01";
+
 function formatMoney(amount, currencyCode = "JPY") {
   const num = Number(amount || 0);
   try {
@@ -62,6 +65,91 @@ function badgeClass(text) {
   }
 
   return "dash-badge dash-badge-gray";
+}
+
+async function getOfflineAccessToken() {
+  const session = await prisma.session.findFirst({
+    where: {
+      shop: SHOPIFY_SHOP_DOMAIN,
+      isOnline: false,
+    },
+  });
+
+  if (!session?.accessToken) {
+    throw new Error(
+      `Offline session not found for shop: ${SHOPIFY_SHOP_DOMAIN}`
+    );
+  }
+
+  return session.accessToken;
+}
+
+async function shopifyGraphQL(query, variables = {}) {
+  const accessToken = await getOfflineAccessToken();
+
+  const res = await fetch(
+    `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+      body: JSON.stringify({
+        query,
+        variables,
+      }),
+    }
+  );
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(
+      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
+    );
+  }
+
+  if (data.errors?.length) {
+    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
+  }
+
+  return data.data;
+}
+
+async function deleteShopifyProduct(shopifyProductId) {
+  const mutation = `
+    mutation DeleteProduct($input: ProductDeleteInput!) {
+      productDelete(input: $input) {
+        deletedProductId
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    input: {
+      id: shopifyProductId,
+    },
+  };
+
+  const result = await shopifyGraphQL(mutation, variables);
+  const payload = result?.productDelete;
+
+  if (!payload) {
+    throw new Error("Shopify productDelete response is empty");
+  }
+
+  if (payload.userErrors?.length) {
+    throw new Error(
+      `productDelete userErrors: ${JSON.stringify(payload.userErrors)}`
+    );
+  }
+
+  return payload.deletedProductId;
 }
 
 async function getVendorSessionOrRedirect(request) {
@@ -226,9 +314,18 @@ export const action = async ({ request }) => {
       return null;
     }
 
-    await prisma.product.delete({
-      where: { id: productId },
-    });
+    try {
+      if (product.shopifyProductId) {
+        await deleteShopifyProduct(product.shopifyProductId);
+      }
+
+      await prisma.product.delete({
+        where: { id: productId },
+      });
+    } catch (error) {
+      console.error("vendor delete error:", error);
+      return null;
+    }
 
     return null;
   }
