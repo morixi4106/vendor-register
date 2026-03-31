@@ -6,16 +6,17 @@ const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
 
 async function getOfflineAccessToken() {
-  const session = await prisma.session.findFirst({
+  const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
+
+  const session = await prisma.session.findUnique({
     where: {
-      shop: SHOPIFY_SHOP_DOMAIN,
-      isOnline: false,
+      id: offlineSessionId,
     },
   });
 
   if (!session?.accessToken) {
     throw new Error(
-      `Offline session not found for shop: ${SHOPIFY_SHOP_DOMAIN}`
+      `Offline session not found for session id: ${offlineSessionId}`
     );
   }
 
