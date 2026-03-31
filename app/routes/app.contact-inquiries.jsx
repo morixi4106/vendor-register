@@ -244,6 +244,32 @@ export default function ContactInquiriesPage() {
                   {item.replyText}
                 </div>
               </div>
+              <button
+  onClick={async () => {
+    await fetch("/api/fixed-candidate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: item.message,
+        replyText: item.replyText,
+      }),
+    });
+
+    alert("固定文候補に追加した");
+  }}
+  style={{
+    marginTop: "10px",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    border: "1px solid #ccc",
+    background: "#eee",
+    cursor: "pointer",
+  }}
+>
+  固定文候補にする
+</button>
             </div>
           ))}
         </div>

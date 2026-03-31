@@ -117,3 +117,10 @@ model ContactInquiry {
   matchedRuleId String?
   createdAt     DateTime @default(now())
 }
+
+model FixedReplyCandidate {
+  id        String   @id @default(cuid())
+  message   String
+  replyText String
+  createdAt DateTime @default(now())
+}
