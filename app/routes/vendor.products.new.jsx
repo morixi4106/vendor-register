@@ -62,10 +62,11 @@ export const action = async ({ request }) => {
 
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
-  const imageUrl = String(formData.get("imageUrl") || "").trim();
   const category = String(formData.get("category") || "").trim();
   const priceRaw = String(formData.get("price") || "").trim();
   const url = String(formData.get("url") || "").trim();
+
+  const imageUrl = null;
 
   if (!name) {
     return json(
@@ -90,23 +91,11 @@ export const action = async ({ request }) => {
     );
   }
 
-  if (imageUrl) {
-    const isHttpUrl =
-      imageUrl.startsWith("http://") || imageUrl.startsWith("https://");
-
-    if (!isHttpUrl) {
-      return json(
-        { ok: false, error: "画像URLは http:// または https:// から始めてください。" },
-        { status: 400 }
-      );
-    }
-  }
-
   await prisma.product.create({
     data: {
       name,
       description: description || null,
-      imageUrl: imageUrl || null,
+      imageUrl: imageUrl,
       category: category || null,
       price,
       url: url || null,
@@ -247,7 +236,6 @@ export default function VendorProductsNew() {
 
             <div>
               <label
-                htmlFor="imageUrl"
                 style={{
                   display: "block",
                   marginBottom: "8px",
@@ -256,23 +244,21 @@ export default function VendorProductsNew() {
                   color: "#111827",
                 }}
               >
-                画像URL
+                商品画像
               </label>
-              <input
-                id="imageUrl"
-                name="imageUrl"
-                type="text"
-                placeholder="https://example.com/image.jpg"
+              <div
                 style={{
-                  width: "100%",
-                  height: "48px",
-                  border: "1px solid #d1d5db",
+                  border: "1px dashed #d1d5db",
                   borderRadius: "10px",
-                  padding: "0 14px",
+                  padding: "20px",
+                  textAlign: "center",
+                  background: "#f9fafb",
                   fontSize: "14px",
-                  boxSizing: "border-box",
+                  color: "#6b7280",
                 }}
-              />
+              >
+                画像アップロード機能は準備中です
+              </div>
             </div>
 
             <div>
