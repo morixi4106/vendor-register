@@ -23,66 +23,6 @@ export const loader = async ({ request }) => {
 };
 
 // =========================
-// 固定ルール定義
-// =========================
-const FIXED_REPLY_RULES = [
-  {
-    id: "shipping_days",
-    keywords: ["配送", "発送", "届く", "到着", "何日", "納期"],
-    reply: ({ name }) => `${name} 様
-
-お問い合わせいただきありがとうございます。
-Oja Immanuel Bacchus サポートでございます。
-
-配送日数についてのお問い合わせありがとうございます。
-通常の発送・配送日数は、ご注文内容やお届け先地域により異なる場合がございますが、一般的には発送後2日〜5日程度を目安としております。
-
-なお、予約商品・取り寄せ商品・一部地域宛ての配送につきましては、通常よりお時間をいただく場合がございます。
-詳細が必要な場合は、対象商品や配送先地域を添えてご返信ください。
-
-何卒よろしくお願い申し上げます。
-
-Oja Immanuel Bacchus サポート`,
-  },
-  {
-    id: "business_hours",
-    keywords: ["営業時間", "営業日", "何時", "休み", "定休日"],
-    reply: ({ name }) => `${name} 様
-
-お問い合わせいただきありがとうございます。
-Oja Immanuel Bacchus サポートでございます。
-
-営業時間・営業日についてのお問い合わせありがとうございます。
-通常2営業日以内を目安に順次ご返信しております。
-なお、土日祝日は対応しておりません。
-
-お急ぎの場合でも、内容を確認のうえ順次ご案内しておりますので、あらかじめご了承ください。
-
-何卒よろしくお願い申し上げます。
-
-Oja Immanuel Bacchus サポート`,
-  },
-  {
-    id: "vendor_application",
-    keywords: ["出店", "申請", "審査", "ベンダー", "店舗登録"],
-    reply: ({ name }) => `${name} 様
-
-お問い合わせいただきありがとうございます。
-Oja Immanuel Bacchus サポートでございます。
-
-出店申請・店舗登録についてのお問い合わせありがとうございます。
-申請内容を確認のうえ、順次ご案内しております。
-内容によって確認にお時間をいただく場合がございますので、あらかじめご了承ください。
-
-何か補足事項がございましたら、そのままご返信ください。
-
-何卒よろしくお願い申し上げます。
-
-Oja Immanuel Bacchus サポート`,
-  },
-];
-
-// =========================
 // 危険ワード定義
 // =========================
 const ESCALATION_KEYWORDS = [
@@ -116,7 +56,7 @@ function normalizeText(value) {
 
 function includesAny(text, keywords) {
   return keywords.some((keyword) =>
-    text.includes(String(keyword).toLowerCase())
+    text.includes(String(keyword || "").toLowerCase())
   );
 }
 
@@ -136,9 +76,29 @@ Oja Immanuel Bacchus サポートでございます。
 Oja Immanuel Bacchus サポート`;
 }
 
-function findFixedReplyRule(message) {
+async function findFixedReplyRule(message) {
   const text = normalizeText(message);
-  return FIXED_REPLY_RULES.find((rule) => includesAny(text, rule.keywords)) || null;
+
+  const rules = await prisma.fixedReplyRule.findMany({
+    where: {
+      isActive: true,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  for (const rule of rules) {
+    const keyword = normalizeText(rule.keyword);
+
+    if (!keyword) continue;
+
+    if (text.includes(keyword)) {
+      return rule;
+    }
+  }
+
+  return null;
 }
 
 function shouldEscalate(message) {
@@ -260,7 +220,11 @@ export const action = async ({ request }) => {
       );
     }
 
-    if (!process.env.RESEND_API_KEY || !process.env.MAIL_FROM || !process.env.ADMIN_EMAIL) {
+    if (
+      !process.env.RESEND_API_KEY ||
+      !process.env.MAIL_FROM ||
+      !process.env.ADMIN_EMAIL
+    ) {
       return json(
         { ok: false, error: "Server env is not configured" },
         {
@@ -274,11 +238,11 @@ export const action = async ({ request }) => {
     let matchedRuleId = null;
     let replyText = null;
 
-    const matchedRule = findFixedReplyRule(message);
+    const matchedRule = await findFixedReplyRule(message);
 
     if (matchedRule) {
       matchedRuleId = matchedRule.id;
-      replyText = matchedRule.reply({ name, email, phone, message });
+      replyText = matchedRule.replyText;
     } else if (shouldEscalate(message)) {
       replyType = "escalation";
       replyText = buildEscalationReply({ name });
