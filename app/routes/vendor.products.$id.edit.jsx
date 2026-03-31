@@ -6,7 +6,9 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+
+const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
+const SHOPIFY_API_VERSION = "2026-01";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -15,6 +17,57 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   secure: process.env.NODE_ENV === "production",
   maxAge: 60 * 60 * 8,
 });
+
+async function getOfflineAccessToken() {
+  const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
+
+  const session = await prisma.session.findUnique({
+    where: {
+      id: offlineSessionId,
+    },
+  });
+
+  if (!session?.accessToken) {
+    throw new Error(
+      `Offline session not found for session id: ${offlineSessionId}`
+    );
+  }
+
+  return session.accessToken;
+}
+
+async function shopifyGraphQL(query, variables = {}) {
+  const accessToken = await getOfflineAccessToken();
+
+  const res = await fetch(
+    `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+      body: JSON.stringify({
+        query,
+        variables,
+      }),
+    }
+  );
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(
+      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
+    );
+  }
+
+  if (data.errors?.length) {
+    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
+  }
+
+  return data.data;
+}
 
 async function uploadImageToCloudinary(file) {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -203,9 +256,7 @@ export const action = async ({ request, params }) => {
     });
 
     if (product.shopifyProductId) {
-      const { admin } = await authenticate.admin(request);
-
-      const response = await admin.graphql(
+      const result = await shopifyGraphQL(
         `
           mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
@@ -221,26 +272,17 @@ export const action = async ({ request, params }) => {
           }
         `,
         {
-          variables: {
-            input: {
-              id: product.shopifyProductId,
-              title: updatedProduct.name,
-              descriptionHtml: updatedProduct.description || "",
-              productType: updatedProduct.category || "",
-              status: "DRAFT",
-            },
+          input: {
+            id: product.shopifyProductId,
+            title: updatedProduct.name,
+            descriptionHtml: updatedProduct.description || "",
+            productType: updatedProduct.category || "",
+            status: "DRAFT",
           },
         }
       );
 
-      const jsonRes = await response.json();
-
-      if (jsonRes.errors) {
-        console.error("Shopify error:", jsonRes.errors);
-        throw new Error("Shopify更新失敗");
-      }
-
-      const userErrors = jsonRes?.data?.productUpdate?.userErrors || [];
+      const userErrors = result?.productUpdate?.userErrors || [];
 
       if (userErrors.length > 0) {
         console.error("userErrors:", userErrors);
