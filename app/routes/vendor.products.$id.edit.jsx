@@ -188,7 +188,7 @@ export const action = async ({ request, params }) => {
       imageUrl = await uploadImageToCloudinary(imageFile);
     }
 
-    await prisma.product.update({
+    const updatedProduct = await prisma.product.update({
       where: { id: productId },
       data: {
         name,
@@ -200,6 +200,54 @@ export const action = async ({ request, params }) => {
         approvalStatus: "pending",
       },
     });
+
+    if (product.shopifyProductId) {
+      const shop = process.env.SHOPIFY_SHOP;
+      const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+      const res = await fetch(
+        `https://${shop}/admin/api/2026-04/graphql.json`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": token,
+          },
+          body: JSON.stringify({
+            query: `
+              mutation productUpdate($input: ProductInput!) {
+                productUpdate(input: $input) {
+                  product { id }
+                  userErrors { field message }
+                }
+              }
+            `,
+            variables: {
+              input: {
+                id: product.shopifyProductId,
+                title: updatedProduct.name,
+                descriptionHtml: updatedProduct.description || "",
+                productType: updatedProduct.category || "",
+              },
+            },
+          }),
+        }
+      );
+
+      const jsonRes = await res.json();
+
+      if (jsonRes.errors) {
+        console.error("Shopify error:", jsonRes.errors);
+        throw new Error("Shopify更新失敗");
+      }
+
+      const userErrors = jsonRes?.data?.productUpdate?.userErrors || [];
+
+      if (userErrors.length > 0) {
+        console.error("userErrors:", userErrors);
+        throw new Error(userErrors.map((e) => e.message).join(", "));
+      }
+    }
 
     return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
   } catch (error) {
