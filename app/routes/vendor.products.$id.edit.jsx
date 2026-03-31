@@ -205,6 +205,11 @@ export const action = async ({ request, params }) => {
       const shop = process.env.SHOPIFY_SHOP;
       const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
+      console.log("SHOPIFY_SHOP =", shop);
+      console.log("SHOPIFY_ADMIN_ACCESS_TOKEN exists =", Boolean(token));
+      console.log("SHOPIFY_ADMIN_ACCESS_TOKEN prefix =", token ? token.slice(0, 8) : "none");
+      console.log("shopifyProductId =", product.shopifyProductId);
+
       const res = await fetch(
         `https://${shop}/admin/api/2026-04/graphql.json`,
         {
@@ -241,7 +246,11 @@ export const action = async ({ request, params }) => {
         }
       );
 
+      console.log("Shopify response status =", res.status);
+      console.log("Shopify response ok =", res.ok);
+
       const jsonRes = await res.json();
+      console.log("Shopify raw response =", JSON.stringify(jsonRes));
 
       if (jsonRes.errors) {
         console.error("Shopify error:", jsonRes.errors);
