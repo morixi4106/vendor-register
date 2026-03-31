@@ -1,7 +1,9 @@
 import { createCookie, json, redirect } from "@remix-run/node";
 import { Form, useActionData } from "@remix-run/react";
 import prisma from "../db.server";
+import { Resend } from "resend";
 
+const resend = new Resend(process.env.RESEND_API_KEY);
 async function uploadImageToCloudinary(file) {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET;
@@ -126,28 +128,46 @@ if (imageFile && typeof imageFile.size === "number" && imageFile.size > 0) {
   const price = Number(priceRaw);
 
   if (!Number.isInteger(price) || price < 0) {
-    return json(
-      { ok: false, error: "価格は0以上の整数で入力してください。" },
-      { status: 400 }
-    );
-  }
+  return json(
+    { ok: false, error: "価格は0以上の整数で入力してください。" },
+    { status: 400 }
+  );
+}
 
-  await prisma.product.create({
-    data: {
-      name,
-      description: description || null,
-      imageUrl: imageUrl,
-      category: category || null,
-      price,
-      url: url || null,
-      vendorStoreId: store.id,
-      approvalStatus: "pending",
-    },
+const createdProduct = await prisma.product.create({
+  data: {
+    name,
+    description: description || null,
+    imageUrl: imageUrl,
+    category: category || null,
+    price,
+    url: url || null,
+    vendorStoreId: store.id,
+    approvalStatus: "pending",
+  },
+});
+
+try {
+  const adminUrl = `https://vendor-register-pbjl.onrender.com/admin/products/${createdProduct.id}`;
+
+  await resend.emails.send({
+    from: process.env.MAIL_FROM,
+    to: [process.env.ADMIN_EMAIL],
+    subject: "新しい商品申請があります",
+    text: `商品名: ${createdProduct.name}
+店舗: ${store.storeName}
+
+管理画面で確認:
+${adminUrl}`,
   });
 
-  return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
-};
+  console.log("📧 管理者通知送信:", createdProduct.name);
+} catch (e) {
+  console.error("❌ メール送信失敗:", e);
+}
 
+return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
+};
 export default function VendorProductsNew() {
   const actionData = useActionData();
 
