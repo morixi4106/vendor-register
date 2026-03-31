@@ -124,3 +124,12 @@ model FixedReplyCandidate {
   replyText String
   createdAt DateTime @default(now())
 }
+
+model FixedReplyRule {
+  id         String   @id @default(cuid())
+  keyword    String
+  replyText  String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
