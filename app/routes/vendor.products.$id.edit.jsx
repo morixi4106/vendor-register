@@ -217,8 +217,14 @@ export const action = async ({ request, params }) => {
             query: `
               mutation productUpdate($input: ProductInput!) {
                 productUpdate(input: $input) {
-                  product { id }
-                  userErrors { field message }
+                  product {
+                    id
+                    status
+                  }
+                  userErrors {
+                    field
+                    message
+                  }
                 }
               }
             `,
@@ -228,6 +234,7 @@ export const action = async ({ request, params }) => {
                 title: updatedProduct.name,
                 descriptionHtml: updatedProduct.description || "",
                 productType: updatedProduct.category || "",
+                status: "DRAFT",
               },
             },
           }),
