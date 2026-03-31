@@ -2,6 +2,42 @@ import { createCookie, json, redirect } from "@remix-run/node";
 import { Form, useActionData } from "@remix-run/react";
 import prisma from "../db.server";
 
+async function uploadImageToCloudinary(file) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET;
+
+  if (!cloudName || !uploadPreset) {
+    throw new Error("Cloudinaryの環境変数が足りません。");
+  }
+
+  if (!file || typeof file.arrayBuffer !== "function" || file.size === 0) {
+    return null;
+  }
+
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+
+  const form = new FormData();
+  form.append("file", new Blob([buffer]), file.name || "upload.jpg");
+  form.append("upload_preset", uploadPreset);
+
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(`Cloudinary upload failed: ${JSON.stringify(data)}`);
+  }
+
+  return data.secure_url || null;
+}
+
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
   sameSite: "lax",
@@ -60,13 +96,18 @@ export const action = async ({ request }) => {
 
   const formData = await request.formData();
 
+  const imageFile = formData.get("image");
+let imageUrl = null;
+
+if (imageFile && typeof imageFile.size === "number" && imageFile.size > 0) {
+  imageUrl = await uploadImageToCloudinary(imageFile);
+}
+
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const category = String(formData.get("category") || "").trim();
   const priceRaw = String(formData.get("price") || "").trim();
   const url = String(formData.get("url") || "").trim();
-
-  const imageUrl = null;
 
   if (!name) {
     return json(
@@ -171,7 +212,7 @@ export default function VendorProductsNew() {
           </div>
         ) : null}
 
-        <Form method="post">
+        <Form method="post" encType="multipart/form-data">
           <div style={{ display: "grid", gap: "20px" }}>
             <div>
               <label
@@ -257,7 +298,7 @@ export default function VendorProductsNew() {
                   color: "#6b7280",
                 }}
               >
-                画像アップロード機能は準備中です
+                <input type="file" name="image" accept="image/*" />
               </div>
             </div>
 
