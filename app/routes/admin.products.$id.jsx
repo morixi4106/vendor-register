@@ -262,6 +262,43 @@ export const action = async ({ request }) => {
 
     if (intent === "approve") {
       if (product.shopifyProductId) {
+        const updateMutation = `
+          mutation UpdateProductStatus($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                status
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        const updateResult = await shopifyGraphQL(updateMutation, {
+          input: {
+            id: product.shopifyProductId,
+            title: product.name,
+            descriptionHtml: product.description || "",
+            productType: product.category || "",
+            status: "ACTIVE",
+          },
+        });
+
+        const updatePayload = updateResult?.productUpdate;
+
+        if (!updatePayload) {
+          throw new Error("Shopify productUpdate response is empty");
+        }
+
+        if (updatePayload.userErrors?.length) {
+          throw new Error(
+            `productUpdate userErrors: ${JSON.stringify(updatePayload.userErrors)}`
+          );
+        }
+
         await prisma.product.update({
           where: { id: productId },
           data: {
