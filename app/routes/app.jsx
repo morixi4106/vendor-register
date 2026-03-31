@@ -31,6 +31,10 @@ export default function App() {
           問い合わせ一覧
         </Link>
 
+        <Link to="/app/fixed-candidates">
+          固定文候補一覧
+        </Link>
+
         <Link to="/app/additional">
           Additional page
         </Link>
