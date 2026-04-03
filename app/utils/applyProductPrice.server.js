@@ -86,17 +86,10 @@ export async function applyProductPrice(productId, options = {}) {
       product(id: $id) {
         id
         title
-        metafields(identifiers: [
-          { namespace: "pricing", key: "cost_amount" }
-          { namespace: "pricing", key: "cost_currency" }
-          { namespace: "pricing", key: "duty_category" }
-          { namespace: "pricing", key: "packaging_fee" }
-        ]) {
-          namespace
-          key
-          value
-          type
-        }
+        costAmountMetafield: metafield(namespace: "pricing", key: "cost_amount") { value }
+        costCurrencyMetafield: metafield(namespace: "pricing", key: "cost_currency") { value }
+        dutyCategoryMetafield: metafield(namespace: "pricing", key: "duty_category") { value }
+        packagingFeeMetafield: metafield(namespace: "pricing", key: "packaging_fee") { value }
         variants(first: 1) {
           nodes {
             id
@@ -126,17 +119,10 @@ export async function applyProductPrice(productId, options = {}) {
     throw new Error('Variant not found');
   }
 
-  const metafields = {};
-  for (const mf of product.metafields || []) {
-    if (mf) {
-      metafields[`${mf.namespace}.${mf.key}`] = mf.value;
-    }
-  }
-
-  const costAmount = Number(metafields['pricing.cost_amount'] || 0);
-  const costCurrency = metafields['pricing.cost_currency'] || null;
-  const dutyCategory = metafields['pricing.duty_category'] || null;
-  const packagingFee = Number(metafields['pricing.packaging_fee'] || 0);
+  const costAmount = Number(product.costAmountMetafield?.value || 0);
+  const costCurrency = product.costCurrencyMetafield?.value || null;
+  const dutyCategory = product.dutyCategoryMetafield?.value || null;
+  const packagingFee = Number(product.packagingFeeMetafield?.value || 0);
 
   if (!costAmount) {
     throw new Error('pricing.cost_amount is empty');
