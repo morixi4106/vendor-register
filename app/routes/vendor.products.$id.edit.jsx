@@ -289,6 +289,33 @@ export const action = async ({ request, params }) => {
     throw new Error(userErrors.map((e) => e.message).join(", "));
   }
 
+  const metafields = [
+    {
+      ownerId: product.shopifyProductId,
+      namespace: "pricing",
+      key: "cost_amount",
+      type: "number_decimal",
+      value: String(price),
+    },
+    {
+      ownerId: product.shopifyProductId,
+      namespace: "pricing",
+      key: "cost_currency",
+      type: "single_line_text_field",
+      value: "JPY",
+    },
+  ];
+
+  if (category === "スキンケア" || category === "化粧品") {
+    metafields.push({
+      ownerId: product.shopifyProductId,
+      namespace: "pricing",
+      key: "duty_category",
+      type: "single_line_text_field",
+      value: "cosmetics",
+    });
+  }
+
   const metafieldsResult = await shopifyGraphQL(
     `
       mutation UpdateMetafields($metafields: [MetafieldsSetInput!]!) {
@@ -306,29 +333,7 @@ export const action = async ({ request, params }) => {
       }
     `,
     {
-      metafields: [
-        {
-          ownerId: product.shopifyProductId,
-          namespace: "pricing",
-          key: "cost_amount",
-          type: "number_decimal",
-          value: String(price),
-        },
-        {
-          ownerId: product.shopifyProductId,
-          namespace: "pricing",
-          key: "cost_currency",
-          type: "single_line_text_field",
-          value: "JPY",
-        },
-        {
-          ownerId: product.shopifyProductId,
-          namespace: "pricing",
-          key: "duty_category",
-          type: "single_line_text_field",
-          value: category === "スキンケア" ? "cosmetics" : "",
-        },
-      ],
+      metafields,
     }
   );
 
