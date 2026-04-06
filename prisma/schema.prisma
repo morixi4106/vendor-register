@@ -134,3 +134,14 @@ model FixedReplyRule {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
+
+model FxRate {
+  id        String   @id @default(cuid())
+  base      String
+  quote     String
+  rate      Float
+  fetchedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([base, quote])
+}

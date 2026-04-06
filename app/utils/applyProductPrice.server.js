@@ -96,7 +96,7 @@ export async function applyProductPrice(productId, options = {}) {
   const finalFxRate =
     options.fxRate != null
       ? Number(options.fxRate)
-      : getFxRateToJpy(costCurrency);
+      : await getFxRateToJpy(costCurrency);
 
   const marginRate = Number(readData.shop?.marginRate?.value ?? 0.1);
   const paymentFeeRate = Number(readData.shop?.paymentFeeRate?.value ?? 0.04);
