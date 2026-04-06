@@ -260,6 +260,25 @@ export const action = async ({ request }) => {
       return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
     }
 
+    if (intent === "apply-price") {
+      if (!product.shopifyProductId) {
+        return json(
+          { ok: false, error: "Shopify商品IDがありません" },
+          { status: 400 }
+        );
+      }
+
+      const { applyProductPrice } = await import("../utils/applyProductPrice.server");
+      const result = await applyProductPrice(product.shopifyProductId);
+
+      return json({
+        ok: true,
+        message: `価格を更新しました（¥${result.oldPrice} → ¥${result.newPrice}）`,
+        priceApplied: true,
+        result,
+      });
+    }
+
     if (intent === "approve") {
       if (product.shopifyProductId) {
         const updateMutation = `
@@ -412,6 +431,24 @@ export default function AdminProductDetail() {
         </div>
       ) : null}
 
+      {actionData?.ok && actionData?.message ? (
+        <div
+          style={{
+            marginTop: "20px",
+            marginBottom: "20px",
+            padding: "14px",
+            borderRadius: "8px",
+            background: "#ecfdf5",
+            border: "1px solid #a7f3d0",
+            color: "#065f46",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <strong>成功:</strong>
+          <div style={{ marginTop: "8px" }}>{actionData.message}</div>
+        </div>
+      ) : null}
+
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
           <h3>基本情報</h3>
@@ -450,7 +487,7 @@ export default function AdminProductDetail() {
           </div>
         ) : null}
 
-        <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
+        <div style={{ display: "flex", gap: "10px", marginTop: "20px", flexWrap: "wrap" }}>
           <Form method="post">
             <input type="hidden" name="intent" value="approve" />
             <input type="hidden" name="productId" value={product.id} />
@@ -461,6 +498,26 @@ export default function AdminProductDetail() {
             <input type="hidden" name="intent" value="reject" />
             <input type="hidden" name="productId" value={product.id} />
             <button type="submit">却下する</button>
+          </Form>
+
+          <Form method="post">
+            <input type="hidden" name="intent" value="apply-price" />
+            <input type="hidden" name="productId" value={product.id} />
+            <button
+              type="submit"
+              style={{
+                height: "40px",
+                padding: "0 14px",
+                borderRadius: "8px",
+                border: "1px solid #2563eb",
+                background: "#2563eb",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              価格更新
+            </button>
           </Form>
 
           <a href="/admin/products">← 戻る</a>

@@ -1,4 +1,5 @@
 import prisma from '../db.server';
+import { calculatePriceBreakdown } from './priceCalculator.js';
 
 const SHOP = 'b30ize-1a.myshopify.com';
 const API_VERSION = '2026-04';
@@ -30,39 +31,6 @@ async function shopifyGraphQL(accessToken, query, variables) {
   return data.data;
 }
 
-function ceilYen(value) {
-  return Math.ceil(Number(value || 0));
-}
-
-function calculateFinalPrice({
-  costAmount,
-  packagingFee,
-  dutyRate,
-  marginRate,
-  paymentFeeRate,
-  paymentFeeFixed,
-  bufferRate,
-  fxRate,
-}) {
-  const costFx = Number(costAmount) * Number(fxRate);
-  const duty = costFx * Number(dutyRate);
-  const landed = costFx + duty + Number(packagingFee);
-  const safeCost = landed * (1 + Number(bufferRate));
-  const target = safeCost * (1 + Number(marginRate));
-  const rawPrice = (target + Number(paymentFeeFixed)) / (1 - Number(paymentFeeRate));
-  const finalPrice = ceilYen(rawPrice);
-
-  return {
-    costFx: ceilYen(costFx),
-    duty: ceilYen(duty),
-    landed: ceilYen(landed),
-    safeCost: ceilYen(safeCost),
-    target: ceilYen(target),
-    rawPrice,
-    finalPrice,
-  };
-}
-
 export async function applyProductPrice(productId, options = {}) {
   if (!productId) {
     throw new Error('productId is required');
@@ -89,7 +57,6 @@ export async function applyProductPrice(productId, options = {}) {
         costAmountMetafield: metafield(namespace: "pricing", key: "cost_amount") { value }
         costCurrencyMetafield: metafield(namespace: "pricing", key: "cost_currency") { value }
         dutyCategoryMetafield: metafield(namespace: "pricing", key: "duty_category") { value }
-        packagingFeeMetafield: metafield(namespace: "pricing", key: "packaging_fee") { value }
         variants(first: 1) {
           nodes {
             id
@@ -122,7 +89,6 @@ export async function applyProductPrice(productId, options = {}) {
   const costAmount = Number(product.costAmountMetafield?.value || 0);
   const costCurrency = product.costCurrencyMetafield?.value || null;
   const dutyCategory = product.dutyCategoryMetafield?.value || null;
-  const packagingFee = Number(product.packagingFeeMetafield?.value || 0);
 
   if (!costAmount) {
     throw new Error('pricing.cost_amount is empty');
@@ -138,15 +104,14 @@ export async function applyProductPrice(productId, options = {}) {
   const bufferRate = Number(readData.shop?.bufferRate?.value ?? 0.1);
   const dutyRate = Number(options.dutyRate ?? DUTY_RATE_MAP[dutyCategory] ?? 0);
 
-  const breakdown = calculateFinalPrice({
+  const breakdown = calculatePriceBreakdown({
     costAmount,
-    packagingFee,
+    fxRate,
     dutyRate,
     marginRate,
     paymentFeeRate,
     paymentFeeFixed,
     bufferRate,
-    fxRate,
   });
 
   const updateMutation = `
@@ -181,18 +146,6 @@ export async function applyProductPrice(productId, options = {}) {
     variantId: variant.id,
     oldPrice: variant.price,
     newPrice: String(breakdown.finalPrice),
-    inputs: {
-      costAmount,
-      costCurrency,
-      dutyCategory,
-      packagingFee,
-      marginRate,
-      paymentFeeRate,
-      paymentFeeFixed,
-      bufferRate,
-      dutyRate,
-      fxRate,
-    },
     breakdown,
   };
 }
