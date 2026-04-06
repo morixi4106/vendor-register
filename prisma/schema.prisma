@@ -52,6 +52,7 @@ model Product {
   imageUrl         String?
   category         String?
   price            Int
+  costCurrency     String      @default("JPY")
   url              String?
   vendorStoreId    String
   approvalStatus   String      @default("pending")

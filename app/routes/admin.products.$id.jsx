@@ -1,3 +1,4 @@
+import { resolveDutyCategory } from "../utils/dutyCategory";
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
@@ -80,35 +81,42 @@ async function createShopifyProductFromDbProduct(product) {
     }
   `;
 
-  const createVariables = {
-    product: {
-      title: product.name,
-      descriptionHtml: product.description || "",
-      vendor: product.vendorStore?.storeName || "Vendor",
-      productType: product.category || "",
-      status: "ACTIVE",
-      metafields: [
-        {
-          namespace: "pricing",
-          key: "cost_amount",
-          type: "number_decimal",
-          value: String(product.price ?? 0),
-        },
-        {
-          namespace: "pricing",
-          key: "cost_currency",
-          type: "single_line_text_field",
-          value: "JPY",
-        },
-        {
-          namespace: "pricing",
-          key: "duty_category",
-          type: "single_line_text_field",
-          value: product.category === "スキンケア" ? "cosmetics" : "",
-        },
-      ],
-    },
-  };
+  const dutyCategory = resolveDutyCategory(product.category);
+
+const metafields = [
+  {
+    namespace: "pricing",
+    key: "cost_amount",
+    type: "number_decimal",
+    value: String(product.price ?? 0),
+  },
+  {
+    namespace: "pricing",
+    key: "cost_currency",
+    type: "single_line_text_field",
+    value: product.costCurrency || "JPY",
+  },
+];
+
+if (dutyCategory) {
+  metafields.push({
+    namespace: "pricing",
+    key: "duty_category",
+    type: "single_line_text_field",
+    value: dutyCategory,
+  });
+}
+
+const createVariables = {
+  product: {
+    title: product.name,
+    descriptionHtml: product.description || "",
+    vendor: product.vendorStore?.storeName || "Vendor",
+    productType: product.category || "",
+    status: "ACTIVE",
+    metafields,
+  },
+};
 
   const createResult = await shopifyGraphQL(createMutation, createVariables);
   const createPayload = createResult?.productCreate;
@@ -258,7 +266,32 @@ export const loader = async ({ params }) => {
     throw new Response("商品が見つかりません", { status: 404 });
   }
 
-  return json({ product });
+  let shopifyPrice = null;
+
+  if (product.shopifyProductId) {
+    const shopifyData = await shopifyGraphQL(
+      `
+        query ReadProductPrice($id: ID!) {
+          product(id: $id) {
+            id
+            variants(first: 1) {
+              nodes {
+                id
+                price
+              }
+            }
+          }
+        }
+      `,
+      {
+        id: product.shopifyProductId,
+      }
+    );
+
+    shopifyPrice = shopifyData?.product?.variants?.nodes?.[0]?.price || null;
+  }
+
+  return json({ product, shopifyPrice });
 };
 
 export const action = async ({ request }) => {
@@ -398,7 +431,7 @@ export const action = async ({ request }) => {
 };
 
 export default function AdminProductDetail() {
-  const { product } = useLoaderData();
+  const { product, shopifyPrice } = useLoaderData();
   const actionData = useActionData();
 
   return (
@@ -475,9 +508,12 @@ export default function AdminProductDetail() {
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
           <h3>基本情報</h3>
-          <p>価格: ¥{product.price}</p>
+          <p>原価: ¥{product.price}</p>
           <p>状態: {product.approvalStatus}</p>
           <p>Shopify商品ID: {product.shopifyProductId || "-"}</p>
+          <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "8px" }}>
+            ※ 原価をもとに販売価格が自動計算されます。
+          </p>
         </div>
 
         <div>

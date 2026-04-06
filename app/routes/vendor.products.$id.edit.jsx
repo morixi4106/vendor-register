@@ -1,3 +1,4 @@
+import { resolveDutyCategory } from "../utils/dutyCategory";
 import { createCookie, json, redirect } from "@remix-run/node";
 import {
   Form,
@@ -207,6 +208,14 @@ export const action = async ({ request, params }) => {
     const category = String(formData.get("category") || "").trim();
     const priceRaw = String(formData.get("price") || "").trim();
     const url = String(formData.get("url") || "").trim();
+    const costCurrency = String(formData.get("costCurrency") || "JPY").trim().toUpperCase();
+
+    if (!["JPY", "USD"].includes(costCurrency)) {
+      return json(
+        { ok: false, error: "原価通貨が不正です。" },
+        { status: 400 }
+      );
+    }
 
     if (!name) {
       return json(
@@ -249,6 +258,7 @@ export const action = async ({ request, params }) => {
         description: description || null,
         category: category || null,
         price,
+        costCurrency,
         url: url || null,
         imageUrl: imageUrl || null,
         approvalStatus: "pending",
@@ -302,7 +312,7 @@ export const action = async ({ request, params }) => {
       namespace: "pricing",
       key: "cost_currency",
       type: "single_line_text_field",
-      value: "JPY",
+      value: costCurrency,
     },
   ];
 
@@ -635,6 +645,39 @@ export default function EditPage() {
                   boxSizing: "border-box",
                 }}
               />
+            </div>
+
+            <div>
+              <label
+                htmlFor="costCurrency"
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                原価通貨
+              </label>
+              <select
+                id="costCurrency"
+                name="costCurrency"
+                defaultValue={product.costCurrency || "JPY"}
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "10px",
+                  padding: "0 14px",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                  background: "#ffffff",
+                }}
+              >
+                <option value="JPY">JPY（円）</option>
+                <option value="USD">USD（ドル）</option>
+              </select>
             </div>
 
             <div>
