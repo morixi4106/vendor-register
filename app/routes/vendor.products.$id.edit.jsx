@@ -256,39 +256,89 @@ export const action = async ({ request, params }) => {
     });
 
     if (product.shopifyProductId) {
-      const result = await shopifyGraphQL(
-        `
-          mutation productUpdate($input: ProductInput!) {
-            productUpdate(input: $input) {
-              product {
-                id
-                status
-              }
-              userErrors {
-                field
-                message
-              }
-            }
+  const result = await shopifyGraphQL(
+    `
+      mutation productUpdate($input: ProductInput!) {
+        productUpdate(input: $input) {
+          product {
+            id
+            status
           }
-        `,
-        {
-          input: {
-            id: product.shopifyProductId,
-            title: updatedProduct.name,
-            descriptionHtml: updatedProduct.description || "",
-            productType: updatedProduct.category || "",
-            status: "DRAFT",
-          },
+          userErrors {
+            field
+            message
+          }
         }
-      );
-
-      const userErrors = result?.productUpdate?.userErrors || [];
-
-      if (userErrors.length > 0) {
-        console.error("userErrors:", userErrors);
-        throw new Error(userErrors.map((e) => e.message).join(", "));
       }
+    `,
+    {
+      input: {
+        id: product.shopifyProductId,
+        title: updatedProduct.name,
+        descriptionHtml: updatedProduct.description || "",
+        productType: updatedProduct.category || "",
+        status: "DRAFT",
+      },
     }
+  );
+
+  const userErrors = result?.productUpdate?.userErrors || [];
+
+  if (userErrors.length > 0) {
+    console.error("userErrors:", userErrors);
+    throw new Error(userErrors.map((e) => e.message).join(", "));
+  }
+
+  const metafieldsResult = await shopifyGraphQL(
+    `
+      mutation UpdateMetafields($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields {
+            key
+            namespace
+            value
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      metafields: [
+        {
+          ownerId: product.shopifyProductId,
+          namespace: "pricing",
+          key: "cost_amount",
+          type: "number_decimal",
+          value: String(price),
+        },
+        {
+          ownerId: product.shopifyProductId,
+          namespace: "pricing",
+          key: "cost_currency",
+          type: "single_line_text_field",
+          value: "JPY",
+        },
+        {
+          ownerId: product.shopifyProductId,
+          namespace: "pricing",
+          key: "duty_category",
+          type: "single_line_text_field",
+          value: category === "スキンケア" ? "cosmetics" : "",
+        },
+      ],
+    }
+  );
+
+  const metafieldErrors = metafieldsResult?.metafieldsSet?.userErrors || [];
+
+  if (metafieldErrors.length > 0) {
+    console.error("metafieldErrors:", metafieldErrors);
+    throw new Error(metafieldErrors.map((e) => e.message).join(", "));
+  }
+}
 
     return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
   } catch (error) {
