@@ -1,46 +1,56 @@
 import { json } from "@remix-run/node";
 import { upsertFxRate } from "../utils/fxRates.server";
 
-export const action = async ({ request }) => {
+const API_KEY = process.env.EXCHANGE_RATE_API_KEY;
+
+export const action = async () => {
   try {
-    const formData = await request.formData();
-
-    const base = String(formData.get("base") || "").trim().toUpperCase();
-    const quote = String(formData.get("quote") || "JPY").trim().toUpperCase();
-    const rateRaw = String(formData.get("rate") || "").trim();
-
-    if (!base) {
+    if (!API_KEY) {
       return json(
-        { ok: false, error: "base が必要です。" },
-        { status: 400 }
+        { ok: false, error: "EXCHANGE_RATE_API_KEY が設定されていません。" },
+        { status: 500 }
       );
     }
 
-    if (!quote) {
+    const response = await fetch(
+      `https://v6.exchangerate-api.com/v6/${API_KEY}/latest/USD`,
+      {
+        method: "GET",
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
       return json(
-        { ok: false, error: "quote が必要です。" },
-        { status: 400 }
+        {
+          ok: false,
+          error: data?.["error-type"]
+            ? `為替APIエラー: ${data["error-type"]}`
+            : "為替APIの取得に失敗しました。",
+        },
+        { status: 500 }
       );
     }
 
-    const rate = Number(rateRaw);
+    const rate = Number(data?.conversion_rates?.JPY);
 
     if (!Number.isFinite(rate) || rate <= 0) {
       return json(
-        { ok: false, error: "為替レートを正しく入力してください。" },
-        { status: 400 }
+        { ok: false, error: "USD/JPY レートの取得に失敗しました。" },
+        { status: 500 }
       );
     }
 
     const saved = await upsertFxRate({
-      base,
-      quote,
+      base: "USD",
+      quote: "JPY",
       rate,
     });
 
     return json({
       ok: true,
-      message: `${saved.base}/${saved.quote} の為替レートを ${saved.rate} に更新しました。`,
+      message: `USD/JPY を ${saved.rate} に更新しました。`,
       fxRate: saved,
     });
   } catch (error) {

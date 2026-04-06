@@ -324,13 +324,33 @@ export const action = async ({ request }) => {
         );
       }
 
+      const refreshRes = await fetch(
+        `${new URL(request.url).origin}/api/refresh-fx`,
+        {
+          method: "POST",
+        }
+      );
+
+      const refreshData = await refreshRes.json();
+
+      if (!refreshRes.ok || !refreshData?.ok) {
+        return json(
+          {
+            ok: false,
+            error: refreshData?.error || "為替更新に失敗しました",
+          },
+          { status: 500 }
+        );
+      }
+
       const { applyProductPrice } = await import("../utils/applyProductPrice.server");
       const result = await applyProductPrice(product.shopifyProductId);
 
       return json({
         ok: true,
-        message: `価格を更新しました（¥${result.oldPrice} → ¥${result.newPrice}）`,
+        message: `為替更新後に価格を更新しました（USD/JPY=${refreshData.fxRate.rate}）（¥${result.oldPrice} → ¥${result.newPrice}）`,
         priceApplied: true,
+        fxRate: refreshData.fxRate,
         result,
       });
     }
