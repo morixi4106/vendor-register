@@ -560,7 +560,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                価格
+                原価
               </label>
               <input
                 id="price"
@@ -569,7 +569,7 @@ export default function EditPage() {
                 min="0"
                 step="1"
                 defaultValue={product.price ?? 0}
-                placeholder="1000"
+                placeholder="1000（原価）"
                 style={{
                   width: "100%",
                   height: "48px",

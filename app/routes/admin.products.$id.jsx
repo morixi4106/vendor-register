@@ -87,6 +87,26 @@ async function createShopifyProductFromDbProduct(product) {
       vendor: product.vendorStore?.storeName || "Vendor",
       productType: product.category || "",
       status: "ACTIVE",
+      metafields: [
+        {
+          namespace: "pricing",
+          key: "cost_amount",
+          type: "number_decimal",
+          value: String(product.price ?? 0),
+        },
+        {
+          namespace: "pricing",
+          key: "cost_currency",
+          type: "single_line_text_field",
+          value: "JPY",
+        },
+        {
+          namespace: "pricing",
+          key: "duty_category",
+          type: "single_line_text_field",
+          value: product.category === "スキンケア" ? "cosmetics" : "",
+        },
+      ],
     },
   };
 
@@ -211,6 +231,9 @@ async function createShopifyProductFromDbProduct(product) {
       );
     }
   }
+
+  const { applyProductPrice } = await import("../utils/applyProductPrice.server");
+  await applyProductPrice(createdProduct.id);
 
   return {
     shopifyProductId: createdProduct.id,
