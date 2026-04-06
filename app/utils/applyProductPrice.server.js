@@ -3,7 +3,7 @@ import { calculatePriceBreakdown } from './priceCalculator.js';
 
 const SHOP = 'b30ize-1a.myshopify.com';
 const API_VERSION = '2026-04';
-const DEFAULT_FX_RATE = 1;
+const DEFAULT_FX_RATE = 150;
 const DUTY_RATE_MAP = {
   cosmetics: 0.2,
 };
