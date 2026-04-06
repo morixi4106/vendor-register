@@ -513,7 +513,7 @@ export default function AdminProductDetail() {
           <p>状態: {product.approvalStatus}</p>
           <p>Shopify商品ID: {product.shopifyProductId || "-"}</p>
           <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "8px" }}>
-            ※ 原価と原価通貨をもとに販売価格が自動計算されます。
+            ※ 原価・通貨・関税設定をもとに販売価格が自動計算されます。
           </p>
         </div>
 
