@@ -94,7 +94,12 @@ export async function applyProductPrice(productId, options = {}) {
     throw new Error('pricing.cost_amount is empty');
   }
 
-  if (costCurrency !== 'JPY') {
+  let finalCostAmount = costAmount;
+
+  if (costCurrency === "USD") {
+    const rate = Number(options.fxRate ?? DEFAULT_FX_RATE ?? 150);
+    finalCostAmount = costAmount * rate;
+  } else if (costCurrency !== "JPY") {
     throw new Error(`Unsupported currency: ${costCurrency}`);
   }
 
@@ -105,7 +110,7 @@ export async function applyProductPrice(productId, options = {}) {
   const dutyRate = Number(options.dutyRate ?? DUTY_RATE_MAP[dutyCategory] ?? 0);
 
   const breakdown = calculatePriceBreakdown({
-    costAmount,
+    costAmount: finalCostAmount,
     fxRate,
     dutyRate,
     marginRate,
