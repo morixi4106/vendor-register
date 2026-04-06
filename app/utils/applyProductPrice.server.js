@@ -1,9 +1,10 @@
 import prisma from '../db.server';
 import { calculatePriceBreakdown } from './priceCalculator.js';
+import { getFxRateToJpy } from './fxRates.server.js';
 
 const SHOP = 'b30ize-1a.myshopify.com';
 const API_VERSION = '2026-04';
-const DEFAULT_FX_RATE = 150;
+
 const DUTY_RATE_MAP = {
   cosmetics: 0.2,
 };
@@ -35,8 +36,6 @@ export async function applyProductPrice(productId, options = {}) {
   if (!productId) {
     throw new Error('productId is required');
   }
-
-  let finalFxRate = Number(options.fxRate ?? DEFAULT_FX_RATE);
 
   const session = await prisma.session.findFirst({
     where: {
@@ -94,15 +93,10 @@ export async function applyProductPrice(productId, options = {}) {
     throw new Error('pricing.cost_amount is empty');
   }
 
-  let finalCostAmount = costAmount;
-
-  if (costCurrency === "JPY") {
-    finalFxRate = 1;
-  } else if (costCurrency === "USD") {
-    finalFxRate = Number(options.fxRate ?? DEFAULT_FX_RATE);
-  } else {
-    throw new Error(`Unsupported currency: ${costCurrency}`);
-  }
+  const finalFxRate =
+    options.fxRate != null
+      ? Number(options.fxRate)
+      : getFxRateToJpy(costCurrency);
 
   const marginRate = Number(readData.shop?.marginRate?.value ?? 0.1);
   const paymentFeeRate = Number(readData.shop?.paymentFeeRate?.value ?? 0.04);

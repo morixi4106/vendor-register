@@ -508,11 +508,12 @@ export default function AdminProductDetail() {
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
           <h3>基本情報</h3>
-          <p>原価: ¥{product.price}</p>
+          <p>原価: {product.costCurrency || "JPY"} {product.price}</p>
+          <p>販売価格（Shopify）: {shopifyPrice ? `¥${shopifyPrice}` : "-"}</p>
           <p>状態: {product.approvalStatus}</p>
           <p>Shopify商品ID: {product.shopifyProductId || "-"}</p>
           <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "8px" }}>
-            ※ 原価をもとに販売価格が自動計算されます。
+            ※ 原価と原価通貨をもとに販売価格が自動計算されます。
           </p>
         </div>
 
