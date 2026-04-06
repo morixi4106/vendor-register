@@ -36,7 +36,7 @@ export async function applyProductPrice(productId, options = {}) {
     throw new Error('productId is required');
   }
 
-  const fxRate = Number(options.fxRate ?? DEFAULT_FX_RATE);
+  let finalFxRate = Number(options.fxRate ?? DEFAULT_FX_RATE);
 
   const session = await prisma.session.findFirst({
     where: {
@@ -96,10 +96,11 @@ export async function applyProductPrice(productId, options = {}) {
 
   let finalCostAmount = costAmount;
 
-  if (costCurrency === "USD") {
-    const rate = Number(options.fxRate ?? DEFAULT_FX_RATE ?? 150);
-    finalCostAmount = costAmount * rate;
-  } else if (costCurrency !== "JPY") {
+  if (costCurrency === "JPY") {
+    finalFxRate = 1;
+  } else if (costCurrency === "USD") {
+    finalFxRate = Number(options.fxRate ?? DEFAULT_FX_RATE);
+  } else {
     throw new Error(`Unsupported currency: ${costCurrency}`);
   }
 
@@ -110,8 +111,8 @@ export async function applyProductPrice(productId, options = {}) {
   const dutyRate = Number(options.dutyRate ?? DUTY_RATE_MAP[dutyCategory] ?? 0);
 
   const breakdown = calculatePriceBreakdown({
-    costAmount: finalCostAmount,
-    fxRate,
+    costAmount,
+    fxRate: finalFxRate,
     dutyRate,
     marginRate,
     paymentFeeRate,
