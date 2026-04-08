@@ -83,40 +83,40 @@ async function createShopifyProductFromDbProduct(product) {
 
   const dutyCategory = resolveDutyCategory(product.category);
 
-const metafields = [
-  {
-    namespace: "pricing",
-    key: "cost_amount",
-    type: "number_decimal",
-    value: String(product.costAmount ?? product.price ?? 0),
-  },
-  {
-    namespace: "pricing",
-    key: "cost_currency",
-    type: "single_line_text_field",
-    value: product.costCurrency || "JPY",
-  },
-];
+  const metafields = [
+    {
+      namespace: "pricing",
+      key: "cost_amount",
+      type: "number_decimal",
+      value: String(product.costAmount ?? product.price ?? 0),
+    },
+    {
+      namespace: "pricing",
+      key: "cost_currency",
+      type: "single_line_text_field",
+      value: product.costCurrency || "JPY",
+    },
+  ];
 
-if (dutyCategory) {
-  metafields.push({
-    namespace: "pricing",
-    key: "duty_category",
-    type: "single_line_text_field",
-    value: dutyCategory,
-  });
-}
+  if (dutyCategory) {
+    metafields.push({
+      namespace: "pricing",
+      key: "duty_category",
+      type: "single_line_text_field",
+      value: dutyCategory,
+    });
+  }
 
-const createVariables = {
-  product: {
-    title: product.name,
-    descriptionHtml: product.description || "",
-    vendor: product.vendorStore?.storeName || "Vendor",
-    productType: product.category || "",
-    status: "ACTIVE",
-    metafields,
-  },
-};
+  const createVariables = {
+    product: {
+      title: product.name,
+      descriptionHtml: product.description || "",
+      vendor: product.vendorStore?.storeName || "Vendor",
+      productType: product.category || "",
+      status: "ACTIVE",
+      metafields,
+    },
+  };
 
   const createResult = await shopifyGraphQL(createMutation, createVariables);
   const createPayload = createResult?.productCreate;
@@ -267,31 +267,50 @@ export const loader = async ({ params }) => {
   }
 
   let shopifyPrice = null;
+  let needsReconnect = false;
+  let shopifyError = null;
 
   if (product.shopifyProductId) {
-    const shopifyData = await shopifyGraphQL(
-      `
-        query ReadProductPrice($id: ID!) {
-          product(id: $id) {
-            id
-            variants(first: 1) {
-              nodes {
-                id
-                price
+    try {
+      const shopifyData = await shopifyGraphQL(
+        `
+          query ReadProductPrice($id: ID!) {
+            product(id: $id) {
+              id
+              variants(first: 1) {
+                nodes {
+                  id
+                  price
+                }
               }
             }
           }
+        `,
+        {
+          id: product.shopifyProductId,
         }
-      `,
-      {
-        id: product.shopifyProductId,
-      }
-    );
+      );
 
-    shopifyPrice = shopifyData?.product?.variants?.nodes?.[0]?.price || null;
+      shopifyPrice =
+        shopifyData?.product?.variants?.nodes?.[0]?.price || null;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "不明なエラーです";
+
+      shopifyError = message;
+
+      if (
+        message.includes("Invalid API key or access token") ||
+        message.includes("401")
+      ) {
+        needsReconnect = true;
+      } else {
+        throw error;
+      }
+    }
   }
 
-  return json({ product, shopifyPrice });
+  return json({ product, shopifyPrice, needsReconnect, shopifyError });
 };
 
 export const action = async ({ request }) => {
@@ -451,7 +470,7 @@ export const action = async ({ request }) => {
 };
 
 export default function AdminProductDetail() {
-  const { product, shopifyPrice } = useLoaderData();
+  const { product, shopifyPrice, needsReconnect, shopifyError } = useLoaderData();
   const actionData = useActionData();
 
   return (
@@ -504,6 +523,51 @@ export default function AdminProductDetail() {
               </Form>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {needsReconnect ? (
+        <div
+          style={{
+            marginTop: "20px",
+            marginBottom: "20px",
+            padding: "14px",
+            borderRadius: "8px",
+            background: "#fff7ed",
+            border: "1px solid #fdba74",
+            color: "#9a3412",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <strong>Shopify接続エラー:</strong>
+          <div style={{ marginTop: "8px" }}>
+            {shopifyError || "Shopify接続が切れています。再接続してください。"}
+          </div>
+
+          <div style={{ marginTop: "14px" }}>
+            <Form method="post" action="/admin/shopify-reconnect">
+              <input
+                type="hidden"
+                name="returnTo"
+                value={`/admin/products/${product.id}`}
+              />
+              <button
+                type="submit"
+                style={{
+                  height: "40px",
+                  padding: "0 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                Shopify再接続
+              </button>
+            </Form>
+          </div>
         </div>
       ) : null}
 
