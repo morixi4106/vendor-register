@@ -133,9 +133,9 @@ if (imageFile && typeof imageFile.size === "number" && imageFile.size > 0) {
     );
   }
 
-  const price = Number(priceRaw);
+  const costAmount = Number(priceRaw);
 
-  if (!Number.isInteger(price) || price < 0) {
+  if (!Number.isInteger(costAmount) || costAmount < 0) {
   return json(
     { ok: false, error: "価格は0以上の整数で入力してください。" },
     { status: 400 }
@@ -148,7 +148,7 @@ const createdProduct = await prisma.product.create({
     description: description || null,
     imageUrl: imageUrl,
     category: category || null,
-    price,
+    costAmount,
     costCurrency,
     url: url || null,
     vendorStoreId: store.id,
