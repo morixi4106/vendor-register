@@ -52,6 +52,7 @@ model Product {
   imageUrl         String?
   category         String?
   price            Int
+  costAmount       Int?
   costCurrency     String      @default("JPY")
   url              String?
   vendorStoreId    String
