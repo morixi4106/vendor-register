@@ -231,9 +231,9 @@ export const action = async ({ request, params }) => {
       );
     }
 
-    const price = Number(priceRaw);
+    const costAmount = Number(priceRaw);
 
-    if (!Number.isInteger(price) || price < 0) {
+    if (!Number.isInteger(costAmount) || costAmount < 0) {
       return json(
         { ok: false, error: "価格は0以上の整数で入力してください。" },
         { status: 400 }
@@ -257,7 +257,8 @@ export const action = async ({ request, params }) => {
         name,
         description: description || null,
         category: category || null,
-        price,
+        price: costAmount,
+        costAmount,
         costCurrency,
         url: url || null,
         imageUrl: imageUrl || null,
@@ -305,7 +306,7 @@ export const action = async ({ request, params }) => {
       namespace: "pricing",
       key: "cost_amount",
       type: "number_decimal",
-      value: String(price),
+      value: String(costAmount),
     },
     {
       ownerId: product.shopifyProductId,
