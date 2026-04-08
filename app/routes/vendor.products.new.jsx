@@ -148,7 +148,7 @@ const createdProduct = await prisma.product.create({
     description: description || null,
     imageUrl: imageUrl,
     category: category || null,
-    costAmount,
+    price: costAmount,
     costCurrency,
     url: url || null,
     vendorStoreId: store.id,
