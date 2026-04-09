@@ -347,7 +347,8 @@ export const loader = async ({ params }) => {
 
       if (
         message.includes("Invalid API key or access token") ||
-        message.includes("401")
+        message.includes("401") ||
+        message.includes("Offline session not found")
       ) {
         needsReconnect = true;
       } else {

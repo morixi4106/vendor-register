@@ -52,7 +52,7 @@ model Product {
   imageUrl         String?
   category         String?
   price            Int
-  costAmount       Int?
+  costAmount       Decimal?    @db.Decimal(12, 2)
   costCurrency     String      @default("JPY")
   url              String?
   vendorStoreId    String
