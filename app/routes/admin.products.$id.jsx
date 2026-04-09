@@ -672,13 +672,20 @@ export default function AdminProductDetail() {
         <div>
           <h3>基本情報</h3>
           {priceBreakdown ? (
-            <div style={{ marginTop: "10px", padding: "10px", background: "#f9fafb", borderRadius: "8px" }}>
-              <p>為替レート: {priceBreakdown.input.fxRate.toFixed(4)}</p>
-              <p>関税率: {(priceBreakdown.input.dutyRate * 100).toFixed(1)}%</p>
-              <p>原価(JPY換算): ¥{Math.round(priceBreakdown.breakdown.costFx)}</p>
-              <p>関税込原価: ¥{Math.round(priceBreakdown.breakdown.landed)}</p>
-              <p>安全原価: ¥{Math.round(priceBreakdown.breakdown.safeCost)}</p>
-              <p>目標価格: ¥{Math.round(priceBreakdown.breakdown.target)}</p>
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "10px",
+                background: "#f9fafb",
+                borderRadius: "8px",
+              }}
+            >
+              <p>原価(JPY換算): ¥{Math.round(priceBreakdown.costFx)}</p>
+              <p>関税: ¥{Math.round(priceBreakdown.duty)}</p>
+              <p>関税込原価: ¥{Math.round(priceBreakdown.landed)}</p>
+              <p>安全原価: ¥{Math.round(priceBreakdown.safeCost)}</p>
+              <p>目標価格: ¥{Math.round(priceBreakdown.target)}</p>
+              <p>計算前価格: ¥{Math.round(priceBreakdown.rawPrice)}</p>
               <p><strong>最終価格: ¥{priceBreakdown.finalPrice}</strong></p>
             </div>
           ) : null}
