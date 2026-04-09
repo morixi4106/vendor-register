@@ -23,6 +23,10 @@ api_version = "2026-04"
   topics = [ "products/create" ]
   uri = "/webhooks/products/create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "products/delete" ]
+  uri = "/webhooks/products/delete"
+
 [access_scopes]
 scopes = "write_customers,read_customers,write_app_proxy,read_products,read_orders"
 

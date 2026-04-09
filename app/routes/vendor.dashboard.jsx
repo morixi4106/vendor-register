@@ -826,6 +826,24 @@ export default function VendorDashboard() {
         </aside>
 
         <main className="dash-main">
+          {actionData?.error ? (
+            <section
+              className="dash-card"
+              style={{
+                borderColor: actionData?.needsReconnect ? "#f59e0b" : "#fecaca",
+                background: actionData?.needsReconnect ? "#fffbeb" : "#fef2f2",
+                color: actionData?.needsReconnect ? "#92400e" : "#b91c1c",
+              }}
+            >
+              <h2 className="dash-section-title" style={{ marginBottom: "12px" }}>
+                Product deletion failed
+              </h2>
+              <p className="dash-section-sub" style={{ color: "inherit", marginBottom: 0 }}>
+                {actionData.error}
+              </p>
+            </section>
+          ) : null}
+
           <section className="dash-cards">
             {summaryCards.map((card) => (
               <div className="dash-card" key={card.title}>
