@@ -1,5 +1,5 @@
 import { createCookie, json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import prisma from "../db.server";
 
@@ -13,6 +13,14 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
 
 const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
+
+function isReconnectableShopifyError(message = "") {
+  return (
+    message.includes("Invalid API key or access token") ||
+    message.includes("401") ||
+    message.includes("Offline session not found")
+  );
+}
 
 function formatMoney(amount, currencyCode = "JPY") {
   const num = Number(amount || 0);
@@ -140,29 +148,41 @@ async function deleteShopifyProduct(shopifyProductId) {
   try {
     const result = await shopifyGraphQL(mutation, variables);
     const payload = result?.productDelete;
+    const userErrors = payload?.userErrors || [];
 
-    if (!payload) {
-      console.log("Shopify response empty → 無視");
-      return true;
-    }
+    if (userErrors.length > 0) {
+      const message = userErrors[0]?.message || "Shopify削除に失敗しました。";
 
-    if (payload.userErrors?.length) {
-      const message = payload.userErrors[0]?.message || "";
-
-      // 👇 ここが最重要
-      if (message.includes("does not exist")) {
-        console.log("Shopifyに存在しない → OKとして続行");
-        return true;
+      if (
+        message.includes("does not exist") ||
+        message.includes("Product does not exist")
+      ) {
+        return {
+          ok: true,
+          alreadyDeleted: true,
+        };
       }
 
-      console.log("Shopify削除エラー:", payload.userErrors);
-      return true; // 👈止めない
+      return {
+        ok: false,
+        error: message,
+        needsReconnect: isReconnectableShopifyError(message),
+      };
     }
 
-    return true;
-  } catch (e) {
-    console.log("Shopify削除失敗（無視して続行）:", e.message);
-    return true; // 👈絶対止めない
+    return {
+      ok: true,
+      deletedProductId: payload?.deletedProductId || null,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Shopify削除に失敗しました。";
+
+    return {
+      ok: false,
+      error: message,
+      needsReconnect: isReconnectableShopifyError(message),
+    };
   }
 }
 
@@ -314,40 +334,54 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent === "delete") {
-    const productId = String(formData.get("productId") || "").trim();
+  const productId = String(formData.get("productId") || "").trim();
 
-    if (!productId) {
-      return null;
-    }
-
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-    });
-
-    if (!product || product.vendorStoreId !== store.id) {
-      return null;
-    }
-
-    try {
-      if (product.shopifyProductId) {
-        await deleteShopifyProduct(product.shopifyProductId);
-      }
-
-      await prisma.product.delete({
-        where: { id: productId },
-      });
-    } catch (error) {
-      console.error("vendor delete error:", error);
-      return null;
-    }
-
-    return null;
+  if (!productId) {
+    return json(
+      { ok: false, error: "productId がありません。" },
+      { status: 400 }
+    );
   }
+
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+  });
+
+  if (!product || product.vendorStoreId !== store.id) {
+    return json(
+      { ok: false, error: "商品が見つかりません。" },
+      { status: 404 }
+    );
+  }
+
+  if (product.shopifyProductId) {
+    const shopifyDelete = await deleteShopifyProduct(product.shopifyProductId);
+
+    if (!shopifyDelete.ok) {
+      return json(
+        {
+          ok: false,
+          error: shopifyDelete.error || "Shopify側の商品削除に失敗しました。",
+          needsReconnect: shopifyDelete.needsReconnect || false,
+        },
+        { status: 500 }
+      );
+    }
+  }
+
+  await prisma.product.delete({
+    where: { id: productId },
+  });
+
+  return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
+}
 
   return null;
 };
 
 export default function VendorDashboard() {
+  const actionData = useActionData();
+
   const { summaryCards, priorityOrders, products, monthlySales, chartData, store } =
     useLoaderData();
 
