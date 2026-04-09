@@ -448,9 +448,9 @@ export const action = async ({ request }) => {
 
       return json({
         ok: true,
-        message: `為替更新後に価格を更新しました（USD/JPY=${refreshData.fxRate.rate}）（¥${result.oldPrice} → ¥${result.newPrice}）`,
+        message: `為替更新後に価格を更新しました（¥${result.oldPrice} → ¥${result.newPrice}）`,
         priceApplied: true,
-        fxRate: refreshData.fxRate,
+        fxRates: refreshData.fxRates || [],
         result,
       });
     }
