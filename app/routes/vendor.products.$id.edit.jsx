@@ -234,9 +234,9 @@ export const action = async ({ request, params }) => {
 
     const costAmount = Number(priceRaw);
 
-    if (!Number.isInteger(costAmount) || costAmount < 0) {
+    if (!Number.isFinite(costAmount) || costAmount < 0) {
       return json(
-        { ok: false, error: "価格は0以上の整数で入力してください。" },
+        { ok: false, error: "価格は0以上の数値で入力してください。" },
         { status: 400 }
       );
     }
@@ -634,7 +634,7 @@ export default function EditPage() {
                 name="price"
                 type="number"
                 min="0"
-                step="1"
+                step="0.01"
                 defaultValue={product.price ?? 0}
                 placeholder="1000（原価）"
                 style={{
