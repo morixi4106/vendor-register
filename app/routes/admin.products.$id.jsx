@@ -516,7 +516,7 @@ export const action = async ({ request }) => {
 };
 
 export default function AdminProductDetail() {
-  const { product, shopifyPrice, needsReconnect, shopifyError } = useLoaderData();
+  const { product, shopifyPrice, needsReconnect, shopifyError, priceBreakdown } = useLoaderData();
   const actionData = useActionData();
 
   return (
