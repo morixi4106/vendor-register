@@ -10,6 +10,7 @@ import prisma from "../db.server";
 
 const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
+const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -210,7 +211,7 @@ export const action = async ({ request, params }) => {
     const url = String(formData.get("url") || "").trim();
     const costCurrency = String(formData.get("costCurrency") || "JPY").trim().toUpperCase();
 
-    if (!["JPY", "USD"].includes(costCurrency)) {
+    if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
         { ok: false, error: "原価通貨が不正です。" },
         { status: 400 }
@@ -662,23 +663,27 @@ export default function EditPage() {
                 原価通貨
               </label>
               <select
-                id="costCurrency"
-                name="costCurrency"
-                defaultValue={product.costCurrency || "JPY"}
-                style={{
-                  width: "100%",
-                  height: "48px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "10px",
-                  padding: "0 14px",
-                  fontSize: "14px",
-                  boxSizing: "border-box",
-                  background: "#ffffff",
-                }}
-              >
-                <option value="JPY">JPY（円）</option>
-                <option value="USD">USD（ドル）</option>
-              </select>
+              id="costCurrency"
+              name="costCurrency"
+              defaultValue={product.costCurrency || "JPY"}
+              style={{
+                width: "100%",
+                height: "48px",
+                border: "1px solid #d1d5db",
+                borderRadius: "10px",
+                padding: "0 14px",
+                fontSize: "14px",
+                boxSizing: "border-box",
+                background: "#ffffff",
+              }}
+            >
+              <option value="JPY">JPY（円）</option>
+              <option value="USD">USD（ドル）</option>
+              <option value="EUR">EUR（ユーロ）</option>
+              <option value="GBP">GBP（ポンド）</option>
+              <option value="CNY">CNY（人民元）</option>
+              <option value="KRW">KRW（ウォン）</option>
+            </select>
             </div>
 
             <div>

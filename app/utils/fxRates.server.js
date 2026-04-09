@@ -1,10 +1,5 @@
 import prisma from "../db.server";
 
-export const FALLBACK_FX_RATES = {
-  JPY: 1,
-  USD: 150,
-};
-
 export async function getFxRateToJpy(currency) {
   if (!currency) {
     throw new Error("currency is required");
@@ -25,17 +20,17 @@ export async function getFxRateToJpy(currency) {
     },
   });
 
-  if (fxRate?.rate && Number.isFinite(fxRate.rate) && fxRate.rate > 0) {
-    return fxRate.rate;
+  if (!fxRate) {
+    throw new Error(`FX rate not found: ${normalized}/JPY`);
   }
 
-  const fallback = FALLBACK_FX_RATES[normalized];
+  const rate = Number(fxRate.rate);
 
-  if (!fallback) {
-    throw new Error(`Unsupported currency: ${normalized}`);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error(`Invalid FX rate: ${normalized}/JPY`);
   }
 
-  return fallback;
+  return rate;
 }
 
 export async function upsertFxRate({ base, quote, rate }) {

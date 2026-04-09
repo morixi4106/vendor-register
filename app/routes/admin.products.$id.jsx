@@ -2,6 +2,8 @@ import { resolveDutyCategory } from "../utils/dutyCategory";
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
+import { getFxRateToJpy } from "../utils/fxRates.server";
+import { calculatePriceBreakdown } from "../utils/priceCalculator";
 
 const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
@@ -266,6 +268,50 @@ export const loader = async ({ params }) => {
     throw new Response("商品が見つかりません", { status: 404 });
   }
 
+  let priceBreakdown = null;
+
+  try {
+    const costAmount = Number(product.costAmount ?? product.price ?? 0);
+    const costCurrency = product.costCurrency || "JPY";
+    const dutyCategory = resolveDutyCategory(product.category);
+
+    const dutyRateMap = {
+      cosmetics: 0.2,
+    };
+
+    const dutyRate = dutyRateMap[dutyCategory] ?? 0;
+
+    const fxRate = await getFxRateToJpy(costCurrency);
+
+    const shopSettingsData = await shopifyGraphQL(`
+      query ReadShopPricingSettings {
+        shop {
+          marginRate: metafield(namespace: "global_pricing", key: "default_margin_rate") { value }
+          paymentFeeRate: metafield(namespace: "global_pricing", key: "payment_fee_rate") { value }
+          paymentFeeFixed: metafield(namespace: "global_pricing", key: "payment_fee_fixed") { value }
+          bufferRate: metafield(namespace: "global_pricing", key: "buffer_rate") { value }
+        }
+      }
+    `);
+
+    const marginRate = Number(shopSettingsData?.shop?.marginRate?.value ?? 0.1);
+    const paymentFeeRate = Number(shopSettingsData?.shop?.paymentFeeRate?.value ?? 0.04);
+    const paymentFeeFixed = Number(shopSettingsData?.shop?.paymentFeeFixed?.value ?? 50);
+    const bufferRate = Number(shopSettingsData?.shop?.bufferRate?.value ?? 0.1);
+
+    priceBreakdown = calculatePriceBreakdown({
+      costAmount,
+      fxRate,
+      dutyRate,
+      marginRate,
+      paymentFeeRate,
+      paymentFeeFixed,
+      bufferRate,
+    });
+  } catch (e) {
+    console.error("price breakdown error:", e);
+  }
+
   let shopifyPrice = null;
   let needsReconnect = false;
   let shopifyError = null;
@@ -310,7 +356,7 @@ export const loader = async ({ params }) => {
     }
   }
 
-  return json({ product, shopifyPrice, needsReconnect, shopifyError });
+  return json({ product, shopifyPrice, needsReconnect, shopifyError, priceBreakdown });
 };
 
 export const action = async ({ request }) => {
@@ -592,6 +638,17 @@ export default function AdminProductDetail() {
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
           <h3>基本情報</h3>
+          {priceBreakdown ? (
+            <div style={{ marginTop: "10px", padding: "10px", background: "#f9fafb", borderRadius: "8px" }}>
+              <p>為替レート: {priceBreakdown.input.fxRate.toFixed(4)}</p>
+              <p>関税率: {(priceBreakdown.input.dutyRate * 100).toFixed(1)}%</p>
+              <p>原価(JPY換算): ¥{Math.round(priceBreakdown.breakdown.costFx)}</p>
+              <p>関税込原価: ¥{Math.round(priceBreakdown.breakdown.landed)}</p>
+              <p>安全原価: ¥{Math.round(priceBreakdown.breakdown.safeCost)}</p>
+              <p>目標価格: ¥{Math.round(priceBreakdown.breakdown.target)}</p>
+              <p><strong>最終価格: ¥{priceBreakdown.finalPrice}</strong></p>
+            </div>
+          ) : null}
           <p>
             原価: {product.costCurrency || "JPY"} {product.costAmount ?? product.price}
           </p>

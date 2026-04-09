@@ -3,6 +3,8 @@ import { Form, useActionData } from "@remix-run/react";
 import prisma from "../db.server";
 import { Resend } from "resend";
 
+const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
+
 const resend = new Resend(process.env.RESEND_API_KEY);
 async function uploadImageToCloudinary(file) {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -112,7 +114,7 @@ if (imageFile && typeof imageFile.size === "number" && imageFile.size > 0) {
   const url = String(formData.get("url") || "").trim();
   const costCurrency = String(formData.get("costCurrency") || "JPY").trim().toUpperCase();
 
-  if (!["JPY", "USD"].includes(costCurrency)) {
+  if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
     return json(
       { ok: false, error: "原価通貨が不正です。" },
       { status: 400 }
@@ -423,6 +425,10 @@ export default function VendorProductsNew() {
               >
                 <option value="JPY">JPY（円）</option>
                 <option value="USD">USD（ドル）</option>
+                <option value="EUR">EUR（ユーロ）</option>
+                <option value="GBP">GBP（ポンド）</option>
+                <option value="CNY">CNY（人民元）</option>
+                <option value="KRW">KRW（ウォン）</option>
               </select>
             </div>
 
