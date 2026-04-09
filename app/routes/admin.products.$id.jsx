@@ -8,6 +8,21 @@ import { calculatePriceBreakdown } from "../utils/priceCalculator";
 const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
 
+const DEFAULT_PRICING_SETTINGS = {
+  marginRate: 0.1,
+  paymentFeeRate: 0.04,
+  paymentFeeFixed: 50,
+  bufferRate: 0.1,
+};
+
+function isReconnectableShopifyError(message = "") {
+  return (
+    message.includes("Invalid API key or access token") ||
+    message.includes("401") ||
+    message.includes("Offline session not found")
+  );
+}
+
 async function getOfflineAccessToken() {
   const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
 
@@ -268,22 +283,29 @@ export const loader = async ({ params }) => {
     throw new Response("商品が見つかりません", { status: 404 });
   }
 
+  let shopifyPrice = null;
+  let needsReconnect = false;
+  let shopifyError = null;
   let priceBreakdown = null;
 
+  const costAmount = Number(product.costAmount ?? product.price ?? 0);
+  const costCurrency = String(product.costCurrency || "JPY").trim().toUpperCase();
+  const dutyCategory = resolveDutyCategory(product.category);
+
+  const dutyRateMap = {
+    cosmetics: 0.2,
+  };
+
+  const dutyRate = dutyRateMap[dutyCategory] ?? 0;
+
+  let marginRate = DEFAULT_PRICING_SETTINGS.marginRate;
+  let paymentFeeRate = DEFAULT_PRICING_SETTINGS.paymentFeeRate;
+  let paymentFeeFixed = DEFAULT_PRICING_SETTINGS.paymentFeeFixed;
+  let bufferRate = DEFAULT_PRICING_SETTINGS.bufferRate;
+
+  // Shopifyのglobal_pricingを読めれば使う。読めなくても表示は止めない
   try {
-    const costAmount = Number(product.costAmount ?? product.price ?? 0);
-    const costCurrency = product.costCurrency || "JPY";
-    const dutyCategory = resolveDutyCategory(product.category);
-
-    const dutyRateMap = {
-      cosmetics: 0.2,
-    };
-
-    const dutyRate = dutyRateMap[dutyCategory] ?? 0;
-
-    const fxRate = await getFxRateToJpy(costCurrency);
-
-    const shopSettingsData = await shopifyGraphQL(`
+    const settingsData = await shopifyGraphQL(`
       query ReadShopPricingSettings {
         shop {
           marginRate: metafield(namespace: "global_pricing", key: "default_margin_rate") { value }
@@ -294,10 +316,24 @@ export const loader = async ({ params }) => {
       }
     `);
 
-    const marginRate = Number(shopSettingsData?.shop?.marginRate?.value ?? 0.1);
-    const paymentFeeRate = Number(shopSettingsData?.shop?.paymentFeeRate?.value ?? 0.04);
-    const paymentFeeFixed = Number(shopSettingsData?.shop?.paymentFeeFixed?.value ?? 50);
-    const bufferRate = Number(shopSettingsData?.shop?.bufferRate?.value ?? 0.1);
+    marginRate = Number(settingsData?.shop?.marginRate?.value ?? marginRate);
+    paymentFeeRate = Number(settingsData?.shop?.paymentFeeRate?.value ?? paymentFeeRate);
+    paymentFeeFixed = Number(settingsData?.shop?.paymentFeeFixed?.value ?? paymentFeeFixed);
+    bufferRate = Number(settingsData?.shop?.bufferRate?.value ?? bufferRate);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "不明なエラーです";
+
+    if (isReconnectableShopifyError(message)) {
+      needsReconnect = true;
+      shopifyError = message;
+    } else {
+      console.error("shop pricing settings read error:", error);
+    }
+  }
+
+  // Shopify接続が死んでいても、価格プレビューは可能な限り出す
+  try {
+    const fxRate = await getFxRateToJpy(costCurrency);
 
     priceBreakdown = calculatePriceBreakdown({
       costAmount,
@@ -308,13 +344,9 @@ export const loader = async ({ params }) => {
       paymentFeeFixed,
       bufferRate,
     });
-  } catch (e) {
-    console.error("price breakdown error:", e);
+  } catch (error) {
+    console.error("price breakdown error:", error);
   }
-
-  let shopifyPrice = null;
-  let needsReconnect = false;
-  let shopifyError = null;
 
   if (product.shopifyProductId) {
     try {
@@ -345,11 +377,7 @@ export const loader = async ({ params }) => {
 
       shopifyError = message;
 
-      if (
-        message.includes("Invalid API key or access token") ||
-        message.includes("401") ||
-        message.includes("Offline session not found")
-      ) {
+      if (isReconnectableShopifyError(message)) {
         needsReconnect = true;
       } else {
         throw error;
@@ -357,7 +385,13 @@ export const loader = async ({ params }) => {
     }
   }
 
-  return json({ product, shopifyPrice, needsReconnect, shopifyError, priceBreakdown });
+  return json({
+    product,
+    shopifyPrice,
+    needsReconnect,
+    shopifyError,
+    priceBreakdown,
+  });
 };
 
 export const action = async ({ request }) => {
@@ -501,9 +535,7 @@ export const action = async ({ request }) => {
     const message =
       error instanceof Error ? error.message : "不明なエラーです";
 
-    const needsReconnect =
-      message.includes("Invalid API key or access token") ||
-      message.includes("401");
+    const needsReconnect = isReconnectableShopifyError(message);
 
     return json(
       {
@@ -654,7 +686,11 @@ export default function AdminProductDetail() {
             原価: {product.costCurrency || "JPY"} {product.costAmount ?? product.price}
           </p>
           <p>
-            基準販売価格（JPY）: {typeof product.price === "number" ? `¥${product.price}` : "-"}
+            基準販売価格（JPY）: {priceBreakdown?.finalPrice != null
+              ? `¥${priceBreakdown.finalPrice}`
+              : typeof product.price === "number"
+                ? `¥${product.price}`
+                : "-"}
           </p>
           <p>
             Shopify基準価格: {shopifyPrice ? `¥${shopifyPrice}` : "-"}
