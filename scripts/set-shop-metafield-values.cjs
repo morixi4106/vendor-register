@@ -23,9 +23,13 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const SHOP = 'b30ize-1a.myshopify.com';
+const SHOP = String(process.env.SHOPIFY_SHOP_DOMAIN || '').trim();
 const API_VERSION = '2026-01';
 const prisma = new PrismaClient();
+
+if (!SHOP) {
+  throw new Error('SHOPIFY_SHOP_DOMAIN is required');
+}
 
 async function getOfflineAccessToken() {
   const sessionId = `offline_${SHOP}`;

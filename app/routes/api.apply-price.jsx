@@ -1,24 +1,5 @@
-import { json } from '@remix-run/node';
-import { applyProductPrice } from '../utils/applyProductPrice.server';
+import { createApplyPriceAction } from './api.apply-price.server.js';
 
-export const action = async ({ request }) => {
-  try {
-    const body = await request.json();
-    const productId = body?.productId;
+export { createApplyPriceAction } from './api.apply-price.server.js';
 
-    if (!productId) {
-      return json({ ok: false, error: 'productId is required' }, { status: 400 });
-    }
-
-    const result = await applyProductPrice(productId);
-    return json(result);
-  } catch (error) {
-    return json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 },
-    );
-  }
-};
+export const action = createApplyPriceAction();

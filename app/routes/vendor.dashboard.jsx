@@ -2,6 +2,7 @@ import { createCookie, json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import prisma from "../db.server";
+import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -11,7 +12,6 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
-const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
 
 function isReconnectableShopifyError(message = "") {
@@ -75,58 +75,16 @@ function badgeClass(text) {
   return "dash-badge dash-badge-gray";
 }
 
-async function getOfflineAccessToken() {
-  const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
-
-  const session = await prisma.session.findUnique({
-    where: {
-      id: offlineSessionId,
-    },
+async function shopifyGraphQL(shopDomain, query, variables = {}) {
+  return shopifyGraphQLWithOfflineSession({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query,
+    variables,
   });
-
-  if (!session?.accessToken) {
-    throw new Error(
-      `Offline session not found for session id: ${offlineSessionId}`
-    );
-  }
-
-  return session.accessToken;
 }
 
-async function shopifyGraphQL(query, variables = {}) {
-  const accessToken = await getOfflineAccessToken();
-
-  const res = await fetch(
-    `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        query,
-        variables,
-      }),
-    }
-  );
-
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(
-      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
-    );
-  }
-
-  if (data.errors?.length) {
-    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
-  }
-
-  return data.data;
-}
-
-async function deleteShopifyProduct(shopifyProductId) {
+async function deleteShopifyProduct(shopDomain, shopifyProductId) {
   const mutation = `
     mutation DeleteProduct($input: ProductDeleteInput!) {
       productDelete(input: $input) {
@@ -146,7 +104,7 @@ async function deleteShopifyProduct(shopifyProductId) {
   };
 
   try {
-    const result = await shopifyGraphQL(mutation, variables);
+    const { data: result } = await shopifyGraphQL(shopDomain, mutation, variables);
     const payload = result?.productDelete;
     const userErrors = payload?.userErrors || [];
 
@@ -355,9 +313,13 @@ export const action = async ({ request }) => {
   }
 
   if (product.shopifyProductId) {
-    const shopifyDelete = await deleteShopifyProduct(product.shopifyProductId);
+    const shopifyDelete = await deleteShopifyProduct(
+      product.shopDomain,
+      product.shopifyProductId
+    );
 
     if (!shopifyDelete.ok) {
+      console.error("vendor product delete error:", shopifyDelete.error);
       return json(
         {
           ok: false,
@@ -839,7 +801,9 @@ export default function VendorDashboard() {
                 Product deletion failed
               </h2>
               <p className="dash-section-sub" style={{ color: "inherit", marginBottom: 0 }}>
-                {actionData.error}
+                {actionData?.needsReconnect
+                  ? "Shopifyとの接続を確認してから、もう一度お試しください。"
+                  : "商品の削除に失敗しました。時間を置いて再度お試しください。"}
               </p>
             </section>
           ) : null}

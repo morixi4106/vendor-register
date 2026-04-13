@@ -2,6 +2,7 @@ import { createCookie, json, redirect } from "@remix-run/node";
 import { Form, useActionData } from "@remix-run/react";
 import prisma from "../db.server";
 import { Resend } from "resend";
+import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
@@ -156,6 +157,8 @@ const createdProduct = await prisma.product.create({
     url: url || null,
     vendorStoreId: store.id,
     approvalStatus: "pending",
+    priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
+    priceSyncError: null,
   },
 });
 

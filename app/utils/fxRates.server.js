@@ -1,4 +1,4 @@
-import prisma from "../db.server";
+import prisma from "../db.server.js";
 
 export async function getFxRateToJpy(currency) {
   if (!currency) {

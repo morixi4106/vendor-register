@@ -2,76 +2,71 @@ import { resolveDutyCategory } from "../utils/dutyCategory";
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
-import { getFxRateToJpy } from "../utils/fxRates.server";
-import { calculatePriceBreakdown } from "../utils/priceCalculator";
+import { calculateProductPriceResult } from "../utils/buildCalculatedPrice";
+import { buildPriceSnapshot } from "../utils/priceSnapshot";
+import {
+  getAdminPriceSyncLabel,
+  getEffectivePriceSyncStatus,
+} from "../utils/priceSyncStatus";
+import { getShopPricingSettings } from "../utils/shopPricingSettings";
+import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 
-const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
-
-const DEFAULT_PRICING_SETTINGS = {
-  marginRate: 0.1,
-  paymentFeeRate: 0.04,
-  paymentFeeFixed: 50,
-  bufferRate: 0.1,
-};
 
 function isReconnectableShopifyError(message = "") {
   return (
+    message.includes("Shopify authentication is required") ||
     message.includes("Invalid API key or access token") ||
     message.includes("401") ||
     message.includes("Offline session not found")
   );
 }
 
-async function getOfflineAccessToken() {
-  const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
+function formatDateTime(value) {
+  if (!value) return "-";
 
-  const session = await prisma.session.findUnique({
-    where: {
-      id: offlineSessionId,
-    },
-  });
+  const date = new Date(value);
 
-  if (!session?.accessToken) {
-    throw new Error(
-      `Offline session not found for session id: ${offlineSessionId}`
-    );
+  if (Number.isNaN(date.getTime())) {
+    return "-";
   }
 
-  return session.accessToken;
+  return date.toLocaleString("ja-JP");
 }
 
-async function shopifyGraphQL(query, variables = {}) {
-  const accessToken = await getOfflineAccessToken();
-
-  const res = await fetch(
-    `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        query,
-        variables,
-      }),
-    }
-  );
-
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(
-      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
-    );
+function getApplyLogStatusLabel(status = "") {
+  switch (status) {
+    case "success":
+      return "Success";
+    case "invalid":
+      return "Invalid";
+    case "apply_failed":
+      return "Apply failed";
+    default:
+      return status || "-";
   }
+}
 
-  if (data.errors?.length) {
-    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
+function getApplyLogStatusColor(status = "") {
+  switch (status) {
+    case "success":
+      return "#065f46";
+    case "invalid":
+      return "#b45309";
+    case "apply_failed":
+      return "#b91c1c";
+    default:
+      return "#374151";
   }
+}
 
-  return data.data;
+async function shopifyGraphQL(shopDomain, query, variables = {}) {
+  return shopifyGraphQLWithOfflineSession({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query,
+    variables,
+  });
 }
 
 async function createShopifyProductFromDbProduct(product) {
@@ -135,7 +130,11 @@ async function createShopifyProductFromDbProduct(product) {
     },
   };
 
-  const createResult = await shopifyGraphQL(createMutation, createVariables);
+  const { data: createResult, shopDomain } = await shopifyGraphQL(
+    product.shopDomain,
+    createMutation,
+    createVariables
+  );
   const createPayload = createResult?.productCreate;
 
   if (!createPayload) {
@@ -187,7 +186,8 @@ async function createShopifyProductFromDbProduct(product) {
     ],
   };
 
-  const updateVariantResult = await shopifyGraphQL(
+  const { data: updateVariantResult } = await shopifyGraphQL(
+    shopDomain,
     updateVariantMutation,
     updateVariantVariables
   );
@@ -237,7 +237,8 @@ async function createShopifyProductFromDbProduct(product) {
       ],
     };
 
-    const createMediaResult = await shopifyGraphQL(
+    const { data: createMediaResult } = await shopifyGraphQL(
+      shopDomain,
       createMediaMutation,
       createMediaVariables
     );
@@ -258,10 +259,14 @@ async function createShopifyProductFromDbProduct(product) {
   }
 
   const { applyProductPrice } = await import("../utils/applyProductPrice.server");
-  await applyProductPrice(createdProduct.id);
+  await applyProductPrice(createdProduct.id, {
+    shopDomain,
+    localProductId: product.id,
+  });
 
   return {
     shopifyProductId: createdProduct.id,
+    shopDomain,
   };
 }
 
@@ -287,39 +292,37 @@ export const loader = async ({ params }) => {
   let needsReconnect = false;
   let shopifyError = null;
   let priceBreakdown = null;
+  let previewPriceSnapshot = null;
+  let priceCalculationState = {
+    status: "calculable",
+    reason: null,
+  };
+  let usedShopifyPricingInput = false;
+  let usedShopifySettings = false;
+  let reconnectShopDomain = product.shopDomain || null;
 
   const costAmount = Number(product.costAmount ?? product.price ?? 0);
   const costCurrency = String(product.costCurrency || "JPY").trim().toUpperCase();
   const dutyCategory = resolveDutyCategory(product.category);
-
-  const dutyRateMap = {
-    cosmetics: 0.2,
+  let previewPricingInput = {
+    costAmount,
+    costCurrency,
+    dutyCategory,
+    shopDomain: reconnectShopDomain,
   };
 
-  const dutyRate = dutyRateMap[dutyCategory] ?? 0;
-
-  let marginRate = DEFAULT_PRICING_SETTINGS.marginRate;
-  let paymentFeeRate = DEFAULT_PRICING_SETTINGS.paymentFeeRate;
-  let paymentFeeFixed = DEFAULT_PRICING_SETTINGS.paymentFeeFixed;
-  let bufferRate = DEFAULT_PRICING_SETTINGS.bufferRate;
+  let pricingSettings = {
+    shopDomain: reconnectShopDomain,
+  };
 
   // Shopifyのglobal_pricingを読めれば使う。読めなくても表示は止めない
   try {
-    const settingsData = await shopifyGraphQL(`
-      query ReadShopPricingSettings {
-        shop {
-          marginRate: metafield(namespace: "global_pricing", key: "default_margin_rate") { value }
-          paymentFeeRate: metafield(namespace: "global_pricing", key: "payment_fee_rate") { value }
-          paymentFeeFixed: metafield(namespace: "global_pricing", key: "payment_fee_fixed") { value }
-          bufferRate: metafield(namespace: "global_pricing", key: "buffer_rate") { value }
-        }
-      }
-    `);
-
-    marginRate = Number(settingsData?.shop?.marginRate?.value ?? marginRate);
-    paymentFeeRate = Number(settingsData?.shop?.paymentFeeRate?.value ?? paymentFeeRate);
-    paymentFeeFixed = Number(settingsData?.shop?.paymentFeeFixed?.value ?? paymentFeeFixed);
-    bufferRate = Number(settingsData?.shop?.bufferRate?.value ?? bufferRate);
+    pricingSettings = await getShopPricingSettings({
+      shopDomain: product.shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+    });
+    usedShopifySettings = true;
+    reconnectShopDomain = reconnectShopDomain || pricingSettings.shopDomain;
   } catch (error) {
     const message = error instanceof Error ? error.message : "不明なエラーです";
 
@@ -332,29 +335,23 @@ export const loader = async ({ params }) => {
   }
 
   // Shopify接続が死んでいても、価格プレビューは可能な限り出す
-  try {
-    const fxRate = await getFxRateToJpy(costCurrency);
-
-    priceBreakdown = calculatePriceBreakdown({
-      costAmount,
-      fxRate,
-      dutyRate,
-      marginRate,
-      paymentFeeRate,
-      paymentFeeFixed,
-      bufferRate,
-    });
-  } catch (error) {
-    console.error("price breakdown error:", error);
-  }
-
   if (product.shopifyProductId) {
     try {
-      const shopifyData = await shopifyGraphQL(
+      const { data: shopifyData, shopDomain } = await shopifyGraphQL(
+        product.shopDomain,
         `
           query ReadProductPrice($id: ID!) {
             product(id: $id) {
               id
+              costAmountMetafield: metafield(namespace: "pricing", key: "cost_amount") {
+                value
+              }
+              costCurrencyMetafield: metafield(namespace: "pricing", key: "cost_currency") {
+                value
+              }
+              dutyCategoryMetafield: metafield(namespace: "pricing", key: "duty_category") {
+                value
+              }
               variants(first: 1) {
                 nodes {
                   id
@@ -371,6 +368,19 @@ export const loader = async ({ params }) => {
 
       shopifyPrice =
         shopifyData?.product?.variants?.nodes?.[0]?.price || null;
+      reconnectShopDomain = reconnectShopDomain || shopDomain;
+      previewPricingInput = {
+        costAmount:
+          shopifyData?.product?.costAmountMetafield?.value ?? previewPricingInput.costAmount,
+        costCurrency:
+          shopifyData?.product?.costCurrencyMetafield?.value ??
+          previewPricingInput.costCurrency,
+        dutyCategory:
+          shopifyData?.product?.dutyCategoryMetafield?.value ??
+          previewPricingInput.dutyCategory,
+        shopDomain: reconnectShopDomain || shopDomain,
+      };
+      usedShopifyPricingInput = true;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "不明なエラーです";
@@ -385,12 +395,98 @@ export const loader = async ({ params }) => {
     }
   }
 
+  // Shopify謗･邯壹′豁ｻ繧薙〒縺・※繧ゅ∽ｾ｡譬ｼ繝励Ξ繝薙Η繝ｼ縺ｯ蜿ｯ閭ｽ縺ｪ髯舌ｊ蜃ｺ縺・
+  const previewResult = await calculateProductPriceResult(previewPricingInput, {
+    settings: pricingSettings,
+    shopDomain: previewPricingInput.shopDomain,
+  });
+
+  if (previewResult.ok) {
+    const priceResult = previewResult.value;
+    priceBreakdown = priceResult.breakdown;
+    previewPriceSnapshot = buildPriceSnapshot(priceResult, {
+      calculatedAt: new Date(),
+      localProductId: product.id,
+      shopifyProductId: product.shopifyProductId,
+      shopDomain: priceResult.shopDomain || previewPricingInput.shopDomain,
+      snapshotType: "preview",
+      source: {
+        pricingInput: usedShopifyPricingInput
+          ? "shopify_product_metafields"
+          : "local_product_fallback",
+        shopSettings: usedShopifySettings
+          ? "shopify_shop_metafields"
+          : "default_pricing_settings",
+        fxRate: "fx_rate_table",
+      },
+    });
+    reconnectShopDomain = reconnectShopDomain || priceResult.shopDomain;
+  } else {
+    priceCalculationState = {
+      status: "invalid",
+      reason: previewResult.error.message,
+    };
+  }
+
+  const effectivePriceSyncStatus = getEffectivePriceSyncStatus(product);
+  const priceState = {
+    syncStatus: effectivePriceSyncStatus,
+    syncLabel: getAdminPriceSyncLabel(effectivePriceSyncStatus),
+    syncError: product.priceSyncError || null,
+    priceAppliedAt: product.priceAppliedAt || product.calculatedAt || null,
+    lastPriceApplyAttemptAt: product.lastPriceApplyAttemptAt || null,
+    calculationStatus: priceCalculationState.status,
+    calculationReason: priceCalculationState.reason,
+  };
+
+  const directPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
+    where: {
+      productId: product.id,
+    },
+    orderBy: {
+      attemptedAt: "desc",
+    },
+    take: 10,
+  });
+
+  let priceApplyLogs = directPriceApplyLogs;
+
+  if (product.shopifyProductId) {
+    const unresolvedPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
+      where: {
+        productId: null,
+        shopifyProductId: product.shopifyProductId,
+        ...(product.shopDomain
+          ? {
+              OR: [{ shopDomain: product.shopDomain }, { shopDomain: null }],
+            }
+          : {}),
+      },
+      orderBy: {
+        attemptedAt: "desc",
+      },
+      take: 10,
+    });
+
+    priceApplyLogs = Array.from(
+      new Map(
+        [...directPriceApplyLogs, ...unresolvedPriceApplyLogs]
+          .sort((a, b) => new Date(b.attemptedAt) - new Date(a.attemptedAt))
+          .map((log) => [log.id, log])
+      ).values()
+    ).slice(0, 10);
+  }
+
   return json({
     product,
     shopifyPrice,
     needsReconnect,
     shopifyError,
     priceBreakdown,
+    previewPriceSnapshot,
+    priceState,
+    reconnectShopDomain,
+    priceApplyLogs,
   });
 };
 
@@ -444,7 +540,10 @@ export const action = async ({ request }) => {
       }
 
       const { applyProductPrice } = await import("../utils/applyProductPrice.server");
-      const result = await applyProductPrice(product.shopifyProductId);
+      const result = await applyProductPrice(product.shopifyProductId, {
+        shopDomain: product.shopDomain,
+        localProductId: product.id,
+      });
 
       return json({
         ok: true,
@@ -472,15 +571,19 @@ export const action = async ({ request }) => {
           }
         `;
 
-        const updateResult = await shopifyGraphQL(updateMutation, {
-          input: {
-            id: product.shopifyProductId,
-            title: product.name,
-            descriptionHtml: product.description || "",
-            productType: product.category || "",
-            status: "ACTIVE",
-          },
-        });
+        const { data: updateResult, shopDomain } = await shopifyGraphQL(
+          product.shopDomain,
+          updateMutation,
+          {
+            input: {
+              id: product.shopifyProductId,
+              title: product.name,
+              descriptionHtml: product.description || "",
+              productType: product.category || "",
+              status: "ACTIVE",
+            },
+          }
+        );
 
         const updatePayload = updateResult?.productUpdate;
 
@@ -498,6 +601,7 @@ export const action = async ({ request }) => {
           where: { id: productId },
           data: {
             approvalStatus: "approved",
+            shopDomain,
           },
         });
 
@@ -511,6 +615,7 @@ export const action = async ({ request }) => {
         data: {
           approvalStatus: "approved",
           shopifyProductId: result.shopifyProductId,
+          shopDomain: result.shopDomain,
         },
       });
 
@@ -549,7 +654,16 @@ export const action = async ({ request }) => {
 };
 
 export default function AdminProductDetail() {
-  const { product, shopifyPrice, needsReconnect, shopifyError, priceBreakdown } = useLoaderData();
+  const {
+    product,
+    shopifyPrice,
+    needsReconnect,
+    shopifyError,
+    priceBreakdown,
+    priceState,
+    reconnectShopDomain,
+    priceApplyLogs,
+  } = useLoaderData();
   const actionData = useActionData();
 
   return (
@@ -584,6 +698,7 @@ export default function AdminProductDetail() {
 
               <Form method="post" action="/admin/shopify-reconnect">
                 <input type="hidden" name="returnTo" value={`/admin/products/${product.id}`} />
+                <input type="hidden" name="shopDomain" value={reconnectShopDomain || ""} />
                 <button
                   type="submit"
                   style={{
@@ -630,6 +745,7 @@ export default function AdminProductDetail() {
                 name="returnTo"
                 value={`/admin/products/${product.id}`}
               />
+              <input type="hidden" name="shopDomain" value={reconnectShopDomain || ""} />
               <button
                 type="submit"
                 style={{
@@ -667,6 +783,122 @@ export default function AdminProductDetail() {
           <div style={{ marginTop: "8px" }}>{actionData.message}</div>
         </div>
       ) : null}
+
+      <div
+        style={{
+          marginTop: "20px",
+          padding: "14px",
+          borderRadius: "8px",
+          background: "#f9fafb",
+          border: "1px solid #e5e7eb",
+        }}
+      >
+        <strong>Price State</strong>
+        <div style={{ marginTop: "8px", display: "grid", gap: "6px" }}>
+          <div>Calculation state: {priceState.calculationStatus}</div>
+          <div>Price sync status: {priceState.syncLabel}</div>
+          <div>Last applied: {formatDateTime(priceState.priceAppliedAt)}</div>
+          <div>Last apply attempt: {formatDateTime(priceState.lastPriceApplyAttemptAt)}</div>
+          {priceState.calculationReason ? (
+            <div style={{ color: "#b45309" }}>
+              Calculation issue: {priceState.calculationReason}
+            </div>
+          ) : null}
+          {priceState.syncError ? (
+            <div style={{ color: "#b91c1c" }}>
+              Last apply failure: {priceState.syncError}
+            </div>
+          ) : null}
+          {priceState.syncStatus === "apply_failed" ? (
+            <div style={{ color: "#1d4ed8" }}>
+              Retry from the apply button below after reconnecting Shopify if needed.
+            </div>
+          ) : null}
+          {priceState.syncStatus === "invalid" ? (
+            <div style={{ color: "#1d4ed8" }}>
+              Fix the pricing inputs, then run apply again from the button below.
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: "20px",
+          padding: "14px",
+          borderRadius: "8px",
+          background: "#f9fafb",
+          border: "1px solid #e5e7eb",
+        }}
+      >
+        <strong>Recent Apply Attempts</strong>
+        {priceApplyLogs?.length ? (
+          <div style={{ marginTop: "12px", display: "grid", gap: "10px" }}>
+            {priceApplyLogs.map((log) => {
+              const logInput = log?.priceSnapshotJson?.input || null;
+              const logSource = log?.priceSnapshotJson?.source || null;
+
+              return (
+                <div
+                  key={log.id}
+                  style={{
+                    padding: "12px",
+                    borderRadius: "8px",
+                    background: "#ffffff",
+                    border: "1px solid #e5e7eb",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <strong style={{ color: getApplyLogStatusColor(log.status) }}>
+                      {getApplyLogStatusLabel(log.status)}
+                    </strong>
+                    <span>{formatDateTime(log.attemptedAt)}</span>
+                    <span>Shop: {log.shopDomain || "-"}</span>
+                    <span>
+                      Attempted price:{" "}
+                      {typeof log.attemptedPrice === "number"
+                        ? `¥${log.attemptedPrice}`
+                        : "-"}
+                    </span>
+                    <span>Formula: {log.priceFormulaVersion || "-"}</span>
+                  </div>
+
+                  {logInput ? (
+                    <div style={{ marginTop: "8px", color: "#4b5563", fontSize: "14px" }}>
+                      Input: {logInput.costAmount ?? "-"} {logInput.costCurrency || "-"} / duty{" "}
+                      {logInput.dutyCategory || "-"}
+                    </div>
+                  ) : null}
+
+                  {logSource ? (
+                    <div style={{ marginTop: "4px", color: "#6b7280", fontSize: "13px" }}>
+                      Source: {logSource.pricingInput || "-"} / {logSource.shopSettings || "-"} /{" "}
+                      {logSource.fxRate || "-"}
+                    </div>
+                  ) : null}
+
+                  {log.errorSummary ? (
+                    <div style={{ marginTop: "8px", color: "#b91c1c" }}>
+                      Error: {log.errorSummary}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ marginTop: "12px", color: "#6b7280" }}>
+            No apply attempts yet.
+          </div>
+        )}
+      </div>
 
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>

@@ -7,8 +7,9 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import prisma from "../db.server";
+import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
+import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 
-const SHOPIFY_SHOP_DOMAIN = "b30ize-1a.myshopify.com";
 const SHOPIFY_API_VERSION = "2026-01";
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
@@ -20,55 +21,21 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
-async function getOfflineAccessToken() {
-  const offlineSessionId = `offline_${SHOPIFY_SHOP_DOMAIN}`;
-
-  const session = await prisma.session.findUnique({
-    where: {
-      id: offlineSessionId,
-    },
-  });
-
-  if (!session?.accessToken) {
-    throw new Error(
-      `Offline session not found for session id: ${offlineSessionId}`
-    );
-  }
-
-  return session.accessToken;
+function isReconnectableShopifyError(message = "") {
+  return (
+    message.includes("Invalid API key or access token") ||
+    message.includes("401") ||
+    message.includes("Offline session not found")
+  );
 }
 
-async function shopifyGraphQL(query, variables = {}) {
-  const accessToken = await getOfflineAccessToken();
-
-  const res = await fetch(
-    `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        query,
-        variables,
-      }),
-    }
-  );
-
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(
-      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
-    );
-  }
-
-  if (data.errors?.length) {
-    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
-  }
-
-  return data.data;
+async function shopifyGraphQL(shopDomain, query, variables = {}) {
+  return shopifyGraphQLWithOfflineSession({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query,
+    variables,
+  });
 }
 
 async function uploadImageToCloudinary(file) {
@@ -76,7 +43,7 @@ async function uploadImageToCloudinary(file) {
   const uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET;
 
   if (!cloudName || !uploadPreset) {
-    throw new Error("Cloudinaryの環境変数が足りません。");
+    throw new Error("Cloudinary environment variables are missing");
   }
 
   if (!file || typeof file.arrayBuffer !== "function" || file.size === 0) {
@@ -144,13 +111,13 @@ export const loader = async ({ request, params }) => {
   const store = vendorSession.vendor?.vendorStore;
 
   if (!store) {
-    throw new Response("店舗情報が見つかりません。", { status: 404 });
+    throw new Response("Store not found", { status: 404 });
   }
 
   const productId = String(params.id || "");
 
   if (!productId) {
-    throw new Response("商品IDがありません。", { status: 400 });
+    throw new Response("Product ID is required", { status: 400 });
   }
 
   const product = await prisma.product.findUnique({
@@ -158,7 +125,7 @@ export const loader = async ({ request, params }) => {
   });
 
   if (!product || product.vendorStoreId !== store.id) {
-    throw new Response("商品が見つかりません。", { status: 404 });
+    throw new Response("Product not found", { status: 404 });
   }
 
   return json({
@@ -177,7 +144,7 @@ export const action = async ({ request, params }) => {
 
     if (!store) {
       return json(
-        { ok: false, error: "店舗情報が見つかりません。" },
+        { ok: false, error: "Store not found" },
         { status: 404 }
       );
     }
@@ -186,7 +153,7 @@ export const action = async ({ request, params }) => {
 
     if (!productId) {
       return json(
-        { ok: false, error: "商品IDがありません。" },
+        { ok: false, error: "Product ID is required" },
         { status: 400 }
       );
     }
@@ -197,7 +164,7 @@ export const action = async ({ request, params }) => {
 
     if (!product || product.vendorStoreId !== store.id) {
       return json(
-        { ok: false, error: "商品が見つかりません。" },
+        { ok: false, error: "Product not found" },
         { status: 404 }
       );
     }
@@ -213,21 +180,21 @@ export const action = async ({ request, params }) => {
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
-        { ok: false, error: "原価通貨が不正です。" },
+        { ok: false, error: "Unsupported currency" },
         { status: 400 }
       );
     }
 
     if (!name) {
       return json(
-        { ok: false, error: "商品名を入力してください。" },
+        { ok: false, error: "Product name is required" },
         { status: 400 }
       );
     }
 
     if (!priceRaw) {
       return json(
-        { ok: false, error: "価格を入力してください。" },
+        { ok: false, error: "Price is required" },
         { status: 400 }
       );
     }
@@ -236,7 +203,7 @@ export const action = async ({ request, params }) => {
 
     if (!Number.isFinite(costAmount) || costAmount < 0) {
       return json(
-        { ok: false, error: "価格は0以上の数値で入力してください。" },
+        { ok: false, error: "Price must be a non-negative number" },
         { status: 400 }
       );
     }
@@ -252,23 +219,23 @@ export const action = async ({ request, params }) => {
       imageUrl = await uploadImageToCloudinary(imageFile);
     }
 
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data: {
-        name,
-        description: description || null,
-        category: category || null,
-        price: costAmount,
-        costAmount,
-        costCurrency,
-        url: url || null,
-        imageUrl: imageUrl || null,
-        approvalStatus: "pending",
-      },
-    });
+    const nextProductData = {
+      name,
+      description: description || null,
+      category: category || null,
+      price: costAmount,
+      costAmount,
+      costCurrency,
+      url: url || null,
+      imageUrl: imageUrl || null,
+      approvalStatus: "pending",
+      priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
+      priceSyncError: null,
+    };
 
     if (product.shopifyProductId) {
-  const result = await shopifyGraphQL(
+  const { data: result, shopDomain } = await shopifyGraphQL(
+    product.shopDomain,
     `
       mutation productUpdate($input: ProductInput!) {
         productUpdate(input: $input) {
@@ -286,9 +253,9 @@ export const action = async ({ request, params }) => {
     {
       input: {
         id: product.shopifyProductId,
-        title: updatedProduct.name,
-        descriptionHtml: updatedProduct.description || "",
-        productType: updatedProduct.category || "",
+        title: nextProductData.name,
+        descriptionHtml: nextProductData.description || "",
+        productType: nextProductData.category || "",
         status: "DRAFT",
       },
     }
@@ -318,17 +285,20 @@ export const action = async ({ request, params }) => {
     },
   ];
 
-  if (category === "スキンケア" || category === "化粧品") {
+  const dutyCategory = resolveDutyCategory(category);
+
+  if (dutyCategory) {
     metafields.push({
       ownerId: product.shopifyProductId,
       namespace: "pricing",
       key: "duty_category",
       type: "single_line_text_field",
-      value: "cosmetics",
+      value: dutyCategory,
     });
   }
 
-  const metafieldsResult = await shopifyGraphQL(
+  const { data: metafieldsResult } = await shopifyGraphQL(
+    shopDomain,
     `
       mutation UpdateMetafields($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -355,16 +325,33 @@ export const action = async ({ request, params }) => {
     console.error("metafieldErrors:", metafieldErrors);
     throw new Error(metafieldErrors.map((e) => e.message).join(", "));
   }
+
+  await prisma.product.update({
+    where: { id: productId },
+    data: {
+      ...nextProductData,
+      shopDomain,
+    },
+  });
+} else {
+  await prisma.product.update({
+    where: { id: productId },
+    data: nextProductData,
+  });
 }
 
     return redirect("https://vendor-register-pbjl.onrender.com/vendor/dashboard");
   } catch (error) {
     console.error("vendor product edit error:", error);
+    const message = error instanceof Error ? error.message : "";
+    const safeError = isReconnectableShopifyError(message)
+      ? "Shopifyとの接続を確認してから、もう一度お試しください。"
+      : "商品の更新に失敗しました。時間を置いて再度お試しください。";
 
     return json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "不明なエラーです。",
+        error: safeError,
       },
       { status: 500 }
     );
@@ -407,7 +394,7 @@ export default function EditPage() {
             color: "#111827",
           }}
         >
-          商品編集
+          蝠・刀邱ｨ髮・
         </h1>
 
         <p
@@ -418,7 +405,7 @@ export default function EditPage() {
             lineHeight: 1.8,
           }}
         >
-          店舗: {store?.storeName || "-"}
+          蠎苓・: {store?.storeName || "-"}
         </p>
 
         <p
@@ -429,7 +416,7 @@ export default function EditPage() {
             lineHeight: 1.8,
           }}
         >
-          編集して更新すると、商品内容は保存されます。承認済みの商品も再確認しやすいように、更新時は申請中に戻します。
+          邱ｨ髮・＠縺ｦ譖ｴ譁ｰ縺吶ｋ縺ｨ縲∝膚蜩∝・螳ｹ縺ｯ菫晏ｭ倥＆繧後∪縺吶よ価隱肴ｸ医∩縺ｮ蝠・刀繧ょ・遒ｺ隱阪＠繧・☆縺・ｈ縺・↓縲∵峩譁ｰ譎ゅ・逕ｳ隲倶ｸｭ縺ｫ謌ｻ縺励∪縺吶・
         </p>
 
         {actionData?.error ? (
@@ -463,14 +450,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                商品名
+                蝠・刀蜷・
               </label>
               <input
                 id="name"
                 name="name"
                 type="text"
                 defaultValue={product.name || ""}
-                placeholder="例：NEOBEAUTE バランシングローション"
+                placeholder="萓具ｼ哢EOBEAUTE 繝舌Λ繝ｳ繧ｷ繝ｳ繧ｰ繝ｭ繝ｼ繧ｷ繝ｧ繝ｳ"
                 style={{
                   width: "100%",
                   height: "48px",
@@ -494,14 +481,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                商品説明
+                蝠・刀隱ｬ譏・
               </label>
               <textarea
                 id="description"
                 name="description"
                 rows={8}
                 defaultValue={product.description || ""}
-                placeholder="商品説明を入力してください"
+                placeholder="蝠・刀隱ｬ譏弱ｒ蜈･蜉帙＠縺ｦ縺上□縺輔＞"
                 style={{
                   width: "100%",
                   border: "1px solid #d1d5db",
@@ -525,7 +512,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                商品画像
+                蝠・刀逕ｻ蜒・
               </label>
 
               {product.imageUrl ? (
@@ -540,7 +527,7 @@ export default function EditPage() {
                 >
                   <img
                     src={product.imageUrl}
-                    alt={product.name || "商品画像"}
+                    alt={product.name || "Product image"}
                     style={{
                       width: "100%",
                       maxHeight: "320px",
@@ -563,7 +550,7 @@ export default function EditPage() {
                     background: "#f9fafb",
                   }}
                 >
-                  現在の画像はありません
+                  迴ｾ蝨ｨ縺ｮ逕ｻ蜒上・縺ゅｊ縺ｾ縺帙ｓ
                 </div>
               )}
 
@@ -580,7 +567,7 @@ export default function EditPage() {
               >
                 <input type="file" name="image" accept="image/*" />
                 <div style={{ marginTop: "10px" }}>
-                  新しい画像を選ぶと上書きされます
+                  譁ｰ縺励＞逕ｻ蜒上ｒ驕ｸ縺ｶ縺ｨ荳頑嶌縺阪＆繧後∪縺・
                 </div>
               </div>
             </div>
@@ -596,14 +583,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                カテゴリ
+                繧ｫ繝・ざ繝ｪ
               </label>
               <input
                 id="category"
                 name="category"
                 type="text"
                 defaultValue={product.category || ""}
-                placeholder="例：スキンケア"
+                placeholder="萓具ｼ壹せ繧ｭ繝ｳ繧ｱ繧｢"
                 style={{
                   width: "100%",
                   height: "48px",
@@ -627,7 +614,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                原価
+                蜴滉ｾ｡
               </label>
               <input
                 id="price"
@@ -636,7 +623,7 @@ export default function EditPage() {
                 min="0"
                 step="0.01"
                 defaultValue={product.price ?? 0}
-                placeholder="1000（原価）"
+                placeholder="1000"
                 style={{
                   width: "100%",
                   height: "48px",
@@ -660,7 +647,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                原価通貨
+                蜴滉ｾ｡騾夊ｲｨ
               </label>
               <select
               id="costCurrency"
@@ -677,12 +664,12 @@ export default function EditPage() {
                 background: "#ffffff",
               }}
             >
-              <option value="JPY">JPY（円）</option>
-              <option value="USD">USD（ドル）</option>
-              <option value="EUR">EUR（ユーロ）</option>
-              <option value="GBP">GBP（ポンド）</option>
-              <option value="CNY">CNY（人民元）</option>
-              <option value="KRW">KRW（ウォン）</option>
+              <option value="JPY">JPY</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+              <option value="CNY">CNY</option>
+              <option value="KRW">KRW</option>
             </select>
             </div>
 
@@ -697,7 +684,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                参考URL（任意）
+                蜿りザRL・井ｻｻ諢擾ｼ・
               </label>
               <input
                 id="url"
@@ -740,7 +727,7 @@ export default function EditPage() {
                   cursor: isSubmitting ? "default" : "pointer",
                 }}
               >
-                {isSubmitting ? "更新中..." : "商品を更新する"}
+                {isSubmitting ? "譖ｴ譁ｰ荳ｭ..." : "蝠・刀繧呈峩譁ｰ縺吶ｋ"}
               </button>
 
               <a
@@ -760,7 +747,7 @@ export default function EditPage() {
                   boxSizing: "border-box",
                 }}
               >
-                ダッシュボードへ戻る
+                繝繝・す繝･繝懊・繝峨∈謌ｻ繧・
               </a>
             </div>
           </div>
@@ -769,3 +756,4 @@ export default function EditPage() {
     </div>
   );
 }
+

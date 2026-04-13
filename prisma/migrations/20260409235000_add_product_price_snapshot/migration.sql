@@ -1,0 +1,10 @@
+ALTER TABLE "Product"
+ADD COLUMN "calculatedPrice" INTEGER,
+ADD COLUMN "usedFxRate" DOUBLE PRECISION,
+ADD COLUMN "usedMargin" DOUBLE PRECISION,
+ADD COLUMN "usedDutyRate" DOUBLE PRECISION,
+ADD COLUMN "usedFee" JSONB,
+ADD COLUMN "roundingResult" JSONB,
+ADD COLUMN "calculatedAt" TIMESTAMP(3),
+ADD COLUMN "priceFormulaVersion" TEXT,
+ADD COLUMN "priceSnapshotJson" JSONB;

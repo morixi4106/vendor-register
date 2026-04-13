@@ -58,10 +58,46 @@ model Product {
   vendorStoreId    String
   approvalStatus   String      @default("pending")
   shopifyProductId String?
+  shopDomain       String?
+  calculatedPrice  Int?
+  usedFxRate       Float?
+  usedMargin       Float?
+  usedDutyRate     Float?
+  usedFee          Json?
+  roundingResult   Json?
+  calculatedAt     DateTime?
+  priceSyncStatus  String      @default("calculated_not_applied")
+  priceSyncError   String?
+  priceAppliedAt   DateTime?
+  lastPriceApplyAttemptAt DateTime?
+  priceFormulaVersion String?
+  priceSnapshotJson Json?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
   vendorStore      VendorStore @relation(fields: [vendorStoreId], references: [id])
+  priceApplyLogs   ProductPriceApplyLog[]
+
+  @@unique([shopDomain, shopifyProductId])
+  @@index([shopifyProductId])
+}
+
+model ProductPriceApplyLog {
+  id                  String    @id @default(cuid())
+  productId           String?
+  shopifyProductId    String?
+  shopDomain          String?
+  attemptedPrice      Int?
+  priceFormulaVersion String?
+  status              String
+  errorSummary        String?
+  priceSnapshotJson   Json?
+  attemptedAt         DateTime  @default(now())
+
+  product             Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([productId, attemptedAt])
+  @@index([shopifyProductId, shopDomain, attemptedAt])
 }
 
 model Vendor {
