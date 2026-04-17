@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createApplyPriceAction } from '../../app/routes/api.apply-price.server.js';
+import { createApplyPriceAction } from '../../app/services/api.apply-price.server.js';
 import { PRICE_SYNC_STATUS } from '../../app/utils/priceSyncStatus.js';
 
 test('api.apply-price returns 400 when productId is missing', async () => {
