@@ -174,6 +174,11 @@ function buildPriceApplyLogData({
   };
 }
 
+function isPriceUnchanged(currentPrice, nextPrice) {
+  const currentNumericPrice = Number(currentPrice);
+  return Number.isFinite(currentNumericPrice) && currentNumericPrice === Number(nextPrice);
+}
+
 async function createPriceApplyLog(prismaClient, logData) {
   try {
     await prismaClient.productPriceApplyLog.create({
@@ -391,18 +396,22 @@ export function createApplyProductPrice({
         },
       });
 
-      const updatePayload = await applyCalculatedPriceToShopifyImpl({
-        shopDomain,
-        productId: product.id,
-        variantId: variant.id,
-        finalPrice: priceResult.finalPrice,
-        apiVersion: API_VERSION,
-      });
+      const skipped = isPriceUnchanged(variant.price, priceResult.finalPrice);
 
-      const userErrors = updatePayload?.userErrors || [];
+      if (!skipped) {
+        const updatePayload = await applyCalculatedPriceToShopifyImpl({
+          shopDomain,
+          productId: product.id,
+          variantId: variant.id,
+          finalPrice: priceResult.finalPrice,
+          apiVersion: API_VERSION,
+        });
 
-      if (userErrors.length) {
-        throw new Error(`productVariantsBulkUpdate failed: ${JSON.stringify(userErrors)}`);
+        const userErrors = updatePayload?.userErrors || [];
+
+        if (userErrors.length) {
+          throw new Error(`productVariantsBulkUpdate failed: ${JSON.stringify(userErrors)}`);
+        }
       }
 
       await prismaClient.product.update({
@@ -446,6 +455,8 @@ export function createApplyProductPrice({
         variantId: variant.id,
         oldPrice: variant.price,
         newPrice: String(priceResult.finalPrice),
+        skipped,
+        skipReason: skipped ? 'price_unchanged' : null,
         shopDomain,
         priceSyncStatus: PRICE_SYNC_STATUS.APPLIED,
         input: priceResult.input,

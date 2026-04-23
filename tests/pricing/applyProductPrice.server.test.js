@@ -295,3 +295,72 @@ test('applyProductPrice logs unresolved local-product failures with productId nu
   assert.equal(prismaClient.state.logs[0].shopifyProductId, 'gid://shopify/Product/1');
   assert.equal(prismaClient.state.logs[0].shopDomain, 'shop-a.myshopify.com');
 });
+
+test('applyProductPrice skips Shopify mutation when the price is unchanged', async () => {
+  const prismaClient = createFakePrisma({
+    linkedProducts: [
+      {
+        id: 'prod_local_1',
+        shopDomain: 'shop-a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+      },
+    ],
+    productsById: {
+      prod_local_1: {
+        shopDomain: 'shop-a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+      },
+    },
+  });
+
+  let applyCalled = false;
+  const applyProductPrice = createApplyProductPrice({
+    prismaClient,
+    calculateProductPriceImpl: async () => ({
+      shopDomain: 'shop-a.myshopify.com',
+      settings: {},
+      input: {
+        fxRate: 150,
+        dutyRate: 0.2,
+        marginRate: 0.1,
+        paymentFeeRate: 0.04,
+        paymentFeeFixed: 50,
+        bufferRate: 0.1,
+        costAmount: 10.5,
+        costCurrency: 'USD',
+        dutyCategory: 'cosmetics',
+      },
+      finalPrice: 1999,
+      breakdown: {
+        costFx: 1292,
+        duty: 258,
+        landed: 1550,
+        safeCost: 1705,
+        target: 1875,
+        rawPrice: 1999,
+        finalPrice: 1999,
+      },
+    }),
+    shopifyGraphQLWithOfflineSessionImpl: async () => createReadProductResponse(),
+    applyCalculatedPriceToShopifyImpl: async () => {
+      applyCalled = true;
+      return { userErrors: [] };
+    },
+  });
+
+  const result = await applyProductPrice('gid://shopify/Product/1', {
+    shopDomain: 'shop-a.myshopify.com',
+    localProductId: 'prod_local_1',
+    fxRate: 150,
+  });
+
+  assert.equal(applyCalled, false);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.skipReason, 'price_unchanged');
+  assert.equal(result.oldPrice, '1999');
+  assert.equal(result.newPrice, '1999');
+  assert.equal(prismaClient.state.updates.length, 1);
+  assert.equal(prismaClient.state.logs.length, 1);
+  assert.equal(prismaClient.state.logs[0].status, 'success');
+});
