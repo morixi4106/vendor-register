@@ -202,39 +202,90 @@ function runAutoPriceRefreshWithLock(runAutoPriceRefreshImpl, logInfo = console.
 
 const runAutoPriceRefresh = createRunAutoPriceRefresh();
 
-export function createRefreshFxAction({
+export function createRunRefreshFx({
   apiKey = process.env.EXCHANGE_RATE_API_KEY,
   fetchImpl = fetch,
   upsertFxRateImpl = upsertFxRate,
   runAutoPriceRefreshImpl = runAutoPriceRefresh,
 } = {}) {
+  return async function runRefreshFx({ autoApplyPrices = false } = {}) {
+    if (!apiKey) {
+      throw new Error('EXCHANGE_RATE_API_KEY is not configured');
+    }
+
+    const { rates, usdToJpy } = await readExchangeRates({
+      apiKey,
+      fetchImpl,
+    });
+    const savedRates = await saveTargetFxRates({
+      rates,
+      usdToJpy,
+      upsertFxRateImpl,
+    });
+    const priceRefresh = autoApplyPrices
+      ? await runAutoPriceRefreshWithLock(runAutoPriceRefreshImpl)
+      : null;
+
+    return {
+      ok: true,
+      message: `Updated ${savedRates.length} FX rates`,
+      fxRates: savedRates,
+      priceRefresh,
+    };
+  };
+}
+
+const runRefreshFx = createRunRefreshFx();
+
+export function createRefreshFxAction({
+  apiKey = process.env.EXCHANGE_RATE_API_KEY,
+  fetchImpl = fetch,
+  upsertFxRateImpl = upsertFxRate,
+  runAutoPriceRefreshImpl = runAutoPriceRefresh,
+  runRefreshFxImpl,
+} = {}) {
+  const resolvedRunRefreshFxImpl =
+    runRefreshFxImpl ||
+    createRunRefreshFx({
+      apiKey,
+      fetchImpl,
+      upsertFxRateImpl,
+      runAutoPriceRefreshImpl,
+    });
+
   return async function action({ request }) {
     try {
-      if (!apiKey) {
-        return createErrorResponse('EXCHANGE_RATE_API_KEY is not configured');
-      }
-
       const requestUrl = new URL(request.url);
       const autoApplyPrices = normalizeBooleanFlag(requestUrl.searchParams.get('autoApplyPrices'));
-      const { rates, usdToJpy } = await readExchangeRates({
-        apiKey,
-        fetchImpl,
-      });
-      const savedRates = await saveTargetFxRates({
-        rates,
-        usdToJpy,
-        upsertFxRateImpl,
-      });
-      const priceRefresh = autoApplyPrices
-        ? await runAutoPriceRefreshWithLock(runAutoPriceRefreshImpl)
-        : null;
 
-      return json({
-        ok: true,
-        message: `Updated ${savedRates.length} FX rates`,
-        fxRates: savedRates,
-        priceRefresh,
-      });
+      return json(await resolvedRunRefreshFxImpl({ autoApplyPrices }));
+    } catch (error) {
+      return createErrorResponse(
+        error instanceof Error ? error.message : 'Unknown error while refreshing FX rates',
+      );
+    }
+  };
+}
+
+export function createRefreshFxCronHandler({
+  apiKey = process.env.EXCHANGE_RATE_API_KEY,
+  fetchImpl = fetch,
+  upsertFxRateImpl = upsertFxRate,
+  runAutoPriceRefreshImpl = runAutoPriceRefresh,
+  runRefreshFxImpl,
+} = {}) {
+  const resolvedRunRefreshFxImpl =
+    runRefreshFxImpl ||
+    createRunRefreshFx({
+      apiKey,
+      fetchImpl,
+      upsertFxRateImpl,
+      runAutoPriceRefreshImpl,
+    });
+
+  return async function handler() {
+    try {
+      return json(await resolvedRunRefreshFxImpl({ autoApplyPrices: true }));
     } catch (error) {
       return createErrorResponse(
         error instanceof Error ? error.message : 'Unknown error while refreshing FX rates',

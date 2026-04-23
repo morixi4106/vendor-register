@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createRefreshFxCronHandler,
   createRefreshFxAction,
+  createRunRefreshFx,
   createRunAutoPriceRefresh,
 } from '../../app/services/api.refresh-fx.server.js';
 
@@ -125,6 +127,109 @@ test('api.refresh-fx auto applies prices sequentially and reports updated/skippe
       failed: 1,
       failedProducts: ['prod_local_3'],
       skippedMissingShopDomainProducts: [],
+    },
+  });
+});
+
+test('createRunRefreshFx returns the same payload shape used by api.refresh-fx with auto apply enabled', async () => {
+  const runRefreshFx = createRunRefreshFx({
+    apiKey: 'test-key',
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          conversion_rates: {
+            JPY: 150,
+            USD: 1,
+            EUR: 0.9,
+            GBP: 0.8,
+            CNY: 7.2,
+            KRW: 1300,
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        },
+      ),
+    upsertFxRateImpl: async ({ base, quote, rate }) => ({ base, quote, rate }),
+    runAutoPriceRefreshImpl: async () => ({
+      targeted: 1,
+      processed: 1,
+      updated: 1,
+      skipped: 0,
+      failed: 0,
+      failedProducts: [],
+      skippedMissingShopDomainProducts: [],
+    }),
+  });
+
+  assert.deepEqual(await runRefreshFx({ autoApplyPrices: true }), {
+    ok: true,
+    message: 'Updated 5 FX rates',
+    fxRates: [
+      { base: 'USD', quote: 'JPY', rate: 150 },
+      { base: 'EUR', quote: 'JPY', rate: 166.66666666666666 },
+      { base: 'GBP', quote: 'JPY', rate: 187.5 },
+      { base: 'CNY', quote: 'JPY', rate: 20.833333333333332 },
+      { base: 'KRW', quote: 'JPY', rate: 0.11538461538461539 },
+    ],
+    priceRefresh: {
+      targeted: 1,
+      processed: 1,
+      updated: 1,
+      skipped: 0,
+      failed: 0,
+      failedProducts: [],
+      skippedMissingShopDomainProducts: [],
+    },
+  });
+});
+
+test('api.refresh-fx cron directly reuses the shared refresh runner and returns the same body shape', async () => {
+  let receivedOptions = null;
+  const handler = createRefreshFxCronHandler({
+    runRefreshFxImpl: async (options) => {
+      receivedOptions = options;
+
+      return {
+        ok: true,
+        message: 'Updated 5 FX rates',
+        fxRates: [{ base: 'USD', quote: 'JPY', rate: 150 }],
+        priceRefresh: {
+          targeted: 2,
+          processed: 2,
+          updated: 1,
+          skipped: 1,
+          failed: 0,
+          failedProducts: [],
+          skippedMissingShopDomainProducts: ['prod_local_3'],
+        },
+      };
+    },
+  });
+
+  const response = await handler({
+    request: new Request('http://localhost/api/refresh-fx/cron', {
+      method: 'POST',
+    }),
+  });
+
+  assert.deepEqual(receivedOptions, { autoApplyPrices: true });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    message: 'Updated 5 FX rates',
+    fxRates: [{ base: 'USD', quote: 'JPY', rate: 150 }],
+    priceRefresh: {
+      targeted: 2,
+      processed: 2,
+      updated: 1,
+      skipped: 1,
+      failed: 0,
+      failedProducts: [],
+      skippedMissingShopDomainProducts: ['prod_local_3'],
     },
   });
 });
