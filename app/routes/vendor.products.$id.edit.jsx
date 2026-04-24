@@ -345,7 +345,7 @@ export const action = async ({ request, params }) => {
       });
     }
 
-    return redirect("/vendor/dashboard");
+    return redirect("/vendor/products");
   } catch (error) {
     console.error("vendor product edit error:", error);
     const message = error instanceof Error ? error.message : "";
@@ -371,8 +371,8 @@ export default function EditPage() {
       title={COPY.shellTitle}
     >
       <VendorProductForm
-        backLabel={COPY.backToDashboard}
-        backTo="/vendor/dashboard"
+        backLabel="商品一覧へ戻る"
+        backTo="/vendor/products"
         currentImageAlt={product.name || COPY.imageAlt}
         currentImageUrl={product.imageUrl || null}
         error={actionData?.error}

@@ -213,7 +213,7 @@ ${adminUrl}`,
     return json({ ok: false, error: COPY.registerFailed }, { status: 500 });
   }
 
-  return redirect("/vendor/dashboard");
+  return redirect("/vendor/products");
 };
 
 export default function VendorProductsNew() {
@@ -230,8 +230,8 @@ export default function VendorProductsNew() {
       title={COPY.shellTitle}
     >
       <VendorProductForm
-        backLabel={COPY.backToDashboard}
-        backTo="/vendor/dashboard"
+        backLabel="商品一覧へ戻る"
+        backTo="/vendor/products"
         error={actionData?.error}
         imageEmptyText={COPY.noImage}
         intro={COPY.intro}
