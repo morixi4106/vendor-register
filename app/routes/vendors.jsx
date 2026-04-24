@@ -1,96 +1,120 @@
-import { json } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
-import { authenticate } from "../shopify.server";
+import { json } from '@remix-run/node';
+import { Link, useLoaderData } from '@remix-run/react';
 
-function slugify(text) {
-  return String(text || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^\w\-ぁ-んァ-ヶ一-龠ー]/g, "");
-}
+import prisma from '../db.server.js';
 
-export async function loader({ request }) {
-  const { admin } = await authenticate.public.appProxy(request).catch(() => ({}));
+export async function loader() {
+  const vendors = await prisma.vendor.findMany({
+    where: {
+      status: 'active',
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    include: {
+      vendorStore: {
+        include: {
+          products: {
+            where: {
+              approvalStatus: 'approved',
+            },
+            select: {
+              id: true,
+            },
+          },
+        },
+      },
+    },
+  });
 
-  if (!admin) {
-    return json({ vendors: [] });
-  }
-
-  const response = await admin.graphql(`
-    query {
-      customers(first: 100, query: "tag:vendor") {
-        edges {
-          node {
-            id
-            firstName
-            lastName
-            email
-            metafield(namespace: "vendor", key: "store_name") {
-              value
-            }
-          }
-        }
-      }
-    }
-  `);
-
-  const data = await response.json();
-
-  const vendors =
-    data?.data?.customers?.edges
-      ?.map(({ node }) => {
-        const storeName =
-          node?.metafield?.value ||
-          [node?.lastName, node?.firstName].filter(Boolean).join(" ").trim() ||
-          node?.email ||
-          "店舗名未設定";
-
-        return {
-          id: node.id,
-          storeName,
-          slug: slugify(storeName),
-        };
-      })
-      .filter((vendor) => vendor.storeName) || [];
-
-  return json({ vendors });
+  return json({
+    vendors: vendors
+      .filter((vendor) => vendor.vendorStore)
+      .map((vendor) => ({
+        id: vendor.id,
+        handle: vendor.handle,
+        storeName: vendor.vendorStore.storeName,
+        country: vendor.vendorStore.country,
+        category: vendor.vendorStore.category,
+        approvedProductCount: vendor.vendorStore.products.length,
+      })),
+  });
 }
 
 export default function Vendors() {
   const { vendors } = useLoaderData();
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "40px" }}>
-      <h1 style={{ fontSize: "42px", fontWeight: "800", marginBottom: "40px" }}>
-        店舗一覧
-      </h1>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '40px 20px 72px' }}>
+      <div style={{ marginBottom: '32px' }}>
+        <p
+          style={{
+            margin: '0 0 12px',
+            fontSize: '13px',
+            letterSpacing: '0.16em',
+            textTransform: 'uppercase',
+            color: '#8a6b57',
+            fontWeight: 800,
+          }}
+        >
+          Customer Storefront
+        </p>
+        <h1 style={{ fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 900, margin: 0 }}>
+          出店者一覧
+        </h1>
+      </div>
 
       {vendors.length === 0 ? (
-        <p style={{ fontSize: "18px" }}>まだ店舗が登録されていません。</p>
+        <p style={{ fontSize: '18px', color: '#6a5446' }}>
+          現在公開中の出店者はまだありません。
+        </p>
       ) : (
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))",
-            gap: "24px",
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))',
+            gap: '24px',
           }}
         >
           {vendors.map((vendor) => (
             <Link
               key={vendor.id}
-              to={`/vendors/${vendor.slug}`}
+              to={`/vendors/${vendor.handle}`}
               style={{
-                border: "1px solid #ddd",
-                padding: "20px",
-                borderRadius: "12px",
-                textDecoration: "none",
-                color: "#111",
-                fontWeight: "700",
-                background: "#fff",
+                display: 'grid',
+                gap: '14px',
+                border: '1px solid rgba(95,72,52,0.12)',
+                padding: '22px',
+                borderRadius: '22px',
+                textDecoration: 'none',
+                color: '#221a15',
+                background: 'rgba(255,255,255,0.92)',
+                boxShadow: '0 16px 48px rgba(72,49,35,0.08)',
               }}
             >
-              {vendor.storeName}
+              <div
+                style={{
+                  display: 'inline-flex',
+                  width: 'fit-content',
+                  padding: '8px 12px',
+                  borderRadius: '999px',
+                  background: '#f4ebe2',
+                  color: '#6a5446',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                }}
+              >
+                {vendor.country}
+              </div>
+              <div>
+                <div style={{ fontSize: '24px', fontWeight: 900, marginBottom: '8px' }}>
+                  {vendor.storeName}
+                </div>
+                <div style={{ color: '#6a5446', fontSize: '14px' }}>{vendor.category}</div>
+              </div>
+              <div style={{ color: '#6a5446', fontSize: '14px', fontWeight: 700 }}>
+                公開商品 {vendor.approvedProductCount} 点
+              </div>
             </Link>
           ))}
         </div>
