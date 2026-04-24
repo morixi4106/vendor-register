@@ -1,22 +1,38 @@
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
+const RESERVED_VENDOR_HANDLES = new Set([
+  "dashboard",
+  "verify",
+  "products",
+  "orders",
+  "inventory",
+  "settings",
+  "reports",
+]);
+
 function slugify(value) {
   return String(value || "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9\-]/g, "-")
-    .replace(/\-+/g, "-")
-    .replace(/^\-+|\-+$/g, "");
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 async function generateUniqueHandle(storeName) {
   const base = slugify(storeName) || "vendor";
-  let handle = base;
-  let count = 1;
+  let count = 0;
 
   while (true) {
+    const handle = count === 0 ? base : `${base}-${count}`;
+
+    if (RESERVED_VENDOR_HANDLES.has(handle)) {
+      count += 1;
+      continue;
+    }
+
     const existing = await prisma.vendor.findUnique({
       where: { handle },
     });
@@ -26,7 +42,6 @@ async function generateUniqueHandle(storeName) {
     }
 
     count += 1;
-    handle = `${base}-${count}`;
   }
 }
 
