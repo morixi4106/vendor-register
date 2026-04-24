@@ -21,8 +21,42 @@ const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
+const COPY = {
+  storeNotFound: "店舗情報が見つかりません。",
+  productIdRequired: "商品IDがありません。",
+  productNotFound: "商品が見つかりません。",
+  unsupportedCurrency: "対応していない通貨です。",
+  productNameRequired: "商品名を入力してください。",
+  priceRequired: "価格を入力してください。",
+  invalidPrice: "価格は0以上の数値で入力してください。",
+  reconnectRequired: "Shopifyとの接続を確認してから、もう一度お試しください。",
+  updateFailed: "商品の更新に失敗しました。時間を置いて再度お試しください。",
+  title: "商品編集",
+  storeLabel: "店舗",
+  intro:
+    "商品情報を更新します。保存後は申請中となり、内容確認後にShopifyへ反映されます。",
+  nameLabel: "商品名",
+  namePlaceholder: "例: EOBEAUTE バランシングローション",
+  descriptionLabel: "商品説明",
+  descriptionPlaceholder: "商品の説明を入力してください",
+  imageLabel: "商品画像",
+  imageAlt: "商品画像",
+  noImage: "現在の画像は登録されていません。",
+  uploadHint:
+    "新しい画像を選択すると、保存時に現在の画像へ上書きされます。",
+  categoryLabel: "カテゴリー",
+  categoryPlaceholder: "例: スキンケア",
+  priceLabel: "価格",
+  currencyLabel: "価格通貨",
+  urlLabel: "参考URL・販売ページ",
+  submit: "商品を更新する",
+  submitting: "更新中...",
+  backToDashboard: "ダッシュボードへ戻る",
+};
+
 function isReconnectableShopifyError(message = "") {
   return (
+    message.includes("Shopify authentication is required") ||
     message.includes("Invalid API key or access token") ||
     message.includes("401") ||
     message.includes("Offline session not found")
@@ -111,13 +145,13 @@ export const loader = async ({ request, params }) => {
   const store = vendorSession.vendor?.vendorStore;
 
   if (!store) {
-    throw new Response("Store not found", { status: 404 });
+    throw new Response(COPY.storeNotFound, { status: 404 });
   }
 
   const productId = String(params.id || "");
 
   if (!productId) {
-    throw new Response("Product ID is required", { status: 400 });
+    throw new Response(COPY.productIdRequired, { status: 400 });
   }
 
   const product = await prisma.product.findUnique({
@@ -125,7 +159,7 @@ export const loader = async ({ request, params }) => {
   });
 
   if (!product || product.vendorStoreId !== store.id) {
-    throw new Response("Product not found", { status: 404 });
+    throw new Response(COPY.productNotFound, { status: 404 });
   }
 
   return json({
@@ -142,32 +176,32 @@ export const action = async ({ request, params }) => {
     const vendorSession = await getVendorSession(request);
     const store = vendorSession.vendor?.vendorStore;
 
-    if (!store) {
-      return json(
-        { ok: false, error: "Store not found" },
-        { status: 404 }
-      );
-    }
+      if (!store) {
+        return json(
+          { ok: false, error: COPY.storeNotFound },
+          { status: 404 }
+        );
+      }
 
     const productId = String(params.id || "");
 
-    if (!productId) {
-      return json(
-        { ok: false, error: "Product ID is required" },
-        { status: 400 }
-      );
-    }
+      if (!productId) {
+        return json(
+          { ok: false, error: COPY.productIdRequired },
+          { status: 400 }
+        );
+      }
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
     });
 
-    if (!product || product.vendorStoreId !== store.id) {
-      return json(
-        { ok: false, error: "Product not found" },
-        { status: 404 }
-      );
-    }
+      if (!product || product.vendorStoreId !== store.id) {
+        return json(
+          { ok: false, error: COPY.productNotFound },
+          { status: 404 }
+        );
+      }
 
     const formData = await request.formData();
 
@@ -180,21 +214,21 @@ export const action = async ({ request, params }) => {
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
-        { ok: false, error: "Unsupported currency" },
+        { ok: false, error: COPY.unsupportedCurrency },
         { status: 400 }
       );
     }
 
     if (!name) {
       return json(
-        { ok: false, error: "Product name is required" },
+        { ok: false, error: COPY.productNameRequired },
         { status: 400 }
       );
     }
 
     if (!priceRaw) {
       return json(
-        { ok: false, error: "Price is required" },
+        { ok: false, error: COPY.priceRequired },
         { status: 400 }
       );
     }
@@ -203,7 +237,7 @@ export const action = async ({ request, params }) => {
 
     if (!Number.isFinite(costAmount) || costAmount < 0) {
       return json(
-        { ok: false, error: "Price must be a non-negative number" },
+        { ok: false, error: COPY.invalidPrice },
         { status: 400 }
       );
     }
@@ -394,7 +428,7 @@ export default function EditPage() {
             color: "#111827",
           }}
         >
-          蝠・刀邱ｨ髮・
+          {COPY.title}
         </h1>
 
         <p
@@ -405,7 +439,7 @@ export default function EditPage() {
             lineHeight: 1.8,
           }}
         >
-          蠎苓・: {store?.storeName || "-"}
+          {COPY.storeLabel}: {store?.storeName || "-"}
         </p>
 
         <p
@@ -416,7 +450,7 @@ export default function EditPage() {
             lineHeight: 1.8,
           }}
         >
-          邱ｨ髮・＠縺ｦ譖ｴ譁ｰ縺吶ｋ縺ｨ縲∝膚蜩∝・螳ｹ縺ｯ菫晏ｭ倥＆繧後∪縺吶よ価隱肴ｸ医∩縺ｮ蝠・刀繧ょ・遒ｺ隱阪＠繧・☆縺・ｈ縺・↓縲∵峩譁ｰ譎ゅ・逕ｳ隲倶ｸｭ縺ｫ謌ｻ縺励∪縺吶・
+          {COPY.intro}
         </p>
 
         {actionData?.error ? (
@@ -450,14 +484,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蝠・刀蜷・
+                {COPY.nameLabel}
               </label>
               <input
                 id="name"
                 name="name"
                 type="text"
                 defaultValue={product.name || ""}
-                placeholder="萓具ｼ哢EOBEAUTE 繝舌Λ繝ｳ繧ｷ繝ｳ繧ｰ繝ｭ繝ｼ繧ｷ繝ｧ繝ｳ"
+                placeholder={COPY.namePlaceholder}
                 style={{
                   width: "100%",
                   height: "48px",
@@ -481,14 +515,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蝠・刀隱ｬ譏・
+                {COPY.descriptionLabel}
               </label>
               <textarea
                 id="description"
                 name="description"
                 rows={8}
                 defaultValue={product.description || ""}
-                placeholder="蝠・刀隱ｬ譏弱ｒ蜈･蜉帙＠縺ｦ縺上□縺輔＞"
+                placeholder={COPY.descriptionPlaceholder}
                 style={{
                   width: "100%",
                   border: "1px solid #d1d5db",
@@ -512,7 +546,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蝠・刀逕ｻ蜒・
+                {COPY.imageLabel}
               </label>
 
               {product.imageUrl ? (
@@ -527,7 +561,7 @@ export default function EditPage() {
                 >
                   <img
                     src={product.imageUrl}
-                    alt={product.name || "Product image"}
+                    alt={product.name || COPY.imageAlt}
                     style={{
                       width: "100%",
                       maxHeight: "320px",
@@ -550,7 +584,7 @@ export default function EditPage() {
                     background: "#f9fafb",
                   }}
                 >
-                  迴ｾ蝨ｨ縺ｮ逕ｻ蜒上・縺ゅｊ縺ｾ縺帙ｓ
+                  {COPY.noImage}
                 </div>
               )}
 
@@ -566,9 +600,7 @@ export default function EditPage() {
                 }}
               >
                 <input type="file" name="image" accept="image/*" />
-                <div style={{ marginTop: "10px" }}>
-                  譁ｰ縺励＞逕ｻ蜒上ｒ驕ｸ縺ｶ縺ｨ荳頑嶌縺阪＆繧後∪縺・
-                </div>
+                <div style={{ marginTop: "10px" }}>{COPY.uploadHint}</div>
               </div>
             </div>
 
@@ -583,14 +615,14 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                繧ｫ繝・ざ繝ｪ
+                {COPY.categoryLabel}
               </label>
               <input
                 id="category"
                 name="category"
                 type="text"
                 defaultValue={product.category || ""}
-                placeholder="萓具ｼ壹せ繧ｭ繝ｳ繧ｱ繧｢"
+                placeholder={COPY.categoryPlaceholder}
                 style={{
                   width: "100%",
                   height: "48px",
@@ -614,7 +646,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蜴滉ｾ｡
+                {COPY.priceLabel}
               </label>
               <input
                 id="price"
@@ -647,7 +679,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蜴滉ｾ｡騾夊ｲｨ
+                {COPY.currencyLabel}
               </label>
               <select
               id="costCurrency"
@@ -684,7 +716,7 @@ export default function EditPage() {
                   color: "#111827",
                 }}
               >
-                蜿りザRL・井ｻｻ諢擾ｼ・
+                {COPY.urlLabel}
               </label>
               <input
                 id="url"
@@ -727,7 +759,7 @@ export default function EditPage() {
                   cursor: isSubmitting ? "default" : "pointer",
                 }}
               >
-                {isSubmitting ? "譖ｴ譁ｰ荳ｭ..." : "蝠・刀繧呈峩譁ｰ縺吶ｋ"}
+                {isSubmitting ? COPY.submitting : COPY.submit}
               </button>
 
               <a
@@ -747,7 +779,7 @@ export default function EditPage() {
                   boxSizing: "border-box",
                 }}
               >
-                繝繝・す繝･繝懊・繝峨∈謌ｻ繧・
+                {COPY.backToDashboard}
               </a>
             </div>
           </div>

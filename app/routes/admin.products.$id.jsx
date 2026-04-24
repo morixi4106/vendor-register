@@ -22,6 +22,22 @@ function isReconnectableShopifyError(message = "") {
   );
 }
 
+function shouldShowInternalPriceDebug() {
+  return process.env.NODE_ENV !== "production";
+}
+
+function getPublicShopifyReconnectNotice() {
+  return "Shopify連携の確認が必要です。必要に応じて再接続してください。";
+}
+
+function getPublicAdminActionErrorMessage(needsReconnect) {
+  if (needsReconnect) {
+    return getPublicShopifyReconnectNotice();
+  }
+
+  return "商品の処理に失敗しました。時間を置いて再度お試しください。";
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
 
@@ -272,6 +288,7 @@ async function createShopifyProductFromDbProduct(product) {
 
 export const loader = async ({ params }) => {
   const id = String(params.id || "");
+  const showInternalPriceDebug = shouldShowInternalPriceDebug();
 
   if (!id) {
     throw new Response("IDがありません", { status: 400 });
@@ -290,7 +307,7 @@ export const loader = async ({ params }) => {
 
   let shopifyPrice = null;
   let needsReconnect = false;
-  let shopifyError = null;
+  let rawShopifyError = null;
   let priceBreakdown = null;
   let previewPriceSnapshot = null;
   let priceCalculationState = {
@@ -328,7 +345,7 @@ export const loader = async ({ params }) => {
 
     if (isReconnectableShopifyError(message)) {
       needsReconnect = true;
-      shopifyError = message;
+      rawShopifyError = message;
     } else {
       console.error("shop pricing settings read error:", error);
     }
@@ -385,7 +402,7 @@ export const loader = async ({ params }) => {
       const message =
         error instanceof Error ? error.message : "不明なエラーです";
 
-      shopifyError = message;
+      rawShopifyError = message;
 
       if (isReconnectableShopifyError(message)) {
         needsReconnect = true;
@@ -404,22 +421,24 @@ export const loader = async ({ params }) => {
   if (previewResult.ok) {
     const priceResult = previewResult.value;
     priceBreakdown = priceResult.breakdown;
-    previewPriceSnapshot = buildPriceSnapshot(priceResult, {
-      calculatedAt: new Date(),
-      localProductId: product.id,
-      shopifyProductId: product.shopifyProductId,
-      shopDomain: priceResult.shopDomain || previewPricingInput.shopDomain,
-      snapshotType: "preview",
-      source: {
-        pricingInput: usedShopifyPricingInput
-          ? "shopify_product_metafields"
-          : "local_product_fallback",
-        shopSettings: usedShopifySettings
-          ? "shopify_shop_metafields"
-          : "default_pricing_settings",
-        fxRate: "fx_rate_table",
-      },
-    });
+    if (showInternalPriceDebug) {
+      previewPriceSnapshot = buildPriceSnapshot(priceResult, {
+        calculatedAt: new Date(),
+        localProductId: product.id,
+        shopifyProductId: product.shopifyProductId,
+        shopDomain: priceResult.shopDomain || previewPricingInput.shopDomain,
+        snapshotType: "preview",
+        source: {
+          pricingInput: usedShopifyPricingInput
+            ? "shopify_product_metafields"
+            : "local_product_fallback",
+          shopSettings: usedShopifySettings
+            ? "shopify_shop_metafields"
+            : "default_pricing_settings",
+          fxRate: "fx_rate_table",
+        },
+      });
+    }
     reconnectShopDomain = reconnectShopDomain || priceResult.shopDomain;
   } else {
     priceCalculationState = {
@@ -429,38 +448,24 @@ export const loader = async ({ params }) => {
   }
 
   const effectivePriceSyncStatus = getEffectivePriceSyncStatus(product);
-  const priceState = {
-    syncStatus: effectivePriceSyncStatus,
-    syncLabel: getAdminPriceSyncLabel(effectivePriceSyncStatus),
-    syncError: product.priceSyncError || null,
-    priceAppliedAt: product.priceAppliedAt || product.calculatedAt || null,
-    lastPriceApplyAttemptAt: product.lastPriceApplyAttemptAt || null,
-    calculationStatus: priceCalculationState.status,
-    calculationReason: priceCalculationState.reason,
-  };
+  const priceState = showInternalPriceDebug
+    ? {
+        syncStatus: effectivePriceSyncStatus,
+        syncLabel: getAdminPriceSyncLabel(effectivePriceSyncStatus),
+        syncError: product.priceSyncError || null,
+        priceAppliedAt: product.priceAppliedAt || product.calculatedAt || null,
+        lastPriceApplyAttemptAt: product.lastPriceApplyAttemptAt || null,
+        calculationStatus: priceCalculationState.status,
+        calculationReason: priceCalculationState.reason,
+      }
+    : null;
 
-  const directPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
-    where: {
-      productId: product.id,
-    },
-    orderBy: {
-      attemptedAt: "desc",
-    },
-    take: 10,
-  });
+  let priceApplyLogs = [];
 
-  let priceApplyLogs = directPriceApplyLogs;
-
-  if (product.shopifyProductId) {
-    const unresolvedPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
+  if (showInternalPriceDebug) {
+    const directPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
       where: {
-        productId: null,
-        shopifyProductId: product.shopifyProductId,
-        ...(product.shopDomain
-          ? {
-              OR: [{ shopDomain: product.shopDomain }, { shopDomain: null }],
-            }
-          : {}),
+        productId: product.id,
       },
       orderBy: {
         attemptedAt: "desc",
@@ -468,25 +473,51 @@ export const loader = async ({ params }) => {
       take: 10,
     });
 
-    priceApplyLogs = Array.from(
-      new Map(
-        [...directPriceApplyLogs, ...unresolvedPriceApplyLogs]
-          .sort((a, b) => new Date(b.attemptedAt) - new Date(a.attemptedAt))
-          .map((log) => [log.id, log])
-      ).values()
-    ).slice(0, 10);
+    priceApplyLogs = directPriceApplyLogs;
+
+    if (product.shopifyProductId) {
+      const unresolvedPriceApplyLogs = await prisma.productPriceApplyLog.findMany({
+        where: {
+          productId: null,
+          shopifyProductId: product.shopifyProductId,
+          ...(product.shopDomain
+            ? {
+                OR: [{ shopDomain: product.shopDomain }, { shopDomain: null }],
+              }
+            : {}),
+        },
+        orderBy: {
+          attemptedAt: "desc",
+        },
+        take: 10,
+      });
+
+      priceApplyLogs = Array.from(
+        new Map(
+          [...directPriceApplyLogs, ...unresolvedPriceApplyLogs]
+            .sort((a, b) => new Date(b.attemptedAt) - new Date(a.attemptedAt))
+            .map((log) => [log.id, log])
+        ).values()
+      ).slice(0, 10);
+    }
   }
 
   return json({
     product,
     shopifyPrice,
     needsReconnect,
-    shopifyError,
+    shopifyNotice: needsReconnect ? getPublicShopifyReconnectNotice() : null,
     priceBreakdown,
-    previewPriceSnapshot,
-    priceState,
     reconnectShopDomain,
-    priceApplyLogs,
+    showInternalPriceDebug,
+    priceDebug: showInternalPriceDebug
+      ? {
+          shopifyError: rawShopifyError,
+          previewPriceSnapshot,
+          priceState,
+          priceApplyLogs,
+        }
+      : null,
   });
 };
 
@@ -641,11 +672,14 @@ export const action = async ({ request }) => {
       error instanceof Error ? error.message : "不明なエラーです";
 
     const needsReconnect = isReconnectableShopifyError(message);
+    const showInternalPriceDebug = shouldShowInternalPriceDebug();
 
     return json(
       {
         ok: false,
-        error: message,
+        error: showInternalPriceDebug
+          ? message
+          : getPublicAdminActionErrorMessage(needsReconnect),
         needsReconnect,
       },
       { status: 500 }
@@ -658,13 +692,21 @@ export default function AdminProductDetail() {
     product,
     shopifyPrice,
     needsReconnect,
-    shopifyError,
+    shopifyNotice,
     priceBreakdown,
-    priceState,
     reconnectShopDomain,
-    priceApplyLogs,
+    showInternalPriceDebug,
+    priceDebug,
   } = useLoaderData();
   const actionData = useActionData();
+  const priceState = priceDebug?.priceState || null;
+  const priceApplyLogs = priceDebug?.priceApplyLogs || [];
+  const publicReconnectMessage =
+    shopifyNotice || getPublicShopifyReconnectNotice();
+  const reconnectMessage = showInternalPriceDebug
+    ? priceDebug?.shopifyError || publicReconnectMessage
+    : publicReconnectMessage;
+  const actionErrorMessage = actionData?.error;
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -674,7 +716,7 @@ export default function AdminProductDetail() {
         店舗: {product.vendorStore?.storeName || "-"}
       </p>
 
-      {actionData?.error ? (
+      {actionErrorMessage ? (
         <div
           style={{
             marginTop: "20px",
@@ -688,12 +730,12 @@ export default function AdminProductDetail() {
           }}
         >
           <strong>エラー:</strong>
-          <div style={{ marginTop: "8px" }}>{actionData.error}</div>
+          <div style={{ marginTop: "8px" }}>{actionErrorMessage}</div>
 
           {actionData?.needsReconnect ? (
             <div style={{ marginTop: "14px" }}>
               <div style={{ marginBottom: "10px" }}>
-                Shopify接続が切れています。再接続してください。
+                Shopifyとの接続を確認してください。
               </div>
 
               <Form method="post" action="/admin/shopify-reconnect">
@@ -734,9 +776,7 @@ export default function AdminProductDetail() {
           }}
         >
           <strong>Shopify接続エラー:</strong>
-          <div style={{ marginTop: "8px" }}>
-            {shopifyError || "Shopify接続が切れています。再接続してください。"}
-          </div>
+          <div style={{ marginTop: "8px" }}>{reconnectMessage}</div>
 
           <div style={{ marginTop: "14px" }}>
             <Form method="post" action="/admin/shopify-reconnect">
@@ -784,121 +824,125 @@ export default function AdminProductDetail() {
         </div>
       ) : null}
 
-      <div
-        style={{
-          marginTop: "20px",
-          padding: "14px",
-          borderRadius: "8px",
-          background: "#f9fafb",
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <strong>Price State</strong>
-        <div style={{ marginTop: "8px", display: "grid", gap: "6px" }}>
-          <div>Calculation state: {priceState.calculationStatus}</div>
-          <div>Price sync status: {priceState.syncLabel}</div>
-          <div>Last applied: {formatDateTime(priceState.priceAppliedAt)}</div>
-          <div>Last apply attempt: {formatDateTime(priceState.lastPriceApplyAttemptAt)}</div>
-          {priceState.calculationReason ? (
-            <div style={{ color: "#b45309" }}>
-              Calculation issue: {priceState.calculationReason}
-            </div>
-          ) : null}
-          {priceState.syncError ? (
-            <div style={{ color: "#b91c1c" }}>
-              Last apply failure: {priceState.syncError}
-            </div>
-          ) : null}
-          {priceState.syncStatus === "apply_failed" ? (
-            <div style={{ color: "#1d4ed8" }}>
-              Retry from the apply button below after reconnecting Shopify if needed.
-            </div>
-          ) : null}
-          {priceState.syncStatus === "invalid" ? (
-            <div style={{ color: "#1d4ed8" }}>
-              Fix the pricing inputs, then run apply again from the button below.
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div
-        style={{
-          marginTop: "20px",
-          padding: "14px",
-          borderRadius: "8px",
-          background: "#f9fafb",
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <strong>Recent Apply Attempts</strong>
-        {priceApplyLogs?.length ? (
-          <div style={{ marginTop: "12px", display: "grid", gap: "10px" }}>
-            {priceApplyLogs.map((log) => {
-              const logInput = log?.priceSnapshotJson?.input || null;
-              const logSource = log?.priceSnapshotJson?.source || null;
-
-              return (
-                <div
-                  key={log.id}
-                  style={{
-                    padding: "12px",
-                    borderRadius: "8px",
-                    background: "#ffffff",
-                    border: "1px solid #e5e7eb",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "10px",
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                    }}
-                  >
-                    <strong style={{ color: getApplyLogStatusColor(log.status) }}>
-                      {getApplyLogStatusLabel(log.status)}
-                    </strong>
-                    <span>{formatDateTime(log.attemptedAt)}</span>
-                    <span>Shop: {log.shopDomain || "-"}</span>
-                    <span>
-                      Attempted price:{" "}
-                      {typeof log.attemptedPrice === "number"
-                        ? `¥${log.attemptedPrice}`
-                        : "-"}
-                    </span>
-                    <span>Formula: {log.priceFormulaVersion || "-"}</span>
-                  </div>
-
-                  {logInput ? (
-                    <div style={{ marginTop: "8px", color: "#4b5563", fontSize: "14px" }}>
-                      Input: {logInput.costAmount ?? "-"} {logInput.costCurrency || "-"} / duty{" "}
-                      {logInput.dutyCategory || "-"}
-                    </div>
-                  ) : null}
-
-                  {logSource ? (
-                    <div style={{ marginTop: "4px", color: "#6b7280", fontSize: "13px" }}>
-                      Source: {logSource.pricingInput || "-"} / {logSource.shopSettings || "-"} /{" "}
-                      {logSource.fxRate || "-"}
-                    </div>
-                  ) : null}
-
-                  {log.errorSummary ? (
-                    <div style={{ marginTop: "8px", color: "#b91c1c" }}>
-                      Error: {log.errorSummary}
-                    </div>
-                  ) : null}
+      {showInternalPriceDebug && priceDebug && priceState ? (
+        <>
+          <div
+            style={{
+              marginTop: "20px",
+              padding: "14px",
+              borderRadius: "8px",
+              background: "#f9fafb",
+              border: "1px solid #e5e7eb",
+            }}
+          >
+            <strong>Price State</strong>
+            <div style={{ marginTop: "8px", display: "grid", gap: "6px" }}>
+              <div>Calculation state: {priceState.calculationStatus}</div>
+              <div>Price sync status: {priceState.syncLabel}</div>
+              <div>Last applied: {formatDateTime(priceState.priceAppliedAt)}</div>
+              <div>Last apply attempt: {formatDateTime(priceState.lastPriceApplyAttemptAt)}</div>
+              {priceState.calculationReason ? (
+                <div style={{ color: "#b45309" }}>
+                  Calculation issue: {priceState.calculationReason}
                 </div>
-              );
-            })}
+              ) : null}
+              {priceState.syncError ? (
+                <div style={{ color: "#b91c1c" }}>
+                  Last apply failure: {priceState.syncError}
+                </div>
+              ) : null}
+              {priceState.syncStatus === "apply_failed" ? (
+                <div style={{ color: "#1d4ed8" }}>
+                  Retry from the apply button below after reconnecting Shopify if needed.
+                </div>
+              ) : null}
+              {priceState.syncStatus === "invalid" ? (
+                <div style={{ color: "#1d4ed8" }}>
+                  Fix the pricing inputs, then run apply again from the button below.
+                </div>
+              ) : null}
+            </div>
           </div>
-        ) : (
-          <div style={{ marginTop: "12px", color: "#6b7280" }}>
-            No apply attempts yet.
+
+          <div
+            style={{
+              marginTop: "20px",
+              padding: "14px",
+              borderRadius: "8px",
+              background: "#f9fafb",
+              border: "1px solid #e5e7eb",
+            }}
+          >
+            <strong>Recent Apply Attempts</strong>
+            {priceApplyLogs?.length ? (
+              <div style={{ marginTop: "12px", display: "grid", gap: "10px" }}>
+                {priceApplyLogs.map((log) => {
+                  const logInput = log?.priceSnapshotJson?.input || null;
+                  const logSource = log?.priceSnapshotJson?.source || null;
+
+                  return (
+                    <div
+                      key={log.id}
+                      style={{
+                        padding: "12px",
+                        borderRadius: "8px",
+                        background: "#ffffff",
+                        border: "1px solid #e5e7eb",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "10px",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <strong style={{ color: getApplyLogStatusColor(log.status) }}>
+                          {getApplyLogStatusLabel(log.status)}
+                        </strong>
+                        <span>{formatDateTime(log.attemptedAt)}</span>
+                        <span>Shop: {log.shopDomain || "-"}</span>
+                        <span>
+                          Attempted price:{" "}
+                          {typeof log.attemptedPrice === "number"
+                            ? `¥${log.attemptedPrice}`
+                            : "-"}
+                        </span>
+                        <span>Formula: {log.priceFormulaVersion || "-"}</span>
+                      </div>
+
+                      {logInput ? (
+                        <div style={{ marginTop: "8px", color: "#4b5563", fontSize: "14px" }}>
+                          Input: {logInput.costAmount ?? "-"} {logInput.costCurrency || "-"} /
+                          duty {logInput.dutyCategory || "-"}
+                        </div>
+                      ) : null}
+
+                      {logSource ? (
+                        <div style={{ marginTop: "4px", color: "#6b7280", fontSize: "13px" }}>
+                          Source: {logSource.pricingInput || "-"} /{" "}
+                          {logSource.shopSettings || "-"} / {logSource.fxRate || "-"}
+                        </div>
+                      ) : null}
+
+                      {log.errorSummary ? (
+                        <div style={{ marginTop: "8px", color: "#b91c1c" }}>
+                          Error: {log.errorSummary}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ marginTop: "12px", color: "#6b7280" }}>
+                No apply attempts yet.
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : null}
 
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
         <div>
