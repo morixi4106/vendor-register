@@ -227,6 +227,11 @@ export default function VendorManagementShell({
           font-size:14px;
           line-height:1.7;
         }
+        .vendor-note--danger{
+          border-color:#fecaca;
+          background:#fef2f2;
+          color:#b91c1c;
+        }
         .vendor-placeholder{
           border:1px dashed #d1d5db;
           background:#f9fafb;
@@ -345,6 +350,99 @@ export default function VendorManagementShell({
           display:flex;
           gap:10px;
           flex-wrap:wrap;
+        }
+        .vendor-form{
+          display:grid;
+          gap:24px;
+        }
+        .vendor-form__meta{
+          display:grid;
+          gap:6px;
+        }
+        .vendor-form__store{
+          margin:0;
+          color:#6b7280;
+          font-size:14px;
+          line-height:1.8;
+        }
+        .vendor-form__grid{
+          display:grid;
+          gap:20px;
+        }
+        .vendor-form__field{
+          display:grid;
+          gap:8px;
+        }
+        .vendor-form__label{
+          display:block;
+          font-size:14px;
+          font-weight:700;
+          color:#111827;
+        }
+        .vendor-form__input,
+        .vendor-form__select,
+        .vendor-form__textarea{
+          width:100%;
+          border:1px solid #d1d5db;
+          border-radius:10px;
+          font-size:14px;
+          box-sizing:border-box;
+          background:#ffffff;
+          color:#111827;
+        }
+        .vendor-form__input,
+        .vendor-form__select{
+          min-height:48px;
+          padding:0 14px;
+        }
+        .vendor-form__textarea{
+          min-height:160px;
+          padding:14px;
+          line-height:1.8;
+          resize:vertical;
+        }
+        .vendor-form__upload{
+          display:grid;
+          gap:10px;
+          border:1px dashed #d1d5db;
+          border-radius:10px;
+          padding:20px;
+          background:#f9fafb;
+          color:#6b7280;
+          font-size:14px;
+          line-height:1.7;
+        }
+        .vendor-form__image-frame{
+          overflow:hidden;
+          border:1px solid #e5e7eb;
+          border-radius:12px;
+          background:#ffffff;
+        }
+        .vendor-form__image{
+          display:block;
+          width:100%;
+          max-height:320px;
+          object-fit:contain;
+          background:#ffffff;
+        }
+        .vendor-form__empty-image{
+          border:1px dashed #d1d5db;
+          border-radius:12px;
+          padding:20px;
+          background:#f9fafb;
+          color:#6b7280;
+          font-size:14px;
+          line-height:1.7;
+          text-align:center;
+        }
+        .vendor-form__file{
+          width:100%;
+        }
+        .vendor-form__actions{
+          display:flex;
+          gap:10px;
+          flex-wrap:wrap;
+          margin-top:8px;
         }
         @media print{
           .vendor-shell__sidebar,
