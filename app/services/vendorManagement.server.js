@@ -97,19 +97,29 @@ export function getBadgeTone(label) {
   return "neutral";
 }
 
+export const PRODUCT_STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "全て" },
+  { value: "pending", label: "申請中" },
+  { value: "review", label: "確認中" },
+  { value: "approved", label: "承認済み（未連携）" },
+  { value: "linked", label: "Shopify連携済み" },
+  { value: "rejected", label: "差し戻し" },
+];
+
 export function serializeVendorProduct(product) {
   return {
     id: product.id,
     name: product.name || "名称未設定",
     category: product.category || "未設定",
-    sku: "-",
+    sku: product.shopifyProductId || "-",
     stockLabel: "未連携",
-    trackingLabel: "-",
+    trackingLabel: product.url || "-",
     salesLabel: "0",
     priceLabel: formatMoney(product.price || 0, "JPY"),
     statusLabel: mapProductStatus(product),
     approvalLabel: mapApprovalLabel(product.approvalStatus),
     shopifyProductId: product.shopifyProductId || null,
+    url: product.url || null,
     updatedAtLabel: formatDateTime(product.updatedAt),
   };
 }
@@ -193,16 +203,65 @@ export async function requireVendorContext(request, options = {}) {
 
 export async function listVendorProducts(storeId, filters = {}) {
   const name = String(filters.name || "").trim();
+  const sku = String(filters.sku || "").trim();
+  const tracking = String(filters.tracking || "").trim();
+  const status = String(filters.status || "all").trim();
+  const and = [{ vendorStoreId: storeId }];
+
+  if (name) {
+    and.push({
+      name: {
+        contains: name,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (sku) {
+    and.push({
+      shopifyProductId: {
+        contains: sku,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (tracking) {
+    and.push({
+      url: {
+        contains: tracking,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  switch (status) {
+    case "pending":
+      and.push({ approvalStatus: "pending" });
+      break;
+    case "review":
+      and.push({ approvalStatus: "review" });
+      break;
+    case "approved":
+      and.push({ approvalStatus: "approved" });
+      and.push({ shopifyProductId: null });
+      break;
+    case "linked":
+      and.push({
+        shopifyProductId: {
+          not: null,
+        },
+      });
+      break;
+    case "rejected":
+      and.push({ approvalStatus: "rejected" });
+      break;
+    default:
+      break;
+  }
+
   const where = {
-    vendorStoreId: storeId,
-    ...(name
-      ? {
-          name: {
-            contains: name,
-            mode: "insensitive",
-          },
-        }
-      : {}),
+    AND: and,
   };
 
   const products = await prisma.product.findMany({
