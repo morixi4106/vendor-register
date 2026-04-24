@@ -58,6 +58,27 @@ export function getVendorPriceSyncLabel(status) {
   }
 }
 
+function getReconnectableAuthFailureMessage(message) {
+  if (
+    message.includes('Offline session not found for shop:') ||
+    message.includes('Shopify Admin authentication failed for shop ')
+  ) {
+    return message;
+  }
+
+  if (message.includes('Could not find a session for shop ')) {
+    const match = message.match(
+      /Could not find a session for shop (.+?) when creating unauthenticated admin context/,
+    );
+
+    if (match?.[1]) {
+      return `Offline session not found for shop: ${match[1]}`;
+    }
+  }
+
+  return 'Shopify authentication is required';
+}
+
 export function normalizePriceSyncFailure(error) {
   const message = error instanceof Error ? error.message : 'Price apply failed';
 
@@ -88,12 +109,15 @@ export function normalizePriceSyncFailure(error) {
   if (
     message.includes('Invalid API key or access token') ||
     message.includes('Offline session not found') ||
+    message.includes('Could not find a session for shop') ||
+    message.includes('Shopify Admin authentication failed for shop') ||
+    message.includes('Unauthorized') ||
     message.includes('401')
   ) {
     return {
       code: 'shopify_auth_error',
       status: PRICE_SYNC_STATUS.APPLY_FAILED,
-      message: 'Shopify authentication is required',
+      message: getReconnectableAuthFailureMessage(message),
       needsReconnect: true,
     };
   }

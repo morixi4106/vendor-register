@@ -296,6 +296,65 @@ test('applyProductPrice logs unresolved local-product failures with productId nu
   assert.equal(prismaClient.state.logs[0].shopDomain, 'shop-a.myshopify.com');
 });
 
+test('applyProductPrice keeps the missing shopDomain in background auth failures', async () => {
+  const prismaClient = createFakePrisma({
+    linkedProducts: [
+      {
+        id: 'prod_local_1',
+        shopDomain: 'b301ze-1a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+      },
+    ],
+    productsById: {
+      prod_local_1: {
+        shopDomain: 'b301ze-1a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+      },
+    },
+  });
+
+  const applyProductPrice = createApplyProductPrice({
+    prismaClient,
+    shopifyGraphQLWithOfflineSessionImpl: async () => {
+      throw new Error('Offline session not found for shop: b301ze-1a.myshopify.com');
+    },
+  });
+
+  let thrownError = null;
+
+  try {
+    await applyProductPrice('gid://shopify/Product/1', {
+      shopDomain: 'b301ze-1a.myshopify.com',
+      localProductId: 'prod_local_1',
+      fxRate: 150,
+    });
+  } catch (error) {
+    thrownError = error;
+  }
+
+  assert.ok(thrownError instanceof Error);
+  assert.equal(
+    thrownError.message,
+    'Offline session not found for shop: b301ze-1a.myshopify.com',
+  );
+  assert.deepEqual(thrownError.priceSyncFailure, {
+    code: 'shopify_auth_error',
+    status: PRICE_SYNC_STATUS.APPLY_FAILED,
+    message: 'Offline session not found for shop: b301ze-1a.myshopify.com',
+    needsReconnect: true,
+  });
+  assert.equal(prismaClient.state.updates.length, 1);
+  assert.equal(
+    prismaClient.state.updates[0].data.priceSyncError,
+    'Offline session not found for shop: b301ze-1a.myshopify.com',
+  );
+  assert.equal(prismaClient.state.logs.length, 1);
+  assert.equal(
+    prismaClient.state.logs[0].errorSummary,
+    'Offline session not found for shop: b301ze-1a.myshopify.com',
+  );
+});
+
 test('applyProductPrice skips Shopify mutation when the price is unchanged', async () => {
   const prismaClient = createFakePrisma({
     linkedProducts: [

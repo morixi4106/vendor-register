@@ -1,12 +1,37 @@
 import prisma from "../db.server.js";
 
+function createMissingOfflineSessionError(shopDomain) {
+  return new Error(`Offline session not found for shop: ${shopDomain}`);
+}
+
+function isMissingOfflineSessionMessage(message = "") {
+  return (
+    message.includes("Offline session not found") ||
+    message.includes("Could not find a session for shop")
+  );
+}
+
+function isShopifyAuthenticationFailureMessage(message = "") {
+  return (
+    message.includes("Invalid API key or access token") ||
+    message.includes("401") ||
+    message.includes("Unauthorized") ||
+    message.includes("unauthorized")
+  );
+}
+
+async function loadOfflineAdminContext(shopDomain) {
+  const { unauthenticated } = await import("../shopify.server.js");
+  return unauthenticated.admin(shopDomain);
+}
+
 export function normalizeShopDomain(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized || null;
 }
 
-export async function listOfflineShopDomains() {
-  const sessions = await prisma.session.findMany({
+export async function listOfflineShopDomains(prismaClient = prisma) {
+  const sessions = await prismaClient.session.findMany({
     where: { isOnline: false },
     select: { shop: true },
   });
@@ -16,14 +41,17 @@ export async function listOfflineShopDomains() {
   ).sort();
 }
 
-export async function resolveShopDomain(preferredShopDomain) {
+export async function resolveShopDomain(
+  preferredShopDomain,
+  { listOfflineShopDomainsImpl = listOfflineShopDomains } = {},
+) {
   const normalized = normalizeShopDomain(preferredShopDomain);
 
   if (normalized) {
     return normalized;
   }
 
-  const offlineShops = await listOfflineShopDomains();
+  const offlineShops = await listOfflineShopDomainsImpl();
 
   if (offlineShops.length === 1) {
     return offlineShops[0];
@@ -36,60 +64,98 @@ export async function resolveShopDomain(preferredShopDomain) {
   throw new Error("Shop context is ambiguous for this product");
 }
 
-export async function getOfflineSessionForShopDomain(preferredShopDomain) {
-  const shopDomain = await resolveShopDomain(preferredShopDomain);
+export function createGetOfflineAdminContextForShopDomain({
+  resolveShopDomainImpl = resolveShopDomain,
+  loadOfflineAdminContextImpl = loadOfflineAdminContext,
+} = {}) {
+  return async function getOfflineAdminContextForShopDomainImpl(preferredShopDomain) {
+    const shopDomain = await resolveShopDomainImpl(preferredShopDomain);
 
-  const session = await prisma.session.findFirst({
-    where: {
-      shop: shopDomain,
-      isOnline: false,
-    },
-  });
+    try {
+      const context = await loadOfflineAdminContextImpl(shopDomain);
 
-  if (!session?.accessToken) {
-    throw new Error(`Offline session not found for shop: ${shopDomain}`);
-  }
+      if (!context?.admin || !context?.session?.accessToken) {
+        throw createMissingOfflineSessionError(shopDomain);
+      }
 
-  return {
-    shopDomain,
-    accessToken: session.accessToken,
-  };
-}
+      return {
+        shopDomain,
+        session: context.session,
+        admin: context.admin,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
 
-export async function shopifyGraphQLWithOfflineSession({
-  shopDomain,
-  apiVersion,
-  query,
-  variables = {},
-}) {
-  const session = await getOfflineSessionForShopDomain(shopDomain);
+      if (isMissingOfflineSessionMessage(message)) {
+        throw createMissingOfflineSessionError(shopDomain);
+      }
 
-  const res = await fetch(
-    `https://${session.shopDomain}/admin/api/${apiVersion}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": session.accessToken,
-      },
-      body: JSON.stringify({ query, variables }),
+      throw error;
     }
-  );
+  };
+}
 
-  const data = await res.json();
+export const getOfflineAdminContextForShopDomain =
+  createGetOfflineAdminContextForShopDomain();
 
-  if (!res.ok) {
-    throw new Error(
-      `Shopify GraphQL request failed: ${res.status} ${JSON.stringify(data)}`
-    );
-  }
+export async function getOfflineSessionForShopDomain(
+  preferredShopDomain,
+  { getOfflineAdminContextForShopDomainImpl = getOfflineAdminContextForShopDomain } = {},
+) {
+  const context = await getOfflineAdminContextForShopDomainImpl(preferredShopDomain);
 
-  if (data.errors?.length) {
-    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(data.errors)}`);
+  if (!context?.session?.accessToken) {
+    throw createMissingOfflineSessionError(context?.shopDomain || preferredShopDomain);
   }
 
   return {
-    data: data.data,
-    shopDomain: session.shopDomain,
+    shopDomain: context.shopDomain,
+    accessToken: context.session.accessToken,
   };
 }
+
+export function createShopifyGraphQLWithOfflineSession({
+  getOfflineAdminContextForShopDomainImpl = getOfflineAdminContextForShopDomain,
+} = {}) {
+  return async function shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion,
+    query,
+    variables = {},
+  }) {
+    const context = await getOfflineAdminContextForShopDomainImpl(shopDomain);
+
+    try {
+      const response = await context.admin.graphql(query, {
+        apiVersion,
+        variables,
+      });
+      const payload = await response.json();
+
+      if (payload.errors?.length) {
+        throw new Error(`Shopify GraphQL errors: ${JSON.stringify(payload.errors)}`);
+      }
+
+      return {
+        data: payload.data,
+        shopDomain: context.shopDomain,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (isMissingOfflineSessionMessage(message)) {
+        throw createMissingOfflineSessionError(context.shopDomain);
+      }
+
+      if (isShopifyAuthenticationFailureMessage(message)) {
+        throw new Error(
+          `Shopify Admin authentication failed for shop ${context.shopDomain}: ${message}`,
+        );
+      }
+
+      throw error;
+    }
+  };
+}
+
+export const shopifyGraphQLWithOfflineSession = createShopifyGraphQLWithOfflineSession();

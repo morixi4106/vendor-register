@@ -43,6 +43,20 @@ test('normalizePriceSyncFailure maps auth failures to reconnectable apply failur
   assert.equal(failure.needsReconnect, true);
 });
 
+test('normalizePriceSyncFailure preserves shop-specific offline-session failures', () => {
+  const failure = normalizePriceSyncFailure(
+    new Error('Offline session not found for shop: b301ze-1a.myshopify.com'),
+  );
+
+  assert.equal(failure.code, 'shopify_auth_error');
+  assert.equal(failure.status, PRICE_SYNC_STATUS.APPLY_FAILED);
+  assert.equal(
+    failure.message,
+    'Offline session not found for shop: b301ze-1a.myshopify.com',
+  );
+  assert.equal(failure.needsReconnect, true);
+});
+
 test('normalizePriceSyncFailure maps Shopify mutation failures to apply_failed without reconnect', () => {
   const failure = normalizePriceSyncFailure(
     new Error('productVariantsBulkUpdate failed: [{"message":"invalid"}]'),
