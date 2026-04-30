@@ -2,33 +2,42 @@ import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 
-function createOrdersPageContent(accessState) {
+function createOrdersPageContent(accessState, orderCount) {
   switch (accessState.status) {
     case "ready":
+      if (orderCount > 0) {
+        return {
+          tone: "success",
+          title: "注文一覧を表示しています",
+          message:
+            "read_draft_orders 権限があるため、completed の Draft Order から Shopify Order を参照して表示しています。",
+        };
+      }
+
       return {
         tone: "success",
-        title: "追加権限を確認できました",
+        title: "注文一覧の準備ができています",
         message:
-          "read_draft_orders 権限は確認済みです。Phase 7.1 で draftOrders を参照する read-only 注文一覧を表示します。",
+          "read_draft_orders 権限は確認済みです。現在の条件に一致する completed Draft Order はまだありません。",
       };
     case "missing_scope":
       return {
         tone: "warning",
         title: "注文管理を有効化するには追加権限が必要です",
         message:
-          "この店舗では read_draft_orders がまだ付与されていないため、注文一覧は表示していません。Shopify 管理者による追加権限の承認後に、draftOrders ベースの注文一覧を有効化します。",
+          "この店舗では read_draft_orders がまだ付与されていないため、注文一覧は表示していません。Shopify 管理者による追加権限の承認後に、Draft Order ベースの注文一覧を有効化します。",
       };
     case "missing_shop":
       return {
         tone: "warning",
-        title: "Shopify 連携済みの商品がまだ見つかりません",
+        title: "Shopify 連携済みの店舗情報がまだ見つかりません",
         message:
           "注文一覧の準備状況を確認するには、現在の店舗に紐づく Shopify shopDomain を一意に特定する必要があります。まずは商品連携を確認してください。",
       };
     case "ambiguous_shop":
       return {
         tone: "danger",
-        title: "複数の Shopify 店舗が紐づいています",
+        title: "複数の Shopify 店舗候補が見つかっています",
         message:
           "この vendorStore には複数の shopDomain が関連付いているため、安全に注文一覧を表示できません。サポート側で連携状態を確認してください。",
       };
@@ -37,14 +46,14 @@ function createOrdersPageContent(accessState) {
         tone: "danger",
         title: "Shopify との接続確認が必要です",
         message:
-          "Shopify の offline session もしくは認証状態を確認できませんでした。Shopify 管理画面でアプリの接続状態を確認してください。",
+          "Shopify の offline session もしくは認証状態を確認できませんでした。Shopify 管理画面でアプリの連携状態を確認してください。",
       };
     default:
       return {
         tone: "danger",
-        title: "注文一覧の準備状況を確認できませんでした",
+        title: "注文一覧の取得に失敗しました",
         message:
-          "時間をおいて再度お試しください。問題が続く場合はサポートに連絡してください。",
+          "時間をおいて再度お試しください。解消しない場合はサポートに連絡してください。",
       };
   }
 }
@@ -61,28 +70,40 @@ function noticeClassName(tone) {
   return "vendor-orders__notice vendor-orders__notice--warning";
 }
 
+function badgeClassName(tone = "neutral") {
+  return `vendor-shell__badge vendor-shell__badge--${tone}`;
+}
+
 export const loader = async ({ request }) => {
   const {
     READ_DRAFT_ORDERS_SCOPE,
-    getVendorOrdersAccessState,
+    VENDOR_DRAFT_ORDERS_PAGE_SIZE,
+    getVendorOrdersPageData,
     getVendorPublicContext,
     requireVendorContext,
   } = await import("../services/vendorManagement.server");
   const { vendor, store } = await requireVendorContext(request);
-  const accessState = await getVendorOrdersAccessState({ storeId: store.id });
+  const { accessState, orders, queryString, pageSize } = await getVendorOrdersPageData({
+    storeId: store.id,
+    vendorHandle: vendor.handle,
+  });
 
   return json({
     ...getVendorPublicContext(vendor, store),
     ordersAccess: {
       ...accessState,
       requiredScope: READ_DRAFT_ORDERS_SCOPE,
+      queryString,
+      pageSize: pageSize || VENDOR_DRAFT_ORDERS_PAGE_SIZE,
     },
+    orders,
   });
 };
 
 export default function VendorOrdersPage() {
-  const { store, ordersAccess } = useLoaderData();
-  const pageContent = createOrdersPageContent(ordersAccess);
+  const { store, ordersAccess, orders } = useLoaderData();
+  const pageContent = createOrdersPageContent(ordersAccess, orders.length);
+  const isReady = ordersAccess.status === "ready";
 
   return (
     <VendorManagementShell
@@ -105,14 +126,30 @@ export default function VendorOrdersPage() {
           background:#ecfdf5;
           color:#047857;
         }
+        .vendor-orders__query{
+          display:block;
+          margin-top:4px;
+          font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          font-size:12px;
+          color:#4b5563;
+          word-break:break-word;
+        }
+        .vendor-orders__order-id{
+          display:grid;
+          gap:4px;
+        }
+        .vendor-orders__empty{
+          margin-top:18px;
+        }
       `}</style>
 
       <section className="vendor-card">
         <h2 className="vendor-section-title">注文管理</h2>
         <p className="vendor-section-subtitle">
-          Phase 7 では、Shopify の draftOrders 参照に必要な追加権限があるかを先に確認します。
-          read_draft_orders が付与されている店舗だけ、次の Phase 7.1 で read-only
-          注文一覧を表示する想定です。
+          vendor portal では、自分の vendor handle に紐づく completed Draft Order から
+          Shopify Order を read-only で参照します。表示対象は直近 {ordersAccess.pageSize} 件までで、条件に使うのは
+          `tag:vendor-storefront`、`tag:vendor:&lt;handle&gt;`、`status:completed`
+          です。
         </p>
 
         <div className={noticeClassName(pageContent.tone)}>
@@ -128,7 +165,7 @@ export default function VendorOrdersPage() {
             <div className="vendor-description-value">{ordersAccess.requiredScope}</div>
           </div>
           <div className="vendor-description-row">
-            <div className="vendor-description-term">判定結果</div>
+            <div className="vendor-description-term">現在の状態</div>
             <div className="vendor-description-value">{ordersAccess.status}</div>
           </div>
           <div className="vendor-description-row">
@@ -136,6 +173,16 @@ export default function VendorOrdersPage() {
             <div className="vendor-description-value">
               {ordersAccess.shopDomain || "-"}
             </div>
+          </div>
+          <div className="vendor-description-row">
+            <div className="vendor-description-term">取得条件</div>
+            <div className="vendor-description-value">
+              {ordersAccess.queryString || "-"}
+            </div>
+          </div>
+          <div className="vendor-description-row">
+            <div className="vendor-description-term">表示件数</div>
+            <div className="vendor-description-value">{orders.length}</div>
           </div>
         </div>
 
@@ -147,17 +194,66 @@ export default function VendorOrdersPage() {
       </section>
 
       <section className="vendor-card">
-        <h2 className="vendor-section-title">Phase 7.1 で表示する予定の項目</h2>
-        <ul className="vendor-list">
-          <li>注文日</li>
-          <li>Shopify注文番号</li>
-          <li>顧客名</li>
-          <li>メール</li>
-          <li>合計金額</li>
-          <li>支払い状態</li>
-          <li>配送状態</li>
-          <li>Shopify order id / name</li>
-        </ul>
+        <h2 className="vendor-section-title">注文一覧</h2>
+        <p className="vendor-section-subtitle">
+          表示するのは DraftOrder.order から取り出した read-only 情報だけです。vendor 側で
+          注文データを編集したり、ローカル DB に保存したりはまだ行いません。直近
+          {ordersAccess.pageSize} 件までを新しい順に表示します。
+        </p>
+
+        {!isReady ? (
+          <div className="vendor-placeholder vendor-orders__empty">
+            追加権限と Shopify 連携がそろった店舗だけ、ここに注文一覧を表示します。
+          </div>
+        ) : orders.length === 0 ? (
+          <div className="vendor-placeholder vendor-orders__empty">
+            条件に一致する注文はまだありません。
+          </div>
+        ) : (
+          <div className="vendor-table-wrap">
+            <table className="vendor-table">
+              <thead>
+                <tr>
+                  <th>注文日</th>
+                  <th>Shopify注文番号</th>
+                  <th>顧客名</th>
+                  <th>メール</th>
+                  <th>合計金額</th>
+                  <th>支払い状態</th>
+                  <th>配送状態</th>
+                  <th>Shopify order id / name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <tr key={order.id}>
+                    <td>{order.createdAtLabel}</td>
+                    <td className="vendor-table__name">{order.shopifyOrderNumber}</td>
+                    <td>{order.customerName}</td>
+                    <td>{order.email}</td>
+                    <td>{order.totalLabel}</td>
+                    <td>
+                      <span className={badgeClassName(order.financialStatusTone)}>
+                        {order.financialStatusLabel}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={badgeClassName(order.fulfillmentStatusTone)}>
+                        {order.fulfillmentStatusLabel}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="vendor-orders__order-id">
+                        <span className="vendor-table__name">{order.orderName}</span>
+                        <span className="vendor-table__meta">{order.orderId}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </VendorManagementShell>
   );

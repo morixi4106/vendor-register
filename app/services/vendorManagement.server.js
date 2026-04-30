@@ -7,6 +7,7 @@ import {
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
+export const VENDOR_DRAFT_ORDERS_PAGE_SIZE = 50;
 
 const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `
   query CurrentAppInstallationAccessScopes {
@@ -274,6 +275,264 @@ export async function getVendorOrdersAccessState(
       grantedScopes: [],
       shopDomain: null,
       shopDomains: [],
+    };
+  }
+}
+
+const VENDOR_DRAFT_ORDERS_QUERY = `
+  query VendorDraftOrders($first: Int!, $query: String!) {
+    draftOrders(first: $first, query: $query) {
+      nodes {
+        id
+        name
+        createdAt
+        completedAt
+        order {
+          id
+          name
+          createdAt
+          email
+          displayFinancialStatus
+          displayFulfillmentStatus
+          customer {
+            displayName
+          }
+          currentTotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+function escapeShopifySearchValue(value = "") {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').trim();
+}
+
+export function buildVendorDraftOrdersSearchQuery(vendorHandle) {
+  const normalizedHandle = escapeShopifySearchValue(vendorHandle);
+
+  if (!normalizedHandle) {
+    throw new Error("VENDOR_HANDLE_REQUIRED");
+  }
+
+  return `tag:vendor-storefront tag:"vendor:${normalizedHandle}" status:completed`;
+}
+
+function mapDisplayFinancialStatusLabel(value) {
+  switch (value) {
+    case "PAID":
+      return "支払い済み";
+    case "PENDING":
+      return "支払い待ち";
+    case "AUTHORIZED":
+      return "オーソリ済み";
+    case "PARTIALLY_PAID":
+      return "一部支払い済み";
+    case "PARTIALLY_REFUNDED":
+      return "一部返金済み";
+    case "REFUNDED":
+      return "返金済み";
+    case "VOIDED":
+      return "無効";
+    default:
+      return value || "未設定";
+  }
+}
+
+function mapDisplayFinancialStatusTone(value) {
+  switch (value) {
+    case "PAID":
+      return "success";
+    case "PENDING":
+    case "AUTHORIZED":
+    case "PARTIALLY_PAID":
+      return "warning";
+    case "REFUNDED":
+    case "PARTIALLY_REFUNDED":
+    case "VOIDED":
+      return "neutral";
+    default:
+      return "neutral";
+  }
+}
+
+function mapDisplayFulfillmentStatusLabel(value) {
+  switch (value) {
+    case "FULFILLED":
+      return "発送済み";
+    case "PARTIALLY_FULFILLED":
+      return "一部発送";
+    case "UNFULFILLED":
+      return "未発送";
+    case "IN_PROGRESS":
+      return "発送処理中";
+    case "ON_HOLD":
+      return "保留";
+    case "OPEN":
+      return "対応中";
+    case "SCHEDULED":
+      return "発送予定";
+    case "RESTOCKED":
+      return "返品済み";
+    default:
+      return value || "未設定";
+  }
+}
+
+function mapDisplayFulfillmentStatusTone(value) {
+  switch (value) {
+    case "FULFILLED":
+      return "success";
+    case "PARTIALLY_FULFILLED":
+    case "IN_PROGRESS":
+    case "OPEN":
+    case "SCHEDULED":
+      return "warning";
+    case "ON_HOLD":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+function serializeVendorOrderRow(draftOrder) {
+  const order = draftOrder?.order;
+
+  if (!order?.id || !order?.name) {
+    return null;
+  }
+
+  const shopMoney = order?.currentTotalPriceSet?.shopMoney;
+  const createdAt = order?.createdAt || draftOrder?.completedAt || draftOrder?.createdAt;
+  const financialStatus = String(order?.displayFinancialStatus || "").trim();
+  const fulfillmentStatus = String(order?.displayFulfillmentStatus || "").trim();
+  const currencyCode = shopMoney?.currencyCode || "JPY";
+
+  return {
+    id: order.id,
+    orderId: order.id,
+    orderName: order.name,
+    shopifyOrderNumber: order.name,
+    createdAt: createdAt || null,
+    createdAtLabel: formatDateTime(createdAt),
+    customerName: order?.customer?.displayName || "未設定",
+    email: order?.email || "未設定",
+    totalAmount: Number(shopMoney?.amount || 0),
+    totalCurrencyCode: currencyCode,
+    totalLabel: formatMoney(shopMoney?.amount || 0, currencyCode),
+    financialStatus,
+    financialStatusLabel: mapDisplayFinancialStatusLabel(financialStatus),
+    financialStatusTone: mapDisplayFinancialStatusTone(financialStatus),
+    fulfillmentStatus,
+    fulfillmentStatusLabel: mapDisplayFulfillmentStatusLabel(fulfillmentStatus),
+    fulfillmentStatusTone: mapDisplayFulfillmentStatusTone(fulfillmentStatus),
+  };
+}
+
+export async function listVendorDraftOrderOrders(
+  { shopDomain, vendorHandle, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
+  {
+    shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  } = {},
+) {
+  const queryString = buildVendorDraftOrdersSearchQuery(vendorHandle);
+  const response = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: VENDOR_DRAFT_ORDERS_QUERY,
+    variables: {
+      first,
+      query: queryString,
+    },
+  });
+  const data = response?.data;
+
+  if (Array.isArray(response?.errors) && response.errors.length > 0) {
+    throw new Error("VENDOR_DRAFT_ORDERS_QUERY_FAILED");
+  }
+
+  const nodes = data?.draftOrders?.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error("VENDOR_DRAFT_ORDERS_QUERY_UNAVAILABLE");
+  }
+
+  const orders = nodes
+    .map(serializeVendorOrderRow)
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftTime = left?.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightTime = right?.createdAt ? new Date(right.createdAt).getTime() : 0;
+      return rightTime - leftTime;
+    });
+
+  return {
+    queryString,
+    orders,
+  };
+}
+
+export async function getVendorOrdersPageData(
+  { storeId, vendorHandle },
+  {
+    listVendorStoreShopDomainsImpl = listVendorStoreShopDomains,
+    listGrantedAppAccessScopesImpl = listGrantedAppAccessScopes,
+    shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  } = {},
+) {
+  const accessState = await getVendorOrdersAccessState(
+    { storeId },
+    {
+      listVendorStoreShopDomainsImpl,
+      listGrantedAppAccessScopesImpl,
+    },
+  );
+
+  if (accessState.status !== "ready") {
+    return {
+      accessState,
+      orders: [],
+      queryString: null,
+      pageSize: VENDOR_DRAFT_ORDERS_PAGE_SIZE,
+    };
+  }
+
+  try {
+    const result = await listVendorDraftOrderOrders(
+      {
+        shopDomain: accessState.shopDomain,
+        vendorHandle,
+      },
+      {
+        shopifyGraphQLWithOfflineSessionImpl,
+      },
+    );
+
+    return {
+      accessState,
+      orders: result.orders,
+      queryString: result.queryString,
+      pageSize: VENDOR_DRAFT_ORDERS_PAGE_SIZE,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("vendor orders list error:", error);
+
+    return {
+      accessState: {
+        ...accessState,
+        status: isReconnectableShopifyError(message)
+          ? "missing_connection"
+          : "error",
+      },
+      orders: [],
+      queryString: null,
+      pageSize: VENDOR_DRAFT_ORDERS_PAGE_SIZE,
     };
   }
 }
