@@ -1,8 +1,22 @@
 import { createCookie, redirect } from "@remix-run/node";
-import prisma from "../db.server";
-import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
+import prisma from "../db.server.js";
+import {
+  normalizeShopDomain,
+  shopifyGraphQLWithOfflineSession,
+} from "../utils/shopifyAdmin.server.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
+export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
+
+const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `
+  query CurrentAppInstallationAccessScopes {
+    currentAppInstallation {
+      accessScopes {
+        handle
+      }
+    }
+  }
+`;
 
 export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -145,6 +159,123 @@ export function getVendorPublicContext(vendor, store) {
       category: store.category,
     },
   };
+}
+
+export async function listVendorStoreShopDomains(
+  storeId,
+  { prismaClient = prisma } = {},
+) {
+  const products = await prismaClient.product.findMany({
+    where: {
+      vendorStoreId: storeId,
+      shopDomain: {
+        not: null,
+      },
+    },
+    select: {
+      shopDomain: true,
+    },
+  });
+
+  return Array.from(
+    new Set(
+      products
+        .map((product) => normalizeShopDomain(product.shopDomain))
+        .filter(Boolean),
+    ),
+  ).sort();
+}
+
+export async function listGrantedAppAccessScopes(
+  shopDomain,
+  {
+    shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  } = {},
+) {
+  const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY,
+  });
+  const accessScopes = data?.currentAppInstallation?.accessScopes;
+
+  if (!Array.isArray(accessScopes)) {
+    throw new Error("CURRENT_APP_INSTALLATION_ACCESS_SCOPES_UNAVAILABLE");
+  }
+
+  return Array.from(
+    new Set(
+      accessScopes
+        .map((scope) => String(scope?.handle || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort();
+}
+
+export async function getVendorOrdersAccessState(
+  { storeId },
+  {
+    listVendorStoreShopDomainsImpl = listVendorStoreShopDomains,
+    listGrantedAppAccessScopesImpl = listGrantedAppAccessScopes,
+  } = {},
+) {
+  try {
+    const shopDomains = await listVendorStoreShopDomainsImpl(storeId);
+
+    if (shopDomains.length === 0) {
+      return {
+        status: "missing_shop",
+        hasReadDraftOrders: false,
+        grantedScopes: [],
+        shopDomain: null,
+        shopDomains: [],
+      };
+    }
+
+    if (shopDomains.length > 1) {
+      return {
+        status: "ambiguous_shop",
+        hasReadDraftOrders: false,
+        grantedScopes: [],
+        shopDomain: null,
+        shopDomains,
+      };
+    }
+
+    const shopDomain = shopDomains[0];
+    const grantedScopes = await listGrantedAppAccessScopesImpl(shopDomain);
+    const hasReadDraftOrders = grantedScopes.includes(READ_DRAFT_ORDERS_SCOPE);
+
+    return {
+      status: hasReadDraftOrders ? "ready" : "missing_scope",
+      hasReadDraftOrders,
+      grantedScopes,
+      shopDomain,
+      shopDomains,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("vendor orders access state error:", error);
+
+    if (isReconnectableShopifyError(message)) {
+      return {
+        status: "missing_connection",
+        hasReadDraftOrders: false,
+        grantedScopes: [],
+        shopDomain: null,
+        shopDomains: [],
+      };
+    }
+
+    return {
+      status: "error",
+      hasReadDraftOrders: false,
+      grantedScopes: [],
+      shopDomain: null,
+      shopDomains: [],
+    };
+  }
 }
 
 function createMonthlyReportRange(month) {

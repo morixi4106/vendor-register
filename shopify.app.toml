@@ -29,6 +29,7 @@ api_version = "2026-04"
 
 [access_scopes]
 scopes = "write_customers,read_customers,write_app_proxy,read_products,read_orders"
+optional_scopes = ["read_draft_orders"]
 
 [auth]
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/api/auth" ]
