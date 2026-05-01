@@ -107,6 +107,7 @@ function normalizeCarrierDestination(destination) {
 function normalizeCarrierItem(item, index) {
   const quantity = toPositiveInteger(item?.quantity) || 1;
   const price = toFiniteNumber(item?.price);
+  const grams = toFiniteNumber(item?.grams);
   const lineAmount = price == null ? null : price * quantity;
 
   return {
@@ -115,6 +116,7 @@ function normalizeCarrierItem(item, index) {
     variantId: normalizeText(item?.variant_id),
     quantity,
     requiresShipping: item?.requires_shipping !== false,
+    ...(grams == null ? {} : { grams }),
     ...(lineAmount == null
       ? {}
       : { amountAfterItemDiscountBeforeOrderCoupon: lineAmount }),
@@ -155,6 +157,7 @@ function summarizeCarrierItems(items) {
     variantId: normalizeText(item?.variant_id),
     quantity: toPositiveInteger(item?.quantity) || 1,
     price: toFiniteNumber(item?.price),
+    grams: toFiniteNumber(item?.grams),
     requiresShipping: item?.requires_shipping !== false,
   }));
 }
@@ -175,6 +178,7 @@ function summarizeQuoteRequest(quoteRequest) {
       requiresShipping: line.requiresShipping !== false,
       amountAfterItemDiscountBeforeOrderCoupon:
         line.amountAfterItemDiscountBeforeOrderCoupon ?? null,
+      grams: line.grams ?? null,
     })),
   };
 }

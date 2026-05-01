@@ -4,14 +4,14 @@ import {
   createShippingDiagnosticId,
   recordShippingDiagnosticEvent,
 } from './shippingDiagnostics.server.js';
+import {
+  normalizeShippingRateRuleConfig,
+  readShippingRateRuleConfig,
+  resolveShippingRate,
+  SHIPPING_RATE_RULES_SOURCE,
+  SHIPPING_RATE_RULES_VERSION,
+} from './shippingRateRules.server.js';
 
-const SMOKE_SHIPPING_RATES_JPY = {
-  JP: 870,
-  US: 2500,
-};
-const DEFAULT_INTERNATIONAL_SHIPPING_RATE_JPY = 3500;
-const SMOKE_QUOTE_SOURCE = 'vendor-register-smoke-quote';
-const SMOKE_CALCULATION_VERSION = 'smoke_v1';
 const JAPAN_PROVINCE_CODE_NAMES = {
   'JP-01': 'Hokkaido',
   'JP-02': 'Aomori',
@@ -91,10 +91,6 @@ function getOrderLines(body) {
   return Array.isArray(body?.orderLike?.lines) ? body.orderLike.lines : [];
 }
 
-function getSmokeRateForCountry(countryCode) {
-  return SMOKE_SHIPPING_RATES_JPY[countryCode] ?? DEFAULT_INTERNATIONAL_SHIPPING_RATE_JPY;
-}
-
 function normalizeProvince({ countryCode, province }) {
   const normalized = normalizeText(province);
 
@@ -130,14 +126,16 @@ function normalizeQuoteLine(line, index) {
     toPositiveNumber(normalized.amountAfterItemDiscountBeforeOrderCoupon) ??
     toPositiveNumber(normalized.amount) ??
     toPositiveNumber(normalized.price);
+  const grams = toPositiveNumber(normalized.grams);
 
   return {
     lineId: normalizeText(normalized.lineId || normalized.id || `quote-line-${index}`),
     productId: normalizeText(normalized.productId || normalized.product_id),
     variantId: normalizeText(normalized.variantId || normalized.variant_id),
     quantity,
-    requiresShipping: normalized.requiresShipping !== false,
+    requiresShipping: (normalized.requiresShipping ?? normalized.requires_shipping) !== false,
     amountAfterItemDiscountBeforeOrderCoupon,
+    grams,
   };
 }
 
@@ -160,8 +158,8 @@ export function normalizeShippingQuoteInput(body) {
   const lines = getOrderLines(body).map(normalizeQuoteLine);
 
   return {
-    source: 'smoke_quote',
-    calculationVersion: SMOKE_CALCULATION_VERSION,
+    source: 'shipping_rules_quote',
+    calculationVersion: SHIPPING_RATE_RULES_VERSION,
     shopDomain: normalizeText(body?.shopDomain),
     shippingAddress: {
       countryCode,
@@ -204,6 +202,7 @@ function summarizeQuoteRequest(body) {
       requiresShipping: line.requiresShipping,
       amountAfterItemDiscountBeforeOrderCoupon:
         line.amountAfterItemDiscountBeforeOrderCoupon,
+      grams: line.grams,
     })),
   };
 }
@@ -231,7 +230,7 @@ function recordQuoteDiagnostic({ requestId, level = 'info', message, details }) 
   });
 }
 
-export function buildShippingQuoteResponse(body) {
+export function buildShippingQuoteResponse(body, options = {}) {
   const input = normalizeShippingQuoteInput(body);
   const {
     countryCode,
@@ -241,8 +240,8 @@ export function buildShippingQuoteResponse(body) {
     provinceName,
   } = input.shippingAddress;
   const debug = {
-    source: SMOKE_QUOTE_SOURCE,
-    calculationVersion: SMOKE_CALCULATION_VERSION,
+    source: SHIPPING_RATE_RULES_SOURCE,
+    calculationVersion: SHIPPING_RATE_RULES_VERSION,
     countryCode,
     postalCode,
     province,
@@ -250,6 +249,44 @@ export function buildShippingQuoteResponse(body) {
     provinceName,
     shippableLineCount: input.shippableLineCount,
   };
+  const rawRuleConfig = Object.hasOwn(options, 'rawRuleConfig')
+    ? options.rawRuleConfig
+    : process.env.SHIPPING_V2_RATE_RULES_JSON;
+  const configResult = options.ruleConfig
+    ? { ok: true, config: normalizeShippingRateRuleConfig(options.ruleConfig) }
+    : readShippingRateRuleConfig(rawRuleConfig);
+
+  if (!configResult.ok) {
+    return {
+      ok: false,
+      enabled: true,
+      reason: configResult.reason,
+      result: {
+        isPendingAddress: false,
+        isDeliverable: false,
+        totalShippingFee: null,
+      },
+      debug: {
+        ...debug,
+        error: configResult.error,
+      },
+    };
+  }
+
+  if (configResult.config.enabled === false) {
+    return {
+      ok: true,
+      enabled: false,
+      reason: 'shipping_v2_disabled',
+      result: {
+        isPendingAddress: false,
+        isDeliverable: false,
+        totalShippingFee: null,
+        currencyCode: configResult.config.currencyCode,
+      },
+      debug,
+    };
+  }
 
   if (!countryCode || !postalCode) {
     return {
@@ -265,6 +302,28 @@ export function buildShippingQuoteResponse(body) {
     };
   }
 
+  const resolvedRate = resolveShippingRate(input, configResult.config);
+
+  if (!resolvedRate.isDeliverable) {
+    return {
+      ok: true,
+      enabled: true,
+      reason: 'undeliverable',
+      result: {
+        isPendingAddress: false,
+        isDeliverable: false,
+        totalShippingFee: null,
+        currencyCode: resolvedRate.currencyCode,
+      },
+      debug: {
+        ...debug,
+        rateSource: resolvedRate.rateSource,
+        matchedRuleId: resolvedRate.matchedRuleId,
+        totalWeightGrams: resolvedRate.totalWeightGrams,
+      },
+    };
+  }
+
   return {
     ok: true,
     enabled: true,
@@ -272,11 +331,15 @@ export function buildShippingQuoteResponse(body) {
     result: {
       isPendingAddress: false,
       isDeliverable: true,
-      totalShippingFee:
-        input.shippableLineCount > 0 ? getSmokeRateForCountry(countryCode) : 0,
-      currencyCode: 'JPY',
+      totalShippingFee: resolvedRate.totalShippingFee,
+      currencyCode: resolvedRate.currencyCode,
     },
-    debug,
+    debug: {
+      ...debug,
+      rateSource: resolvedRate.rateSource,
+      matchedRuleId: resolvedRate.matchedRuleId,
+      totalWeightGrams: resolvedRate.totalWeightGrams,
+    },
   };
 }
 

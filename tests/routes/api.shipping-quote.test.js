@@ -39,7 +39,7 @@ function createQuoteRequest(overrides = {}) {
   };
 }
 
-test('api.shipping-quote returns a JP smoke quote in the Shipping V2 response shape', () => {
+test('api.shipping-quote returns a JP default quote in the Shipping V2 response shape', () => {
   assert.deepEqual(buildShippingQuoteResponse(createQuoteRequest()).result, {
     isPendingAddress: false,
     isDeliverable: true,
@@ -72,8 +72,8 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
       }),
     ),
     {
-      source: 'smoke_quote',
-      calculationVersion: 'smoke_v1',
+      source: 'shipping_rules_quote',
+      calculationVersion: 'rules_v1',
       shopDomain: 'b30ize-1a.myshopify.com',
       shippingAddress: {
         countryCode: 'JP',
@@ -94,6 +94,7 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
           quantity: 1,
           requiresShipping: true,
           amountAfterItemDiscountBeforeOrderCoupon: 165000,
+          grams: null,
         },
       ],
       lineCount: 1,
@@ -102,7 +103,7 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
   );
 });
 
-test('api.shipping-quote returns a different smoke quote for US addresses', async () => {
+test('api.shipping-quote returns a different default quote for US addresses', async () => {
   clearShippingDiagnosticEvents();
   const action = createShippingQuoteAction();
   const response = await action({
@@ -138,8 +139,8 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
     message: 'quote_returned',
     details: {
       request: {
-        source: 'smoke_quote',
-        calculationVersion: 'smoke_v1',
+        source: 'shipping_rules_quote',
+        calculationVersion: 'rules_v1',
         shopDomain: 'b30ize-1a.myshopify.com',
         shippingAddress: {
           countryCode: 'US',
@@ -158,6 +159,7 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
             quantity: 1,
             requiresShipping: true,
             amountAfterItemDiscountBeforeOrderCoupon: 4200,
+            grams: null,
           },
         ],
       },
@@ -170,14 +172,17 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
         totalShippingFee: 2500,
         currencyCode: 'JPY',
         debug: {
-          source: 'vendor-register-smoke-quote',
-          calculationVersion: 'smoke_v1',
+          source: 'vendor-register-shipping-rules',
+          calculationVersion: 'rules_v1',
           countryCode: 'US',
           postalCode: '90210',
           province: 'CA',
           provinceCode: null,
           provinceName: 'CA',
           shippableLineCount: 1,
+          rateSource: 'rule',
+          matchedRuleId: 'us-default',
+          totalWeightGrams: 0,
         },
       },
     },
@@ -217,6 +222,86 @@ test('api.shipping-quote returns zero when every line is non-shipping', () => {
 
   assert.equal(payload.result.totalShippingFee, 0);
   assert.equal(payload.debug.shippableLineCount, 0);
+});
+
+test('api.shipping-quote can use configured province and variant rules', () => {
+  const payload = buildShippingQuoteResponse(
+    createQuoteRequest({
+      orderLike: {
+        lines: [
+          {
+            productId: '9044842447011',
+            variantId: '47424753369251',
+            quantity: 1,
+            requiresShipping: true,
+            grams: 300,
+          },
+        ],
+      },
+      shippingAddress: {
+        country: 'JP',
+        postal_code: '300-1532',
+        province: 'JP-08',
+      },
+    }),
+    {
+      ruleConfig: {
+        currencyCode: 'JPY',
+        defaultAmount: 3500,
+        rules: [
+          {
+            id: 'ibaraki-target-variant',
+            countryCodes: ['JP'],
+            provinceCodes: ['JP-08'],
+            variantIds: ['47424753369251'],
+            maxTotalWeightGrams: 1000,
+            amount: 990,
+          },
+        ],
+      },
+    },
+  );
+
+  assert.equal(payload.result.totalShippingFee, 990);
+  assert.equal(payload.debug.matchedRuleId, 'ibaraki-target-variant');
+  assert.equal(payload.debug.totalWeightGrams, 300);
+});
+
+test('api.shipping-quote returns undeliverable when configured with no matching rule', () => {
+  const payload = buildShippingQuoteResponse(
+    createQuoteRequest({
+      shippingAddress: {
+        country: 'FR',
+        postalCode: '75001',
+      },
+    }),
+    {
+      ruleConfig: {
+        undeliverableWhenNoRule: true,
+        rules: [
+          {
+            id: 'jp-only',
+            countryCodes: ['JP'],
+            amount: 870,
+          },
+        ],
+      },
+    },
+  );
+
+  assert.equal(payload.reason, 'undeliverable');
+  assert.equal(payload.result.isDeliverable, false);
+  assert.equal(payload.debug.rateSource, 'no_matching_rule');
+});
+
+test('api.shipping-quote fails closed for invalid JSON rule config', () => {
+  const payload = buildShippingQuoteResponse(createQuoteRequest(), {
+    rawRuleConfig: '{nope',
+  });
+
+  assert.equal(payload.ok, false);
+  assert.equal(payload.reason, 'shipping_rule_config_error');
+  assert.equal(payload.result.isDeliverable, false);
 });
 
 test('api.shipping-quote returns JSON errors for invalid JSON and GET requests', async () => {

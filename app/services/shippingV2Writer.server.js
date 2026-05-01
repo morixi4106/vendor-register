@@ -84,6 +84,10 @@ function buildShippingV2QuoteLine(line) {
     );
   }
 
+  if (toFiniteNumber(line.grams ?? line.weightGrams) != null) {
+    normalized.grams = toFiniteNumber(line.grams ?? line.weightGrams);
+  }
+
   if (line.requiresShipping != null) {
     normalized.requiresShipping = Boolean(line.requiresShipping);
   }
