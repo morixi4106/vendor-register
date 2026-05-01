@@ -11,8 +11,9 @@ import {
 import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
 
 const CARRIER_SERVICE_NAME = 'Shipping V2';
+const CARRIER_SERVICE_DISPLAY_NAME = '地域別配送';
 const CARRIER_SERVICE_CODE = 'shipping_v2';
-const CARRIER_SERVICE_DESCRIPTION = 'Calculated shipping';
+const CARRIER_SERVICE_DESCRIPTION = '配送先に基づく送料';
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
 
 const CARRIER_SERVICES_QUERY = `#graphql
@@ -306,7 +307,7 @@ export function buildCarrierRatesResponse({ quoteResponse, currency }) {
   return {
     rates: [
       {
-        service_name: CARRIER_SERVICE_NAME,
+        service_name: CARRIER_SERVICE_DISPLAY_NAME,
         service_code: CARRIER_SERVICE_CODE,
         total_price: totalPrice,
         currency: normalizeText(currency)?.toUpperCase() || 'JPY',

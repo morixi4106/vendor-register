@@ -185,11 +185,11 @@ test('carrier shipping rates returns rates from Shipping V2 quote response', asy
   assert.deepEqual(payload, {
     rates: [
       {
-        service_name: 'Shipping V2',
+        service_name: '地域別配送',
         service_code: 'shipping_v2',
         total_price: '42000',
         currency: 'JPY',
-        description: 'Calculated shipping',
+        description: '配送先に基づく送料',
       },
     ],
   });
