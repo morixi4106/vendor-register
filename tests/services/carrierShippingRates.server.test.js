@@ -126,6 +126,38 @@ test('carrier shipping rates returns rates from Shipping V2 quote response', asy
           isDeliverable: true,
           totalShippingFee: 420,
         },
+        debug: {
+          groups: [
+            {
+              groupId: 'ship_group_1',
+              mode: 'parcel',
+              regionTier: 'honshu',
+              packageCount: 1,
+              fee: 420,
+              originalFee: 420,
+              isDeliverable: true,
+              isFreeShippingApplied: false,
+              totalShippingPoint: 1,
+              totalWeightGrams: 0,
+              shipFromId: 'default',
+              temperatureZone: 'ambient',
+              leadTimeBucket: 'normal',
+              messages: [],
+              lines: [
+                {
+                  productId: '9044842447011',
+                  variantId: '111222333',
+                  quantity: 2,
+                  shippingClass: 'parcel',
+                  temperatureZone: 'ambient',
+                  shippingPoint: 1,
+                  totalShippingPoint: 2,
+                  appliedLineRuleId: null,
+                },
+              ],
+            },
+          ],
+        },
       };
     },
     logInfo: (...args) => infoLogs.push(args),
@@ -144,6 +176,12 @@ test('carrier shipping rates returns rates from Shipping V2 quote response', asy
   assert.equal(receivedQuoteRequest.shippingAddress.postalCode, '150-0001');
   assert.equal(infoLogs.some(([message]) => message === 'carrier shipping rates request:'), true);
   assert.equal(infoLogs.some(([message]) => message === 'carrier shipping rates response:'), true);
+  const quoteResponseLog = infoLogs.find(
+    ([message]) => message === 'carrier shipping rates quote response:',
+  );
+  assert.equal(quoteResponseLog[1].shippingGroups[0].mode, 'parcel');
+  assert.equal(quoteResponseLog[1].shippingGroups[0].fee, 420);
+  assert.equal(quoteResponseLog[1].shippingGroups[0].lines[0].variantId, '111222333');
   assert.deepEqual(payload, {
     rates: [
       {

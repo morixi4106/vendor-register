@@ -205,6 +205,47 @@ function summarizeQuoteRequest(quoteRequest) {
   };
 }
 
+function summarizeQuoteLine(line) {
+  return {
+    productId: line?.productId || null,
+    variantId: line?.variantId || null,
+    skuId: line?.skuId || null,
+    quantity: line?.quantity || null,
+    shippingClass: line?.shippingClass || null,
+    temperatureZone: line?.temperatureZone || null,
+    leadTimeBucket: line?.leadTimeBucket || null,
+    shipFromId: line?.shipFromId || null,
+    forceSeparateShipment: line?.forceSeparateShipment ?? null,
+    freeShippingEligible: line?.freeShippingEligible ?? null,
+    shippingPoint: line?.shippingPoint ?? null,
+    totalShippingPoint: line?.totalShippingPoint ?? null,
+    amountAfterItemDiscountBeforeOrderCoupon:
+      line?.amountAfterItemDiscountBeforeOrderCoupon ?? null,
+    appliedLineRuleId: line?.appliedLineRuleId || null,
+  };
+}
+
+function summarizeQuoteGroups(groups) {
+  return (Array.isArray(groups) ? groups : []).map((group) => ({
+    groupId: group?.groupId || null,
+    mode: group?.mode || null,
+    regionTier: group?.regionTier || null,
+    packageCount: group?.packageCount ?? null,
+    fee: group?.fee ?? null,
+    originalFee: group?.originalFee ?? null,
+    isDeliverable: group?.isDeliverable ?? null,
+    isFreeShippingApplied: group?.isFreeShippingApplied ?? null,
+    totalShippingPoint: group?.totalShippingPoint ?? null,
+    totalWeightGrams: group?.totalWeightGrams ?? null,
+    shipFromId: group?.shipFromId || null,
+    temperatureZone: group?.temperatureZone || null,
+    leadTimeBucket: group?.leadTimeBucket || null,
+    messages: Array.isArray(group?.messages) ? group.messages : [],
+    lineCount: Array.isArray(group?.lines) ? group.lines.length : 0,
+    lines: (Array.isArray(group?.lines) ? group.lines : []).map(summarizeQuoteLine),
+  }));
+}
+
 function summarizeQuoteResponse(quoteResponse) {
   return {
     ok: quoteResponse?.ok ?? null,
@@ -214,6 +255,7 @@ function summarizeQuoteResponse(quoteResponse) {
     isDeliverable: quoteResponse?.result?.isDeliverable ?? null,
     totalShippingFee: quoteResponse?.result?.totalShippingFee ?? null,
     currencyCode: quoteResponse?.result?.currencyCode ?? null,
+    shippingGroups: summarizeQuoteGroups(quoteResponse?.debug?.groups),
     debug: quoteResponse?.debug ?? null,
   };
 }
