@@ -60,6 +60,50 @@ test('carrier shipping rates converts Shopify destination and items to Shipping 
   ]);
 });
 
+test('carrier shipping rates accepts Shopify carrier postal_code payloads', () => {
+  const quoteRequest = buildCarrierShippingV2QuoteRequest(
+    createCarrierRequest({
+      rate: {
+        destination: {
+          country: 'JP',
+          postal_code: '300-1532',
+          province: 'JP-08',
+          city: '取手市',
+        },
+        items: [
+          {
+            product_id: 9044842447011,
+            variant_id: 47424753369251,
+            quantity: 1,
+            price: 165000,
+            requires_shipping: true,
+          },
+        ],
+      },
+    }),
+  );
+
+  assert.deepEqual(quoteRequest.shippingAddress, {
+    postalCode: '300-1532',
+    zip: '300-1532',
+    prefecture: 'JP-08',
+    province: 'JP-08',
+    city: '取手市',
+    country: 'JP',
+    countryCode: 'JP',
+  });
+  assert.deepEqual(quoteRequest.orderLike.lines, [
+    {
+      lineId: '47424753369251',
+      productId: '9044842447011',
+      variantId: '47424753369251',
+      quantity: 1,
+      amountAfterItemDiscountBeforeOrderCoupon: 165000,
+      requiresShipping: true,
+    },
+  ]);
+});
+
 test('carrier shipping rates returns rates from Shipping V2 quote response', async () => {
   let receivedQuoteRequest = null;
   const infoLogs = [];

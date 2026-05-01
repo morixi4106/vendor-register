@@ -82,15 +82,21 @@ function toPositiveInteger(value) {
 
 function normalizeCarrierDestination(destination) {
   const normalized = isPlainObject(destination) ? destination : {};
+  const postalCode = normalizeText(
+    normalized.zip || normalized.postal_code || normalized.postalCode,
+  );
+  const country = normalizeText(
+    normalized.country || normalized.country_code || normalized.countryCode,
+  );
 
   return {
-    postalCode: normalizeText(normalized.zip || normalized.postalCode),
-    zip: normalizeText(normalized.zip || normalized.postalCode),
+    postalCode,
+    zip: postalCode,
     prefecture: normalizeText(normalized.province || normalized.prefecture),
     province: normalizeText(normalized.province || normalized.prefecture),
     city: normalizeText(normalized.city),
-    country: normalizeText(normalized.country || normalized.countryCode),
-    countryCode: normalizeText(normalized.country || normalized.countryCode),
+    country,
+    countryCode: country,
   };
 }
 
