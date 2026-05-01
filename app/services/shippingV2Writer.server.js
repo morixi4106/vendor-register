@@ -66,6 +66,14 @@ function buildShippingV2QuoteLine(line) {
     normalized.skuId = normalizeText(line.skuId) || normalizeText(line.sku);
   }
 
+  if (normalizeText(line.vendor)) {
+    normalized.vendor = normalizeText(line.vendor);
+  }
+
+  if (normalizeText(line.title) || normalizeText(line.name)) {
+    normalized.title = normalizeText(line.title) || normalizeText(line.name);
+  }
+
   if (toFiniteNumber(line.quantity ?? line.qty) != null) {
     normalized.quantity = toFiniteNumber(line.quantity ?? line.qty);
   }
@@ -86,6 +94,46 @@ function buildShippingV2QuoteLine(line) {
 
   if (toFiniteNumber(line.grams ?? line.weightGrams) != null) {
     normalized.grams = toFiniteNumber(line.grams ?? line.weightGrams);
+  }
+
+  if (normalizeText(line.shipFromId) || normalizeText(line.ship_from_id)) {
+    normalized.shipFromId = normalizeText(line.shipFromId) || normalizeText(line.ship_from_id);
+  }
+
+  if (normalizeText(line.leadTimeBucket) || normalizeText(line.lead_time_bucket)) {
+    normalized.leadTimeBucket =
+      normalizeText(line.leadTimeBucket) || normalizeText(line.lead_time_bucket);
+  }
+
+  if (normalizeText(line.shippingClass) || normalizeText(line.shipping_class)) {
+    normalized.shippingClass =
+      normalizeText(line.shippingClass) || normalizeText(line.shipping_class);
+  }
+
+  if (normalizeText(line.temperatureZone) || normalizeText(line.temperature_zone)) {
+    normalized.temperatureZone =
+      normalizeText(line.temperatureZone) || normalizeText(line.temperature_zone);
+  }
+
+  if (normalizeText(line.directShipGroup) || normalizeText(line.direct_ship_group)) {
+    normalized.directShipGroup =
+      normalizeText(line.directShipGroup) || normalizeText(line.direct_ship_group);
+  }
+
+  if (line.forceSeparateShipment != null || line.force_separate_shipment != null) {
+    normalized.forceSeparateShipment = Boolean(
+      line.forceSeparateShipment ?? line.force_separate_shipment,
+    );
+  }
+
+  if (line.freeShippingEligible != null || line.free_shipping_eligible != null) {
+    normalized.freeShippingEligible = Boolean(
+      line.freeShippingEligible ?? line.free_shipping_eligible,
+    );
+  }
+
+  if (toFiniteNumber(line.shippingPoint ?? line.shipping_point) != null) {
+    normalized.shippingPoint = toFiniteNumber(line.shippingPoint ?? line.shipping_point);
   }
 
   if (line.requiresShipping != null) {

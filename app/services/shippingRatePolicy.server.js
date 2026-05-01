@@ -2,64 +2,34 @@ import {
   normalizeShippingRateRuleConfig,
   readShippingRateRuleConfig,
   resolveShippingRate,
+  REGION_TIERS,
+  SHIPPING_MODES,
 } from './shippingRateRules.server.js';
-
-const COUNTRY_LABELS_JA = {
-  JP: '日本',
-  US: '米国',
-};
 
 const SAMPLE_VARIANT_ID = '47424753369251';
 const SAMPLE_PRODUCT_ID = '9044842447011';
 
+const MODE_LABELS = {
+  mail: 'Mail',
+  compact: 'Compact parcel',
+  parcel: 'Standard parcel',
+  cool: 'Cool delivery',
+  bulky: 'Bulky delivery',
+  direct: 'Direct shipment',
+};
+
+const REGION_LABELS = {
+  honshu: 'Honshu and standard JP regions',
+  hokkaido_kyushu: 'Hokkaido and Kyushu',
+  okinawa: 'Okinawa',
+  remote_island: 'Remote islands',
+  us: 'United States',
+  international: 'Other international regions',
+};
+
 function normalizeText(value) {
   const normalized = String(value || '').trim();
-
   return normalized || null;
-}
-
-function formatConditionList(values) {
-  return values.length > 0 ? values.join(', ') : null;
-}
-
-function getCountryLabel(countryCode) {
-  return COUNTRY_LABELS_JA[countryCode] || countryCode;
-}
-
-function describeRule(rule) {
-  const parts = [];
-
-  if (rule.countryCodes.length > 0) {
-    parts.push(`配送先: ${rule.countryCodes.map(getCountryLabel).join(', ')}`);
-  }
-
-  if (rule.provinceCodes.length > 0) {
-    parts.push(`都道府県コード: ${formatConditionList(rule.provinceCodes)}`);
-  }
-
-  if (rule.provinceNames.length > 0) {
-    parts.push(`都道府県: ${formatConditionList(rule.provinceNames)}`);
-  }
-
-  if (rule.postalCodePrefixes.length > 0) {
-    parts.push(`郵便番号の先頭: ${formatConditionList(rule.postalCodePrefixes)}`);
-  }
-
-  if (rule.productIds.length > 0) {
-    parts.push(`対象商品ID: ${formatConditionList(rule.productIds)}`);
-  }
-
-  if (rule.variantIds.length > 0) {
-    parts.push(`対象バリアントID: ${formatConditionList(rule.variantIds)}`);
-  }
-
-  if (rule.minTotalWeightGrams != null || rule.maxTotalWeightGrams != null) {
-    const min = rule.minTotalWeightGrams ?? 0;
-    const max = rule.maxTotalWeightGrams ?? '上限なし';
-    parts.push(`重量: ${min}g - ${max}g`);
-  }
-
-  return parts.length > 0 ? parts.join(' / ') : '全配送先';
 }
 
 function createQuoteInput({
@@ -69,6 +39,7 @@ function createQuoteInput({
   provinceCode = null,
   provinceName = null,
   city,
+  shippingClass = 'parcel',
 }) {
   return {
     shippingAddress: {
@@ -88,6 +59,7 @@ function createQuoteInput({
         variantId: SAMPLE_VARIANT_ID,
         quantity: 1,
         requiresShipping: true,
+        shippingClass,
         grams: 0,
       },
     ],
@@ -97,32 +69,32 @@ function createQuoteInput({
 function buildExamples(config) {
   const examples = [
     {
-      label: '日本国内配送の例',
-      destination: '東京都千代田区 / 郵便番号 100-0001',
+      label: 'Japan standard delivery example',
+      destination: 'Tokyo Chiyoda / postal code 100-0001',
       input: createQuoteInput({
         countryCode: 'JP',
         postalCode: '100-0001',
         province: 'JP-13',
         provinceCode: 'JP-13',
         provinceName: 'Tokyo',
-        city: '千代田区',
+        city: 'Chiyoda',
       }),
     },
     {
-      label: '日本国内配送の例',
-      destination: '茨城県取手市 / 郵便番号 300-1532',
+      label: 'Japan standard delivery example',
+      destination: 'Ibaraki Toride / postal code 300-1532',
       input: createQuoteInput({
         countryCode: 'JP',
         postalCode: '300-1532',
         province: 'JP-08',
         provinceCode: 'JP-08',
         provinceName: 'Ibaraki',
-        city: '取手市',
+        city: 'Toride',
       }),
     },
     {
-      label: '海外配送の例',
-      destination: '米国 New York / ZIP 10118',
+      label: 'International delivery example',
+      destination: 'United States New York / ZIP 10118',
       input: createQuoteInput({
         countryCode: 'US',
         postalCode: '10118',
@@ -132,8 +104,8 @@ function buildExamples(config) {
       }),
     },
     {
-      label: 'その他海外配送の例',
-      destination: 'フランス Paris / 郵便番号 75001',
+      label: 'Other international delivery example',
+      destination: 'France Paris / postal code 75001',
       input: createQuoteInput({
         countryCode: 'FR',
         postalCode: '75001',
@@ -166,6 +138,28 @@ function calculateAverageAmount(amounts) {
   );
 }
 
+function buildFeeMatrixRows(config) {
+  const rows = [];
+
+  for (const mode of SHIPPING_MODES) {
+    for (const regionTier of REGION_TIERS) {
+      const amount = config.feeMatrix?.[mode]?.[regionTier];
+
+      if (!Number.isFinite(amount)) {
+        continue;
+      }
+
+      rows.push({
+        id: `${mode}-${regionTier}`,
+        condition: `${MODE_LABELS[mode] || mode} / ${REGION_LABELS[regionTier] || regionTier}`,
+        amount,
+      });
+    }
+  }
+
+  return rows;
+}
+
 export function buildShippingRatePolicyData({
   rawRuleConfig,
   ruleConfig,
@@ -184,15 +178,8 @@ export function buildShippingRatePolicyData({
   }
 
   const config = configResult.config;
-  const ruleRows = config.rules.map((rule) => ({
-    id: rule.id,
-    condition: describeRule(rule),
-    amount: rule.amount,
-  }));
-  const shippableAmounts = [
-    ...ruleRows.map((rule) => rule.amount),
-    ...(config.undeliverableWhenNoRule ? [] : [config.defaultAmount]),
-  ].filter((amount) => Number.isFinite(amount));
+  const rows = buildFeeMatrixRows(config);
+  const shippableAmounts = rows.map((row) => row.amount).filter((amount) => Number.isFinite(amount));
   const minimumAmount = shippableAmounts.length > 0 ? Math.min(...shippableAmounts) : null;
   const maximumAmount = shippableAmounts.length > 0 ? Math.max(...shippableAmounts) : null;
 
@@ -206,7 +193,7 @@ export function buildShippingRatePolicyData({
     averageAmount: calculateAverageAmount(shippableAmounts),
     defaultAmount: config.defaultAmount,
     undeliverableWhenNoRule: config.undeliverableWhenNoRule,
-    rows: ruleRows,
+    rows,
     examples: buildExamples(config),
     note: normalizeText(process.env.SHIPPING_POLICY_NOTE),
   };

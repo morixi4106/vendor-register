@@ -5,7 +5,7 @@ import { buildShippingRatePolicyData } from '../../app/services/shippingRatePoli
 
 const FIXED_DATE = new Date('2026-05-02T00:00:00.000Z');
 
-test('shipping rate policy exposes minimum, maximum, average, and examples', () => {
+test('shipping rate policy exposes minimum, maximum, and examples', () => {
   const policy = buildShippingRatePolicyData({
     rawRuleConfig: '',
     generatedAt: FIXED_DATE,
@@ -13,11 +13,10 @@ test('shipping rate policy exposes minimum, maximum, average, and examples', () 
 
   assert.equal(policy.ok, true);
   assert.equal(policy.generatedAt, FIXED_DATE.toISOString());
-  assert.equal(policy.minimumAmount, 870);
-  assert.equal(policy.maximumAmount, 3500);
-  assert.equal(policy.averageAmount, 2290);
-  assert.equal(policy.rows.some((row) => row.id === 'jp-default'), true);
-  assert.equal(policy.rows.some((row) => row.id === 'us-default'), true);
+  assert.equal(policy.minimumAmount, 370);
+  assert.equal(policy.maximumAmount, 15000);
+  assert.equal(policy.rows.some((row) => row.id === 'parcel-honshu'), true);
+  assert.equal(policy.rows.some((row) => row.id === 'direct-international'), true);
   assert.equal(policy.examples.length >= 4, true);
   assert.equal(
     policy.examples.some(
@@ -27,38 +26,24 @@ test('shipping rate policy exposes minimum, maximum, average, and examples', () 
   );
 });
 
-test('shipping rate policy reflects configured public rules', () => {
+test('shipping rate policy reflects configured fee matrix values', () => {
   const policy = buildShippingRatePolicyData({
     generatedAt: FIXED_DATE,
     ruleConfig: {
       currencyCode: 'JPY',
       defaultAmount: 4200,
-      rules: [
-        {
-          id: 'tokyo-policy-test',
-          countryCodes: ['JP'],
-          provinceCodes: ['JP-13'],
-          variantIds: ['47424753369251'],
-          amount: 990,
+      feeMatrix: {
+        parcel: {
+          honshu: 990,
         },
-      ],
+      },
     },
   });
 
-  assert.equal(policy.minimumAmount, 990);
-  assert.equal(policy.maximumAmount, 4200);
-  assert.deepEqual(policy.rows, [
-    {
-      id: 'tokyo-policy-test',
-      condition:
-        '配送先: 日本 / 都道府県コード: JP-13 / 対象バリアントID: 47424753369251',
-      amount: 990,
-    },
-  ]);
+  assert.equal(policy.rows.find((row) => row.id === 'parcel-honshu').amount, 990);
   assert.equal(
-    policy.examples.find((example) => example.destination.includes('100-0001'))
-      .matchedRuleId,
-    'tokyo-policy-test',
+    policy.examples.find((example) => example.destination.includes('100-0001')).amount,
+    990,
   );
 });
 

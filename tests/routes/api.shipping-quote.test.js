@@ -73,7 +73,7 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
     ),
     {
       source: 'shipping_rules_quote',
-      calculationVersion: 'rules_v1',
+      calculationVersion: 'mvp_v2',
       shopDomain: 'b30ize-1a.myshopify.com',
       shippingAddress: {
         countryCode: 'JP',
@@ -91,10 +91,21 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
           lineId: 'quote-line-0',
           productId: '9044842447011',
           variantId: '47424753369251',
+          skuId: null,
+          vendor: null,
+          title: null,
           quantity: 1,
           requiresShipping: true,
           amountAfterItemDiscountBeforeOrderCoupon: 165000,
           grams: null,
+          shipFromId: null,
+          leadTimeBucket: null,
+          shippingClass: null,
+          temperatureZone: null,
+          directShipGroup: null,
+          forceSeparateShipment: null,
+          freeShippingEligible: null,
+          shippingPoint: null,
         },
       ],
       lineCount: 1,
@@ -130,63 +141,15 @@ test('api.shipping-quote returns a different default quote for US addresses', as
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.equal(payload.result.totalShippingFee, 2500);
-  assert.deepEqual(listShippingDiagnosticEvents({ limit: 1 })[0], {
-    sequence: 1,
-    timestamp: listShippingDiagnosticEvents({ limit: 1 })[0].timestamp,
-    requestId: 'carrier_test_1',
-    source: 'quote',
-    level: 'info',
-    message: 'quote_returned',
-    details: {
-      request: {
-        source: 'shipping_rules_quote',
-        calculationVersion: 'rules_v1',
-        shopDomain: 'b30ize-1a.myshopify.com',
-        shippingAddress: {
-          countryCode: 'US',
-          postalCode: '90210',
-          province: 'CA',
-          provinceCode: null,
-          provinceName: 'CA',
-          city: null,
-        },
-        lineCount: 1,
-        shippableLineCount: 1,
-        lines: [
-          {
-            productId: 'gid://shopify/Product/1',
-            variantId: 'gid://shopify/ProductVariant/1',
-            quantity: 1,
-            requiresShipping: true,
-            amountAfterItemDiscountBeforeOrderCoupon: 4200,
-            grams: null,
-          },
-        ],
-      },
-      response: {
-        ok: true,
-        enabled: true,
-        reason: null,
-        isPendingAddress: false,
-        isDeliverable: true,
-        totalShippingFee: 2500,
-        currencyCode: 'JPY',
-        debug: {
-          source: 'vendor-register-shipping-rules',
-          calculationVersion: 'rules_v1',
-          countryCode: 'US',
-          postalCode: '90210',
-          province: 'CA',
-          provinceCode: null,
-          provinceName: 'CA',
-          shippableLineCount: 1,
-          rateSource: 'rule',
-          matchedRuleId: 'us-default',
-          totalWeightGrams: 0,
-        },
-      },
-    },
-  });
+  const event = listShippingDiagnosticEvents({ limit: 1 })[0];
+
+  assert.equal(event.requestId, 'carrier_test_1');
+  assert.equal(event.message, 'quote_returned');
+  assert.equal(event.details.request.calculationVersion, 'mvp_v2');
+  assert.equal(event.details.response.debug.rateSource, 'shipment_groups');
+  assert.equal(event.details.response.debug.regionTier, 'us');
+  assert.equal(event.details.response.debug.groups[0].mode, 'parcel');
+  assert.equal(event.details.response.debug.groups[0].fee, 2500);
 });
 
 test('api.shipping-quote returns pending_address when address is incomplete', () => {
@@ -277,21 +240,18 @@ test('api.shipping-quote returns undeliverable when configured with no matching 
     }),
     {
       ruleConfig: {
-        undeliverableWhenNoRule: true,
-        rules: [
-          {
-            id: 'jp-only',
-            countryCodes: ['JP'],
-            amount: 870,
+        feeMatrix: {
+          parcel: {
+            international: null,
           },
-        ],
+        },
       },
     },
   );
 
   assert.equal(payload.reason, 'undeliverable');
   assert.equal(payload.result.isDeliverable, false);
-  assert.equal(payload.debug.rateSource, 'no_matching_rule');
+  assert.equal(payload.debug.rateSource, 'group_unavailable');
 });
 
 test('api.shipping-quote fails closed for invalid JSON rule config', () => {

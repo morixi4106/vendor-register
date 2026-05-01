@@ -54,7 +54,7 @@ test('shipping rate rules match province, variant, and weight constraints', () =
   const resolution = resolveShippingRate(createInput(), {
     currencyCode: 'JPY',
     defaultAmount: 3500,
-    rules: [
+    rateOverrides: [
       {
         id: 'tokyo-light-variant',
         countryCodes: ['JP'],
@@ -82,20 +82,119 @@ test('shipping rate rules can mark unmatched destinations undeliverable', () => 
       },
     }),
     {
-      undeliverableWhenNoRule: true,
-      rules: [
-        {
-          id: 'jp-only',
-          countryCodes: ['JP'],
-          amount: 870,
+      feeMatrix: {
+        parcel: {
+          international: null,
         },
-      ],
+      },
     },
   );
 
   assert.equal(resolution.isDeliverable, false);
   assert.equal(resolution.totalShippingFee, null);
-  assert.equal(resolution.rateSource, 'no_matching_rule');
+  assert.equal(resolution.rateSource, 'group_unavailable');
+});
+
+test('shipping rate rules split direct, cool, and normal shipment groups', () => {
+  const resolution = resolveShippingRate(
+    createInput({
+      lines: [
+        {
+          productId: 'product-cool',
+          variantId: 'variant-cool',
+          quantity: 1,
+          requiresShipping: true,
+          temperatureZone: 'chilled',
+          shippingPoint: 1,
+        },
+        {
+          productId: 'product-direct',
+          variantId: 'variant-direct',
+          quantity: 1,
+          requiresShipping: true,
+          shippingClass: 'direct',
+          directShipGroup: 'maker-a',
+          shippingPoint: 1,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(resolution.isDeliverable, true);
+  assert.deepEqual(
+    resolution.groups.map((group) => group.mode).sort(),
+    ['cool', 'direct', 'parcel'],
+  );
+  assert.equal(resolution.groups.length, 3);
+});
+
+test('shipping rate rules apply free shipping only to eligible normal groups', () => {
+  const resolution = resolveShippingRate(
+    createInput({
+      lines: [
+        {
+          productId: 'product-cool',
+          variantId: 'variant-cool',
+          quantity: 1,
+          requiresShipping: true,
+          temperatureZone: 'chilled',
+          amountAfterItemDiscountBeforeOrderCoupon: 1000,
+        },
+      ],
+    }),
+    {
+      freeShippingRule: {
+        threshold: 1000,
+        eligibleModes: ['parcel'],
+      },
+    },
+  );
+
+  const parcelGroup = resolution.groups.find((group) => group.mode === 'parcel');
+  const coolGroup = resolution.groups.find((group) => group.mode === 'cool');
+
+  assert.equal(resolution.isFreeShippingThresholdMet, true);
+  assert.equal(parcelGroup.fee, 0);
+  assert.equal(parcelGroup.isFreeShippingApplied, true);
+  assert.equal(coolGroup.isFreeShippingApplied, false);
+});
+
+test('shipping rate rules estimate package count by shipping points', () => {
+  const resolution = resolveShippingRate(
+    createInput({
+      lines: [],
+    }),
+    {
+      pointThresholdByMode: {
+        parcel: 3,
+      },
+    },
+  );
+
+  assert.equal(resolution.groups[0].mode, 'parcel');
+  assert.equal(resolution.groups[0].packageCount, 1);
+
+  const oversized = resolveShippingRate(
+    createInput({
+      lines: [
+        {
+          productId: 'product-2',
+          variantId: 'variant-2',
+          quantity: 2,
+          requiresShipping: true,
+          shippingPoint: 2,
+        },
+      ],
+    }),
+    {
+      pointThresholdByMode: {
+        parcel: 3,
+      },
+    },
+  );
+
+  assert.equal(oversized.groups[0].packageCount, 2);
+  assert.equal(oversized.groups[0].fee, 1570);
 });
 
 test('shipping rate rule config reports invalid JSON without throwing', () => {

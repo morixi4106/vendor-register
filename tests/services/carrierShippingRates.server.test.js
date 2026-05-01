@@ -59,7 +59,7 @@ test('carrier shipping rates converts Shopify destination and items to Shipping 
       productId: '9044842447011',
       variantId: '111222333',
       quantity: 2,
-      amountAfterItemDiscountBeforeOrderCoupon: 4200,
+      amountAfterItemDiscountBeforeOrderCoupon: 42,
       requiresShipping: true,
     },
   ]);
@@ -105,7 +105,7 @@ test('carrier shipping rates accepts Shopify carrier postal_code payloads', () =
       variantId: '47424753369251',
       quantity: 1,
       grams: 120,
-      amountAfterItemDiscountBeforeOrderCoupon: 165000,
+      amountAfterItemDiscountBeforeOrderCoupon: 1650,
       requiresShipping: true,
     },
   ]);

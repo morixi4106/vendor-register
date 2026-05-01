@@ -83,6 +83,12 @@ function toPositiveNumber(value) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
+function toNonNegativeNumber(value) {
+  const numeric = Number(value);
+
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+}
+
 function getShippingAddress(body) {
   return isPlainObject(body?.shippingAddress) ? body.shippingAddress : {};
 }
@@ -126,16 +132,29 @@ function normalizeQuoteLine(line, index) {
     toPositiveNumber(normalized.amountAfterItemDiscountBeforeOrderCoupon) ??
     toPositiveNumber(normalized.amount) ??
     toPositiveNumber(normalized.price);
-  const grams = toPositiveNumber(normalized.grams);
+  const grams = toNonNegativeNumber(normalized.grams ?? normalized.weightGrams);
 
   return {
     lineId: normalizeText(normalized.lineId || normalized.id || `quote-line-${index}`),
     productId: normalizeText(normalized.productId || normalized.product_id),
     variantId: normalizeText(normalized.variantId || normalized.variant_id),
+    skuId: normalizeText(normalized.skuId || normalized.sku),
+    vendor: normalizeText(normalized.vendor),
+    title: normalizeText(normalized.title || normalized.name),
     quantity,
     requiresShipping: (normalized.requiresShipping ?? normalized.requires_shipping) !== false,
     amountAfterItemDiscountBeforeOrderCoupon,
     grams,
+    shipFromId: normalizeText(normalized.shipFromId || normalized.ship_from_id),
+    leadTimeBucket: normalizeText(normalized.leadTimeBucket || normalized.lead_time_bucket),
+    shippingClass: normalizeText(normalized.shippingClass || normalized.shipping_class),
+    temperatureZone: normalizeText(normalized.temperatureZone || normalized.temperature_zone),
+    directShipGroup: normalizeText(normalized.directShipGroup || normalized.direct_ship_group),
+    forceSeparateShipment:
+      normalized.forceSeparateShipment ?? normalized.force_separate_shipment ?? null,
+    freeShippingEligible:
+      normalized.freeShippingEligible ?? normalized.free_shipping_eligible ?? null,
+    shippingPoint: toNonNegativeNumber(normalized.shippingPoint ?? normalized.shipping_point),
   };
 }
 
@@ -203,6 +222,9 @@ function summarizeQuoteRequest(body) {
       amountAfterItemDiscountBeforeOrderCoupon:
         line.amountAfterItemDiscountBeforeOrderCoupon,
       grams: line.grams,
+      shippingClass: line.shippingClass,
+      temperatureZone: line.temperatureZone,
+      shippingPoint: line.shippingPoint,
     })),
   };
 }
@@ -319,7 +341,12 @@ export function buildShippingQuoteResponse(body, options = {}) {
         ...debug,
         rateSource: resolvedRate.rateSource,
         matchedRuleId: resolvedRate.matchedRuleId,
+        regionTier: resolvedRate.regionTier,
         totalWeightGrams: resolvedRate.totalWeightGrams,
+        totalShippingPoint: resolvedRate.totalShippingPoint,
+        freeShippingEligibleSubtotal: resolvedRate.freeShippingEligibleSubtotal,
+        isFreeShippingThresholdMet: resolvedRate.isFreeShippingThresholdMet,
+        groups: resolvedRate.groups,
       },
     };
   }
@@ -338,7 +365,12 @@ export function buildShippingQuoteResponse(body, options = {}) {
       ...debug,
       rateSource: resolvedRate.rateSource,
       matchedRuleId: resolvedRate.matchedRuleId,
+      regionTier: resolvedRate.regionTier,
       totalWeightGrams: resolvedRate.totalWeightGrams,
+      totalShippingPoint: resolvedRate.totalShippingPoint,
+      freeShippingEligibleSubtotal: resolvedRate.freeShippingEligibleSubtotal,
+      isFreeShippingThresholdMet: resolvedRate.isFreeShippingThresholdMet,
+      groups: resolvedRate.groups,
     },
   };
 }

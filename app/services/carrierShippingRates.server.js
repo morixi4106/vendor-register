@@ -75,6 +75,10 @@ function normalizeText(value) {
 }
 
 function toFiniteNumber(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -104,9 +108,19 @@ function normalizeCarrierDestination(destination) {
   };
 }
 
+function toMajorCurrencyAmountFromCarrierPrice(price) {
+  const numeric = toFiniteNumber(price);
+
+  if (numeric == null) {
+    return null;
+  }
+
+  return numeric / 100;
+}
+
 function normalizeCarrierItem(item, index) {
   const quantity = toPositiveInteger(item?.quantity) || 1;
-  const price = toFiniteNumber(item?.price);
+  const price = toMajorCurrencyAmountFromCarrierPrice(item?.price);
   const grams = toFiniteNumber(item?.grams);
   const lineAmount = price == null ? null : price * quantity;
 
@@ -114,6 +128,9 @@ function normalizeCarrierItem(item, index) {
     lineId: normalizeText(item?.id || item?.line_item_id || item?.variant_id || `carrier-line-${index}`),
     productId: normalizeText(item?.product_id),
     variantId: normalizeText(item?.variant_id),
+    skuId: normalizeText(item?.sku),
+    vendor: normalizeText(item?.vendor),
+    title: normalizeText(item?.name || item?.title),
     quantity,
     requiresShipping: item?.requires_shipping !== false,
     ...(grams == null ? {} : { grams }),
@@ -155,8 +172,11 @@ function summarizeCarrierItems(items) {
   return (Array.isArray(items) ? items : []).map((item) => ({
     productId: normalizeText(item?.product_id),
     variantId: normalizeText(item?.variant_id),
+    skuId: normalizeText(item?.sku),
+    vendor: normalizeText(item?.vendor),
+    title: normalizeText(item?.name || item?.title),
     quantity: toPositiveInteger(item?.quantity) || 1,
-    price: toFiniteNumber(item?.price),
+    price: toMajorCurrencyAmountFromCarrierPrice(item?.price),
     grams: toFiniteNumber(item?.grams),
     requiresShipping: item?.requires_shipping !== false,
   }));
@@ -174,6 +194,8 @@ function summarizeQuoteRequest(quoteRequest) {
     lines: lines.map((line) => ({
       productId: line.productId || null,
       variantId: line.variantId || null,
+      skuId: line.skuId || null,
+      vendor: line.vendor || null,
       quantity: line.quantity || null,
       requiresShipping: line.requiresShipping !== false,
       amountAfterItemDiscountBeforeOrderCoupon:
