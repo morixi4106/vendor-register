@@ -144,6 +144,7 @@ test('shipping rate rules apply free shipping only to eligible normal groups', (
     }),
     {
       freeShippingRule: {
+        enabled: true,
         threshold: 1000,
         eligibleModes: ['parcel'],
       },
@@ -157,6 +158,26 @@ test('shipping rate rules apply free shipping only to eligible normal groups', (
   assert.equal(parcelGroup.fee, 0);
   assert.equal(parcelGroup.isFreeShippingApplied, true);
   assert.equal(coolGroup.isFreeShippingApplied, false);
+});
+
+test('shipping rate rules do not apply free shipping by default', () => {
+  const resolution = resolveShippingRate(
+    createInput({
+      lines: [
+        {
+          productId: 'product-2',
+          variantId: 'variant-2',
+          quantity: 1,
+          requiresShipping: true,
+          amountAfterItemDiscountBeforeOrderCoupon: 12000,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(resolution.isFreeShippingThresholdMet, false);
+  assert.equal(resolution.groups.every((group) => group.isFreeShippingApplied === false), true);
+  assert.equal(resolution.totalShippingFee, 870);
 });
 
 test('shipping rate rules estimate package count by shipping points', () => {

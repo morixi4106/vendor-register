@@ -153,7 +153,7 @@ export const DEFAULT_SHIPPING_RATE_RULE_CONFIG = {
   extraPackageFee: DEFAULT_EXTRA_PACKAGE_FEE,
   pointThresholdByMode: DEFAULT_POINT_THRESHOLD_BY_MODE,
   freeShippingRule: {
-    enabled: true,
+    enabled: false,
     threshold: 10000,
     eligibleModes: ['mail', 'compact', 'parcel'],
   },
@@ -371,7 +371,7 @@ function normalizeFreeShippingRule(value) {
   const defaultRule = DEFAULT_SHIPPING_RATE_RULE_CONFIG.freeShippingRule;
 
   return {
-    enabled: normalized.enabled !== false,
+    enabled: normalized.enabled === true,
     threshold:
       toNonNegativeNumber(normalized.threshold ?? normalized.minimumSubtotal) ??
       defaultRule.threshold,
