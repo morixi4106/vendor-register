@@ -1,5 +1,10 @@
 import { json } from '@remix-run/node';
 
+import {
+  createShippingDiagnosticId,
+  recordShippingDiagnosticEvent,
+} from './shippingDiagnostics.server.js';
+
 const SMOKE_SHIPPING_RATES_JPY = {
   JP: 870,
   US: 2500,
@@ -49,6 +54,47 @@ function lineRequiresShipping(line) {
 
 function getSmokeRateForCountry(countryCode) {
   return SMOKE_SHIPPING_RATES_JPY[countryCode] ?? DEFAULT_INTERNATIONAL_SHIPPING_RATE_JPY;
+}
+
+function summarizeQuoteRequest(body) {
+  const shippingAddress = getShippingAddress(body);
+  const lines = getOrderLines(body);
+
+  return {
+    source: 'smoke_quote',
+    shopDomain: normalizeText(body?.shopDomain),
+    shippingAddress: {
+      countryCode: normalizeCountryCode(shippingAddress.countryCode || shippingAddress.country),
+      postalCode: normalizeText(shippingAddress.postalCode || shippingAddress.zip),
+      province: normalizeText(shippingAddress.province || shippingAddress.prefecture),
+      city: normalizeText(shippingAddress.city),
+    },
+    lineCount: lines.length,
+    shippableLineCount: lines.filter(lineRequiresShipping).length,
+  };
+}
+
+function summarizeQuoteResponse(payload) {
+  return {
+    ok: payload?.ok ?? null,
+    enabled: payload?.enabled ?? null,
+    reason: payload?.reason ?? null,
+    isPendingAddress: payload?.result?.isPendingAddress ?? null,
+    isDeliverable: payload?.result?.isDeliverable ?? null,
+    totalShippingFee: payload?.result?.totalShippingFee ?? null,
+    currencyCode: payload?.result?.currencyCode ?? null,
+    debug: payload?.debug ?? null,
+  };
+}
+
+function recordQuoteDiagnostic({ requestId, level = 'info', message, details }) {
+  recordShippingDiagnosticEvent({
+    requestId,
+    source: 'quote',
+    level,
+    message,
+    details,
+  });
 }
 
 export function buildShippingQuoteResponse(body) {
@@ -117,11 +163,24 @@ export function createShippingQuoteLoader() {
 
 export function createShippingQuoteAction() {
   return async function action({ request }) {
+    const requestId =
+      request.headers.get('x-shipping-diagnostic-request-id') ||
+      createShippingDiagnosticId('quote');
     let body;
 
     try {
       body = await request.json();
     } catch {
+      recordQuoteDiagnostic({
+        requestId,
+        level: 'warn',
+        message: 'invalid_json',
+        details: {
+          method: request.method,
+          url: request.url,
+          contentType: request.headers.get('content-type') || '',
+        },
+      });
       return json(
         {
           ok: false,
@@ -131,6 +190,19 @@ export function createShippingQuoteAction() {
       );
     }
 
-    return json(buildShippingQuoteResponse(body));
+    const payload = buildShippingQuoteResponse(body);
+    const responseSummary = summarizeQuoteResponse(payload);
+
+    recordQuoteDiagnostic({
+      requestId,
+      level: responseSummary.reason ? 'warn' : 'info',
+      message: responseSummary.reason ? 'quote_not_applied' : 'quote_returned',
+      details: {
+        request: summarizeQuoteRequest(body),
+        response: responseSummary,
+      },
+    });
+
+    return json(payload);
   };
 }

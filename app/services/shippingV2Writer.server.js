@@ -129,6 +129,7 @@ export async function fetchShippingV2Quote({
   quoteUrl = process.env.SHIPPING_V2_QUOTE_URL,
   fetchImpl = fetch,
   timeoutMs = DEFAULT_SHIPPING_V2_QUOTE_TIMEOUT_MS,
+  diagnosticRequestId = null,
 }) {
   const normalizedQuoteUrl = normalizeText(quoteUrl);
 
@@ -140,6 +141,9 @@ export async function fetchShippingV2Quote({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(diagnosticRequestId
+        ? { 'X-Shipping-Diagnostic-Request-Id': diagnosticRequestId }
+        : {}),
     },
     body: JSON.stringify(quoteRequest),
     ...(timeoutMs > 0 && typeof AbortSignal?.timeout === 'function'

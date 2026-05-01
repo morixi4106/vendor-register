@@ -6,10 +6,15 @@ import {
   buildCarrierShippingV2QuoteRequest,
   createCarrierShippingRatesAction,
   createCarrierShippingRatesLoader,
+  getCarrierRatesEmptyReason,
   getCarrierCallbackUrl,
   toShopifyCarrierSubunits,
   upsertShippingV2CarrierService,
 } from '../../app/services/carrierShippingRates.server.js';
+import {
+  clearShippingDiagnosticEvents,
+  listShippingDiagnosticEvents,
+} from '../../app/services/shippingDiagnostics.server.js';
 
 function createCarrierRequest(overrides = {}) {
   return {
@@ -229,6 +234,8 @@ test('carrier shipping rates converts Shipping V2 amount to Shopify carrier subu
 });
 
 test('carrier shipping rates returns empty rates for quote errors and undeliverable quotes', async () => {
+  clearShippingDiagnosticEvents();
+
   assert.deepEqual(
     buildCarrierRatesResponse({
       quoteResponse: {
@@ -261,6 +268,62 @@ test('carrier shipping rates returns empty rates for quote errors and undelivera
   });
 
   assert.deepEqual(await response.json(), { rates: [] });
+  assert.equal(
+    listShippingDiagnosticEvents({ limit: 10 }).some(
+      (event) => event.source === 'carrier' && event.message === 'quote_error',
+    ),
+    true,
+  );
+});
+
+test('carrier shipping rates records empty rate reasons for diagnostics', async () => {
+  clearShippingDiagnosticEvents();
+  const action = createCarrierShippingRatesAction({
+    fetchShippingV2QuoteImpl: async () => ({
+      ok: true,
+      enabled: true,
+      reason: 'pending_address',
+      result: {
+        isPendingAddress: true,
+        isDeliverable: false,
+        totalShippingFee: null,
+      },
+    }),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  const response = await action({
+    request: new Request('http://localhost/carrier/shipping-rates', {
+      method: 'POST',
+      body: JSON.stringify(createCarrierRequest()),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }),
+  });
+  const events = listShippingDiagnosticEvents({ limit: 10 });
+
+  assert.deepEqual(await response.json(), { rates: [] });
+  assert.equal(
+    getCarrierRatesEmptyReason({
+      ok: true,
+      enabled: true,
+      reason: 'pending_address',
+      result: {
+        isPendingAddress: true,
+      },
+    }),
+    'pending_address',
+  );
+  assert.equal(
+    events.some(
+      (event) =>
+        event.source === 'carrier' &&
+        event.message === 'empty_rates' &&
+        event.details.emptyRatesReason === 'pending_address',
+    ),
+    true,
+  );
 });
 
 test('upsertShippingV2CarrierService updates an existing Shipping V2 carrier service', async () => {

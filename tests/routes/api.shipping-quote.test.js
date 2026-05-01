@@ -6,6 +6,10 @@ import {
   createShippingQuoteAction,
   createShippingQuoteLoader,
 } from '../../app/services/shippingQuote.server.js';
+import {
+  clearShippingDiagnosticEvents,
+  listShippingDiagnosticEvents,
+} from '../../app/services/shippingDiagnostics.server.js';
 
 function createQuoteRequest(overrides = {}) {
   return {
@@ -44,12 +48,14 @@ test('api.shipping-quote returns a JP smoke quote in the Shipping V2 response sh
 });
 
 test('api.shipping-quote returns a different smoke quote for US addresses', async () => {
+  clearShippingDiagnosticEvents();
   const action = createShippingQuoteAction();
   const response = await action({
     request: new Request('http://localhost/api/shipping-quote', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Shipping-Diagnostic-Request-Id': 'carrier_test_1',
       },
       body: JSON.stringify(
         createQuoteRequest({
@@ -68,6 +74,43 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.equal(payload.result.totalShippingFee, 2500);
+  assert.deepEqual(listShippingDiagnosticEvents({ limit: 1 })[0], {
+    sequence: 1,
+    timestamp: listShippingDiagnosticEvents({ limit: 1 })[0].timestamp,
+    requestId: 'carrier_test_1',
+    source: 'quote',
+    level: 'info',
+    message: 'quote_returned',
+    details: {
+      request: {
+        source: 'smoke_quote',
+        shopDomain: 'b30ize-1a.myshopify.com',
+        shippingAddress: {
+          countryCode: 'US',
+          postalCode: '90210',
+          province: 'CA',
+          city: null,
+        },
+        lineCount: 1,
+        shippableLineCount: 1,
+      },
+      response: {
+        ok: true,
+        enabled: true,
+        reason: null,
+        isPendingAddress: false,
+        isDeliverable: true,
+        totalShippingFee: 2500,
+        currencyCode: 'JPY',
+        debug: {
+          source: 'vendor-register-smoke-quote',
+          countryCode: 'US',
+          postalCode: '90210',
+          shippableLineCount: 1,
+        },
+      },
+    },
+  });
 });
 
 test('api.shipping-quote returns pending_address when address is incomplete', () => {
