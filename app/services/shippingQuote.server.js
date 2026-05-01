@@ -10,6 +10,57 @@ const SMOKE_SHIPPING_RATES_JPY = {
   US: 2500,
 };
 const DEFAULT_INTERNATIONAL_SHIPPING_RATE_JPY = 3500;
+const SMOKE_QUOTE_SOURCE = 'vendor-register-smoke-quote';
+const SMOKE_CALCULATION_VERSION = 'smoke_v1';
+const JAPAN_PROVINCE_CODE_NAMES = {
+  'JP-01': 'Hokkaido',
+  'JP-02': 'Aomori',
+  'JP-03': 'Iwate',
+  'JP-04': 'Miyagi',
+  'JP-05': 'Akita',
+  'JP-06': 'Yamagata',
+  'JP-07': 'Fukushima',
+  'JP-08': 'Ibaraki',
+  'JP-09': 'Tochigi',
+  'JP-10': 'Gunma',
+  'JP-11': 'Saitama',
+  'JP-12': 'Chiba',
+  'JP-13': 'Tokyo',
+  'JP-14': 'Kanagawa',
+  'JP-15': 'Niigata',
+  'JP-16': 'Toyama',
+  'JP-17': 'Ishikawa',
+  'JP-18': 'Fukui',
+  'JP-19': 'Yamanashi',
+  'JP-20': 'Nagano',
+  'JP-21': 'Gifu',
+  'JP-22': 'Shizuoka',
+  'JP-23': 'Aichi',
+  'JP-24': 'Mie',
+  'JP-25': 'Shiga',
+  'JP-26': 'Kyoto',
+  'JP-27': 'Osaka',
+  'JP-28': 'Hyogo',
+  'JP-29': 'Nara',
+  'JP-30': 'Wakayama',
+  'JP-31': 'Tottori',
+  'JP-32': 'Shimane',
+  'JP-33': 'Okayama',
+  'JP-34': 'Hiroshima',
+  'JP-35': 'Yamaguchi',
+  'JP-36': 'Tokushima',
+  'JP-37': 'Kagawa',
+  'JP-38': 'Ehime',
+  'JP-39': 'Kochi',
+  'JP-40': 'Fukuoka',
+  'JP-41': 'Saga',
+  'JP-42': 'Nagasaki',
+  'JP-43': 'Kumamoto',
+  'JP-44': 'Oita',
+  'JP-45': 'Miyazaki',
+  'JP-46': 'Kagoshima',
+  'JP-47': 'Okinawa',
+};
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -40,37 +91,120 @@ function getOrderLines(body) {
   return Array.isArray(body?.orderLike?.lines) ? body.orderLike.lines : [];
 }
 
-function lineRequiresShipping(line) {
-  if (!isPlainObject(line)) {
-    return false;
-  }
-
-  if (line.requiresShipping === false) {
-    return false;
-  }
-
-  return (toPositiveNumber(line.quantity) || 1) > 0;
-}
-
 function getSmokeRateForCountry(countryCode) {
   return SMOKE_SHIPPING_RATES_JPY[countryCode] ?? DEFAULT_INTERNATIONAL_SHIPPING_RATE_JPY;
 }
 
-function summarizeQuoteRequest(body) {
+function normalizeProvince({ countryCode, province }) {
+  const normalized = normalizeText(province);
+
+  if (!normalized) {
+    return {
+      province: null,
+      provinceCode: null,
+      provinceName: null,
+    };
+  }
+
+  const provinceCode = normalized.toUpperCase();
+
+  if (countryCode === 'JP' && /^JP-\d{2}$/.test(provinceCode)) {
+    return {
+      province: provinceCode,
+      provinceCode,
+      provinceName: JAPAN_PROVINCE_CODE_NAMES[provinceCode] || null,
+    };
+  }
+
+  return {
+    province: normalized,
+    provinceCode: null,
+    provinceName: normalized,
+  };
+}
+
+function normalizeQuoteLine(line, index) {
+  const normalized = isPlainObject(line) ? line : {};
+  const quantity = toPositiveNumber(normalized.quantity) || 1;
+  const amountAfterItemDiscountBeforeOrderCoupon =
+    toPositiveNumber(normalized.amountAfterItemDiscountBeforeOrderCoupon) ??
+    toPositiveNumber(normalized.amount) ??
+    toPositiveNumber(normalized.price);
+
+  return {
+    lineId: normalizeText(normalized.lineId || normalized.id || `quote-line-${index}`),
+    productId: normalizeText(normalized.productId || normalized.product_id),
+    variantId: normalizeText(normalized.variantId || normalized.variant_id),
+    quantity,
+    requiresShipping: normalized.requiresShipping !== false,
+    amountAfterItemDiscountBeforeOrderCoupon,
+  };
+}
+
+function lineRequiresShipping(line) {
+  return Boolean(line?.requiresShipping && line.quantity > 0);
+}
+
+export function normalizeShippingQuoteInput(body) {
   const shippingAddress = getShippingAddress(body);
-  const lines = getOrderLines(body);
+  const countryCode = normalizeCountryCode(
+    shippingAddress.countryCode || shippingAddress.country || shippingAddress.country_code,
+  );
+  const postalCode = normalizeText(
+    shippingAddress.postalCode || shippingAddress.zip || shippingAddress.postal_code,
+  );
+  const province = normalizeProvince({
+    countryCode,
+    province: shippingAddress.province || shippingAddress.prefecture || shippingAddress.province_code,
+  });
+  const lines = getOrderLines(body).map(normalizeQuoteLine);
 
   return {
     source: 'smoke_quote',
+    calculationVersion: SMOKE_CALCULATION_VERSION,
     shopDomain: normalizeText(body?.shopDomain),
     shippingAddress: {
-      countryCode: normalizeCountryCode(shippingAddress.countryCode || shippingAddress.country),
-      postalCode: normalizeText(shippingAddress.postalCode || shippingAddress.zip),
-      province: normalizeText(shippingAddress.province || shippingAddress.prefecture),
+      countryCode,
+      country: countryCode,
+      postalCode,
+      zip: postalCode,
+      province: province.province,
+      prefecture: province.province,
+      provinceCode: province.provinceCode,
+      provinceName: province.provinceName,
       city: normalizeText(shippingAddress.city),
     },
+    lines,
     lineCount: lines.length,
     shippableLineCount: lines.filter(lineRequiresShipping).length,
+  };
+}
+
+function summarizeQuoteRequest(body) {
+  const input = normalizeShippingQuoteInput(body);
+
+  return {
+    source: input.source,
+    calculationVersion: input.calculationVersion,
+    shopDomain: input.shopDomain,
+    shippingAddress: {
+      countryCode: input.shippingAddress.countryCode,
+      postalCode: input.shippingAddress.postalCode,
+      province: input.shippingAddress.province,
+      provinceCode: input.shippingAddress.provinceCode,
+      provinceName: input.shippingAddress.provinceName,
+      city: input.shippingAddress.city,
+    },
+    lineCount: input.lineCount,
+    shippableLineCount: input.shippableLineCount,
+    lines: input.lines.map((line) => ({
+      productId: line.productId,
+      variantId: line.variantId,
+      quantity: line.quantity,
+      requiresShipping: line.requiresShipping,
+      amountAfterItemDiscountBeforeOrderCoupon:
+        line.amountAfterItemDiscountBeforeOrderCoupon,
+    })),
   };
 }
 
@@ -98,12 +232,24 @@ function recordQuoteDiagnostic({ requestId, level = 'info', message, details }) 
 }
 
 export function buildShippingQuoteResponse(body) {
-  const shippingAddress = getShippingAddress(body);
-  const countryCode = normalizeCountryCode(
-    shippingAddress.countryCode || shippingAddress.country,
-  );
-  const postalCode = normalizeText(shippingAddress.postalCode || shippingAddress.zip);
-  const shippableLines = getOrderLines(body).filter(lineRequiresShipping);
+  const input = normalizeShippingQuoteInput(body);
+  const {
+    countryCode,
+    postalCode,
+    province,
+    provinceCode,
+    provinceName,
+  } = input.shippingAddress;
+  const debug = {
+    source: SMOKE_QUOTE_SOURCE,
+    calculationVersion: SMOKE_CALCULATION_VERSION,
+    countryCode,
+    postalCode,
+    province,
+    provinceCode,
+    provinceName,
+    shippableLineCount: input.shippableLineCount,
+  };
 
   if (!countryCode || !postalCode) {
     return {
@@ -115,12 +261,7 @@ export function buildShippingQuoteResponse(body) {
         isDeliverable: false,
         totalShippingFee: null,
       },
-      debug: {
-        source: 'vendor-register-smoke-quote',
-        countryCode,
-        postalCode,
-        shippableLineCount: shippableLines.length,
-      },
+      debug,
     };
   }
 
@@ -131,15 +272,11 @@ export function buildShippingQuoteResponse(body) {
     result: {
       isPendingAddress: false,
       isDeliverable: true,
-      totalShippingFee: shippableLines.length > 0 ? getSmokeRateForCountry(countryCode) : 0,
+      totalShippingFee:
+        input.shippableLineCount > 0 ? getSmokeRateForCountry(countryCode) : 0,
       currencyCode: 'JPY',
     },
-    debug: {
-      source: 'vendor-register-smoke-quote',
-      countryCode,
-      postalCode,
-      shippableLineCount: shippableLines.length,
-    },
+    debug,
   };
 }
 

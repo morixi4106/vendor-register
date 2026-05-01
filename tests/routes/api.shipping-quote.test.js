@@ -5,6 +5,7 @@ import {
   buildShippingQuoteResponse,
   createShippingQuoteAction,
   createShippingQuoteLoader,
+  normalizeShippingQuoteInput,
 } from '../../app/services/shippingQuote.server.js';
 import {
   clearShippingDiagnosticEvents,
@@ -47,6 +48,60 @@ test('api.shipping-quote returns a JP smoke quote in the Shipping V2 response sh
   });
 });
 
+test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => {
+  assert.deepEqual(
+    normalizeShippingQuoteInput(
+      createQuoteRequest({
+        orderLike: {
+          lines: [
+            {
+              product_id: 9044842447011,
+              variant_id: 47424753369251,
+              quantity: 1,
+              requiresShipping: true,
+              price: 165000,
+            },
+          ],
+        },
+        shippingAddress: {
+          country: 'JP',
+          postal_code: '300-1532',
+          province: 'JP-08',
+          city: 'Toride',
+        },
+      }),
+    ),
+    {
+      source: 'smoke_quote',
+      calculationVersion: 'smoke_v1',
+      shopDomain: 'b30ize-1a.myshopify.com',
+      shippingAddress: {
+        countryCode: 'JP',
+        country: 'JP',
+        postalCode: '300-1532',
+        zip: '300-1532',
+        province: 'JP-08',
+        prefecture: 'JP-08',
+        provinceCode: 'JP-08',
+        provinceName: 'Ibaraki',
+        city: 'Toride',
+      },
+      lines: [
+        {
+          lineId: 'quote-line-0',
+          productId: '9044842447011',
+          variantId: '47424753369251',
+          quantity: 1,
+          requiresShipping: true,
+          amountAfterItemDiscountBeforeOrderCoupon: 165000,
+        },
+      ],
+      lineCount: 1,
+      shippableLineCount: 1,
+    },
+  );
+});
+
 test('api.shipping-quote returns a different smoke quote for US addresses', async () => {
   clearShippingDiagnosticEvents();
   const action = createShippingQuoteAction();
@@ -84,15 +139,27 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
     details: {
       request: {
         source: 'smoke_quote',
+        calculationVersion: 'smoke_v1',
         shopDomain: 'b30ize-1a.myshopify.com',
         shippingAddress: {
           countryCode: 'US',
           postalCode: '90210',
           province: 'CA',
+          provinceCode: null,
+          provinceName: 'CA',
           city: null,
         },
         lineCount: 1,
         shippableLineCount: 1,
+        lines: [
+          {
+            productId: 'gid://shopify/Product/1',
+            variantId: 'gid://shopify/ProductVariant/1',
+            quantity: 1,
+            requiresShipping: true,
+            amountAfterItemDiscountBeforeOrderCoupon: 4200,
+          },
+        ],
       },
       response: {
         ok: true,
@@ -104,8 +171,12 @@ test('api.shipping-quote returns a different smoke quote for US addresses', asyn
         currencyCode: 'JPY',
         debug: {
           source: 'vendor-register-smoke-quote',
+          calculationVersion: 'smoke_v1',
           countryCode: 'US',
           postalCode: '90210',
+          province: 'CA',
+          provinceCode: null,
+          provinceName: 'CA',
           shippableLineCount: 1,
         },
       },
@@ -125,6 +196,27 @@ test('api.shipping-quote returns pending_address when address is incomplete', ()
   assert.equal(payload.reason, 'pending_address');
   assert.equal(payload.result.isPendingAddress, true);
   assert.equal(payload.result.totalShippingFee, null);
+});
+
+test('api.shipping-quote returns zero when every line is non-shipping', () => {
+  const payload = buildShippingQuoteResponse(
+    createQuoteRequest({
+      orderLike: {
+        lines: [
+          {
+            productId: 'gid://shopify/Product/1',
+            variantId: 'gid://shopify/ProductVariant/1',
+            quantity: 1,
+            requiresShipping: false,
+            amountAfterItemDiscountBeforeOrderCoupon: 4200,
+          },
+        ],
+      },
+    }),
+  );
+
+  assert.equal(payload.result.totalShippingFee, 0);
+  assert.equal(payload.debug.shippableLineCount, 0);
 });
 
 test('api.shipping-quote returns JSON errors for invalid JSON and GET requests', async () => {
