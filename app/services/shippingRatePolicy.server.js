@@ -24,6 +24,10 @@ const REGION_LABELS = {
   okinawa: 'Okinawa',
   remote_island: 'Remote islands',
   us: 'United States',
+  asia: 'Asia',
+  north_america: 'North America except United States',
+  europe: 'Europe',
+  oceania: 'Oceania',
   international: 'Other international regions',
 };
 
@@ -104,13 +108,44 @@ function buildExamples(config) {
       }),
     },
     {
-      label: 'Other international delivery example',
+      label: 'Asia delivery example',
+      destination: 'Singapore / postal code 018956',
+      input: createQuoteInput({
+        countryCode: 'SG',
+        postalCode: '018956',
+        province: null,
+        city: 'Singapore',
+      }),
+    },
+    {
+      label: 'Europe delivery example',
       destination: 'France Paris / postal code 75001',
       input: createQuoteInput({
         countryCode: 'FR',
         postalCode: '75001',
         province: null,
         city: 'Paris',
+      }),
+    },
+    {
+      label: 'Oceania delivery example',
+      destination: 'Australia Sydney / postal code 2000',
+      input: createQuoteInput({
+        countryCode: 'AU',
+        postalCode: '2000',
+        province: 'NSW',
+        provinceName: 'NSW',
+        city: 'Sydney',
+      }),
+    },
+    {
+      label: 'Other international delivery example',
+      destination: 'South Africa Cape Town / postal code 8001',
+      input: createQuoteInput({
+        countryCode: 'ZA',
+        postalCode: '8001',
+        province: null,
+        city: 'Cape Town',
       }),
     },
   ];

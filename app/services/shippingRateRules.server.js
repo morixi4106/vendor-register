@@ -8,6 +8,10 @@ export const REGION_TIERS = [
   'okinawa',
   'remote_island',
   'us',
+  'asia',
+  'north_america',
+  'europe',
+  'oceania',
   'international',
 ];
 
@@ -21,6 +25,43 @@ const HOKKAIDO_KYUSHU_PROVINCE_CODES = new Set([
   'JP-45',
   'JP-46',
 ]);
+
+const ASIA_COUNTRY_CODES = new Set([
+  'CN',
+  'HK',
+  'ID',
+  'IN',
+  'KR',
+  'MY',
+  'PH',
+  'SG',
+  'TH',
+  'TW',
+  'VN',
+]);
+
+const NORTH_AMERICA_COUNTRY_CODES = new Set(['CA', 'MX']);
+
+const EUROPE_COUNTRY_CODES = new Set([
+  'AT',
+  'BE',
+  'CH',
+  'DE',
+  'DK',
+  'ES',
+  'FI',
+  'FR',
+  'GB',
+  'IE',
+  'IT',
+  'NL',
+  'NO',
+  'PL',
+  'PT',
+  'SE',
+]);
+
+const OCEANIA_COUNTRY_CODES = new Set(['AU', 'NZ']);
 
 const DEFAULT_LINE_VALUES = {
   shipFromId: 'default',
@@ -39,6 +80,10 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 370,
     remote_island: 370,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   compact: {
@@ -47,6 +92,10 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 1200,
     remote_island: 1500,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   parcel: {
@@ -55,7 +104,11 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 1800,
     remote_island: 2500,
     us: 2500,
-    international: 3500,
+    asia: 2500,
+    north_america: 3500,
+    europe: 4500,
+    oceania: 4000,
+    international: 6000,
   },
   cool: {
     honshu: 1200,
@@ -63,6 +116,10 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 2500,
     remote_island: null,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   bulky: {
@@ -71,6 +128,10 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 8000,
     remote_island: 10000,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   direct: {
@@ -79,7 +140,11 @@ const DEFAULT_FEE_MATRIX = {
     okinawa: 3500,
     remote_island: 5000,
     us: 15000,
-    international: 15000,
+    asia: 10000,
+    north_america: 15000,
+    europe: 18000,
+    oceania: 18000,
+    international: 20000,
   },
 };
 
@@ -90,6 +155,10 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 0,
     remote_island: 0,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   compact: {
@@ -98,6 +167,10 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 700,
     remote_island: 800,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   parcel: {
@@ -106,7 +179,11 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 1200,
     remote_island: 1500,
     us: 2000,
-    international: 2500,
+    asia: 2000,
+    north_america: 2500,
+    europe: 3000,
+    oceania: 3000,
+    international: 3500,
   },
   cool: {
     honshu: 900,
@@ -114,6 +191,10 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 1500,
     remote_island: null,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   bulky: {
@@ -122,6 +203,10 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 7000,
     remote_island: 9000,
     us: null,
+    asia: null,
+    north_america: null,
+    europe: null,
+    oceania: null,
     international: null,
   },
   direct: {
@@ -130,7 +215,11 @@ const DEFAULT_EXTRA_PACKAGE_FEE = {
     okinawa: 3500,
     remote_island: 5000,
     us: 15000,
-    international: 15000,
+    asia: 10000,
+    north_america: 15000,
+    europe: 18000,
+    oceania: 18000,
+    international: 20000,
   },
 };
 
@@ -161,7 +250,15 @@ export const DEFAULT_SHIPPING_RATE_RULE_CONFIG = {
   rateOverrides: [],
   remoteIslandOverrides: [],
   disallowedCoolRegions: {
-    regionTiers: ['remote_island', 'us', 'international'],
+    regionTiers: [
+      'remote_island',
+      'us',
+      'asia',
+      'north_america',
+      'europe',
+      'oceania',
+      'international',
+    ],
     provinceCodes: [],
     postalCodePrefixes: [],
   },
@@ -667,6 +764,22 @@ export function resolveRegionTier(shippingAddress = {}, config = DEFAULT_SHIPPIN
   }
 
   if (countryCode && countryCode !== 'JP') {
+    if (ASIA_COUNTRY_CODES.has(countryCode)) {
+      return 'asia';
+    }
+
+    if (NORTH_AMERICA_COUNTRY_CODES.has(countryCode)) {
+      return 'north_america';
+    }
+
+    if (EUROPE_COUNTRY_CODES.has(countryCode)) {
+      return 'europe';
+    }
+
+    if (OCEANIA_COUNTRY_CODES.has(countryCode)) {
+      return 'oceania';
+    }
+
     return 'international';
   }
 

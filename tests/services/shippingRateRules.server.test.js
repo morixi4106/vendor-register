@@ -50,6 +50,35 @@ test('shipping rate rules preserve default JP and US rates', () => {
   );
 });
 
+test('shipping rate rules split international destinations into coarse tiers', () => {
+  const config = readShippingRateRuleConfig(null).config;
+
+  const cases = [
+    ['SG', 'asia', 2500],
+    ['CA', 'north_america', 3500],
+    ['FR', 'europe', 4500],
+    ['AU', 'oceania', 4000],
+    ['ZA', 'international', 6000],
+  ];
+
+  for (const [countryCode, regionTier, totalShippingFee] of cases) {
+    const resolution = resolveShippingRate(
+      createInput({
+        shippingAddress: {
+          countryCode,
+          province: null,
+          provinceCode: null,
+          provinceName: null,
+        },
+      }),
+      config,
+    );
+
+    assert.equal(resolution.regionTier, regionTier);
+    assert.equal(resolution.totalShippingFee, totalShippingFee);
+  }
+});
+
 test('shipping rate rules match province, variant, and weight constraints', () => {
   const resolution = resolveShippingRate(createInput(), {
     currencyCode: 'JPY',
@@ -75,7 +104,7 @@ test('shipping rate rules can mark unmatched destinations undeliverable', () => 
   const resolution = resolveShippingRate(
     createInput({
       shippingAddress: {
-        countryCode: 'FR',
+        countryCode: 'ZA',
         province: null,
         provinceCode: null,
         provinceName: null,

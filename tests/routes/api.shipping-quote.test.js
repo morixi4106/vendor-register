@@ -234,8 +234,8 @@ test('api.shipping-quote returns undeliverable when configured with no matching 
   const payload = buildShippingQuoteResponse(
     createQuoteRequest({
       shippingAddress: {
-        country: 'FR',
-        postalCode: '75001',
+        country: 'ZA',
+        postalCode: '8001',
       },
     }),
     {

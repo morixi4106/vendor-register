@@ -14,7 +14,7 @@ test('shipping rate policy exposes minimum, maximum, and examples', () => {
   assert.equal(policy.ok, true);
   assert.equal(policy.generatedAt, FIXED_DATE.toISOString());
   assert.equal(policy.minimumAmount, 370);
-  assert.equal(policy.maximumAmount, 15000);
+  assert.equal(policy.maximumAmount, 20000);
   assert.equal(policy.rows.some((row) => row.id === 'parcel-honshu'), true);
   assert.equal(policy.rows.some((row) => row.id === 'direct-international'), true);
   assert.equal(policy.examples.length >= 4, true);
