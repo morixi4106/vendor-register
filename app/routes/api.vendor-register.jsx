@@ -1,5 +1,7 @@
 import { json } from "@remix-run/node";
-import prisma from "../db.server";
+
+import prisma from "../db.server.js";
+import { ensureSellerForVendor } from "../services/sellerPayments.server.js";
 
 const RESERVED_VENDOR_HANDLES = new Set([
   "dashboard",
@@ -93,7 +95,7 @@ export const action = async ({ request }) => {
     if (!existingStore.vendorAuth) {
       const handle = await generateUniqueHandle(existingStore.storeName);
 
-      await prisma.vendor.create({
+      const vendor = await prisma.vendor.create({
         data: {
           vendorStoreId: existingStore.id,
           storeName: existingStore.storeName,
@@ -101,6 +103,20 @@ export const action = async ({ request }) => {
           managementEmail: existingStore.email.toLowerCase(),
           status: "active",
         },
+      });
+
+      await ensureSellerForVendor(vendor.id, {
+        prismaClient: prisma,
+        defaultStatus: "pending",
+        changedBy: "system.vendor_register",
+        reason: "vendor_registration",
+      });
+    } else {
+      await ensureSellerForVendor(existingStore.vendorAuth.id, {
+        prismaClient: prisma,
+        defaultStatus: "pending",
+        changedBy: "system.vendor_register",
+        reason: "vendor_registration",
       });
     }
 
@@ -124,13 +140,31 @@ export const action = async ({ request }) => {
       },
     });
 
-    await tx.vendor.create({
+    const vendor = await tx.vendor.create({
       data: {
         vendorStoreId: vendorStore.id,
         storeName,
         handle,
         managementEmail: email,
         status: "active",
+      },
+    });
+
+    const seller = await tx.seller.create({
+      data: {
+        vendorId: vendor.id,
+        vendorStoreId: vendorStore.id,
+        status: "pending",
+      },
+    });
+
+    await tx.sellerStatusHistory.create({
+      data: {
+        sellerId: seller.id,
+        fromStatus: null,
+        toStatus: "pending",
+        changedBy: "system.vendor_register",
+        reason: "vendor_registration",
       },
     });
   });

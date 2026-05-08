@@ -27,6 +27,14 @@ export default function App() {
           店舗一覧
         </Link>
 
+        <Link to="/app/sellers">
+          Sellers
+        </Link>
+
+        <Link to="/app/payout-runs">
+          Payout Runs
+        </Link>
+
         <Link to="/app/contact-inquiries">
           問い合わせ一覧
         </Link>

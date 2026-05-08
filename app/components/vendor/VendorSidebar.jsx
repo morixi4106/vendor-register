@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { key: "products", label: "商品管理", to: "/vendor/products", end: true },
   { key: "inventory", label: "在庫", to: "/vendor/inventory", end: true },
   { key: "settings", label: "設定", to: "/vendor/settings", end: true },
+  { key: "payments", label: "Payments", to: "/seller/settings/payments", end: true },
 ];
 
 export default function VendorSidebar({ activeItem }) {
