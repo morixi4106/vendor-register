@@ -1,5 +1,13 @@
-import { json } from "@remix-run/node";
-import { Form, Link, Outlet, useLoaderData, useLocation, useNavigation } from "@remix-run/react";
+import { json, redirect } from "@remix-run/node";
+import {
+  Form,
+  Link,
+  Outlet,
+  useActionData,
+  useLoaderData,
+  useLocation,
+  useNavigation,
+} from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
@@ -18,12 +26,39 @@ export const loader = async ({ request }) => {
   });
 };
 
+export const action = async ({ request }) => {
+  await authenticate.admin(request);
+  const { createPayoutRun } = await import("../services/sellerPayments.server.js");
+
+  const formData = await request.formData();
+  const result = await createPayoutRun({
+    sellerId: String(formData.get("sellerId") || ""),
+    amount: formData.get("amount"),
+    currencyCode: String(formData.get("currencyCode") || "jpy"),
+    createdBy: "admin",
+  });
+
+  if (!result.ok) {
+    return json(
+      {
+        ok: false,
+        reason: result.reason,
+        message: "出金予定の作成に失敗しました。",
+      },
+      { status: 400 },
+    );
+  }
+
+  return redirect(`/app/payout-runs/${result.payoutRun.id}`);
+};
+
 export default function AdminPayoutRunsPage() {
   const { sellers, payoutRuns } = useLoaderData();
+  const actionData = useActionData();
   const location = useLocation();
   const navigation = useNavigation();
   const isCreating =
-    navigation.formAction?.endsWith("/internal/payout-runs") &&
+    navigation.formData?.has("sellerId") &&
     navigation.state !== "idle";
   const isDetailRoute = location.pathname.startsWith("/app/payout-runs/");
 
@@ -102,7 +137,13 @@ export default function AdminPayoutRunsPage() {
             承認後に明示的に実行した場合だけStripeから出金されます。
           </p>
 
-          <Form method="post" action="/internal/payout-runs" className="payout-admin__form">
+          {actionData?.message ? (
+            <div style={{ marginBottom: "16px", color: actionData.ok ? "#047857" : "#b91c1c" }}>
+              {actionData.message}
+            </div>
+          ) : null}
+
+          <Form method="post" className="payout-admin__form">
             <div className="payout-admin__field">
               <label htmlFor="sellerId">出店者</label>
               <select id="sellerId" name="sellerId" className="payout-admin__select" required>

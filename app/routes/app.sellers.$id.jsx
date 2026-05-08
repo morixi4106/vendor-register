@@ -26,10 +26,46 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { updateSellerStatus } = await import("../services/sellerPayments.server.js");
+  const { createSellerStripeAccount, updateSellerStatus } = await import(
+    "../services/sellerPayments.server.js"
+  );
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+
+  if (intent === "create_stripe_account") {
+    try {
+      const result = await createSellerStripeAccount({
+        sellerId: params.id,
+      });
+
+      if (!result.ok) {
+        return json(
+          {
+            ok: false,
+            reason: result.reason,
+            message: "Stripe連携アカウントの作成に失敗しました。",
+          },
+          { status: 400 },
+        );
+      }
+
+      return json({
+        ok: true,
+        message: "Stripe連携アカウントを作成しました。",
+      });
+    } catch (error) {
+      console.error("seller stripe account create error:", error);
+      return json(
+        {
+          ok: false,
+          reason: "internal_error",
+          message: "Stripe連携アカウントの作成に失敗しました。",
+        },
+        { status: 500 },
+      );
+    }
+  }
 
   if (intent !== "update_status") {
     return json(
@@ -105,7 +141,7 @@ export default function AdminSellerDetailPage() {
   const isStatusSubmitting =
     navigation.formData?.get("intent") === "update_status";
   const isStripeCreating =
-    navigation.formAction?.endsWith(`/internal/sellers/${data.seller.id}/stripe-account`) &&
+    navigation.formData?.get("intent") === "create_stripe_account" &&
     navigation.state !== "idle";
 
   return (
@@ -327,7 +363,8 @@ export default function AdminSellerDetailPage() {
               </div>
             </div>
             {!data.stripeAccount ? (
-              <Form method="post" action={`/internal/sellers/${data.seller.id}/stripe-account`}>
+              <Form method="post">
+                <input type="hidden" name="intent" value="create_stripe_account" />
                 <button
                   type="submit"
                   className="seller-detail__button"

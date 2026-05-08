@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
@@ -16,14 +16,50 @@ export const loader = async ({ request, params }) => {
   return json({ payoutRun });
 };
 
+export const action = async ({ request, params }) => {
+  await authenticate.admin(request);
+  const { approvePayoutRun, executePayoutRun } = await import(
+    "../services/sellerPayments.server.js"
+  );
+
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+  const result =
+    intent === "approve"
+      ? await approvePayoutRun({ payoutRunId: params.id, approvedBy: "admin" })
+      : intent === "execute"
+        ? await executePayoutRun({ payoutRunId: params.id, executedBy: "admin" })
+        : {
+            ok: false,
+            reason: "invalid_intent",
+          };
+
+  if (!result.ok) {
+    return json(
+      {
+        ok: false,
+        reason: result.reason,
+        message: "出金予定の更新に失敗しました。",
+      },
+      { status: 400 },
+    );
+  }
+
+  return json({
+    ok: true,
+    message: intent === "approve" ? "出金予定を承認しました。" : "出金を実行しました。",
+  });
+};
+
 export default function AdminPayoutRunDetailPage() {
   const { payoutRun } = useLoaderData();
+  const actionData = useActionData();
   const navigation = useNavigation();
   const isApproving =
-    navigation.formAction?.endsWith(`/internal/payout-runs/${payoutRun.id}/approve`) &&
+    navigation.formData?.get("intent") === "approve" &&
     navigation.state !== "idle";
   const isExecuting =
-    navigation.formAction?.endsWith(`/internal/payout-runs/${payoutRun.id}/execute`) &&
+    navigation.formData?.get("intent") === "execute" &&
     navigation.state !== "idle";
 
   return (
@@ -92,14 +128,16 @@ export default function AdminPayoutRunDetailPage() {
                 一覧へ戻る
               </Link>
               {payoutRun.status === "draft" ? (
-                <Form method="post" action={`/internal/payout-runs/${payoutRun.id}/approve`}>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="approve" />
                   <button type="submit" className="payout-detail__button" disabled={isApproving}>
                     {isApproving ? "承認中..." : "承認する"}
                   </button>
                 </Form>
               ) : null}
               {payoutRun.status === "approved" ? (
-                <Form method="post" action={`/internal/payout-runs/${payoutRun.id}/execute`}>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="execute" />
                   <button type="submit" className="payout-detail__button" disabled={isExecuting}>
                     {isExecuting ? "実行中..." : "出金を実行"}
                   </button>
@@ -107,6 +145,11 @@ export default function AdminPayoutRunDetailPage() {
               ) : null}
             </div>
           </div>
+          {actionData?.message ? (
+            <div style={{ marginTop: "16px", color: actionData.ok ? "#047857" : "#b91c1c" }}>
+              {actionData.message}
+            </div>
+          ) : null}
         </section>
 
         <section className="payout-detail__card">
