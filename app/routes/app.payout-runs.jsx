@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, Link, Outlet, useLoaderData, useLocation, useNavigation } from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
@@ -20,10 +20,16 @@ export const loader = async ({ request }) => {
 
 export default function AdminPayoutRunsPage() {
   const { sellers, payoutRuns } = useLoaderData();
+  const location = useLocation();
   const navigation = useNavigation();
   const isCreating =
     navigation.formAction?.endsWith("/internal/payout-runs") &&
     navigation.state !== "idle";
+  const isDetailRoute = location.pathname.startsWith("/app/payout-runs/");
+
+  if (isDetailRoute) {
+    return <Outlet />;
+  }
 
   return (
     <div style={{ padding: "24px" }}>

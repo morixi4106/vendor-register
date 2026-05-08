@@ -1,5 +1,13 @@
 import { json } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  Link,
+  Outlet,
+  useActionData,
+  useLoaderData,
+  useLocation,
+  useNavigation,
+} from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
@@ -71,11 +79,17 @@ function badgeClassName(status) {
 export default function AdminSellersPage() {
   const { sellers } = useLoaderData();
   const actionData = useActionData();
+  const location = useLocation();
   const navigation = useNavigation();
+  const isDetailRoute = location.pathname.startsWith("/app/sellers/");
   const submittingVendorId =
     navigation.formData?.get("intent") === "initialize_seller"
       ? String(navigation.formData?.get("vendorId") || "")
       : "";
+
+  if (isDetailRoute) {
+    return <Outlet />;
+  }
 
   return (
     <div style={{ padding: "24px" }}>
