@@ -9,7 +9,11 @@ import {
   getEffectivePriceSyncStatus,
 } from "../utils/priceSyncStatus";
 import { getShopPricingSettings } from "../utils/shopPricingSettings";
-import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
+import {
+  listOfflineShopDomains,
+  normalizeShopDomain,
+  shopifyGraphQLWithOfflineSession,
+} from "../utils/shopifyAdmin.server";
 
 const SHOPIFY_API_VERSION = "2026-01";
 
@@ -24,6 +28,31 @@ function isReconnectableShopifyError(message = "") {
 
 function shouldShowInternalPriceDebug() {
   return process.env.NODE_ENV !== "production";
+}
+
+async function getAllowedShopDomains() {
+  try {
+    return await listOfflineShopDomains();
+  } catch (error) {
+    console.error("offline shop domain list error:", error);
+    return [];
+  }
+}
+
+async function validateSelectedShopDomain(selectedShopDomain) {
+  const shopDomain = normalizeShopDomain(selectedShopDomain);
+
+  if (!shopDomain) {
+    return null;
+  }
+
+  const allowedShopDomains = await getAllowedShopDomains();
+
+  if (allowedShopDomains.length > 0 && !allowedShopDomains.includes(shopDomain)) {
+    throw new Error(`Selected shopDomain is not connected: ${shopDomain}`);
+  }
+
+  return shopDomain;
 }
 
 function getPublicShopifyReconnectNotice() {
@@ -502,8 +531,11 @@ export const loader = async ({ params }) => {
     }
   }
 
+  const availableShopDomains = await getAllowedShopDomains();
+
   return json({
     product,
+    availableShopDomains,
     shopifyPrice,
     needsReconnect,
     shopifyNotice: needsReconnect ? getPublicShopifyReconnectNotice() : null,
@@ -543,8 +575,33 @@ export const action = async ({ request }) => {
       return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
     }
 
+    const selectedShopDomain = await validateSelectedShopDomain(
+      formData.get("shopDomain"),
+    );
+    const productWithSelectedShopDomain =
+      selectedShopDomain && !product.shopDomain
+        ? { ...product, shopDomain: selectedShopDomain }
+        : product;
+
+    if (
+      (intent === "approve" || intent === "apply-price") &&
+      !productWithSelectedShopDomain.shopDomain
+    ) {
+      const availableShopDomains = await getAllowedShopDomains();
+
+      if (availableShopDomains.length > 1) {
+        return json(
+          {
+            ok: false,
+            error: "Shopify shopを選択してください。",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     if (intent === "apply-price") {
-      if (!product.shopifyProductId) {
+      if (!productWithSelectedShopDomain.shopifyProductId) {
         return json(
           { ok: false, error: "Shopify商品IDがありません" },
           { status: 400 }
@@ -571,9 +628,9 @@ export const action = async ({ request }) => {
       }
 
       const { applyProductPrice } = await import("../utils/applyProductPrice.server");
-      const result = await applyProductPrice(product.shopifyProductId, {
-        shopDomain: product.shopDomain,
-        localProductId: product.id,
+      const result = await applyProductPrice(productWithSelectedShopDomain.shopifyProductId, {
+        shopDomain: productWithSelectedShopDomain.shopDomain,
+        localProductId: productWithSelectedShopDomain.id,
       });
 
       return json({
@@ -586,7 +643,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "approve") {
-      if (product.shopifyProductId) {
+      if (productWithSelectedShopDomain.shopifyProductId) {
         const updateMutation = `
           mutation UpdateProductStatus($input: ProductInput!) {
             productUpdate(input: $input) {
@@ -603,14 +660,14 @@ export const action = async ({ request }) => {
         `;
 
         const { data: updateResult, shopDomain } = await shopifyGraphQL(
-          product.shopDomain,
+          productWithSelectedShopDomain.shopDomain,
           updateMutation,
           {
             input: {
-              id: product.shopifyProductId,
-              title: product.name,
-              descriptionHtml: product.description || "",
-              productType: product.category || "",
+              id: productWithSelectedShopDomain.shopifyProductId,
+              title: productWithSelectedShopDomain.name,
+              descriptionHtml: productWithSelectedShopDomain.description || "",
+              productType: productWithSelectedShopDomain.category || "",
               status: "ACTIVE",
             },
           }
@@ -639,7 +696,7 @@ export const action = async ({ request }) => {
         return redirect(`/admin/products/${productId}`);
       }
 
-      const result = await createShopifyProductFromDbProduct(product);
+      const result = await createShopifyProductFromDbProduct(productWithSelectedShopDomain);
 
       await prisma.product.update({
         where: { id: productId },
@@ -690,6 +747,7 @@ export const action = async ({ request }) => {
 export default function AdminProductDetail() {
   const {
     product,
+    availableShopDomains,
     shopifyPrice,
     needsReconnect,
     shopifyNotice,
@@ -707,6 +765,12 @@ export default function AdminProductDetail() {
     ? priceDebug?.shopifyError || publicReconnectMessage
     : publicReconnectMessage;
   const actionErrorMessage = actionData?.error;
+  const shopDomainChoices = Array.isArray(availableShopDomains)
+    ? availableShopDomains
+    : [];
+  const needsShopDomainChoice = !product.shopDomain && shopDomainChoices.length > 1;
+  const selectedShopDomain =
+    product.shopDomain || (shopDomainChoices.length === 1 ? shopDomainChoices[0] : "");
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -980,6 +1044,12 @@ export default function AdminProductDetail() {
           </p>
           <p>状態: {product.approvalStatus}</p>
           <p>Shopify商品ID: {product.shopifyProductId || "-"}</p>
+          <p>Shopify shop: {selectedShopDomain || "-"}</p>
+          {needsShopDomainChoice ? (
+            <p style={{ color: "#b45309", fontSize: "14px", marginTop: "8px" }}>
+              Multiple connected shops were found. Select the Shopify shop before approving.
+            </p>
+          ) : null}
           <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "8px" }}>
             ※ 原価・通貨・関税設定をもとに基準販売価格（JPY）が計算されます。
           </p>
@@ -1019,6 +1089,23 @@ export default function AdminProductDetail() {
           <Form method="post">
             <input type="hidden" name="intent" value="approve" />
             <input type="hidden" name="productId" value={product.id} />
+            {needsShopDomainChoice ? (
+              <label style={{ display: "block", marginBottom: "8px" }}>
+                <span style={{ display: "block", marginBottom: "4px" }}>
+                  Shopify shop
+                </span>
+                <select name="shopDomain" required defaultValue="">
+                  <option value="">Select a shop</option>
+                  {shopDomainChoices.map((shopDomain) => (
+                    <option key={shopDomain} value={shopDomain}>
+                      {shopDomain}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : selectedShopDomain ? (
+              <input type="hidden" name="shopDomain" value={selectedShopDomain} />
+            ) : null}
             <button type="submit">承認する</button>
           </Form>
 

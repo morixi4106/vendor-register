@@ -5,6 +5,7 @@ import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
+import { resolveShopDomain } from "../utils/shopifyAdmin.server";
 
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
@@ -174,6 +175,14 @@ export const action = async ({ request }) => {
       return json({ ok: false, error: COPY.invalidPrice }, { status: 400 });
     }
 
+    let shopDomain = null;
+
+    try {
+      shopDomain = await resolveShopDomain();
+    } catch (error) {
+      console.error("vendor product shop domain resolve error:", error);
+    }
+
     const createdProduct = await prisma.product.create({
       data: {
         name,
@@ -185,6 +194,7 @@ export const action = async ({ request }) => {
         costCurrency,
         url: url || null,
         vendorStoreId: store.id,
+        shopDomain,
         approvalStatus: "pending",
         priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
         priceSyncError: null,

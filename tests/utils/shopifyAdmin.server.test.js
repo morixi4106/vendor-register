@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createGetOfflineAdminContextForShopDomain,
   createShopifyGraphQLWithOfflineSession,
+  resolveShopDomain,
 } from '../../app/utils/shopifyAdmin.server.js';
 
 test('shopifyGraphQLWithOfflineSession gets a background admin client from the requested shopDomain', async () => {
@@ -78,5 +79,31 @@ test('getOfflineAdminContextForShopDomain reports the missing offline session fo
   await assert.rejects(
     () => getOfflineAdminContextForShopDomain('b301ze-1a.myshopify.com'),
     /Offline session not found for shop: b301ze-1a\.myshopify\.com/,
+  );
+});
+
+test('resolveShopDomain uses a configured primary shop before ambiguous offline sessions', async () => {
+  const shopDomain = await resolveShopDomain(null, {
+    configuredPrimaryShopDomain: 'primary-shop.myshopify.com',
+    listOfflineShopDomainsImpl: async () => [
+      'shop-a.myshopify.com',
+      'shop-b.myshopify.com',
+    ],
+  });
+
+  assert.equal(shopDomain, 'primary-shop.myshopify.com');
+});
+
+test('resolveShopDomain still rejects ambiguous offline sessions without a configured shop', async () => {
+  await assert.rejects(
+    () =>
+      resolveShopDomain(null, {
+        configuredPrimaryShopDomain: null,
+        listOfflineShopDomainsImpl: async () => [
+          'shop-a.myshopify.com',
+          'shop-b.myshopify.com',
+        ],
+      }),
+    /Shop context is ambiguous for this product/,
   );
 });

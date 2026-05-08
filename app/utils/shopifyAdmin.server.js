@@ -30,6 +30,15 @@ export function normalizeShopDomain(value) {
   return normalized || null;
 }
 
+export function getConfiguredPrimaryShopDomain() {
+  return normalizeShopDomain(
+    process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN ||
+      process.env.SHOPIFY_PRODUCT_SHOP_DOMAIN ||
+      process.env.SHOPIFY_SHOP_DOMAIN ||
+      process.env.SHOPIFY_STORE_DOMAIN,
+  );
+}
+
 export async function listOfflineShopDomains(prismaClient = prisma) {
   const sessions = await prismaClient.session.findMany({
     where: { isOnline: false },
@@ -43,12 +52,19 @@ export async function listOfflineShopDomains(prismaClient = prisma) {
 
 export async function resolveShopDomain(
   preferredShopDomain,
-  { listOfflineShopDomainsImpl = listOfflineShopDomains } = {},
+  {
+    listOfflineShopDomainsImpl = listOfflineShopDomains,
+    configuredPrimaryShopDomain = getConfiguredPrimaryShopDomain(),
+  } = {},
 ) {
   const normalized = normalizeShopDomain(preferredShopDomain);
 
   if (normalized) {
     return normalized;
+  }
+
+  if (configuredPrimaryShopDomain) {
+    return configuredPrimaryShopDomain;
   }
 
   const offlineShops = await listOfflineShopDomainsImpl();
