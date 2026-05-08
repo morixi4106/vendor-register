@@ -32,7 +32,7 @@ scopes = "write_customers,read_customers,write_app_proxy,read_products,read_orde
 optional_scopes = ["read_draft_orders"]
 
 [auth]
-redirect_urls = [ "https://vendor-register-pbjl.onrender.com/api/auth" ]
+redirect_urls = [ "https://vendor-register-pbjl.onrender.com/auth/callback" ]
 
 [app_proxy]
 url = "https://vendor-register-pbjl.onrender.com/apps/vendors"
