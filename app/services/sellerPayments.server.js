@@ -582,6 +582,13 @@ function buildStripeConnectedAccountCreateParams(seller) {
       name: seller.vendor.storeName,
     },
     controller: {
+      fees: {
+        payer: "account",
+      },
+      losses: {
+        payments: "stripe",
+      },
+      requirement_collection: "stripe",
       stripe_dashboard: {
         type: "none",
       },
@@ -601,6 +608,81 @@ function buildStripeConnectedAccountCreateParams(seller) {
       vendorStoreId: seller.vendor.vendorStore.id,
     },
   };
+}
+
+function normalizeStripeError(error) {
+  const raw = error?.raw || {};
+  const message = normalizeText(raw.message || error?.message);
+
+  return {
+    message: message || "Stripe API request failed.",
+    type: normalizeText(raw.type || error?.type),
+    code: normalizeText(raw.code || error?.code),
+    param: normalizeText(raw.param || error?.param),
+    requestId: normalizeText(raw.requestId || error?.requestId),
+  };
+}
+
+async function setConnectedAccountManualPayouts(stripeClient, stripeAccountId) {
+  try {
+    await stripeClient.balanceSettings.update(
+      {
+        payments: {
+          payouts: {
+            schedule: {
+              interval: "manual",
+            },
+          },
+        },
+      },
+      {
+        stripeAccount: stripeAccountId,
+      },
+    );
+
+    return {
+      ok: true,
+      method: "balance_settings",
+    };
+  } catch (balanceSettingsError) {
+    const balanceSettingsStripeError = normalizeStripeError(balanceSettingsError);
+
+    if (!stripeClient.accounts?.update) {
+      return {
+        ok: false,
+        reason: "manual_payout_schedule_failed",
+        stripeError: balanceSettingsStripeError,
+      };
+    }
+
+    try {
+      await stripeClient.accounts.update(
+        stripeAccountId,
+        {
+          settings: {
+            payouts: {
+              schedule: {
+                interval: "manual",
+              },
+            },
+          },
+        },
+      );
+
+      return {
+        ok: true,
+        method: "account_settings",
+        fallbackFrom: balanceSettingsStripeError,
+      };
+    } catch (accountSettingsError) {
+      return {
+        ok: false,
+        reason: "manual_payout_schedule_failed",
+        stripeError: normalizeStripeError(accountSettingsError),
+        fallbackFrom: balanceSettingsStripeError,
+      };
+    }
+  }
 }
 
 export async function createSellerStripeAccount(
@@ -628,24 +710,38 @@ export async function createSellerStripeAccount(
     };
   }
 
-  const account = await stripeClient.accounts.create(
-    buildStripeConnectedAccountCreateParams(seller),
+  let account = null;
+
+  try {
+    account = await stripeClient.accounts.create(
+      buildStripeConnectedAccountCreateParams(seller),
+    );
+  } catch (error) {
+    const stripeError = normalizeStripeError(error);
+
+    return {
+      ok: false,
+      reason: "stripe_account_create_failed",
+      message: stripeError.message,
+      stripeError,
+    };
+  }
+
+  const manualPayoutResult = await setConnectedAccountManualPayouts(
+    stripeClient,
+    account.id,
   );
 
-  await stripeClient.balanceSettings.update(
-    {
-      payments: {
-        payouts: {
-          schedule: {
-            interval: "manual",
-          },
-        },
-      },
-    },
-    {
-      stripeAccount: account.id,
-    },
-  );
+  if (!manualPayoutResult.ok) {
+    return {
+      ok: false,
+      reason: manualPayoutResult.reason,
+      message: manualPayoutResult.stripeError?.message,
+      stripeAccountId: account.id,
+      stripeError: manualPayoutResult.stripeError,
+      fallbackFrom: manualPayoutResult.fallbackFrom,
+    };
+  }
 
   const savedStripeAccount = await prismaClient.sellerStripeAccount.create({
     data: {

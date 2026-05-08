@@ -97,6 +97,13 @@ test("createSellerStripeAccount creates a connected account with manual payouts 
       name: "Amber Cellar",
     },
     controller: {
+      fees: {
+        payer: "account",
+      },
+      losses: {
+        payments: "stripe",
+      },
+      requirement_collection: "stripe",
       stripe_dashboard: {
         type: "none",
       },
@@ -128,6 +135,91 @@ test("createSellerStripeAccount creates a connected account with manual payouts 
     },
     options: {
       stripeAccount: "acct_123",
+    },
+  });
+});
+
+test("createSellerStripeAccount falls back to account settings for manual payouts", async () => {
+  const stripeCalls = {
+    accountsUpdate: [],
+  };
+
+  const fakeStripe = {
+    accounts: {
+      async create() {
+        return {
+          id: "acct_fallback",
+          country: "JP",
+          default_currency: "jpy",
+          details_submitted: false,
+          charges_enabled: false,
+          payouts_enabled: false,
+          requirements: {},
+        };
+      },
+      async update(accountId, params) {
+        stripeCalls.accountsUpdate.push({ accountId, params });
+      },
+    },
+    balanceSettings: {
+      async update() {
+        throw Object.assign(new Error("Balance Settings unavailable"), {
+          raw: {
+            message: "Balance Settings unavailable",
+            type: "invalid_request_error",
+          },
+        });
+      },
+    },
+  };
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          vendor: {
+            id: "vendor_1",
+            handle: "amber-cellar",
+            storeName: "Amber Cellar",
+            managementEmail: "owner@example.com",
+            vendorStore: {
+              id: "store_1",
+              country: "Japan",
+            },
+          },
+          stripeAccount: null,
+        };
+      },
+    },
+    sellerStripeAccount: {
+      async create({ data }) {
+        return {
+          id: "ssa_1",
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await createSellerStripeAccount(
+    { sellerId: "seller_1" },
+    {
+      prismaClient: fakePrisma,
+      stripeClient: fakeStripe,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(stripeCalls.accountsUpdate[0], {
+    accountId: "acct_fallback",
+    params: {
+      settings: {
+        payouts: {
+          schedule: {
+            interval: "manual",
+          },
+        },
+      },
     },
   });
 });

@@ -44,7 +44,11 @@ export const action = async ({ request, params }) => {
           {
             ok: false,
             reason: result.reason,
-            message: "Stripe連携アカウントの作成に失敗しました。",
+            message: result.message
+              ? `Stripe連携アカウントの作成に失敗しました: ${result.message}`
+              : "Stripe連携アカウントの作成に失敗しました。",
+            stripeAccountId: result.stripeAccountId || null,
+            stripeError: result.stripeError || null,
           },
           { status: 400 },
         );
@@ -60,7 +64,10 @@ export const action = async ({ request, params }) => {
         {
           ok: false,
           reason: "internal_error",
-          message: "Stripe連携アカウントの作成に失敗しました。",
+          message:
+            error instanceof Error && error.message
+              ? `Stripe連携アカウントの作成に失敗しました: ${error.message}`
+              : "Stripe連携アカウントの作成に失敗しました。",
         },
         { status: 500 },
       );
