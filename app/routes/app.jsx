@@ -28,11 +28,11 @@ export default function App() {
         </Link>
 
         <Link to="/app/sellers">
-          Sellers
+          出店者決済
         </Link>
 
         <Link to="/app/payout-runs">
-          Payout Runs
+          出金管理
         </Link>
 
         <Link to="/app/contact-inquiries">

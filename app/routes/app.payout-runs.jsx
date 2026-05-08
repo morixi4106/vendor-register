@@ -90,26 +90,26 @@ export default function AdminPayoutRunsPage() {
 
       <div className="payout-admin__page">
         <section className="payout-admin__card">
-          <h1 className="payout-admin__title">Payout Runs</h1>
+          <h1 className="payout-admin__title">出金管理</h1>
           <p className="payout-admin__subtitle">
-            Sellers stay on manual payout. A payout is only sent when an approved run is
-            explicitly executed by an admin.
+            出店者への出金は自動では行いません。管理者が出金内容を作成し、
+            承認後に明示的に実行した場合だけStripeから出金されます。
           </p>
 
           <Form method="post" action="/internal/payout-runs" className="payout-admin__form">
             <div className="payout-admin__field">
-              <label htmlFor="sellerId">Seller</label>
+              <label htmlFor="sellerId">出店者</label>
               <select id="sellerId" name="sellerId" className="payout-admin__select" required>
-                <option value="">Select a seller</option>
+                <option value="">出店者を選択</option>
                 {sellers.map((seller) => (
                   <option key={seller.sellerId} value={seller.sellerId}>
-                    {seller.vendorStoreName} ({seller.sellerStatus || "unknown"})
+                    {seller.vendorStoreName} ({seller.sellerStatusLabel || seller.sellerStatus || "状態不明"})
                   </option>
                 ))}
               </select>
             </div>
             <div className="payout-admin__field">
-              <label htmlFor="amount">Amount</label>
+              <label htmlFor="amount">金額</label>
               <input
                 id="amount"
                 name="amount"
@@ -121,7 +121,7 @@ export default function AdminPayoutRunsPage() {
               />
             </div>
             <div className="payout-admin__field">
-              <label htmlFor="currencyCode">Currency</label>
+              <label htmlFor="currencyCode">通貨</label>
               <input
                 id="currencyCode"
                 name="currencyCode"
@@ -132,7 +132,7 @@ export default function AdminPayoutRunsPage() {
             </div>
             <div className="payout-admin__field" style={{ alignSelf: "end" }}>
               <button type="submit" className="payout-admin__button" disabled={isCreating}>
-                {isCreating ? "Creating..." : "Create payout run"}
+                {isCreating ? "作成中..." : "出金予定を作成"}
               </button>
             </div>
           </Form>
@@ -140,18 +140,18 @@ export default function AdminPayoutRunsPage() {
 
         <section className="payout-admin__card">
           {payoutRuns.length === 0 ? (
-            <p style={{ margin: 0 }}>No payout runs yet.</p>
+            <p style={{ margin: 0 }}>出金予定はまだありません。</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={thStyle}>Run</th>
-                    <th style={thStyle}>Seller</th>
-                    <th style={thStyle}>Amount</th>
-                    <th style={thStyle}>Status</th>
-                    <th style={thStyle}>Stripe payout</th>
-                    <th style={thStyle}>Updated</th>
+                    <th style={thStyle}>出金ID</th>
+                    <th style={thStyle}>出店者</th>
+                    <th style={thStyle}>金額</th>
+                    <th style={thStyle}>状態</th>
+                    <th style={thStyle}>Stripe出金ID</th>
+                    <th style={thStyle}>更新日時</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -18,7 +18,7 @@ export const loader = async ({ request, params }) => {
   const detail = await getAdminSellerDetail(params.id);
 
   if (!detail) {
-    throw new Response("Not Found", { status: 404 });
+    throw new Response("見つかりません", { status: 404 });
   }
 
   return json(detail);
@@ -35,7 +35,7 @@ export const action = async ({ request, params }) => {
     return json(
       {
         ok: false,
-        message: "Invalid request.",
+        message: "不正なリクエストです。",
       },
       { status: 400 },
     );
@@ -54,7 +54,7 @@ export const action = async ({ request, params }) => {
     return json(
       {
         ok: false,
-        message: "Failed to update seller status.",
+        message: "決済状態の更新に失敗しました。",
       },
       { status: 400 },
     );
@@ -62,9 +62,26 @@ export const action = async ({ request, params }) => {
 
   return json({
     ok: true,
-    message: result.changed ? "Seller status updated." : "Seller status unchanged.",
+    message: result.changed ? "決済状態を更新しました。" : "決済状態に変更はありません。",
   });
 };
+
+function sellerStatusOptionLabel(status) {
+  switch (status) {
+    case "pending":
+      return "未設定";
+    case "active":
+      return "有効";
+    case "review":
+      return "確認中";
+    case "restricted":
+      return "制限中";
+    case "banned":
+      return "停止中";
+    default:
+      return status;
+  }
+}
 
 function badgeClassName(status) {
   switch (status) {
@@ -225,13 +242,13 @@ export default function AdminSellerDetailPage() {
             <div>
               <h1 className="seller-detail__title">{data.vendor.storeName}</h1>
               <p className="seller-detail__subtitle">
-                Seller detail, Stripe account state, manual payout history, and recent
-                webhook / ledger entries.
+                出店者の決済状態、Stripe連携アカウント、出金履歴、
+                webhook受信履歴、売上台帳を確認します。
               </p>
             </div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <Link className="seller-detail__button seller-detail__button--secondary" to="/app/sellers">
-                Back
+                一覧へ戻る
               </Link>
               <a
                 className="seller-detail__button seller-detail__button--secondary"
@@ -239,7 +256,7 @@ export default function AdminSellerDetailPage() {
                 target="_blank"
                 rel="noreferrer"
               >
-                Seller payments page
+                出店者側の決済設定
               </a>
             </div>
           </div>
@@ -250,14 +267,14 @@ export default function AdminSellerDetailPage() {
 
         <div className="seller-detail__grid">
           <section className="seller-detail__card">
-            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Seller</h2>
+            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>出店者決済</h2>
             <div className="seller-detail__description">
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Seller ID</div>
+                <div className="seller-detail__term">決済レコードID</div>
                 <div className="seller-detail__value">{data.seller.id}</div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Status</div>
+                <div className="seller-detail__term">状態</div>
                 <div className="seller-detail__value">
                   <span className={badgeClassName(data.seller.status)}>
                     {data.seller.statusLabel}
@@ -265,47 +282,47 @@ export default function AdminSellerDetailPage() {
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Vendor handle</div>
+                <div className="seller-detail__term">出店者ハンドル</div>
                 <div className="seller-detail__value">{data.vendor.handle}</div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Management email</div>
+                <div className="seller-detail__term">管理メール</div>
                 <div className="seller-detail__value">{data.vendor.managementEmail}</div>
               </div>
             </div>
           </section>
 
           <section className="seller-detail__card">
-            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Stripe account</h2>
+            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Stripe連携アカウント</h2>
             <div className="seller-detail__description">
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Connected account</div>
+                <div className="seller-detail__term">連携アカウント</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount?.stripeAccountId || "Not created"}
+                  {data.stripeAccount?.stripeAccountId || "未作成"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Details submitted</div>
+                <div className="seller-detail__term">登録情報の提出</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? String(data.stripeAccount.detailsSubmitted) : "-"}
+                  {data.stripeAccount ? (data.stripeAccount.detailsSubmitted ? "完了" : "未完了") : "-"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Charges enabled</div>
+                <div className="seller-detail__term">決済受付</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? String(data.stripeAccount.chargesEnabled) : "-"}
+                  {data.stripeAccount ? (data.stripeAccount.chargesEnabled ? "有効" : "無効") : "-"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Payouts enabled</div>
+                <div className="seller-detail__term">出金可否</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? String(data.stripeAccount.payoutsEnabled) : "-"}
+                  {data.stripeAccount ? (data.stripeAccount.payoutsEnabled ? "有効" : "無効") : "-"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">Payout schedule</div>
+                <div className="seller-detail__term">出金方式</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount?.payoutSchedule || "-"}
+                  {data.stripeAccount?.payoutSchedule === "manual" ? "手動" : data.stripeAccount?.payoutSchedule || "-"}
                 </div>
               </div>
             </div>
@@ -316,7 +333,7 @@ export default function AdminSellerDetailPage() {
                   className="seller-detail__button"
                   disabled={isStripeCreating}
                 >
-                  {isStripeCreating ? "Creating..." : "Create connected account"}
+                  {isStripeCreating ? "作成中..." : "Stripe連携アカウントを作成"}
                 </button>
               </Form>
             ) : null}
@@ -324,11 +341,11 @@ export default function AdminSellerDetailPage() {
         </div>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Status change</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>決済状態の変更</h2>
           <Form method="post" className="seller-detail__form">
             <input type="hidden" name="intent" value="update_status" />
             <div className="seller-detail__field">
-              <label htmlFor="status">Status</label>
+              <label htmlFor="status">状態</label>
               <select
                 id="status"
                 name="status"
@@ -337,19 +354,19 @@ export default function AdminSellerDetailPage() {
               >
                 {SELLER_STATUSES.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {sellerStatusOptionLabel(status)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="seller-detail__field">
-              <label htmlFor="reason">Reason</label>
+              <label htmlFor="reason">理由</label>
               <input
                 id="reason"
                 name="reason"
                 className="seller-detail__input"
                 defaultValue={data.seller.statusReason || ""}
-                placeholder="Optional reason for status change"
+                placeholder="変更理由を入力"
               />
             </div>
             <div>
@@ -358,31 +375,31 @@ export default function AdminSellerDetailPage() {
                 className="seller-detail__button"
                 disabled={Boolean(isStatusSubmitting)}
               >
-                {isStatusSubmitting ? "Updating..." : "Update status"}
+                {isStatusSubmitting ? "更新中..." : "状態を更新"}
               </button>
             </div>
           </Form>
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Status history</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>状態変更履歴</h2>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={thStyle}>At</th>
-                  <th style={thStyle}>From</th>
-                  <th style={thStyle}>To</th>
-                  <th style={thStyle}>Changed by</th>
-                  <th style={thStyle}>Reason</th>
+                  <th style={thStyle}>日時</th>
+                  <th style={thStyle}>変更前</th>
+                  <th style={thStyle}>変更後</th>
+                  <th style={thStyle}>変更者</th>
+                  <th style={thStyle}>理由</th>
                 </tr>
               </thead>
               <tbody>
                 {data.statusHistory.map((item) => (
                   <tr key={item.id}>
                     <td style={tdStyle}>{new Date(item.createdAt).toLocaleString("ja-JP")}</td>
-                    <td style={tdStyle}>{item.fromStatus || "-"}</td>
-                    <td style={tdStyle}>{item.toStatus}</td>
+                    <td style={tdStyle}>{item.fromStatus ? sellerStatusOptionLabel(item.fromStatus) : "-"}</td>
+                    <td style={tdStyle}>{sellerStatusOptionLabel(item.toStatus)}</td>
                     <td style={tdStyle}>{item.changedBy || "-"}</td>
                     <td style={tdStyle}>{item.reason || "-"}</td>
                   </tr>
@@ -393,9 +410,9 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Recent orders</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の注文</h2>
           <SimpleTable
-            headers={["Order", "Status", "Amount", "PaymentIntent", "Charge"]}
+            headers={["注文ID", "状態", "金額", "PaymentIntent", "Charge"]}
             rows={data.orders.map((order) => [
               order.id,
               order.status,
@@ -407,9 +424,9 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Recent payout runs</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の出金予定</h2>
           <SimpleTable
-            headers={["Run", "Status", "Amount", "Stripe payout", "Updated"]}
+            headers={["出金ID", "状態", "金額", "Stripe出金ID", "更新日時"]}
             rows={data.payoutRuns.map((run) => [
               run.id,
               run.statusLabel,
@@ -421,9 +438,9 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Recent ledger entries</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の売上台帳</h2>
           <SimpleTable
-            headers={["When", "Type", "Amount", "Direction", "Object"]}
+            headers={["日時", "種別", "金額", "方向", "対象ID"]}
             rows={data.ledgerEntries.map((entry) => [
               new Date(entry.occurredAt).toLocaleString("ja-JP"),
               entry.entryType,
@@ -435,9 +452,9 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Recent Stripe events</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近のStripeイベント</h2>
           <SimpleTable
-            headers={["When", "Type", "Account", "Status"]}
+            headers={["日時", "種別", "アカウント", "処理状態"]}
             rows={data.stripeEvents.map((event) => [
               new Date(event.createdAt).toLocaleString("ja-JP"),
               event.type,
@@ -453,7 +470,7 @@ export default function AdminSellerDetailPage() {
 
 function SimpleTable({ headers, rows }) {
   if (!rows.length) {
-    return <p style={{ margin: 0 }}>No records yet.</p>;
+    return <p style={{ margin: 0 }}>まだ記録がありません。</p>;
   }
 
   return (

@@ -193,15 +193,15 @@ export function getStripeClient() {
 function createSellerStatusLabel(status) {
   switch (status) {
     case "pending":
-      return "Pending";
+      return "未設定";
     case "active":
-      return "Active";
+      return "有効";
     case "review":
-      return "Review";
+      return "確認中";
     case "restricted":
-      return "Restricted";
+      return "制限中";
     case "banned":
-      return "Banned";
+      return "停止中";
     default:
       return status || "-";
   }
@@ -210,13 +210,13 @@ function createSellerStatusLabel(status) {
 function createPayoutRunStatusLabel(status) {
   switch (status) {
     case "draft":
-      return "Draft";
+      return "下書き";
     case "approved":
-      return "Approved";
+      return "承認済み";
     case "executed":
-      return "Executed";
+      return "実行済み";
     case "failed":
-      return "Failed";
+      return "失敗";
     default:
       return status || "-";
   }

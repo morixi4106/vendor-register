@@ -24,7 +24,7 @@ export const action = async ({ request }) => {
     return json(
       {
         ok: false,
-        message: "Invalid request.",
+        message: "不正なリクエストです。",
       },
       { status: 400 },
     );
@@ -39,14 +39,14 @@ export const action = async ({ request }) => {
 
     return json({
       ok: true,
-      message: result.created ? "Seller initialized." : "Seller already exists.",
+      message: result.created ? "出店者決済レコードを作成しました。" : "出店者決済レコードは作成済みです。",
     });
   } catch (error) {
     console.error("seller initialize error:", error);
     return json(
       {
         ok: false,
-        message: "Failed to initialize seller.",
+        message: "出店者決済レコードの作成に失敗しました。",
       },
       { status: 500 },
     );
@@ -164,11 +164,10 @@ export default function AdminSellersPage() {
 
       <div className="seller-admin__page">
         <section className="seller-admin__card">
-          <h1 className="seller-admin__title">Sellers</h1>
+          <h1 className="seller-admin__title">出店者決済</h1>
           <p className="seller-admin__subtitle">
-            Existing vendors can be initialized as sellers here. Stripe account creation,
-            seller status changes, ledger review, and payout runs are all anchored to a
-            seller record.
+            既存の出店者に対して、Stripe連携アカウントの作成、決済可否の管理、
+            売上台帳の確認、出金処理を行います。
           </p>
           {actionData?.message ? (
             <div className="seller-admin__notice">{actionData.message}</div>
@@ -177,18 +176,18 @@ export default function AdminSellersPage() {
 
         <section className="seller-admin__card">
           {sellers.length === 0 ? (
-            <p style={{ margin: 0 }}>No vendors found.</p>
+            <p style={{ margin: 0 }}>出店者がまだありません。</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={thStyle}>Store</th>
-                    <th style={thStyle}>Handle</th>
-                    <th style={thStyle}>Email</th>
-                    <th style={thStyle}>Seller</th>
+                    <th style={thStyle}>店舗名</th>
+                    <th style={thStyle}>ハンドル</th>
+                    <th style={thStyle}>メール</th>
+                    <th style={thStyle}>決済状態</th>
                     <th style={thStyle}>Stripe</th>
-                    <th style={thStyle}>Actions</th>
+                    <th style={thStyle}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -206,7 +205,7 @@ export default function AdminSellersPage() {
                               {seller.sellerStatusLabel}
                             </span>
                           ) : (
-                            <span className={badgeClassName("pending")}>Not initialized</span>
+                            <span className={badgeClassName("pending")}>未作成</span>
                           )}
                         </td>
                         <td style={tdStyle}>
@@ -218,7 +217,7 @@ export default function AdminSellersPage() {
                               className="seller-admin__button seller-admin__button--secondary"
                               to={`/app/sellers/${seller.sellerId}`}
                             >
-                              Details
+                              詳細
                             </Link>
                           ) : (
                             <Form method="post">
@@ -229,7 +228,7 @@ export default function AdminSellersPage() {
                                 className="seller-admin__button"
                                 disabled={isInitializing}
                               >
-                                {isInitializing ? "Initializing..." : "Initialize seller"}
+                                {isInitializing ? "作成中..." : "決済レコード作成"}
                               </button>
                             </Form>
                           )}

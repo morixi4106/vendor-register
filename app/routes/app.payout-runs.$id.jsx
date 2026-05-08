@@ -10,7 +10,7 @@ export const loader = async ({ request, params }) => {
   const payoutRun = await getPayoutRunDetail(params.id);
 
   if (!payoutRun) {
-    throw new Response("Not Found", { status: 404 });
+    throw new Response("見つかりません", { status: 404 });
   }
 
   return json({ payoutRun });
@@ -89,19 +89,19 @@ export default function AdminPayoutRunDetailPage() {
             </div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <Link className="payout-detail__button payout-detail__button--secondary" to="/app/payout-runs">
-                Back
+                一覧へ戻る
               </Link>
               {payoutRun.status === "draft" ? (
                 <Form method="post" action={`/internal/payout-runs/${payoutRun.id}/approve`}>
                   <button type="submit" className="payout-detail__button" disabled={isApproving}>
-                    {isApproving ? "Approving..." : "Approve"}
+                    {isApproving ? "承認中..." : "承認する"}
                   </button>
                 </Form>
               ) : null}
               {payoutRun.status === "approved" ? (
                 <Form method="post" action={`/internal/payout-runs/${payoutRun.id}/execute`}>
                   <button type="submit" className="payout-detail__button" disabled={isExecuting}>
-                    {isExecuting ? "Executing..." : "Execute"}
+                    {isExecuting ? "実行中..." : "出金を実行"}
                   </button>
                 </Form>
               ) : null}
@@ -113,35 +113,35 @@ export default function AdminPayoutRunDetailPage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <tbody>
-                <Row label="Seller" value={payoutRun.sellerStoreName} />
-                <Row label="Status" value={payoutRun.statusLabel} />
-                <Row label="Amount" value={`${payoutRun.amount} ${payoutRun.currencyCode.toUpperCase()}`} />
-                <Row label="Stripe account" value={payoutRun.stripeAccountId} />
-                <Row label="Stripe payout" value={payoutRun.stripePayoutId || "-"} />
-                <Row label="Failure code" value={payoutRun.failureCode || "-"} />
-                <Row label="Failure message" value={payoutRun.failureMessage || "-"} />
-                <Row label="Approved at" value={payoutRun.approvedAt ? new Date(payoutRun.approvedAt).toLocaleString("ja-JP") : "-"} />
-                <Row label="Executed at" value={payoutRun.executedAt ? new Date(payoutRun.executedAt).toLocaleString("ja-JP") : "-"} />
-                <Row label="Updated at" value={new Date(payoutRun.updatedAt).toLocaleString("ja-JP")} />
+                <Row label="出店者" value={payoutRun.sellerStoreName} />
+                <Row label="状態" value={payoutRun.statusLabel} />
+                <Row label="金額" value={`${payoutRun.amount} ${payoutRun.currencyCode.toUpperCase()}`} />
+                <Row label="Stripe連携アカウント" value={payoutRun.stripeAccountId} />
+                <Row label="Stripe出金ID" value={payoutRun.stripePayoutId || "-"} />
+                <Row label="失敗コード" value={payoutRun.failureCode || "-"} />
+                <Row label="失敗理由" value={payoutRun.failureMessage || "-"} />
+                <Row label="承認日時" value={payoutRun.approvedAt ? new Date(payoutRun.approvedAt).toLocaleString("ja-JP") : "-"} />
+                <Row label="実行日時" value={payoutRun.executedAt ? new Date(payoutRun.executedAt).toLocaleString("ja-JP") : "-"} />
+                <Row label="更新日時" value={new Date(payoutRun.updatedAt).toLocaleString("ja-JP")} />
               </tbody>
             </table>
           </div>
         </section>
 
         <section className="payout-detail__card">
-          <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>Ledger entries</h2>
+          <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>売上台帳</h2>
           {payoutRun.ledgerEntries.length === 0 ? (
-            <p style={{ margin: 0 }}>No ledger entries yet.</p>
+            <p style={{ margin: 0 }}>台帳記録はまだありません。</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={thStyle}>When</th>
-                    <th style={thStyle}>Type</th>
-                    <th style={thStyle}>Amount</th>
-                    <th style={thStyle}>Direction</th>
-                    <th style={thStyle}>Object</th>
+                    <th style={thStyle}>日時</th>
+                    <th style={thStyle}>種別</th>
+                    <th style={thStyle}>金額</th>
+                    <th style={thStyle}>方向</th>
+                    <th style={thStyle}>対象ID</th>
                   </tr>
                 </thead>
                 <tbody>

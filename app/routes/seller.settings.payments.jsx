@@ -54,6 +54,7 @@ export default function SellerPaymentsSettingsPage() {
 
         connectInstance = loadConnectAndInitialize({
           publishableKey: data.stripePublishableKey,
+          locale: "ja",
           fetchClientSecret: async () => {
             const response = await fetch("/seller/connect/account-session", {
               method: "POST",
@@ -65,7 +66,7 @@ export default function SellerPaymentsSettingsPage() {
             const payload = await response.json();
 
             if (!response.ok || !payload?.clientSecret) {
-              throw new Error(payload?.message || "Failed to create account session");
+              throw new Error(payload?.message || "決済設定画面の初期化に失敗しました。");
             }
 
             return payload.clientSecret;
@@ -111,7 +112,7 @@ export default function SellerPaymentsSettingsPage() {
         setComponentState({
           loading: false,
           ready: false,
-          error: "Stripe onboarding components could not be loaded.",
+          error: "Stripeの登録・管理フォームを読み込めませんでした。",
         });
       }
     }
@@ -134,7 +135,7 @@ export default function SellerPaymentsSettingsPage() {
     <VendorManagementShell
       activeItem="payments"
       storeName={data.store.storeName}
-      title="Payments"
+      title="決済設定"
     >
       <style>{`
         .seller-payments__grid{
@@ -202,47 +203,47 @@ export default function SellerPaymentsSettingsPage() {
 
       <div className="seller-payments__grid">
         <section className="seller-payments__card">
-          <h2 className="seller-payments__title">Seller payments setup</h2>
+          <h2 className="seller-payments__title">決済・出金設定</h2>
           <p className="seller-payments__subtitle">
-            This page keeps Stripe onboarding and account management inside your own
-            dashboard. No Stripe-hosted dashboard link is used.
+            Stripeの登録、口座情報の更新、必要な追加対応をこの画面内で行います。
+            Stripeの管理画面へ移動する必要はありません。
           </p>
 
           <div className="seller-payments__description">
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Seller status</div>
+              <div className="seller-payments__term">決済状態</div>
               <div className="seller-payments__value">
-                {data.seller?.statusLabel || "Not initialized"}
+                {data.seller?.statusLabel || "未作成"}
               </div>
             </div>
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Connected account</div>
+              <div className="seller-payments__term">Stripe連携アカウント</div>
               <div className="seller-payments__value">
-                {data.stripeAccount?.stripeAccountId || "Not created yet"}
+                {data.stripeAccount?.stripeAccountId || "未作成"}
               </div>
             </div>
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Details submitted</div>
+              <div className="seller-payments__term">登録情報の提出</div>
               <div className="seller-payments__value">
-                {data.stripeAccount ? String(data.stripeAccount.detailsSubmitted) : "-"}
+                {data.stripeAccount ? (data.stripeAccount.detailsSubmitted ? "完了" : "未完了") : "-"}
               </div>
             </div>
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Charges enabled</div>
+              <div className="seller-payments__term">決済受付</div>
               <div className="seller-payments__value">
-                {data.stripeAccount ? String(data.stripeAccount.chargesEnabled) : "-"}
+                {data.stripeAccount ? (data.stripeAccount.chargesEnabled ? "有効" : "無効") : "-"}
               </div>
             </div>
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Payouts enabled</div>
+              <div className="seller-payments__term">出金可否</div>
               <div className="seller-payments__value">
-                {data.stripeAccount ? String(data.stripeAccount.payoutsEnabled) : "-"}
+                {data.stripeAccount ? (data.stripeAccount.payoutsEnabled ? "有効" : "無効") : "-"}
               </div>
             </div>
             <div className="seller-payments__row">
-              <div className="seller-payments__term">Payout schedule</div>
+              <div className="seller-payments__term">出金方式</div>
               <div className="seller-payments__value">
-                {data.stripeAccount?.payoutSchedule || "-"}
+                {data.stripeAccount?.payoutSchedule === "manual" ? "手動" : data.stripeAccount?.payoutSchedule || "-"}
               </div>
             </div>
           </div>
@@ -251,7 +252,7 @@ export default function SellerPaymentsSettingsPage() {
         {!data.stripePublishableKey ? (
           <section className="seller-payments__card">
             <div className="seller-payments__notice seller-payments__notice--danger">
-              STRIPE_PUBLISHABLE_KEY is missing, so embedded components can’t be rendered.
+              STRIPE_PUBLISHABLE_KEY が未設定のため、Stripeの登録・管理フォームを表示できません。
             </div>
           </section>
         ) : null}
@@ -259,8 +260,7 @@ export default function SellerPaymentsSettingsPage() {
         {!hasStripeAccount ? (
           <section className="seller-payments__card">
             <div className="seller-payments__notice">
-              A connected account has not been created yet. Ask an admin to create the
-              seller’s Stripe account first.
+              Stripe連携アカウントがまだ作成されていません。管理者に作成を依頼してください。
             </div>
           </section>
         ) : null}
@@ -275,33 +275,32 @@ export default function SellerPaymentsSettingsPage() {
 
         {componentState.loading ? (
           <section className="seller-payments__card">
-            <div className="seller-payments__notice">Loading Stripe onboarding…</div>
+            <div className="seller-payments__notice">Stripeの登録・管理フォームを読み込み中...</div>
           </section>
         ) : null}
 
         {canRenderComponents ? (
           <>
             <section className="seller-payments__card">
-              <h2 className="seller-payments__title">Notifications</h2>
+              <h2 className="seller-payments__title">対応が必要な通知</h2>
               <p className="seller-payments__subtitle">
-                Stripe requirement reminders and action prompts appear here.
+                Stripeから追加情報や修正が求められている場合、この欄に表示されます。
               </p>
               <div ref={notificationRef} />
             </section>
 
             <section className="seller-payments__card">
-              <h2 className="seller-payments__title">Onboarding</h2>
+              <h2 className="seller-payments__title">登録手続き</h2>
               <p className="seller-payments__subtitle">
-                Complete or refresh account onboarding inside this page.
+                決済受付に必要な事業者情報・本人確認情報を登録します。
               </p>
               <div ref={onboardingRef} />
             </section>
 
             <section className="seller-payments__card">
-              <h2 className="seller-payments__title">Account management</h2>
+              <h2 className="seller-payments__title">口座・アカウント管理</h2>
               <p className="seller-payments__subtitle">
-                Manage payout details and Stripe account settings without leaving the
-                dashboard.
+                出金先口座やStripeアカウント情報を、この管理画面内で更新します。
               </p>
               <div ref={managementRef} />
             </section>
