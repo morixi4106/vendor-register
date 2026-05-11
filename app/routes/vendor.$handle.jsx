@@ -1,13 +1,14 @@
 import { Form, Link, useActionData, useLoaderData, useNavigation } from '@remix-run/react';
 import { useMemo, useState } from 'react';
 
-import {
-  createVendorStorefrontAction,
-  createVendorStorefrontLoader,
-} from '../services/vendorStorefront.server.js';
+function hiddenVendorStorefrontResponse() {
+  throw new Response('Not Found', {
+    status: 404,
+  });
+}
 
-export const loader = createVendorStorefrontLoader();
-export const action = createVendorStorefrontAction();
+export const loader = hiddenVendorStorefrontResponse;
+export const action = hiddenVendorStorefrontResponse;
 
 function formatMoney(amount, currencyCode = 'JPY') {
   const numeric = Number(amount || 0);
