@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import { Form, Link, Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import prisma from "../db.server";
+import { formatMoney } from "../utils/money";
 
 export const loader = async () => {
   const products = await prisma.product.findMany({
@@ -69,7 +70,7 @@ export default function AdminProducts() {
             }}
           >
             <h3>{product.name}</h3>
-            <p>価格: ¥{product.price}</p>
+            <p>価格: {formatMoney(product.price, product.costCurrency || "JPY")}</p>
 
             <p style={{ marginTop: "10px", whiteSpace: "pre-wrap" }}>
               {product.description || "説明なし"}

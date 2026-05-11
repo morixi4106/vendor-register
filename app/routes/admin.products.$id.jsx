@@ -986,8 +986,8 @@ export default function AdminProductDetail() {
           <p>
             基準販売価格（JPY）: {priceBreakdown?.finalPrice != null
               ? `¥${priceBreakdown.finalPrice}`
-              : typeof product.price === "number"
-                ? `¥${product.price}`
+              : typeof product.calculatedPrice === "number"
+                ? `¥${product.calculatedPrice}`
                 : "-"}
           </p>
           <p>

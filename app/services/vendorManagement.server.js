@@ -4,6 +4,7 @@ import {
   normalizeShopDomain,
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server.js";
+import { formatMoney as formatCurrencyMoney } from "../utils/money.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
@@ -28,17 +29,7 @@ export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
 });
 
 export function formatMoney(amount, currencyCode = "JPY") {
-  const numericAmount = Number(amount || 0);
-
-  try {
-    return new Intl.NumberFormat("ja-JP", {
-      style: "currency",
-      currency: currencyCode,
-      maximumFractionDigits: 0,
-    }).format(numericAmount);
-  } catch {
-    return `${Math.round(numericAmount).toLocaleString("ja-JP")} ${currencyCode}`;
-  }
+  return formatCurrencyMoney(amount, currencyCode);
 }
 
 export function formatDateTime(value) {
@@ -122,6 +113,8 @@ export const PRODUCT_STATUS_FILTER_OPTIONS = [
 ];
 
 export function serializeVendorProduct(product) {
+  const currencyCode = product.costCurrency || "JPY";
+
   return {
     id: product.id,
     name: product.name || "名称未設定",
@@ -130,7 +123,8 @@ export function serializeVendorProduct(product) {
     stockLabel: "未連携",
     trackingLabel: product.url || "-",
     salesLabel: "0",
-    priceLabel: formatMoney(product.price || 0, "JPY"),
+    priceLabel: formatMoney(product.price || 0, currencyCode),
+    currencyCode,
     statusLabel: mapProductStatus(product),
     approvalLabel: mapApprovalLabel(product.approvalStatus),
     shopifyProductId: product.shopifyProductId || null,

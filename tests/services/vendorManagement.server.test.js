@@ -7,6 +7,7 @@ import {
   buildVendorDraftOrdersSearchQuery,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
+  serializeVendorProduct,
 } from "../../app/services/vendorManagement.server.js";
 
 test("getVendorOrdersAccessState returns ready when read_draft_orders is granted", async () => {
@@ -90,6 +91,21 @@ test("buildVendorDraftOrdersSearchQuery uses vendor tags and completed status", 
     buildVendorDraftOrdersSearchQuery("amber-cellar"),
     'tag:vendor-storefront tag:"vendor:amber-cellar" status:completed',
   );
+});
+
+test("serializeVendorProduct formats product price with the original currency", () => {
+  const product = serializeVendorProduct({
+    id: "product_1",
+    name: "Test product",
+    category: "Cosmetics",
+    price: 100,
+    costCurrency: "EUR",
+    approvalStatus: "approved",
+    updatedAt: "2026-05-11T00:00:00Z",
+  });
+
+  assert.equal(product.priceLabel, "€100");
+  assert.equal(product.currencyCode, "EUR");
 });
 
 test("getVendorOrdersPageData returns mapped orders when read_draft_orders is granted", async () => {

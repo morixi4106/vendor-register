@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { formatMoney } from "../utils/money";
 
 export const loader = async ({ request, params }) => {
   await authenticate.admin(request);
@@ -70,7 +71,7 @@ export default function VendorDetailPage() {
               }}
             >
               <div style={{ fontWeight: "700" }}>{product.name}</div>
-              <div>¥{product.price.toLocaleString()}</div>
+              <div>{formatMoney(product.price, product.costCurrency || "JPY")}</div>
             </div>
           ))}
         </div>
