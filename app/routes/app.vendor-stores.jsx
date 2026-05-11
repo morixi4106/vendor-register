@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData, useNavigation, useRevalidator } from "@remix-run/react";
+import { Form, Link, useLoaderData, useNavigation, useRevalidator } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useState } from "react";
 import { authenticate } from "../shopify.server";
@@ -430,10 +430,8 @@ export default function VendorStoresPage() {
                     return (
                       <tr key={store.id}>
                         <td style={tdStyle}>
-                          <a
-                            href={`https://oja-immanuel-bacchus.myshopify.com/apps/vendors/${store.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <Link
+                            to={`/app/vendor/${store.id}`}
                             style={{
                               color: "#0b57d0",
                               textDecoration: "underline",
@@ -441,7 +439,7 @@ export default function VendorStoresPage() {
                             }}
                           >
                             {store.storeName}
-                          </a>
+                          </Link>
                         </td>
                         <td style={tdStyle}>{store.ownerName}</td>
                         <td style={tdStyle}>{store.email}</td>
