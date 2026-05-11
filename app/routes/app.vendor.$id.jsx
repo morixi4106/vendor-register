@@ -41,7 +41,18 @@ export const action = async ({ request, params }) => {
     return json({ ok: false, error: "Unknown action" }, { status: 400 });
   }
 
-  const result = await syncVendorCollectionByStoreId(params.id);
+  let result;
+
+  try {
+    result = await syncVendorCollectionByStoreId(params.id);
+  } catch (error) {
+    console.error("vendor collection sync action failed:", error);
+    result = {
+      ok: false,
+      reason: "sync_failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   return json(
     {

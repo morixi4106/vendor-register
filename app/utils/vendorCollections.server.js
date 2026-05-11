@@ -196,20 +196,28 @@ function buildCollectionDescription(store) {
 function buildCollectionMetafields({ collectionId, vendor, store }) {
   const fields = [
     ["vendor_handle", vendor.handle],
-    ["vendor_store_name", store.storeName || vendor.storeName],
+    ["vendor_store_name", store.storeName || vendor.storeName || vendor.handle],
     ["vendor_category", store.category],
     ["vendor_country", store.country],
     ["vendor_address", store.address],
     ["vendor_note", store.note],
   ];
 
-  return fields.map(([key, value]) => ({
-    ownerId: collectionId,
-    namespace: "custom",
-    key,
-    type: "single_line_text_field",
-    value: String(value || ""),
-  }));
+  return fields.flatMap(([key, value]) => {
+    const normalizedValue = normalizeText(value);
+
+    if (!normalizedValue) return [];
+
+    return [
+      {
+        ownerId: collectionId,
+        namespace: "custom",
+        key,
+        type: "single_line_text_field",
+        value: normalizedValue,
+      },
+    ];
+  });
 }
 
 function getMissingScopes(grantedScopes, requiredScopes) {
@@ -378,12 +386,18 @@ async function setVendorCollectionMetafields({
   shopDomain,
   shopifyGraphQLWithOfflineSessionImpl,
 }) {
+  const metafields = buildCollectionMetafields({ collectionId, vendor, store });
+
+  if (metafields.length === 0) {
+    return;
+  }
+
   const { data } = await shopifyGraphQLWithOfflineSessionImpl({
     shopDomain,
     apiVersion: SHOPIFY_API_VERSION,
     query: SET_VENDOR_COLLECTION_METAFIELDS_MUTATION,
     variables: {
-      metafields: buildCollectionMetafields({ collectionId, vendor, store }),
+      metafields,
     },
   });
 

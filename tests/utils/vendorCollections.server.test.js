@@ -7,7 +7,7 @@ import {
 } from "../../app/utils/vendorCollectionHandles.js";
 import { syncVendorCollection } from "../../app/utils/vendorCollections.server.js";
 
-function createVendor({ products }) {
+function createVendor({ products, storeOverrides = {} }) {
   return {
     id: "vendor_1",
     handle: "vendor",
@@ -21,6 +21,7 @@ function createVendor({ products }) {
       address: "Tokyo",
       note: "Vendor note",
       products,
+      ...storeOverrides,
     },
   };
 }
@@ -295,4 +296,89 @@ test("syncVendorCollection updates existing collection membership and publishes 
     { publicationId: "gid://shopify/Publication/1" },
   ]);
   assert.equal(result.publish.ok, true);
+});
+
+test("syncVendorCollection omits blank collection metafields", async () => {
+  let metafields = null;
+  const vendor = createVendor({
+    storeOverrides: {
+      category: "",
+      country: null,
+      address: "   ",
+      note: null,
+    },
+    products: [
+      {
+        id: "product_1",
+        name: "Linked Product",
+        approvalStatus: "approved",
+        shopifyProductId: "gid://shopify/Product/1",
+        shopDomain: "shop-a.myshopify.com",
+      },
+    ],
+  });
+
+  const result = await syncVendorCollection({
+    vendorHandle: "vendor",
+    prismaClient: createPrisma(vendor),
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query, variables, shopDomain }) => {
+      if (query.includes("CurrentAppInstallationAccessScopes")) {
+        return {
+          data: {
+            currentAppInstallation: {
+              accessScopes: [{ handle: "read_products" }, { handle: "write_products" }],
+            },
+          },
+          shopDomain,
+        };
+      }
+
+      if (query.includes("FindVendorCollection")) {
+        return { data: { collections: { nodes: [] } }, shopDomain };
+      }
+
+      if (query.includes("CreateVendorCollection")) {
+        return {
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/1",
+                handle: "vendor-vendor",
+                title: "Test Store",
+                products: {
+                  nodes: [{ id: "gid://shopify/Product/1" }],
+                },
+              },
+              userErrors: [],
+            },
+          },
+          shopDomain,
+        };
+      }
+
+      if (query.includes("SetVendorCollectionMetafields")) {
+        metafields = variables.metafields;
+
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: [],
+              userErrors: [],
+            },
+          },
+          shopDomain,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${query}`);
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    metafields.map((metafield) => metafield.key),
+    ["vendor_handle", "vendor_store_name"],
+  );
+  assert.equal(metafields.every((metafield) => metafield.value.trim()), true);
+  assert.equal(metafields.some((metafield) => metafield.key === "vendor_note"), false);
 });
