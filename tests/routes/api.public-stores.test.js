@@ -20,6 +20,8 @@ test("serializePublicStore exposes vendor handle for storefront links", () => {
     {
       id: "store_1",
       handle: "vendor",
+      collectionHandle: "vendor-vendor",
+      collectionUrl: "/collections/vendor-vendor",
       storeName: "Test Store",
       category: "Cosmetics",
       country: "Japan",

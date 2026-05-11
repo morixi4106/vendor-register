@@ -1,3 +1,8 @@
+import {
+  buildVendorCollectionHandle,
+  buildVendorCollectionUrl,
+} from "./vendorCollectionHandles.js";
+
 function normalizeText(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
@@ -45,10 +50,14 @@ export function serializePublicVendorStorefront({ vendor, store, products = [] }
     vendor: {
       handle,
       storeName: vendor?.storeName || store?.storeName || "",
+      collectionHandle: buildVendorCollectionHandle(handle),
+      collectionUrl: buildVendorCollectionUrl(handle),
     },
     store: {
       id: store.id,
       handle,
+      collectionHandle: buildVendorCollectionHandle(handle),
+      collectionUrl: buildVendorCollectionUrl(handle),
       storeName: store.storeName || vendor?.storeName || "",
       country: store.country || null,
       category: store.category || null,

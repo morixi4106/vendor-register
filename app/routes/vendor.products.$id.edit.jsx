@@ -6,6 +6,7 @@ import prisma from "../db.server";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
+import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
 const SHOPIFY_API_VERSION = "2026-01";
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
@@ -338,6 +339,12 @@ export const action = async ({ request, params }) => {
           shopDomain,
         },
       });
+
+      try {
+        await syncVendorCollectionByStoreId(product.vendorStoreId, { shopDomain });
+      } catch (error) {
+        console.error("vendor collection sync after product edit failed:", error);
+      }
     } else {
       await prisma.product.update({
         where: { id: productId },

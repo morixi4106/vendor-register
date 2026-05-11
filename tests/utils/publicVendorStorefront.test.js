@@ -49,10 +49,14 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
       vendor: {
         handle: "vendor",
         storeName: "Test Store",
+        collectionHandle: "vendor-vendor",
+        collectionUrl: "/collections/vendor-vendor",
       },
       store: {
         id: "store_1",
         handle: "vendor",
+        collectionHandle: "vendor-vendor",
+        collectionUrl: "/collections/vendor-vendor",
         storeName: "Test Store",
         country: "Japan",
         category: "Cosmetics",
