@@ -19,7 +19,7 @@ function formatMoney(amount, currencyCode = 'JPY') {
       maximumFractionDigits: 0,
     }).format(numeric);
   } catch {
-    return `ﾂ･${Math.round(numeric).toLocaleString('ja-JP')}`;
+    return `JPY ${Math.round(numeric).toLocaleString('ja-JP')}`;
   }
 }
 
@@ -72,6 +72,7 @@ export default function VendorStorefrontPage() {
         .storefront-grid{display:grid;grid-template-columns:1.2fr 0.9fr;gap:24px;margin-top:28px;}
         .storefront-card{padding:24px;border-radius:24px;background:rgba(255,255,255,0.88);border:1px solid rgba(95,72,52,0.12);box-shadow:0 18px 60px rgba(72,49,35,0.08);}
         .storefront-section-title{margin:0 0 8px;font-size:24px;font-weight:800;}
+        .storefront-subtitle{margin:18px 0 8px;font-size:18px;font-weight:800;}
         .storefront-section-sub{margin:0 0 20px;color:#6a5446;font-size:14px;line-height:1.7;}
         .storefront-error{margin-bottom:18px;padding:14px 16px;border-radius:16px;border:1px solid #e6b6b6;background:#fff3f2;color:#9d1d1d;font-size:14px;line-height:1.7;}
         .product-list{display:grid;gap:16px;}
@@ -102,24 +103,26 @@ export default function VendorStorefrontPage() {
 
       <div className="storefront-shell">
         <Link className="storefront-back" to="/vendors">
-          竊・蜃ｺ蠎苓・ｸ隕ｧ縺ｫ謌ｻ繧・
+          店舗一覧へ戻る
         </Link>
 
         <section className="storefront-hero">
-          <p className="storefront-kicker">Customer Checkout</p>
+          <p className="storefront-kicker">STORE CHECKOUT</p>
           <h1 className="storefront-title">{store.storeName}</h1>
           <div className="storefront-meta">
             <span className="storefront-chip">{store.country}</span>
             <span className="storefront-chip">{store.category}</span>
-            <span className="storefront-chip">{products.length} products</span>
+            <span className="storefront-chip">{products.length} 点の商品</span>
           </div>
           {store.note ? <p className="storefront-note">{store.note}</p> : null}
         </section>
 
         <div className="storefront-grid">
           <section className="storefront-card">
-            <h2 className="storefront-section-title">蝠・刀繧帝∈縺ｶ</h2>
-            <p className="storefront-section-sub">謨ｰ驥上ｒ謖・ｮ壹＠縺ｦ縺昴・縺ｾ縺ｾ豎ｺ貂医∈騾ｲ縺ｿ縺ｾ縺吶る∵侭縺ｯ驟埼∝・蜈･蜉帛ｾ後↓險育ｮ励＆繧後∵ｱｺ貂育判髱｢縺ｧ陦ｨ遉ｺ縺輔ｌ縺ｾ縺吶・</p>
+            <h2 className="storefront-section-title">商品を選ぶ</h2>
+            <p className="storefront-section-sub">
+              数量を指定して商品を選択してください。送料は配送先入力後に計算され、決済画面で確認できます。
+            </p>
 
             <div className="product-list">
               {products.map((product) => (
@@ -127,18 +130,20 @@ export default function VendorStorefrontPage() {
                   {product.imageUrl ? (
                     <img className="product-image" src={product.imageUrl} alt={product.name} />
                   ) : (
-                    <div className="product-image-placeholder">ITEM</div>
+                    <div className="product-image-placeholder">NO IMAGE</div>
                   )}
 
                   <div>
                     <h3 className="product-title">{product.name}</h3>
-                    <p className="product-description">{product.description || '縺薙・蝠・刀縺ｯ蠎苓・縺ｮ豁｣隕丞ｰ守ｷ壹°繧芽ｳｼ蜈･縺ｧ縺阪∪縺吶・'}</p>
+                    <p className="product-description">
+                      {product.description || '商品説明はありません。'}
+                    </p>
                   </div>
 
                   <div className="product-side">
                     <div className="product-price">{formatMoney(product.price)}</div>
                     <label className="quantity-label">
-                      謨ｰ驥・
+                      数量
                       <input
                         className="quantity-input"
                         type="number"
@@ -155,7 +160,9 @@ export default function VendorStorefrontPage() {
                         disabled={!product.isPurchasable || isSubmitting}
                       />
                     </label>
-                    {!product.isPurchasable ? <div className="product-disabled">迴ｾ蝨ｨ縺ｯ雉ｼ蜈･貅門ｙ荳ｭ縺ｧ縺・</div> : null}
+                    {!product.isPurchasable ? (
+                      <div className="product-disabled">現在この商品は購入できません。</div>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -163,20 +170,22 @@ export default function VendorStorefrontPage() {
           </section>
 
           <section className="storefront-card">
-            <h2 className="storefront-section-title">驟埼∝・縺ｨ縺雁ｮ｢讒俶ュ蝣ｱ</h2>
-            <p className="storefront-section-sub">蜈･蜉帛・螳ｹ縺九ｉ checkout payload 繧堤ｵ・∩遶九※縲√◎縺ｮ縺ｾ縺ｾ豎ｺ貂亥ｰ守ｷ壹∈驕ｷ遘ｻ縺励∪縺吶・</p>
+            <h2 className="storefront-section-title">配送先・お客様情報</h2>
+            <p className="storefront-section-sub">
+              入力内容をもとにチェックアウトを作成し、Shopify の決済画面へ移動します。
+            </p>
 
             {actionData?.error ? (
               <div className="storefront-error">
-                <strong>豎ｺ貂医ｒ髢句ｧ九〒縺阪∪縺帙ｓ縺ｧ縺励◆縲・</strong>
+                <strong>決済を開始できませんでした。</strong>
                 <div>{actionData.error}</div>
               </div>
             ) : null}
 
             <Form className="checkout-form" method="post">
               <div className="checkout-summary">
-                <strong>{selectedCount} 轤ｹ繧帝∈謚樔ｸｭ</strong>
-                <span>submit 縺ｯ 1 蝗槭□縺大ｮ溯｡後＆繧後∵・蜉滓凾縺ｯ invoice URL 縺ｸ縺昴・縺ｾ縺ｾ驕ｷ遘ｻ縺励∪縺吶・</span>
+                <strong>{selectedCount} 点を選択中</strong>
+                <span>商品と配送先を確認してから決済へ進んでください。</span>
                 {actionData?.fieldErrors?.cart ? (
                   <div className="field-error" style={{ marginTop: '8px' }}>
                     {actionData.fieldErrors.cart}
@@ -184,82 +193,202 @@ export default function VendorStorefrontPage() {
                 ) : null}
               </div>
 
+              <h3 className="storefront-subtitle">お客様情報</h3>
               <div className="field-grid">
                 <label className="field-label">
-                  蟋・
-                  <input className="field-input" name="lastName" value={customer.lastName} onChange={(event) => setCustomer((current) => ({ ...current, lastName: event.target.value }))} />
-                  {actionData?.fieldErrors?.lastName ? <span className="field-error">{actionData.fieldErrors.lastName}</span> : null}
+                  姓
+                  <input
+                    className="field-input"
+                    name="lastName"
+                    placeholder="Yamada"
+                    value={customer.lastName}
+                    onChange={(event) =>
+                      setCustomer((current) => ({ ...current, lastName: event.target.value }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.lastName ? (
+                    <span className="field-error">{actionData.fieldErrors.lastName}</span>
+                  ) : null}
                 </label>
 
                 <label className="field-label">
-                  蜷・
-                  <input className="field-input" name="firstName" value={customer.firstName} onChange={(event) => setCustomer((current) => ({ ...current, firstName: event.target.value }))} />
-                  {actionData?.fieldErrors?.firstName ? <span className="field-error">{actionData.fieldErrors.firstName}</span> : null}
+                  名
+                  <input
+                    className="field-input"
+                    name="firstName"
+                    placeholder="Taro"
+                    value={customer.firstName}
+                    onChange={(event) =>
+                      setCustomer((current) => ({ ...current, firstName: event.target.value }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.firstName ? (
+                    <span className="field-error">{actionData.fieldErrors.firstName}</span>
+                  ) : null}
                 </label>
               </div>
 
               <div className="field-stack">
                 <label className="field-label">
-                  繝｡繝ｼ繝ｫ繧｢繝峨Ξ繧ｹ
-                  <input className="field-input" type="email" name="email" value={customer.email} onChange={(event) => setCustomer((current) => ({ ...current, email: event.target.value }))} />
-                  {actionData?.fieldErrors?.email ? <span className="field-error">{actionData.fieldErrors.email}</span> : null}
+                  メールアドレス
+                  <input
+                    className="field-input"
+                    type="email"
+                    name="email"
+                    placeholder="taro@example.com"
+                    value={customer.email}
+                    onChange={(event) =>
+                      setCustomer((current) => ({ ...current, email: event.target.value }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.email ? (
+                    <span className="field-error">{actionData.fieldErrors.email}</span>
+                  ) : null}
                 </label>
 
                 <label className="field-label">
-                  髮ｻ隧ｱ逡ｪ蜿ｷ
-                  <input className="field-input" name="phone" value={customer.phone} onChange={(event) => setCustomer((current) => ({ ...current, phone: event.target.value }))} />
-                  {actionData?.fieldErrors?.phone ? <span className="field-error">{actionData.fieldErrors.phone}</span> : null}
+                  電話番号
+                  <input
+                    className="field-input"
+                    name="phone"
+                    placeholder="09012345678"
+                    value={customer.phone}
+                    onChange={(event) =>
+                      setCustomer((current) => ({ ...current, phone: event.target.value }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.phone ? (
+                    <span className="field-error">{actionData.fieldErrors.phone}</span>
+                  ) : null}
                 </label>
               </div>
 
+              <h3 className="storefront-subtitle">配送先住所</h3>
               <div className="field-stack">
                 <label className="field-label">
-                  菴乗園1
-                  <input className="field-input" name="address1" value={shippingAddress.address1} onChange={(event) => setShippingAddress((current) => ({ ...current, address1: event.target.value }))} />
-                  {actionData?.fieldErrors?.address1 ? <span className="field-error">{actionData.fieldErrors.address1}</span> : null}
+                  住所1
+                  <input
+                    className="field-input"
+                    name="address1"
+                    placeholder="Jingumae 1-2-3"
+                    value={shippingAddress.address1}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({
+                        ...current,
+                        address1: event.target.value,
+                      }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.address1 ? (
+                    <span className="field-error">{actionData.fieldErrors.address1}</span>
+                  ) : null}
                 </label>
 
                 <label className="field-label">
-                  菴乗園2
-                  <input className="field-input" name="address2" value={shippingAddress.address2} onChange={(event) => setShippingAddress((current) => ({ ...current, address2: event.target.value }))} />
+                  住所2
+                  <input
+                    className="field-input"
+                    name="address2"
+                    value={shippingAddress.address2}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({
+                        ...current,
+                        address2: event.target.value,
+                      }))
+                    }
+                  />
                 </label>
               </div>
 
               <div className="field-grid">
                 <label className="field-label">
-                  蟶ょ玄逕ｺ譚・
-                  <input className="field-input" name="city" value={shippingAddress.city} onChange={(event) => setShippingAddress((current) => ({ ...current, city: event.target.value }))} />
-                  {actionData?.fieldErrors?.city ? <span className="field-error">{actionData.fieldErrors.city}</span> : null}
+                  市区町村
+                  <input
+                    className="field-input"
+                    name="city"
+                    placeholder="Shibuya"
+                    value={shippingAddress.city}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({ ...current, city: event.target.value }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.city ? (
+                    <span className="field-error">{actionData.fieldErrors.city}</span>
+                  ) : null}
                 </label>
 
                 <label className="field-label">
-                  驛ｽ驕灘ｺ懃恁
-                  <input className="field-input" name="province" value={shippingAddress.province} onChange={(event) => setShippingAddress((current) => ({ ...current, province: event.target.value }))} />
-                  {actionData?.fieldErrors?.province ? <span className="field-error">{actionData.fieldErrors.province}</span> : null}
+                  都道府県
+                  <input
+                    className="field-input"
+                    name="province"
+                    placeholder="Tokyo"
+                    value={shippingAddress.province}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({
+                        ...current,
+                        province: event.target.value,
+                      }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.province ? (
+                    <span className="field-error">{actionData.fieldErrors.province}</span>
+                  ) : null}
                 </label>
               </div>
 
               <div className="field-grid">
                 <label className="field-label">
-                  驛ｵ萓ｿ逡ｪ蜿ｷ
-                  <input className="field-input" name="postalCode" value={shippingAddress.postalCode} onChange={(event) => setShippingAddress((current) => ({ ...current, postalCode: event.target.value }))} />
-                  {actionData?.fieldErrors?.postalCode ? <span className="field-error">{actionData.fieldErrors.postalCode}</span> : null}
+                  郵便番号
+                  <input
+                    className="field-input"
+                    name="postalCode"
+                    placeholder="150-0001"
+                    value={shippingAddress.postalCode}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({
+                        ...current,
+                        postalCode: event.target.value,
+                      }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.postalCode ? (
+                    <span className="field-error">{actionData.fieldErrors.postalCode}</span>
+                  ) : null}
                 </label>
 
                 <label className="field-label">
-                  蝗ｽ繧ｳ繝ｼ繝・
-                  <input className="field-input" name="country" value={shippingAddress.country} onChange={(event) => setShippingAddress((current) => ({ ...current, country: event.target.value }))} />
-                  {actionData?.fieldErrors?.country ? <span className="field-error">{actionData.fieldErrors.country}</span> : null}
+                  国コード
+                  <input
+                    className="field-input"
+                    name="country"
+                    placeholder="JP"
+                    value={shippingAddress.country}
+                    onChange={(event) =>
+                      setShippingAddress((current) => ({
+                        ...current,
+                        country: event.target.value,
+                      }))
+                    }
+                  />
+                  {actionData?.fieldErrors?.country ? (
+                    <span className="field-error">{actionData.fieldErrors.country}</span>
+                  ) : null}
                 </label>
               </div>
 
               <label className="field-label">
-                豕ｨ譁・Γ繝｢
-                <textarea className="field-textarea" name="note" value={note} onChange={(event) => setNote(event.target.value)} />
+                注文メモ
+                <textarea
+                  className="field-textarea"
+                  name="note"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                />
               </label>
 
               <button className="checkout-submit" type="submit" disabled={isSubmitting}>
-                {isSubmitting ? '豎ｺ貂亥ｰ守ｷ壹ｒ貅門ｙ荳ｭ...' : '騾∵侭縺､縺阪〒豎ｺ貂医∈騾ｲ繧'}
+                {isSubmitting ? '決済画面を準備中...' : '送料つきで決済へ進む'}
               </button>
             </Form>
           </section>
