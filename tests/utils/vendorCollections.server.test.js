@@ -143,6 +143,10 @@ test("syncVendorCollection creates a manual collection and reports missing publi
     },
   ]);
   assert.deepEqual(result.publish.missingScopes, ["read_publications", "write_publications"]);
+  assert.deepEqual(result.productPublish.missingScopes, [
+    "read_publications",
+    "write_publications",
+  ]);
   assert.equal(calls.some((call) => call.query.includes("VendorCollectionPublications")), false);
 });
 
@@ -150,7 +154,7 @@ test("syncVendorCollection updates existing collection membership and publishes 
   const observed = {
     addProductIds: null,
     removeProductIds: null,
-    publishInput: null,
+    publishCalls: [],
   };
   const vendor = createVendor({
     products: [
@@ -269,8 +273,11 @@ test("syncVendorCollection updates existing collection membership and publishes 
         };
       }
 
-      if (query.includes("PublishVendorCollection")) {
-        observed.publishInput = variables.input;
+      if (query.includes("PublishVendorResource")) {
+        observed.publishCalls.push({
+          id: variables.id,
+          input: variables.input,
+        });
         return {
           data: {
             publishablePublish: {
@@ -292,10 +299,26 @@ test("syncVendorCollection updates existing collection membership and publishes 
   assert.equal(result.collection.created, false);
   assert.deepEqual(observed.addProductIds, ["gid://shopify/Product/2"]);
   assert.deepEqual(observed.removeProductIds, ["gid://shopify/Product/999"]);
-  assert.deepEqual(observed.publishInput, [
-    { publicationId: "gid://shopify/Publication/1" },
+  assert.deepEqual(observed.publishCalls, [
+    {
+      id: "gid://shopify/Collection/1",
+      input: [{ publicationId: "gid://shopify/Publication/1" }],
+    },
+    {
+      id: "gid://shopify/Product/1",
+      input: [{ publicationId: "gid://shopify/Publication/1" }],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      input: [{ publicationId: "gid://shopify/Publication/1" }],
+    },
   ]);
   assert.equal(result.publish.ok, true);
+  assert.equal(result.productPublish.ok, true);
+  assert.deepEqual(result.productPublish.productIds, [
+    "gid://shopify/Product/1",
+    "gid://shopify/Product/2",
+  ]);
 });
 
 test("syncVendorCollection omits blank collection metafields", async () => {

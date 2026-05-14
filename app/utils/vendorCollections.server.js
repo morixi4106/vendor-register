@@ -136,8 +136,8 @@ const PUBLICATIONS_QUERY = `
   }
 `;
 
-const PUBLISH_COLLECTION_MUTATION = `
-  mutation PublishVendorCollection($id: ID!, $input: [PublicationInput!]!) {
+const PUBLISH_RESOURCE_MUTATION = `
+  mutation PublishVendorResource($id: ID!, $input: [PublicationInput!]!) {
     publishablePublish(id: $id, input: $input) {
       publishable {
         availablePublicationsCount {
@@ -512,7 +512,7 @@ async function publishVendorCollection({
   const { data } = await shopifyGraphQLWithOfflineSessionImpl({
     shopDomain,
     apiVersion: SHOPIFY_API_VERSION,
-    query: PUBLISH_COLLECTION_MUTATION,
+    query: PUBLISH_RESOURCE_MUTATION,
     variables: {
       id: collectionId,
       input: [{ publicationId }],
@@ -527,6 +527,60 @@ async function publishVendorCollection({
     source,
     availablePublicationsCount:
       data?.publishablePublish?.publishable?.availablePublicationsCount?.count ?? null,
+  };
+}
+
+async function publishVendorProducts({
+  productIds,
+  publicationId,
+  source,
+  shopDomain,
+  shopifyGraphQLWithOfflineSessionImpl,
+}) {
+  const normalizedProductIds = unique(productIds);
+
+  if (normalizedProductIds.length === 0) {
+    return {
+      ok: true,
+      publicationId,
+      source,
+      productIds: [],
+      errors: [],
+    };
+  }
+
+  const publishedProductIds = [];
+  const errors = [];
+
+  for (const productId of normalizedProductIds) {
+    try {
+      const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+        shopDomain,
+        apiVersion: SHOPIFY_API_VERSION,
+        query: PUBLISH_RESOURCE_MUTATION,
+        variables: {
+          id: productId,
+          input: [{ publicationId }],
+        },
+      });
+
+      assertNoUserErrors(data, "publishablePublish");
+      publishedProductIds.push(productId);
+    } catch (error) {
+      errors.push({
+        productId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    reason: errors.length > 0 ? "product_publish_failed" : undefined,
+    publicationId,
+    source,
+    productIds: publishedProductIds,
+    errors,
   };
 }
 
@@ -694,6 +748,20 @@ export async function syncVendorCollection({
           reason: "missing_scope",
           missingScopes: missingPublicationScopes,
         };
+  const productPublishResult =
+    publishResult.ok && publishResult.publicationId
+      ? await publishVendorProducts({
+          productIds,
+          publicationId: publishResult.publicationId,
+          source: publishResult.source,
+          shopDomain: resolvedShopDomain,
+          shopifyGraphQLWithOfflineSessionImpl,
+        })
+      : {
+          ok: false,
+          reason: publishResult.reason || "collection_publish_failed",
+          missingScopes: publishResult.missingScopes,
+        };
 
   return {
     ok: true,
@@ -708,6 +776,7 @@ export async function syncVendorCollection({
     unsyncedProducts,
     productSync,
     publish: publishResult,
+    productPublish: productPublishResult,
     missingScopes: missingPublicationScopes,
   };
 }
