@@ -196,6 +196,53 @@ export function getStripeClient() {
   return stripeClientSingleton;
 }
 
+export async function createConnectedAccountPayout({
+  stripeAccountId,
+  amount,
+  currencyCode,
+  payoutRunId,
+  sellerId,
+  fetchImpl = fetch,
+}) {
+  const normalizedStripeAccountId = normalizeText(stripeAccountId);
+
+  if (!normalizedStripeAccountId) {
+    throw new Error("STRIPE_CONNECTED_ACCOUNT_ID_MISSING");
+  }
+
+  const body = new URLSearchParams();
+  body.set("amount", String(clampInteger(amount)));
+  body.set("currency", normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY);
+  body.set("description", `Manual payout ${payoutRunId}`);
+  body.set("metadata[payoutRunId]", payoutRunId);
+  body.set("metadata[sellerId]", sellerId);
+
+  const response = await fetchImpl("https://api.stripe.com/v1/payouts", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getStripeSecretKey()}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Stripe-Account": normalizedStripeAccountId,
+    },
+    body,
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const stripeError = payload?.error || {};
+    const error = new Error(
+      normalizeText(stripeError.message) || "Stripe payout creation failed.",
+    );
+    error.code = normalizeText(stripeError.code);
+    error.type = normalizeText(stripeError.type);
+    error.param = normalizeText(stripeError.param);
+    throw error;
+  }
+
+  return payload;
+}
+
 function createSellerStatusLabel(status) {
   switch (status) {
     case "pending":
@@ -2280,7 +2327,8 @@ export async function executePayoutRun(
   { payoutRunId, executedBy = "admin" },
   {
     prismaClient = prisma,
-    stripeClient = getStripeClient(),
+    stripeClient,
+    createPayout = createConnectedAccountPayout,
   } = {},
 ) {
   const payoutRun = await prismaClient.payoutRun.findUnique({
@@ -2323,8 +2371,10 @@ export async function executePayoutRun(
   }
 
   try {
+    const balanceStripeClient =
+      stripeClient || (createPayout === createConnectedAccountPayout ? getStripeClient() : null);
     const availableBalance = await getConnectedAccountAvailableBalanceAmount({
-      stripeClient,
+      stripeClient: balanceStripeClient,
       stripeAccountId: payoutRun.stripeAccountId,
       currencyCode: payoutRun.currencyCode,
     });
@@ -2338,20 +2388,13 @@ export async function executePayoutRun(
       };
     }
 
-    const payout = await stripeClient.payouts.create(
-      {
-        amount: payoutRun.amount,
-        currency: payoutRun.currencyCode,
-        metadata: {
-          payoutRunId: payoutRun.id,
-          sellerId: payoutRun.sellerId,
-        },
-        description: `Manual payout ${payoutRun.id}`,
-      },
-      {
-        stripeAccount: payoutRun.stripeAccountId,
-      },
-    );
+    const payout = await createPayout({
+      stripeAccountId: payoutRun.stripeAccountId,
+      amount: payoutRun.amount,
+      currencyCode: payoutRun.currencyCode,
+      payoutRunId: payoutRun.id,
+      sellerId: payoutRun.sellerId,
+    });
 
     const updated = await prismaClient.payoutRun.update({
       where: { id: payoutRun.id },

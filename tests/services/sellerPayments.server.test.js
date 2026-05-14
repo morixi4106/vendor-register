@@ -5,6 +5,7 @@ import {
   approvePayoutRun,
   createCheckoutOrder,
   createCheckoutOrderPaymentIntent,
+  createConnectedAccountPayout,
   createOrderRefund,
   createSellerAccountSession,
   createSellerStripeAccount,
@@ -1152,6 +1153,46 @@ test("charge.dispute.created marks the order disputed and seller review required
   assert.equal(state.ledgerEntries[0].direction, "debit");
 });
 
+test("createConnectedAccountPayout sends connected account as a Stripe header", async () => {
+  const originalSecretKey = process.env.STRIPE_SECRET_KEY;
+  const calls = [];
+  process.env.STRIPE_SECRET_KEY = "sk_test_unit";
+
+  try {
+    const payout = await createConnectedAccountPayout({
+      stripeAccountId: "acct_123",
+      amount: 5000,
+      currencyCode: "jpy",
+      payoutRunId: "pr_1",
+      sellerId: "seller_1",
+      async fetchImpl(url, init) {
+        calls.push({ url, init });
+        return {
+          ok: true,
+          async json() {
+            return {
+              id: "po_123",
+            };
+          },
+        };
+      },
+    });
+
+    assert.equal(payout.id, "po_123");
+    assert.equal(calls[0].url, "https://api.stripe.com/v1/payouts");
+    assert.equal(calls[0].init.headers["Stripe-Account"], "acct_123");
+    assert.equal(calls[0].init.headers.Authorization, "Bearer sk_test_unit");
+    assert.match(calls[0].init.body.toString(), /amount=5000/);
+    assert.doesNotMatch(calls[0].init.body.toString(), /stripeAccount/);
+  } finally {
+    if (originalSecretKey) {
+      process.env.STRIPE_SECRET_KEY = originalSecretKey;
+    } else {
+      delete process.env.STRIPE_SECRET_KEY;
+    }
+  }
+});
+
 test("payout runs require approval and execute on the connected account only when eligible", async () => {
   const state = {
     payoutRun: {
@@ -1173,7 +1214,7 @@ test("payout runs require approval and execute on the connected account only whe
       },
     },
   };
-  const stripeCalls = [];
+  const payoutCalls = [];
 
   const fakePrisma = {
     payoutRun: {
@@ -1189,16 +1230,12 @@ test("payout runs require approval and execute on the connected account only whe
       },
     },
   };
-  const fakeStripe = {
-    payouts: {
-      async create(params, options) {
-        stripeCalls.push({ params, options });
-        return {
-          id: "po_123",
-        };
-      },
-    },
-  };
+  async function createPayout(params) {
+    payoutCalls.push(params);
+    return {
+      id: "po_123",
+    };
+  }
 
   const approval = await approvePayoutRun(
     { payoutRunId: "pr_1", approvedBy: "admin_user" },
@@ -1211,26 +1248,19 @@ test("payout runs require approval and execute on the connected account only whe
     { payoutRunId: "pr_1", executedBy: "admin_user" },
     {
       prismaClient: fakePrisma,
-      stripeClient: fakeStripe,
+      createPayout,
     },
   );
 
   assert.equal(execution.ok, true);
   assert.equal(state.payoutRun.status, "executed");
   assert.equal(state.payoutRun.stripePayoutId, "po_123");
-  assert.deepEqual(stripeCalls[0], {
-    params: {
-      amount: 5000,
-      currency: "jpy",
-      metadata: {
-        payoutRunId: "pr_1",
-        sellerId: "seller_1",
-      },
-      description: "Manual payout pr_1",
-    },
-    options: {
-      stripeAccount: "acct_123",
-    },
+  assert.deepEqual(payoutCalls[0], {
+    stripeAccountId: "acct_123",
+    amount: 5000,
+    currencyCode: "jpy",
+    payoutRunId: "pr_1",
+    sellerId: "seller_1",
   });
 });
 
