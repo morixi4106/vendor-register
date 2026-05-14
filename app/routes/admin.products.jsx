@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { Form, Link, Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
@@ -26,18 +26,8 @@ export const action = async ({ request }) => {
     return null;
   }
 
-  if (intent === "approve") {
-    await prisma.product.update({
-      where: { id: productId },
-      data: { approvalStatus: "approved" },
-    });
-  }
-
-  if (intent === "reject") {
-    await prisma.product.update({
-      where: { id: productId },
-      data: { approvalStatus: "rejected" },
-    });
+  if (intent === "approve" || intent === "reject") {
+    return redirect(`/admin/products/${productId}`);
   }
 
   return null;
@@ -85,13 +75,13 @@ export default function AdminProducts() {
             )}
 
             <div style={{ marginTop: "15px", display: "flex", gap: "10px" }}>
-              <Form method="post">
+              <Form method="post" action={`/admin/products/${product.id}`}>
                 <input type="hidden" name="intent" value="approve" />
                 <input type="hidden" name="productId" value={product.id} />
                 <button type="submit">承認</button>
               </Form>
 
-              <Form method="post">
+              <Form method="post" action={`/admin/products/${product.id}`}>
                 <input type="hidden" name="intent" value="reject" />
                 <input type="hidden" name="productId" value={product.id} />
                 <button type="submit">却下</button>
