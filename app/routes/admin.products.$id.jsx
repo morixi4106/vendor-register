@@ -13,7 +13,7 @@ import {
   resolveShopDomain,
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server";
-import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
+import { ensureApprovedProductPublished } from "../services/productPublication.server";
 
 const SHOPIFY_API_VERSION = "2026-01";
 
@@ -288,19 +288,6 @@ async function createShopifyProductFromDbProduct(product) {
     shopifyProductId: createdProduct.id,
     shopDomain,
   };
-}
-
-async function syncProductVendorCollection(product, { shopDomain } = {}) {
-  try {
-    return await syncVendorCollectionByStoreId(product.vendorStoreId, { shopDomain });
-  } catch (error) {
-    console.error("vendor collection sync error:", error);
-    return {
-      ok: false,
-      reason: "sync_failed",
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
 }
 
 export const loader = async ({ params }) => {
@@ -665,12 +652,7 @@ export const action = async ({ request }) => {
           },
         });
 
-        const collectionSync = await syncProductVendorCollection(productWithResolvedShopDomain, {
-          shopDomain,
-        });
-        if (!collectionSync.ok) {
-          console.warn("vendor collection sync warning:", collectionSync);
-        }
+        await ensureApprovedProductPublished(productId);
 
         return redirect(`/admin/products/${productId}`);
       }
@@ -686,12 +668,7 @@ export const action = async ({ request }) => {
         },
       });
 
-      const collectionSync = await syncProductVendorCollection(productWithResolvedShopDomain, {
-        shopDomain: result.shopDomain,
-      });
-      if (!collectionSync.ok) {
-        console.warn("vendor collection sync warning:", collectionSync);
-      }
+      await ensureApprovedProductPublished(productId);
 
       return redirect(`/admin/products/${productId}`);
     }
