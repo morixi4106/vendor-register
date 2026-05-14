@@ -56,6 +56,12 @@ const SELLER_REVIEW_REASON_PAYOUT_FAILED =
 const SELLER_REVIEW_REASON_EXTERNAL_ACCOUNT_UPDATED =
   "payout_external_account_admin_review_required";
 const SELLER_REVIEW_REASON_DISPUTE = "dispute_review_required";
+const STRIPE_ACCOUNT_RESET_REASON = "stripe_account_recreate_requested";
+const STRIPE_ACCOUNT_RESETTABLE_ORDER_STATUSES = new Set([
+  "draft",
+  "payment_intent_created",
+  "failed",
+]);
 
 let stripeClientSingleton = null;
 
@@ -487,6 +493,159 @@ export async function updateSellerStatus(
     changed: true,
     seller: updatedSeller,
   };
+}
+
+function createStripeAccountResetBlockers(seller) {
+  const blockingOrders = (seller?.orders || []).filter((order) => {
+    if (order.paidAt || order.stripeChargeId) return true;
+    return !STRIPE_ACCOUNT_RESETTABLE_ORDER_STATUSES.has(order.status);
+  });
+  const blockingPayoutRuns = seller?.payoutRuns || [];
+  const blockingLedgerEntries = seller?.ledgerEntries || [];
+
+  return {
+    orders: blockingOrders.map((order) => ({
+      id: order.id,
+      status: order.status,
+    })),
+    payoutRuns: blockingPayoutRuns.map((run) => ({
+      id: run.id,
+      status: run.status,
+    })),
+    ledgerEntries: blockingLedgerEntries.map((entry) => ({
+      id: entry.id,
+      entryType: entry.entryType,
+    })),
+  };
+}
+
+function hasStripeAccountResetBlockers(blockers) {
+  return (
+    blockers.orders.length > 0 ||
+    blockers.payoutRuns.length > 0 ||
+    blockers.ledgerEntries.length > 0
+  );
+}
+
+export async function resetSellerStripeAccountForRecreate(
+  {
+    sellerId,
+    changedBy = "admin",
+    reason = STRIPE_ACCOUNT_RESET_REASON,
+  },
+  { prismaClient = prisma } = {},
+) {
+  const seller = await prismaClient.seller.findUnique({
+    where: { id: sellerId },
+    include: {
+      stripeAccount: true,
+      orders: {
+        select: {
+          id: true,
+          status: true,
+          paidAt: true,
+          stripeChargeId: true,
+        },
+      },
+      payoutRuns: {
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+      ledgerEntries: {
+        select: {
+          id: true,
+          entryType: true,
+        },
+        take: 10,
+      },
+    },
+  });
+
+  if (!seller) {
+    return {
+      ok: false,
+      reason: "seller_not_found",
+    };
+  }
+
+  if (!seller.stripeAccount) {
+    return {
+      ok: true,
+      reset: false,
+      reason: "stripe_account_missing",
+      seller,
+    };
+  }
+
+  const blockers = createStripeAccountResetBlockers(seller);
+
+  if (hasStripeAccountResetBlockers(blockers)) {
+    return {
+      ok: false,
+      reason: "stripe_account_reset_blocked",
+      blockers,
+    };
+  }
+
+  const normalizedReason = normalizeText(reason) || STRIPE_ACCOUNT_RESET_REASON;
+  const resetInTransaction = async (tx) => {
+    const staleOrders = await tx.order.updateMany({
+      where: {
+        sellerId: seller.id,
+        sellerStripeAccountId: seller.stripeAccount.id,
+        status: {
+          in: Array.from(STRIPE_ACCOUNT_RESETTABLE_ORDER_STATUSES),
+        },
+        paidAt: null,
+        stripeChargeId: null,
+      },
+      data: {
+        status: "failed",
+        sellerStripeAccountId: null,
+        stripeAccountId: null,
+      },
+    });
+
+    await tx.sellerStripeAccount.delete({
+      where: {
+        id: seller.stripeAccount.id,
+      },
+    });
+
+    const updatedSeller = await tx.seller.update({
+      where: { id: seller.id },
+      data: {
+        status: "pending",
+        statusReason: normalizedReason,
+      },
+    });
+
+    await tx.sellerStatusHistory.create({
+      data: {
+        sellerId: seller.id,
+        fromStatus: seller.status,
+        toStatus: "pending",
+        changedBy,
+        reason: normalizedReason,
+      },
+    });
+
+    return {
+      ok: true,
+      reset: true,
+      seller: updatedSeller,
+      removedStripeAccountId: seller.stripeAccount.stripeAccountId,
+      staleOrdersUpdated: staleOrders.count || 0,
+    };
+  };
+
+  if (typeof prismaClient.$transaction === "function") {
+    return prismaClient.$transaction(resetInTransaction);
+  }
+
+  return resetInTransaction(prismaClient);
 }
 
 async function setSellerReviewStatus(

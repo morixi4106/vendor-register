@@ -10,6 +10,7 @@ import {
   createSellerStripeAccount,
   executePayoutRun,
   handleStripeWebhook,
+  resetSellerStripeAccountForRecreate,
 } from "../../app/services/sellerPayments.server.js";
 
 test("createSellerStripeAccount creates a connected account with manual payouts and no hosted dashboard", async () => {
@@ -222,6 +223,139 @@ test("createSellerStripeAccount falls back to account settings for manual payout
       },
     },
   });
+});
+
+test("resetSellerStripeAccountForRecreate removes an unused Stripe account and marks stale orders failed", async () => {
+  const state = {
+    seller: {
+      id: "seller_1",
+      status: "active",
+      statusReason: null,
+      stripeAccount: {
+        id: "seller_stripe_1",
+        stripeAccountId: "acct_old",
+      },
+      orders: [
+        {
+          id: "order_1",
+          status: "payment_intent_created",
+          paidAt: null,
+          stripeChargeId: null,
+        },
+      ],
+      payoutRuns: [],
+      ledgerEntries: [],
+    },
+    deletedStripeAccountId: null,
+    updatedOrders: null,
+    statusHistory: [],
+  };
+  const fakePrisma = {
+    seller: {
+      async findUnique({ where }) {
+        assert.deepEqual(where, { id: "seller_1" });
+        return state.seller;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, { id: "seller_1" });
+        state.seller = {
+          ...state.seller,
+          ...data,
+        };
+        return state.seller;
+      },
+    },
+    order: {
+      async updateMany({ where, data }) {
+        state.updatedOrders = { where, data };
+        return { count: 1 };
+      },
+    },
+    sellerStripeAccount: {
+      async delete({ where }) {
+        state.deletedStripeAccountId = where.id;
+        state.seller = {
+          ...state.seller,
+          stripeAccount: null,
+        };
+        return { id: where.id };
+      },
+    },
+    sellerStatusHistory: {
+      async create({ data }) {
+        state.statusHistory.push(data);
+        return data;
+      },
+    },
+    async $transaction(callback) {
+      return callback(fakePrisma);
+    },
+  };
+
+  const result = await resetSellerStripeAccountForRecreate(
+    {
+      sellerId: "seller_1",
+      changedBy: "admin",
+      reason: "platform_mismatch",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reset, true);
+  assert.equal(result.removedStripeAccountId, "acct_old");
+  assert.equal(result.staleOrdersUpdated, 1);
+  assert.equal(state.deletedStripeAccountId, "seller_stripe_1");
+  assert.equal(state.seller.status, "pending");
+  assert.equal(state.seller.statusReason, "platform_mismatch");
+  assert.deepEqual(state.updatedOrders.data, {
+    status: "failed",
+    sellerStripeAccountId: null,
+    stripeAccountId: null,
+  });
+  assert.equal(state.statusHistory[0].fromStatus, "active");
+  assert.equal(state.statusHistory[0].toStatus, "pending");
+});
+
+test("resetSellerStripeAccountForRecreate refuses to reset accounts with paid orders", async () => {
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          stripeAccount: {
+            id: "seller_stripe_1",
+            stripeAccountId: "acct_old",
+          },
+          orders: [
+            {
+              id: "order_paid",
+              status: "paid",
+              paidAt: new Date(),
+              stripeChargeId: "ch_123",
+            },
+          ],
+          payoutRuns: [],
+          ledgerEntries: [],
+        };
+      },
+    },
+  };
+
+  const result = await resetSellerStripeAccountForRecreate(
+    { sellerId: "seller_1" },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "stripe_account_reset_blocked");
+  assert.deepEqual(result.blockers.orders, [
+    {
+      id: "order_paid",
+      status: "paid",
+    },
+  ]);
 });
 
 test("createSellerAccountSession returns an embedded account session secret", async () => {

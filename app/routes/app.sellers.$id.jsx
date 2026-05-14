@@ -26,9 +26,11 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { createSellerStripeAccount, updateSellerStatus } = await import(
-    "../services/sellerPayments.server.js"
-  );
+  const {
+    createSellerStripeAccount,
+    resetSellerStripeAccountForRecreate,
+    updateSellerStatus,
+  } = await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
@@ -72,6 +74,36 @@ export const action = async ({ request, params }) => {
         { status: 500 },
       );
     }
+  }
+
+  if (intent === "reset_stripe_account") {
+    const result = await resetSellerStripeAccountForRecreate({
+      sellerId: params.id,
+      changedBy: "admin",
+      reason: "stripe_platform_mismatch_recreate",
+    });
+
+    if (!result.ok) {
+      return json(
+        {
+          ok: false,
+          reason: result.reason,
+          message:
+            result.reason === "stripe_account_reset_blocked"
+              ? "売上・台帳・出金履歴があるため、Stripe連携アカウントをリセットできません。"
+              : "Stripe連携アカウントのリセットに失敗しました。",
+          blockers: result.blockers || null,
+        },
+        { status: 400 },
+      );
+    }
+
+    return json({
+      ok: true,
+      message: result.reset
+        ? `Stripe連携アカウントをリセットしました。古い未決済注文 ${result.staleOrdersUpdated} 件を失敗扱いにしました。`
+        : "リセット対象のStripe連携アカウントはありませんでした。",
+    });
   }
 
   if (intent !== "update_status") {
@@ -149,6 +181,9 @@ export default function AdminSellerDetailPage() {
     navigation.formData?.get("intent") === "update_status";
   const isStripeCreating =
     navigation.formData?.get("intent") === "create_stripe_account" &&
+    navigation.state !== "idle";
+  const isStripeResetting =
+    navigation.formData?.get("intent") === "reset_stripe_account" &&
     navigation.state !== "idle";
 
   return (
@@ -378,6 +413,30 @@ export default function AdminSellerDetailPage() {
                   disabled={isStripeCreating}
                 >
                   {isStripeCreating ? "作成中..." : "Stripe連携アカウントを作成"}
+                </button>
+              </Form>
+            ) : null}
+            {data.stripeAccount ? (
+              <Form
+                method="post"
+                onSubmit={(event) => {
+                  if (
+                    !window.confirm(
+                      "このStripe連携アカウントをリセットします。未決済のテスト注文は失敗扱いになります。続行しますか？",
+                    )
+                  ) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <input type="hidden" name="intent" value="reset_stripe_account" />
+                <button
+                  type="submit"
+                  className="seller-detail__button seller-detail__button--secondary"
+                  disabled={isStripeResetting}
+                  style={{ marginTop: "12px" }}
+                >
+                  {isStripeResetting ? "リセット中..." : "Stripe連携を作り直す"}
                 </button>
               </Form>
             ) : null}
