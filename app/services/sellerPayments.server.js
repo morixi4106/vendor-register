@@ -1427,6 +1427,7 @@ export async function createCheckoutOrderPaymentIntent(
     try {
       const existingIntent = await stripeClient.paymentIntents.retrieve(
         order.stripePaymentIntentId,
+        {},
         {
           stripeAccount: stripeAccountId,
         },
@@ -2312,9 +2313,12 @@ async function getConnectedAccountAvailableBalanceAmount(
     return null;
   }
 
-  const balance = await stripeClient.balance.retrieve({
-    stripeAccount: stripeAccountId,
-  });
+  const balance = await stripeClient.balance.retrieve(
+    {},
+    {
+      stripeAccount: stripeAccountId,
+    },
+  );
   const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
   const availableRows = Array.isArray(balance?.available) ? balance.available : [];
 

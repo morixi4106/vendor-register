@@ -1292,7 +1292,8 @@ test("executePayoutRun refuses to create a payout above connected account availa
   };
   const fakeStripe = {
     balance: {
-      async retrieve(options) {
+      async retrieve(params, options) {
+        assert.deepEqual(params, {});
         assert.deepEqual(options, {
           stripeAccount: "acct_123",
         });
