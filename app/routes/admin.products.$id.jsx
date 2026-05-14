@@ -16,6 +16,13 @@ import {
 import { ensureApprovedProductPublished } from "../services/productPublication.server";
 
 const SHOPIFY_API_VERSION = "2026-01";
+const SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS = "publishing";
+const SHOPIFY_PRODUCT_CREATE_CLAIMABLE_STATUSES = [
+  "pending",
+  "review",
+  "rejected",
+  "approved",
+];
 
 function isReconnectableShopifyError(message = "") {
   return (
@@ -288,6 +295,36 @@ async function createShopifyProductFromDbProduct(product) {
     shopifyProductId: createdProduct.id,
     shopDomain,
   };
+}
+
+async function claimShopifyProductCreation(productId) {
+  const result = await prisma.product.updateMany({
+    where: {
+      id: productId,
+      shopifyProductId: null,
+      approvalStatus: {
+        in: SHOPIFY_PRODUCT_CREATE_CLAIMABLE_STATUSES,
+      },
+    },
+    data: {
+      approvalStatus: SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS,
+    },
+  });
+
+  return result.count === 1;
+}
+
+async function resetShopifyProductCreationClaim(productId, approvalStatus) {
+  await prisma.product.updateMany({
+    where: {
+      id: productId,
+      shopifyProductId: null,
+      approvalStatus: SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS,
+    },
+    data: {
+      approvalStatus: approvalStatus || "pending",
+    },
+  });
 }
 
 export const loader = async ({ params }) => {
@@ -657,7 +694,44 @@ export const action = async ({ request }) => {
         return redirect(`/admin/products/${productId}`);
       }
 
-      const result = await createShopifyProductFromDbProduct(productWithResolvedShopDomain);
+      const originalApprovalStatus =
+        productWithResolvedShopDomain.approvalStatus || "pending";
+      const claimedCreation = await claimShopifyProductCreation(productId);
+
+      if (!claimedCreation) {
+        const latestProduct = await prisma.product.findUnique({
+          where: { id: productId },
+          select: {
+            approvalStatus: true,
+            shopifyProductId: true,
+          },
+        });
+
+        if (latestProduct?.shopifyProductId) {
+          await prisma.product.update({
+            where: { id: productId },
+            data: {
+              approvalStatus: "approved",
+            },
+          });
+
+          await ensureApprovedProductPublished(productId);
+        }
+
+        return redirect(`/admin/products/${productId}`);
+      }
+
+      let result;
+
+      try {
+        result = await createShopifyProductFromDbProduct({
+          ...productWithResolvedShopDomain,
+          approvalStatus: SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS,
+        });
+      } catch (error) {
+        await resetShopifyProductCreationClaim(productId, originalApprovalStatus);
+        throw error;
+      }
 
       await prisma.product.update({
         where: { id: productId },
