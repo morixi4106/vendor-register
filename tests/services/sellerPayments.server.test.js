@@ -14,6 +14,7 @@ import {
   executePayoutRun,
   handleStripeWebhook,
   markPayoutRunManuallyPaid,
+  processShopifyOrderCancelledSettlement,
   processShopifyOrderPaidSettlement,
   processShopifyRefundSettlement,
   resetSellerStripeAccountForRecreate,
@@ -1307,6 +1308,33 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
           ...data,
         };
       },
+      async findMany({ where }) {
+        assert.deepEqual(where.entryType.in, [
+          "shopify_order_paid",
+          "refund",
+          "shopify_order_cancelled",
+        ]);
+        assert.deepEqual(where.OR, [
+          { stripeObjectId: "gid://shopify/Order/1001" },
+          {
+            metadataJson: {
+              path: ["shopifyOrderId"],
+              equals: "gid://shopify/Order/1001",
+            },
+          },
+        ]);
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+          },
+        ];
+      },
     },
     product: {
       async findMany({ where }) {
@@ -1544,9 +1572,234 @@ test("processShopifyRefundSettlement refuses multi-seller Shopify refunds", asyn
   assert.equal(state.ledgerEntries.length, 0);
 });
 
+test("processShopifyRefundSettlement does not double debit after order cancellation reversal", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+          },
+          {
+            id: "ledger_cancelled",
+            sellerId: "seller_1",
+            entryType: "shopify_order_cancelled",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_1",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2003,
+        order_id: 1001,
+        refund_line_items: [
+          {
+            line_item_id: 1,
+            quantity: 1,
+            subtotal: 99,
+            line_item: {
+              product_id: 1,
+            },
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "shopify_refund_order_already_reversed");
+  assert.equal(result.amount, 0);
+  assert.equal(state.ledgerEntries.length, 0);
+});
+
+test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout balance", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "shopify_order_cancelled",
+          stripeObjectId: "gid://shopify/Order/1001",
+        });
+        return null;
+      },
+      async findMany({ where }) {
+        assert.deepEqual(where.entryType.in, [
+          "shopify_order_paid",
+          "refund",
+          "shopify_order_cancelled",
+        ]);
+        assert.deepEqual(where.OR, [
+          { stripeObjectId: "gid://shopify/Order/1001" },
+          {
+            metadataJson: {
+              path: ["shopifyOrderId"],
+              equals: "gid://shopify/Order/1001",
+            },
+          },
+        ]);
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await processShopifyOrderCancelledSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1001,
+        admin_graphql_api_id: "gid://shopify/Order/1001",
+        name: "#1001",
+        currency: "JPY",
+        cancel_reason: "customer",
+        cancelled_at: "2026-05-16T12:00:00Z",
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.sellerId, "seller_1");
+  assert.equal(result.amount, 99);
+  assert.equal(result.currencyCode, "jpy");
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "shopify_order_cancelled");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
+  assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
+  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Order/1001");
+  assert.equal(state.ledgerEntries[0].metadataJson.cancelReason, "customer");
+});
+
+test("processShopifyOrderCancelledSettlement only reverses the remaining unpaid balance", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 1000,
+          },
+          {
+            id: "ledger_refund",
+            sellerId: "seller_1",
+            entryType: "refund",
+            stripeObjectId: "gid://shopify/Refund/2001",
+            amount: 400,
+            metadataJson: {
+              shopifyOrderId: "gid://shopify/Order/1001",
+            },
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+  };
+
+  const result = await processShopifyOrderCancelledSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1001,
+        currency: "JPY",
+        cancel_reason: "customer",
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.amount, 600);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].amount, 600);
+});
+
 test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payouts as deductions", () => {
   const balance = calculateSellerPayoutableLedgerBalance([
     { entryType: "shopify_order_paid", amount: 10000 },
+    { entryType: "shopify_order_cancelled", amount: 800 },
     { entryType: "charge", amount: 5000 },
     { entryType: "application_fee", amount: 1000 },
     { entryType: "application_fee_refund", amount: 200 },
@@ -1557,7 +1810,7 @@ test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payou
     { entryType: "payout_paid", amount: 2000 },
   ]);
 
-  assert.equal(balance, 10700);
+  assert.equal(balance, 9900);
 });
 
 test("createPayoutRun refuses amounts above the seller payoutable ledger balance", async () => {

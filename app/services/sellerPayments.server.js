@@ -42,6 +42,7 @@ export const ORDER_STATUSES = [
 export const LEDGER_ENTRY_TYPES = [
   "charge",
   "shopify_order_paid",
+  "shopify_order_cancelled",
   "application_fee",
   "application_fee_refund",
   "refund",
@@ -68,6 +69,14 @@ const STRIPE_ACCOUNT_RESETTABLE_ORDER_STATUSES = new Set([
   "payment_intent_created",
   "failed",
 ]);
+const SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES = [
+  "refund",
+  "shopify_order_cancelled",
+];
+const SHOPIFY_ORDER_SETTLEMENT_ENTRY_TYPES = [
+  "shopify_order_paid",
+  ...SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES,
+];
 
 let stripeClientSingleton = null;
 
@@ -1736,6 +1745,62 @@ function getShopifyRefundLineAmount(refundLineItem, currencyCode) {
   return Math.max(0, unitAmount * quantity);
 }
 
+async function findShopifyOrderLedgerEntries(shopifyOrderId, prismaClient) {
+  if (!shopifyOrderId) {
+    return [];
+  }
+
+  return prismaClient.ledgerEntry.findMany({
+    where: {
+      entryType: {
+        in: SHOPIFY_ORDER_SETTLEMENT_ENTRY_TYPES,
+      },
+      OR: [
+        {
+          stripeObjectId: shopifyOrderId,
+        },
+        {
+          metadataJson: {
+            path: ["shopifyOrderId"],
+            equals: shopifyOrderId,
+          },
+        },
+      ],
+    },
+  });
+}
+
+function summarizeShopifyOrderLedgerEntries(entries, sellerId = null) {
+  const sellerLedgerEntries = sellerId
+    ? entries.filter((entry) => entry?.sellerId === sellerId)
+    : entries;
+  const paidAmount = sellerLedgerEntries
+    .filter((entry) => entry?.entryType === "shopify_order_paid")
+    .reduce((total, entry) => total + clampInteger(entry?.amount), 0);
+  const reversedAmount = sellerLedgerEntries
+    .filter((entry) =>
+      SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES.includes(entry?.entryType),
+    )
+    .reduce((total, entry) => total + clampInteger(entry?.amount), 0);
+
+  return {
+    paidAmount,
+    reversedAmount,
+    remainingAmount: Math.max(0, paidAmount - reversedAmount),
+    hasPaidEntry: paidAmount > 0,
+  };
+}
+
+function capShopifyOrderReversalAmount(requestedAmount, orderLedgerSummary) {
+  const normalizedAmount = clampInteger(requestedAmount);
+
+  if (!orderLedgerSummary?.hasPaidEntry) {
+    return normalizedAmount;
+  }
+
+  return Math.min(normalizedAmount, orderLedgerSummary.remainingAmount);
+}
+
 function compareProductMatchPriority(a, b, shopDomain) {
   const aExact = normalizeLowercase(a?.shopDomain) === shopDomain ? 0 : 1;
   const bExact = normalizeLowercase(b?.shopDomain) === shopDomain ? 0 : 1;
@@ -2160,16 +2225,30 @@ export async function processShopifyRefundSettlement(
     };
   }
 
-  const settlementAmount = matchedLines.reduce(
+  const requestedSettlementAmount = matchedLines.reduce(
     (total, matchedLine) => total + matchedLine.amount,
     0,
+  );
+  const orderLedgerEntries = await findShopifyOrderLedgerEntries(
+    shopifyOrderId,
+    prismaClient,
+  );
+  const orderLedgerSummary = summarizeShopifyOrderLedgerEntries(
+    orderLedgerEntries,
+    seller.id,
+  );
+  const settlementAmount = capShopifyOrderReversalAmount(
+    requestedSettlementAmount,
+    orderLedgerSummary,
   );
 
   if (settlementAmount <= 0) {
     return {
-      ok: false,
-      reason: "shopify_refund_settlement_amount_empty",
+      ok: true,
+      reason: "shopify_refund_order_already_reversed",
       sellerId: seller.id,
+      amount: 0,
+      currencyCode,
     };
   }
 
@@ -2225,6 +2304,125 @@ export async function processShopifyRefundSettlement(
     currencyCode,
     matchedLineCount: matchedLines.length,
     unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+  };
+}
+
+export async function processShopifyOrderCancelledSettlement(
+  { payload, shop },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopifyOrderId = normalizeShopifyOrderId(payload);
+  const shopifyOrderName = normalizeText(payload?.name || payload?.order_number);
+  const currencyCode =
+    normalizeLowercase(payload?.currency || payload?.presentment_currency) ||
+    DEFAULT_ORDER_CURRENCY;
+
+  if (!shopDomain || !shopifyOrderId) {
+    return {
+      ok: false,
+      reason: "invalid_shopify_cancelled_order_payload",
+    };
+  }
+
+  const existingCancellationEntry = await prismaClient.ledgerEntry.findFirst({
+    where: {
+      entryType: "shopify_order_cancelled",
+      stripeObjectId: shopifyOrderId,
+    },
+  });
+
+  if (existingCancellationEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingCancellationEntry,
+    };
+  }
+
+  const orderLedgerEntries = await findShopifyOrderLedgerEntries(
+    shopifyOrderId,
+    prismaClient,
+  );
+  const paidEntries = orderLedgerEntries.filter(
+    (entry) => entry?.entryType === "shopify_order_paid",
+  );
+  const sellerIds = uniqueValues(paidEntries.map((entry) => entry?.sellerId));
+
+  if (sellerIds.length === 0) {
+    return {
+      ok: true,
+      reason: "shopify_cancelled_order_not_settled",
+      amount: 0,
+      currencyCode,
+    };
+  }
+
+  if (sellerIds.length > 1) {
+    return {
+      ok: false,
+      reason: "multi_seller_shopify_cancelled_order_unsupported",
+      sellerIds,
+    };
+  }
+
+  const sellerId = sellerIds[0];
+  const orderLedgerSummary = summarizeShopifyOrderLedgerEntries(
+    orderLedgerEntries,
+    sellerId,
+  );
+  const settlementAmount = orderLedgerSummary.remainingAmount;
+
+  if (settlementAmount <= 0) {
+    return {
+      ok: true,
+      reason: "shopify_cancelled_order_already_reversed",
+      sellerId,
+      amount: 0,
+      currencyCode,
+    };
+  }
+
+  const paidEntry = paidEntries.find((entry) => entry?.sellerId === sellerId);
+  const occurredAt = payload?.cancelled_at
+    ? new Date(payload.cancelled_at)
+    : payload?.updated_at
+      ? new Date(payload.updated_at)
+      : new Date();
+  const ledgerEntry = await createLedgerEntry(
+    {
+      sellerId,
+      sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
+      stripeAccountId: paidEntry?.stripeAccountId || null,
+      entryType: "shopify_order_cancelled",
+      stripeObjectId: shopifyOrderId,
+      amount: settlementAmount,
+      currencyCode,
+      direction: "debit",
+      description: "Shopify order cancelled",
+      metadataJson: {
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        shopifyOrderNumericId: normalizeText(payload?.id),
+        cancelReason: normalizeText(payload?.cancel_reason),
+        cancelledAt: normalizeText(payload?.cancelled_at),
+        settlementMode: "shopify_cancelled_order_to_connect_manual_payout",
+        paidAmount: orderLedgerSummary.paidAmount,
+        reversedAmountBeforeCancellation: orderLedgerSummary.reversedAmount,
+      },
+      occurredAt,
+    },
+    { prismaClient },
+  );
+
+  return {
+    ok: true,
+    duplicate: false,
+    ledgerEntry,
+    sellerId,
+    amount: settlementAmount,
+    currencyCode,
   };
 }
 
@@ -2864,6 +3062,7 @@ export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } 
 
 const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
   shopify_order_paid: 1,
+  shopify_order_cancelled: -1,
   charge: 1,
   application_fee: -1,
   application_fee_refund: 1,
