@@ -35,6 +35,10 @@ export default function App() {
           出金管理
         </Link>
 
+        <Link to="/app/production-readiness">
+          本番確認
+        </Link>
+
         <Link to="/app/contact-inquiries">
           問い合わせ一覧
         </Link>
