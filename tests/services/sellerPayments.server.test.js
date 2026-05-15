@@ -15,6 +15,7 @@ import {
   handleStripeWebhook,
   markPayoutRunManuallyPaid,
   processShopifyOrderPaidSettlement,
+  processShopifyRefundSettlement,
   resetSellerStripeAccountForRecreate,
 } from "../../app/services/sellerPayments.server.js";
 
@@ -1282,6 +1283,263 @@ test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", as
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, "multi_seller_shopify_order_unsupported");
+  assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
+  assert.equal(state.ledgerEntries.length, 0);
+});
+
+test("processShopifyRefundSettlement records a seller refund debit ledger entry", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "refund",
+          stripeObjectId: "gid://shopify/Refund/2001",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany({ where }) {
+        assert.deepEqual(where.shopifyProductId.in, [
+          "gid://shopify/Product/911",
+          "911",
+        ]);
+        assert.deepEqual(where.OR, [
+          { shopDomain: "b30ize-1a.myshopify.com" },
+          { shopDomain: null },
+        ]);
+        return [
+          {
+            id: "product_1",
+            name: "Test Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Test Store",
+              seller: null,
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor",
+                storeName: "Test Store",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_123",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2001,
+        admin_graphql_api_id: "gid://shopify/Refund/2001",
+        order_id: 1001,
+        created_at: "2026-05-16T12:00:00Z",
+        refund_line_items: [
+          {
+            id: 301,
+            line_item_id: 501,
+            quantity: 1,
+            subtotal_set: {
+              shop_money: {
+                amount: "99",
+                currency_code: "JPY",
+              },
+            },
+            line_item: {
+              id: 501,
+              product_id: 911,
+            },
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.sellerId, "seller_1");
+  assert.equal(result.amount, 99);
+  assert.equal(result.currencyCode, "jpy");
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "refund");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
+  assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
+  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Refund/2001");
+  assert.equal(state.ledgerEntries[0].metadataJson.shopifyOrderId, "gid://shopify/Order/1001");
+  assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
+  assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 99);
+});
+
+test("processShopifyRefundSettlement is idempotent by Shopify refund id", async () => {
+  const existingLedgerEntry = {
+    id: "ledger_existing",
+    entryType: "refund",
+    stripeObjectId: "gid://shopify/Refund/2001",
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return existingLedgerEntry;
+      },
+      async create() {
+        throw new Error("duplicate refund should not create another ledger entry");
+      },
+    },
+    product: {
+      async findMany() {
+        throw new Error("duplicate refund should not load products");
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2001,
+        order_id: 1001,
+        refund_line_items: [
+          {
+            line_item_id: 501,
+            quantity: 1,
+            subtotal: 99,
+            line_item: {
+              product_id: 911,
+            },
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    duplicate: true,
+    ledgerEntry: existingLedgerEntry,
+  });
+});
+
+test("processShopifyRefundSettlement refuses multi-seller Shopify refunds", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor-1",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_1",
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "product_2",
+            name: "Product 2",
+            shopifyProductId: "gid://shopify/Product/2",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_2",
+                handle: "vendor-2",
+                seller: {
+                  id: "seller_2",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_2",
+                    stripeAccountId: "acct_2",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2002,
+        order_id: 1002,
+        refund_line_items: [
+          {
+            line_item_id: 1,
+            quantity: 1,
+            subtotal: 1000,
+            line_item: {
+              product_id: 1,
+            },
+          },
+          {
+            line_item_id: 2,
+            quantity: 1,
+            subtotal: 2000,
+            line_item: {
+              product_id: 2,
+            },
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "multi_seller_shopify_refund_unsupported");
   assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
   assert.equal(state.ledgerEntries.length, 0);
 });

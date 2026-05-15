@@ -1637,6 +1637,13 @@ function normalizeShopifyOrderId(payload) {
   );
 }
 
+function normalizeShopifyRefundId(payload) {
+  return (
+    normalizeShopifyGid("Refund", payload?.admin_graphql_api_id) ||
+    normalizeShopifyGid("Refund", payload?.id)
+  );
+}
+
 function getShopifyLineProductIdCandidates(lineItem) {
   return uniqueValues([
     normalizeShopifyGid("Product", lineItem?.product_id),
@@ -1677,6 +1684,56 @@ function getShopifyLineNetAmount(lineItem, currencyCode) {
   const discountAmount = getLineDiscountAmount(lineItem, currencyCode);
 
   return Math.max(0, grossAmount - discountAmount);
+}
+
+function getShopifyRefundLineProductIdCandidates(refundLineItem) {
+  const lineItem = refundLineItem?.line_item || refundLineItem;
+
+  return uniqueValues([
+    normalizeShopifyGid("Product", refundLineItem?.product_id),
+    normalizeShopifyGid("Product", lineItem?.product_id),
+    normalizeShopifyGid("Product", lineItem?.product?.id),
+    normalizeShopifyGid("Product", lineItem?.product?.admin_graphql_api_id),
+    normalizeText(refundLineItem?.product_id),
+    normalizeText(lineItem?.product_id),
+  ]);
+}
+
+function getShopifyRefundCurrencyCode(payload, refundLineItems) {
+  return (
+    normalizeLowercase(payload?.currency) ||
+    normalizeLowercase(
+      refundLineItems[0]?.subtotal_set?.shop_money?.currency_code,
+    ) ||
+    normalizeLowercase(
+      refundLineItems[0]?.subtotal_set?.presentment_money?.currency_code,
+    ) ||
+    DEFAULT_ORDER_CURRENCY
+  );
+}
+
+function getShopifyRefundLineAmount(refundLineItem, currencyCode) {
+  const subtotal =
+    refundLineItem?.subtotal_set?.shop_money?.amount ??
+    refundLineItem?.subtotal_set?.presentment_money?.amount ??
+    refundLineItem?.subtotal;
+
+  const subtotalAmount = moneyAmountToMinorUnits(subtotal, currencyCode);
+
+  if (subtotalAmount > 0) {
+    return subtotalAmount;
+  }
+
+  const lineItem = refundLineItem?.line_item || refundLineItem;
+  const quantity = toPositiveInteger(refundLineItem?.quantity) || 0;
+  const unitAmount = moneyAmountToMinorUnits(
+    lineItem?.price_set?.shop_money?.amount ??
+      lineItem?.price_set?.presentment_money?.amount ??
+      lineItem?.price,
+    currencyCode,
+  );
+
+  return Math.max(0, unitAmount * quantity);
 }
 
 function compareProductMatchPriority(a, b, shopDomain) {
@@ -1925,6 +1982,232 @@ export async function processShopifyOrderPaidSettlement(
           localProductId: product.id,
           localProductName: product.name,
           quantity: toPositiveInteger(lineItem?.quantity) || 0,
+          amount,
+        })),
+      },
+      occurredAt,
+    },
+    { prismaClient },
+  );
+
+  return {
+    ok: true,
+    duplicate: false,
+    ledgerEntry,
+    sellerId: seller.id,
+    amount: settlementAmount,
+    currencyCode,
+    matchedLineCount: matchedLines.length,
+    unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+  };
+}
+
+export async function processShopifyRefundSettlement(
+  { payload, shop },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopifyRefundId = normalizeShopifyRefundId(payload);
+  const shopifyOrderId = normalizeShopifyGid("Order", payload?.order_id);
+  const refundLineItems = Array.isArray(payload?.refund_line_items)
+    ? payload.refund_line_items
+    : [];
+  const currencyCode = getShopifyRefundCurrencyCode(payload, refundLineItems);
+
+  if (!shopDomain || !shopifyRefundId || refundLineItems.length === 0) {
+    return {
+      ok: false,
+      reason: "invalid_shopify_refund_payload",
+    };
+  }
+
+  const existingLedgerEntry = await prismaClient.ledgerEntry.findFirst({
+    where: {
+      entryType: "refund",
+      stripeObjectId: shopifyRefundId,
+    },
+  });
+
+  if (existingLedgerEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingLedgerEntry,
+    };
+  }
+
+  const productIdCandidates = uniqueValues(
+    refundLineItems.flatMap(getShopifyRefundLineProductIdCandidates),
+  );
+
+  if (productIdCandidates.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_refund_products_missing",
+    };
+  }
+
+  const products = await prismaClient.product.findMany({
+    where: {
+      shopifyProductId: {
+        in: productIdCandidates,
+      },
+      OR: [
+        {
+          shopDomain,
+        },
+        {
+          shopDomain: null,
+        },
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      approvalStatus: true,
+      shopifyProductId: true,
+      shopDomain: true,
+      vendorStoreId: true,
+      vendorStore: {
+        select: {
+          id: true,
+          storeName: true,
+          seller: {
+            select: {
+              id: true,
+              status: true,
+              stripeAccount: true,
+            },
+          },
+          vendorAuth: {
+            select: {
+              id: true,
+              handle: true,
+              storeName: true,
+              seller: {
+                select: {
+                  id: true,
+                  status: true,
+                  stripeAccount: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const productMap = buildProductCandidateMap(products, shopDomain);
+  const matchedLines = [];
+  const unmatchedProductIds = [];
+
+  for (const refundLineItem of refundLineItems) {
+    const candidates = getShopifyRefundLineProductIdCandidates(refundLineItem);
+    const product = candidates.map((candidate) => productMap.get(candidate)).find(Boolean);
+
+    if (!product) {
+      unmatchedProductIds.push(
+        candidates[0] ||
+          normalizeText(refundLineItem?.line_item?.product_id) ||
+          normalizeText(refundLineItem?.product_id) ||
+          null,
+      );
+      continue;
+    }
+
+    matchedLines.push({
+      refundLineItem,
+      product,
+      amount: getShopifyRefundLineAmount(refundLineItem, currencyCode),
+    });
+  }
+
+  if (matchedLines.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_refund_no_matching_products",
+      unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+    };
+  }
+
+  const sellerIds = uniqueValues(
+    matchedLines.map(({ product }) => getProductSeller(product)?.id),
+  );
+
+  if (sellerIds.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_refund_seller_missing",
+    };
+  }
+
+  if (sellerIds.length > 1) {
+    return {
+      ok: false,
+      reason: "multi_seller_shopify_refund_unsupported",
+      sellerIds,
+    };
+  }
+
+  const seller = getProductSeller(matchedLines[0].product);
+
+  if (!seller.stripeAccount?.id || !seller.stripeAccount?.stripeAccountId) {
+    return {
+      ok: false,
+      reason: "stripe_account_missing",
+      sellerId: seller.id,
+    };
+  }
+
+  const settlementAmount = matchedLines.reduce(
+    (total, matchedLine) => total + matchedLine.amount,
+    0,
+  );
+
+  if (settlementAmount <= 0) {
+    return {
+      ok: false,
+      reason: "shopify_refund_settlement_amount_empty",
+      sellerId: seller.id,
+    };
+  }
+
+  const occurredAt = payload?.processed_at
+    ? new Date(payload.processed_at)
+    : payload?.created_at
+      ? new Date(payload.created_at)
+      : new Date();
+  const vendor = getProductVendor(matchedLines[0].product);
+  const ledgerEntry = await createLedgerEntry(
+    {
+      sellerId: seller.id,
+      sellerStripeAccountId: seller.stripeAccount.id,
+      stripeAccountId: seller.stripeAccount.stripeAccountId,
+      entryType: "refund",
+      stripeObjectId: shopifyRefundId,
+      amount: settlementAmount,
+      currencyCode,
+      direction: "debit",
+      description: "Shopify refund",
+      metadataJson: {
+        shopDomain,
+        shopifyRefundId,
+        shopifyRefundNumericId: normalizeText(payload?.id),
+        shopifyOrderId,
+        shopifyOrderNumericId: normalizeText(payload?.order_id),
+        vendorId: normalizeText(vendor?.id),
+        vendorHandle: normalizeText(vendor?.handle),
+        settlementMode: "shopify_refund_to_connect_manual_payout",
+        matchedLineCount: matchedLines.length,
+        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+        lineItems: matchedLines.map(({ refundLineItem, product, amount }) => ({
+          shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
+          shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
+          shopifyProductId: normalizeText(product.shopifyProductId),
+          localProductId: product.id,
+          localProductName: product.name,
+          quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
           amount,
         })),
       },
