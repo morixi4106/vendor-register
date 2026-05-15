@@ -1,7 +1,7 @@
 import { json, redirect } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
-import { executePayoutRun } from "../services/sellerPayments.server.js";
+import { markPayoutRunManuallyPaid } from "../services/sellerPayments.server.js";
 
 export const loader = async () => {
   return json(
@@ -13,9 +13,12 @@ export const loader = async () => {
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
 
-  const result = await executePayoutRun({
+  const formData = await request.formData();
+  const result = await markPayoutRunManuallyPaid({
     payoutRunId: params.id,
     executedBy: "admin",
+    externalTransferId: formData.get("externalTransferId"),
+    transferMemo: formData.get("transferMemo"),
   });
 
   if (!result.ok) {

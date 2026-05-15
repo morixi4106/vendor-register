@@ -13,6 +13,7 @@ import {
   createSellerStripeAccount,
   executePayoutRun,
   handleStripeWebhook,
+  markPayoutRunManuallyPaid,
   processShopifyOrderPaidSettlement,
   resetSellerStripeAccountForRecreate,
 } from "../../app/services/sellerPayments.server.js";
@@ -1395,6 +1396,7 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
           amount: 900,
           currencyCode: "jpy",
           status: "draft",
+          transferMethod: "manual_bank_transfer",
         });
         return {
           id: "pr_1",
@@ -1758,6 +1760,80 @@ test("payout runs require approval and execute on the connected account only whe
     payoutRunId: "pr_1",
     sellerId: "seller_1",
   });
+});
+
+test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe payout", async () => {
+  const state = {
+    ledgerEntries: [],
+    payoutRun: {
+      id: "pr_manual",
+      sellerId: "seller_1",
+      sellerStripeAccountId: "ssa_1",
+      stripeAccountId: "acct_123",
+      amount: 9900,
+      currencyCode: "jpy",
+      status: "approved",
+      transferMethod: "manual_bank_transfer",
+      stripePayoutId: null,
+      seller: {
+        id: "seller_1",
+        status: "active",
+        stripeAccount: {
+          id: "ssa_1",
+          payoutsEnabled: true,
+        },
+      },
+    },
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    payoutRun: {
+      async findUnique() {
+        return state.payoutRun;
+      },
+      async update({ data }) {
+        state.payoutRun = {
+          ...state.payoutRun,
+          ...data,
+        };
+        return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await markPayoutRunManuallyPaid(
+    {
+      payoutRunId: "pr_manual",
+      executedBy: "admin_user",
+      externalTransferId: "bank_tx_123",
+      transferMemo: "May payout",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(state.payoutRun.status, "executed");
+  assert.equal(state.payoutRun.transferMethod, "manual_bank_transfer");
+  assert.equal(state.payoutRun.externalTransferId, "bank_tx_123");
+  assert.equal(state.payoutRun.transferMemo, "May payout");
+  assert.equal(state.payoutRun.stripePayoutId, null);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "payout_paid");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].amount, 9900);
+  assert.equal(state.ledgerEntries[0].stripeObjectId, "bank_tx_123");
+  assert.equal(state.ledgerEntries[0].metadataJson.transferMethod, "manual_bank_transfer");
 });
 
 test("executePayoutRun refuses to create a payout above connected account available balance", async () => {

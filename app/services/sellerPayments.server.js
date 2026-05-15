@@ -25,6 +25,11 @@ export const PAYOUT_RUN_STATUSES = [
   "failed",
 ];
 
+export const PAYOUT_TRANSFER_METHODS = [
+  "manual_bank_transfer",
+  "stripe_connect_payout",
+];
+
 export const ORDER_STATUSES = [
   "draft",
   "payment_intent_created",
@@ -334,6 +339,17 @@ function createPayoutRunStatusLabel(status) {
       return "失敗";
     default:
       return status || "-";
+  }
+}
+
+function createPayoutTransferMethodLabel(method) {
+  switch (method) {
+    case "manual_bank_transfer":
+      return "手動送金";
+    case "stripe_connect_payout":
+      return "Stripe Connect payout";
+    default:
+      return method || "-";
   }
 }
 
@@ -2529,6 +2545,7 @@ export async function listPayoutRuns({ prismaClient = prisma } = {}) {
   return runs.map((run) => ({
     ...run,
     statusLabel: createPayoutRunStatusLabel(run.status),
+    transferMethodLabel: createPayoutTransferMethodLabel(run.transferMethod),
     sellerStoreName: run.seller?.vendor?.storeName || "-",
   }));
 }
@@ -2556,6 +2573,7 @@ export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } 
   return {
     ...payoutRun,
     statusLabel: createPayoutRunStatusLabel(payoutRun.status),
+    transferMethodLabel: createPayoutTransferMethodLabel(payoutRun.transferMethod),
     sellerStoreName: payoutRun.seller.vendor.storeName,
     stripeAccount: serializeStripeAccountSummary(payoutRun.seller.stripeAccount),
   };
@@ -2701,6 +2719,7 @@ export async function createPayoutRun(
       amount: normalizedAmount,
       currencyCode: normalizedCurrency,
       status: "draft",
+      transferMethod: "manual_bank_transfer",
     },
   });
 
@@ -2756,6 +2775,97 @@ export async function approvePayoutRun(
     ok: true,
     payoutRun: updated,
   };
+}
+
+export async function markPayoutRunManuallyPaid(
+  {
+    payoutRunId,
+    executedBy = "admin",
+    externalTransferId = null,
+    transferMemo = null,
+  },
+  { prismaClient = prisma } = {},
+) {
+  const payoutRun = await prismaClient.payoutRun.findUnique({
+    where: { id: payoutRunId },
+    include: {
+      seller: {
+        include: {
+          stripeAccount: true,
+        },
+      },
+    },
+  });
+
+  if (!payoutRun?.seller) {
+    return {
+      ok: false,
+      reason: "payout_run_not_found",
+    };
+  }
+
+  if (payoutRun.status !== "approved") {
+    return {
+      ok: false,
+      reason: "payout_run_not_executable",
+    };
+  }
+
+  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
+    return {
+      ok: false,
+      reason: "seller_payout_restricted",
+    };
+  }
+
+  const now = new Date();
+  const normalizedExternalTransferId = normalizeText(externalTransferId);
+  const normalizedTransferMemo = normalizeText(transferMemo);
+
+  return prismaClient.$transaction(async (tx) => {
+    const updated = await tx.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        status: "executed",
+        executedAt: now,
+        executedBy,
+        transferMethod: "manual_bank_transfer",
+        externalTransferId: normalizedExternalTransferId,
+        transferMemo: normalizedTransferMemo,
+        failureCode: null,
+        failureMessage: null,
+      },
+    });
+
+    await createLedgerEntry(
+      {
+        sellerId: payoutRun.sellerId,
+        sellerStripeAccountId: payoutRun.sellerStripeAccountId,
+        payoutRunId: payoutRun.id,
+        stripeAccountId: payoutRun.stripeAccountId,
+        entryType: "payout_paid",
+        stripeObjectId: normalizedExternalTransferId || payoutRun.id,
+        amount: payoutRun.amount,
+        currencyCode: payoutRun.currencyCode,
+        direction: "debit",
+        description: "Manual seller payout paid",
+        metadataJson: {
+          transferMethod: "manual_bank_transfer",
+          externalTransferId: normalizedExternalTransferId,
+          transferMemo: normalizedTransferMemo,
+          executedBy,
+        },
+        occurredAt: now,
+      },
+      { prismaClient: tx },
+    );
+
+    return {
+      ok: true,
+      payoutRun: updated,
+      externalTransferId: normalizedExternalTransferId,
+    };
+  });
 }
 
 async function getConnectedAccountAvailableBalanceAmount(

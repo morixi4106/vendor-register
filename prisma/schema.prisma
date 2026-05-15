@@ -265,7 +265,10 @@ model PayoutRun {
   amount               Int
   currencyCode         String               @default("jpy")
   status               String               @default("draft")
+  transferMethod       String               @default("manual_bank_transfer")
   stripePayoutId       String?              @unique
+  externalTransferId   String?
+  transferMemo         String?
   approvedAt           DateTime?
   approvedBy           String?
   executedAt           DateTime?

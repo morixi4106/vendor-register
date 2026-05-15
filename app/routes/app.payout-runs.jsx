@@ -278,6 +278,7 @@ export default function AdminPayoutRunsPage() {
                     <th style={thStyle}>出金ID</th>
                     <th style={thStyle}>出店者</th>
                     <th style={thStyle}>金額</th>
+                    <th style={thStyle}>送金方法</th>
                     <th style={thStyle}>状態</th>
                     <th style={thStyle}>Stripe出金ID</th>
                     <th style={thStyle}>更新日時</th>
@@ -291,6 +292,7 @@ export default function AdminPayoutRunsPage() {
                       </td>
                       <td style={tdStyle}>{run.sellerStoreName}</td>
                       <td style={tdStyle}>{formatMoney(run.amount, run.currencyCode)}</td>
+                      <td style={tdStyle}>{run.transferMethodLabel || "-"}</td>
                       <td style={tdStyle}>{run.statusLabel}</td>
                       <td style={tdStyle}>{run.stripePayoutId || "-"}</td>
                       <td style={tdStyle}>
