@@ -1950,28 +1950,29 @@ async function processPayoutEvent(
     }
   }
 
-  await createLedgerEntry(
-    {
-      sellerId: payoutRun?.sellerId || null,
-      sellerStripeAccountId: payoutRun?.sellerStripeAccountId || null,
-      stripeEventId: stripeEventRecordId,
-      payoutRunId: payoutRun?.id || null,
-      stripeAccountId: normalizeText(event.account) || payoutRun?.stripeAccountId || null,
-      entryType: type,
-      stripeObjectId: normalizeText(payout?.id),
-      amount: clampInteger(payout?.amount),
-      currencyCode: normalizeLowercase(payout?.currency) || DEFAULT_ORDER_CURRENCY,
-      direction: "debit",
-      description: `Payout ${type}`,
-      metadataJson: {
-        destination: normalizeText(payout?.destination),
-        arrivalDate: payout?.arrival_date || null,
-        failureCode: normalizeText(payout?.failure_code),
+  if (type === "payout_paid") {
+    await createLedgerEntry(
+      {
+        sellerId: payoutRun?.sellerId || null,
+        sellerStripeAccountId: payoutRun?.sellerStripeAccountId || null,
+        stripeEventId: stripeEventRecordId,
+        payoutRunId: payoutRun?.id || null,
+        stripeAccountId: normalizeText(event.account) || payoutRun?.stripeAccountId || null,
+        entryType: type,
+        stripeObjectId: normalizeText(payout?.id),
+        amount: clampInteger(payout?.amount),
+        currencyCode: normalizeLowercase(payout?.currency) || DEFAULT_ORDER_CURRENCY,
+        direction: "debit",
+        description: `Payout ${type}`,
+        metadataJson: {
+          destination: normalizeText(payout?.destination),
+          arrivalDate: payout?.arrival_date || null,
+        },
+        occurredAt,
       },
-      occurredAt,
-    },
-    { prismaClient },
-  );
+      { prismaClient },
+    );
+  }
 }
 
 async function processStripeEventByType(

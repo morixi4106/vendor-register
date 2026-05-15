@@ -918,8 +918,139 @@ test("payout.failed marks the payout run failed and moves the seller to review",
     state.seller.statusReason,
     "payout_external_account_update_required",
   );
-  assert.equal(state.ledgerEntries[0].entryType, "payout_failed");
+  assert.equal(state.ledgerEntries.length, 0);
   assert.equal(state.statusHistory[0].changedBy, "stripe.payout.failed");
+});
+
+test("payout.created updates the run without ledger debit and payout.paid records the debit", async () => {
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_vendor_register";
+
+  let currentEventType = "payout.created";
+  const state = {
+    savedEvents: new Map(),
+    payoutRun: {
+      id: "pr_paid",
+      sellerId: "seller_1",
+      sellerStripeAccountId: "ssa_1",
+      stripeAccountId: "acct_123",
+      amount: 5000,
+      currencyCode: "jpy",
+      status: "approved",
+      stripePayoutId: null,
+      failureCode: null,
+      failureMessage: null,
+    },
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    stripeEvent: {
+      async findUnique({ where }) {
+        return state.savedEvents.get(where.stripeEventId) || null;
+      },
+      async create({ data }) {
+        const savedEvent = {
+          id: `sev_${data.stripeEventId}`,
+          ...data,
+        };
+        state.savedEvents.set(data.stripeEventId, savedEvent);
+        return savedEvent;
+      },
+      async update({ where, data }) {
+        const savedEvent = {
+          ...state.savedEvents.get(where.stripeEventId),
+          ...data,
+        };
+        state.savedEvents.set(where.stripeEventId, savedEvent);
+        return savedEvent;
+      },
+    },
+    payoutRun: {
+      async findFirst({ where }) {
+        return where.stripePayoutId === state.payoutRun.stripePayoutId
+          ? state.payoutRun
+          : null;
+      },
+      async findUnique({ where }) {
+        return where.id === state.payoutRun.id ? state.payoutRun : null;
+      },
+      async update({ data }) {
+        state.payoutRun = {
+          ...state.payoutRun,
+          ...data,
+        };
+        return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+  const fakeStripe = {
+    webhooks: {
+      constructEvent() {
+        return {
+          id: `evt_${currentEventType.replace(".", "_")}`,
+          type: currentEventType,
+          account: "acct_123",
+          livemode: false,
+          created: 1777777777,
+          data: {
+            object: {
+              id: "po_paid",
+              amount: 5000,
+              currency: "jpy",
+              destination: "ba_123",
+              created: 1777777777,
+              metadata: {
+                payoutRunId: "pr_paid",
+              },
+            },
+          },
+        };
+      },
+    },
+  };
+
+  const createdResult = await handleStripeWebhook(
+    {
+      rawBody: "{}",
+      signature: "t=1,v1=test",
+    },
+    {
+      prismaClient: fakePrisma,
+      stripeClient: fakeStripe,
+    },
+  );
+
+  assert.equal(createdResult.ok, true);
+  assert.equal(state.payoutRun.status, "executed");
+  assert.equal(state.payoutRun.stripePayoutId, "po_paid");
+  assert.equal(state.ledgerEntries.length, 0);
+
+  currentEventType = "payout.paid";
+  const paidResult = await handleStripeWebhook(
+    {
+      rawBody: "{}",
+      signature: "t=1,v1=test",
+    },
+    {
+      prismaClient: fakePrisma,
+      stripeClient: fakeStripe,
+    },
+  );
+
+  assert.equal(paidResult.ok, true);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "payout_paid");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].amount, 5000);
 });
 
 test("account.external_account.updated keeps the seller in admin review", async () => {
