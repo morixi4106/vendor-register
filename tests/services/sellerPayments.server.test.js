@@ -14,6 +14,7 @@ import {
   executePayoutRun,
   handleStripeWebhook,
   markPayoutRunManuallyPaid,
+  processShopifyDisputeSettlement,
   processShopifyOrderCancelledSettlement,
   processShopifyOrderPaidSettlement,
   processShopifyRefundSettlement,
@@ -1794,6 +1795,213 @@ test("processShopifyOrderCancelledSettlement only reverses the remaining unpaid 
   assert.equal(result.amount, 600);
   assert.equal(state.ledgerEntries.length, 1);
   assert.equal(state.ledgerEntries[0].amount, 600);
+});
+
+test("processShopifyDisputeSettlement holds seller payout balance and marks seller review", async () => {
+  const state = {
+    seller: {
+      id: "seller_1",
+      status: "active",
+      statusReason: null,
+    },
+    statusHistory: [],
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findMany({ where }) {
+        assert.deepEqual(where.entryType.in, [
+          "shopify_order_paid",
+          "refund",
+          "shopify_order_cancelled",
+          "dispute_created",
+          "dispute_funds_reinstated",
+        ]);
+        assert.deepEqual(where.OR, [
+          { stripeObjectId: "gid://shopify/Order/1001" },
+          {
+            metadataJson: {
+              path: ["shopifyOrderId"],
+              equals: "gid://shopify/Order/1001",
+            },
+          },
+        ]);
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+            currencyCode: "jpy",
+          },
+        ];
+      },
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "dispute_created",
+          stripeObjectId: "gid://shopify/ShopifyPaymentsDispute/3001",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    seller: {
+      async findUnique({ where }) {
+        assert.deepEqual(where, { id: "seller_1" });
+        return state.seller;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, { id: "seller_1" });
+        state.seller = {
+          ...state.seller,
+          ...data,
+        };
+        return state.seller;
+      },
+    },
+    sellerStatusHistory: {
+      async create({ data }) {
+        state.statusHistory.push(data);
+        return data;
+      },
+    },
+    async $transaction(callback) {
+      return callback(fakePrisma);
+    },
+  };
+
+  const result = await processShopifyDisputeSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      topic: "disputes/create",
+      payload: {
+        id: 3001,
+        order_id: 1001,
+        type: "chargeback",
+        amount: "70",
+        currency: "JPY",
+        reason: "fraudulent",
+        status: "needs_response",
+        initiated_at: "2026-05-16T12:00:00Z",
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.sellerId, "seller_1");
+  assert.equal(result.amount, 70);
+  assert.equal(state.seller.status, "review");
+  assert.equal(state.seller.statusReason, "dispute_review_required");
+  assert.equal(state.statusHistory[0].changedBy, "shopify.disputes/create");
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "dispute_created");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
+  assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
+  assert.equal(
+    state.ledgerEntries[0].stripeObjectId,
+    "gid://shopify/ShopifyPaymentsDispute/3001",
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.shopifyOrderId,
+    "gid://shopify/Order/1001",
+  );
+  assert.equal(state.ledgerEntries[0].metadataJson.disputeStatus, "needs_response");
+});
+
+test("processShopifyDisputeSettlement releases held funds when dispute is won", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 99,
+            currencyCode: "jpy",
+          },
+          {
+            id: "ledger_dispute",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_123",
+            entryType: "dispute_created",
+            stripeObjectId: "gid://shopify/ShopifyPaymentsDispute/3001",
+            amount: 70,
+            currencyCode: "jpy",
+            metadataJson: {
+              shopifyOrderId: "gid://shopify/Order/1001",
+            },
+          },
+        ];
+      },
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "dispute_funds_reinstated",
+          stripeObjectId: "gid://shopify/ShopifyPaymentsDispute/3001",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await processShopifyDisputeSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      topic: "disputes/update",
+      payload: {
+        id: 3001,
+        order_id: 1001,
+        type: "chargeback",
+        amount: "99",
+        currency: "JPY",
+        reason: "fraudulent",
+        status: "won",
+        finalized_on: "2026-05-18T12:00:00Z",
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.sellerId, "seller_1");
+  assert.equal(result.amount, 70);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "dispute_funds_reinstated");
+  assert.equal(state.ledgerEntries[0].direction, "credit");
+  assert.equal(state.ledgerEntries[0].amount, 70);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.shopifyOrderId,
+    "gid://shopify/Order/1001",
+  );
+  assert.equal(state.ledgerEntries[0].metadataJson.disputeStatus, "won");
 });
 
 test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payouts as deductions", () => {

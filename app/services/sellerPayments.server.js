@@ -77,6 +77,18 @@ const SHOPIFY_ORDER_SETTLEMENT_ENTRY_TYPES = [
   "shopify_order_paid",
   ...SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES,
 ];
+const SHOPIFY_ORDER_DISPUTE_ENTRY_TYPES = [
+  "dispute_created",
+  "dispute_funds_reinstated",
+];
+const SHOPIFY_ORDER_RISK_ENTRY_TYPES = [
+  ...SHOPIFY_ORDER_SETTLEMENT_ENTRY_TYPES,
+  ...SHOPIFY_ORDER_DISPUTE_ENTRY_TYPES,
+];
+const SHOPIFY_DISPUTE_RELEASE_STATUSES = new Set([
+  "charge_refunded",
+  "won",
+]);
 
 let stripeClientSingleton = null;
 
@@ -170,6 +182,21 @@ function normalizeShopifyGid(kind, value) {
   }
 
   return normalized;
+}
+
+function normalizeShopifyDisputeId(payload) {
+  return (
+    normalizeText(payload?.admin_graphql_api_id) ||
+    normalizeShopifyGid("ShopifyPaymentsDispute", payload?.id)
+  );
+}
+
+function normalizeShopifyDisputeOrderId(payload) {
+  return (
+    normalizeShopifyGid("Order", payload?.order_id) ||
+    normalizeShopifyGid("Order", payload?.order?.admin_graphql_api_id) ||
+    normalizeShopifyGid("Order", payload?.order?.id)
+  );
 }
 
 function uniqueValues(values) {
@@ -1770,6 +1797,31 @@ async function findShopifyOrderLedgerEntries(shopifyOrderId, prismaClient) {
   });
 }
 
+async function findShopifyOrderRiskLedgerEntries(shopifyOrderId, prismaClient) {
+  if (!shopifyOrderId) {
+    return [];
+  }
+
+  return prismaClient.ledgerEntry.findMany({
+    where: {
+      entryType: {
+        in: SHOPIFY_ORDER_RISK_ENTRY_TYPES,
+      },
+      OR: [
+        {
+          stripeObjectId: shopifyOrderId,
+        },
+        {
+          metadataJson: {
+            path: ["shopifyOrderId"],
+            equals: shopifyOrderId,
+          },
+        },
+      ],
+    },
+  });
+}
+
 function summarizeShopifyOrderLedgerEntries(entries, sellerId = null) {
   const sellerLedgerEntries = sellerId
     ? entries.filter((entry) => entry?.sellerId === sellerId)
@@ -1788,6 +1840,29 @@ function summarizeShopifyOrderLedgerEntries(entries, sellerId = null) {
     reversedAmount,
     remainingAmount: Math.max(0, paidAmount - reversedAmount),
     hasPaidEntry: paidAmount > 0,
+  };
+}
+
+function summarizeShopifyOrderRiskLedgerEntries(entries, sellerId = null) {
+  const settlementSummary = summarizeShopifyOrderLedgerEntries(entries, sellerId);
+  const sellerLedgerEntries = sellerId
+    ? entries.filter((entry) => entry?.sellerId === sellerId)
+    : entries;
+  const disputeHoldAmount = sellerLedgerEntries
+    .filter((entry) => entry?.entryType === "dispute_created")
+    .reduce((total, entry) => total + clampInteger(entry?.amount), 0);
+  const disputeReleasedAmount = sellerLedgerEntries
+    .filter((entry) => entry?.entryType === "dispute_funds_reinstated")
+    .reduce((total, entry) => total + clampInteger(entry?.amount), 0);
+  const disputeHeldAmount = Math.max(0, disputeHoldAmount - disputeReleasedAmount);
+
+  return {
+    ...settlementSummary,
+    disputeHeldAmount,
+    remainingHoldableAmount: Math.max(
+      0,
+      settlementSummary.remainingAmount - disputeHeldAmount,
+    ),
   };
 }
 
@@ -2410,6 +2485,217 @@ export async function processShopifyOrderCancelledSettlement(
         settlementMode: "shopify_cancelled_order_to_connect_manual_payout",
         paidAmount: orderLedgerSummary.paidAmount,
         reversedAmountBeforeCancellation: orderLedgerSummary.reversedAmount,
+      },
+      occurredAt,
+    },
+    { prismaClient },
+  );
+
+  return {
+    ok: true,
+    duplicate: false,
+    ledgerEntry,
+    sellerId,
+    amount: settlementAmount,
+    currencyCode,
+  };
+}
+
+export async function processShopifyDisputeSettlement(
+  { payload, shop, topic },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopifyDisputeId = normalizeShopifyDisputeId(payload);
+  const shopifyOrderId = normalizeShopifyDisputeOrderId(payload);
+  const disputeStatus = normalizeLowercase(payload?.status);
+  const disputeType = normalizeLowercase(payload?.type);
+  const disputeReason = normalizeLowercase(payload?.reason);
+  const normalizedTopic = normalizeText(topic) || "disputes/create";
+
+  if (!shopDomain || !shopifyDisputeId || !shopifyOrderId) {
+    return {
+      ok: false,
+      reason: "invalid_shopify_dispute_payload",
+    };
+  }
+
+  const orderLedgerEntries = await findShopifyOrderRiskLedgerEntries(
+    shopifyOrderId,
+    prismaClient,
+  );
+  const paidEntries = orderLedgerEntries.filter(
+    (entry) => entry?.entryType === "shopify_order_paid",
+  );
+  const sellerIds = uniqueValues(paidEntries.map((entry) => entry?.sellerId));
+
+  if (sellerIds.length === 0) {
+    return {
+      ok: true,
+      reason: "shopify_dispute_order_not_settled",
+      amount: 0,
+    };
+  }
+
+  if (sellerIds.length > 1) {
+    return {
+      ok: false,
+      reason: "multi_seller_shopify_dispute_unsupported",
+      sellerIds,
+    };
+  }
+
+  const sellerId = sellerIds[0];
+  const paidEntry = paidEntries.find((entry) => entry?.sellerId === sellerId);
+  const currencyCode =
+    normalizeLowercase(payload?.currency) ||
+    normalizeLowercase(paidEntry?.currencyCode) ||
+    DEFAULT_ORDER_CURRENCY;
+  const requestedDisputeAmount = moneyAmountToMinorUnits(
+    payload?.amount,
+    currencyCode,
+  );
+  const orderRiskSummary = summarizeShopifyOrderRiskLedgerEntries(
+    orderLedgerEntries,
+    sellerId,
+  );
+  const occurredAt = payload?.initiated_at
+    ? new Date(payload.initiated_at)
+    : payload?.finalized_on
+      ? new Date(payload.finalized_on)
+      : new Date();
+  const metadataJson = {
+    shopDomain,
+    shopifyDisputeId,
+    shopifyDisputeNumericId: normalizeText(payload?.id),
+    shopifyOrderId,
+    shopifyOrderNumericId: normalizeText(payload?.order_id),
+    disputeType,
+    disputeStatus,
+    disputeReason,
+    networkReasonCode: normalizeText(payload?.network_reason_code),
+    evidenceDueBy: normalizeText(payload?.evidence_due_by),
+    evidenceSentOn: normalizeText(payload?.evidence_sent_on),
+    finalizedOn: normalizeText(payload?.finalized_on),
+    disputeEventType: normalizedTopic,
+    settlementMode: "shopify_dispute_to_connect_manual_payout",
+  };
+
+  if (SHOPIFY_DISPUTE_RELEASE_STATUSES.has(disputeStatus)) {
+    const existingReleaseEntry = await prismaClient.ledgerEntry.findFirst({
+      where: {
+        entryType: "dispute_funds_reinstated",
+        stripeObjectId: shopifyDisputeId,
+      },
+    });
+
+    if (existingReleaseEntry) {
+      return {
+        ok: true,
+        duplicate: true,
+        ledgerEntry: existingReleaseEntry,
+      };
+    }
+
+    const settlementAmount = Math.min(
+      requestedDisputeAmount || orderRiskSummary.disputeHeldAmount,
+      orderRiskSummary.disputeHeldAmount,
+    );
+
+    if (settlementAmount <= 0) {
+      return {
+        ok: true,
+        reason: "shopify_dispute_no_held_funds_to_release",
+        sellerId,
+        amount: 0,
+        currencyCode,
+      };
+    }
+
+    const ledgerEntry = await createLedgerEntry(
+      {
+        sellerId,
+        sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
+        stripeAccountId: paidEntry?.stripeAccountId || null,
+        entryType: "dispute_funds_reinstated",
+        stripeObjectId: shopifyDisputeId,
+        amount: settlementAmount,
+        currencyCode,
+        direction: "credit",
+        description: "Shopify dispute funds released",
+        metadataJson: {
+          ...metadataJson,
+          heldAmountBeforeRelease: orderRiskSummary.disputeHeldAmount,
+        },
+        occurredAt,
+      },
+      { prismaClient },
+    );
+
+    return {
+      ok: true,
+      duplicate: false,
+      ledgerEntry,
+      sellerId,
+      amount: settlementAmount,
+      currencyCode,
+    };
+  }
+
+  await setSellerReviewStatus(
+    {
+      sellerId,
+      reason: SELLER_REVIEW_REASON_DISPUTE,
+      changedBy: `shopify.${normalizedTopic}`,
+    },
+    { prismaClient },
+  );
+
+  const existingHoldEntry = await prismaClient.ledgerEntry.findFirst({
+    where: {
+      entryType: "dispute_created",
+      stripeObjectId: shopifyDisputeId,
+    },
+  });
+
+  if (existingHoldEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingHoldEntry,
+    };
+  }
+
+  const settlementAmount = Math.min(
+    requestedDisputeAmount || orderRiskSummary.remainingHoldableAmount,
+    orderRiskSummary.remainingHoldableAmount,
+  );
+
+  if (settlementAmount <= 0) {
+    return {
+      ok: true,
+      reason: "shopify_dispute_order_already_reversed_or_held",
+      sellerId,
+      amount: 0,
+      currencyCode,
+    };
+  }
+
+  const ledgerEntry = await createLedgerEntry(
+    {
+      sellerId,
+      sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
+      stripeAccountId: paidEntry?.stripeAccountId || null,
+      entryType: "dispute_created",
+      stripeObjectId: shopifyDisputeId,
+      amount: settlementAmount,
+      currencyCode,
+      direction: "debit",
+      description: "Shopify dispute opened",
+      metadataJson: {
+        ...metadataJson,
+        remainingHoldableAmountBeforeDispute:
+          orderRiskSummary.remainingHoldableAmount,
       },
       occurredAt,
     },

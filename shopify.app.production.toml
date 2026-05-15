@@ -40,9 +40,17 @@ api_version = "2026-04"
   topics = [ "refunds/create" ]
   uri = "/webhooks/refunds/create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "disputes/create" ]
+  uri = "/webhooks/disputes/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "disputes/update" ]
+  uri = "/webhooks/disputes/update"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_products,write_products,write_customers,read_orders,read_shipping,write_shipping,read_publications,write_publications"
+scopes = "read_customers,read_products,write_products,write_customers,read_orders,read_shipping,write_shipping,read_publications,write_publications,read_shopify_payments_disputes"
 optional_scopes = ["read_draft_orders"]
 
 [auth]
