@@ -36,6 +36,7 @@ export const ORDER_STATUSES = [
 
 export const LEDGER_ENTRY_TYPES = [
   "charge",
+  "shopify_order_paid",
   "application_fee",
   "application_fee_refund",
   "refund",
@@ -98,6 +99,67 @@ function clampInteger(value, fallback = 0) {
     return fallback;
   }
   return Math.max(0, Math.round(numeric));
+}
+
+const ZERO_DECIMAL_CURRENCIES = new Set([
+  "bif",
+  "clp",
+  "djf",
+  "gnf",
+  "jpy",
+  "kmf",
+  "krw",
+  "mga",
+  "pyg",
+  "rwf",
+  "ugx",
+  "vnd",
+  "vuv",
+  "xaf",
+  "xof",
+  "xpf",
+]);
+
+function moneyAmountToMinorUnits(value, currencyCode = DEFAULT_ORDER_CURRENCY) {
+  const normalizedValue = normalizeText(value);
+
+  if (!normalizedValue) {
+    return 0;
+  }
+
+  const numeric = Number(normalizedValue.replace(/,/g, ""));
+
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 0;
+  }
+
+  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+
+  return ZERO_DECIMAL_CURRENCIES.has(normalizedCurrency)
+    ? Math.round(numeric)
+    : Math.round(numeric * 100);
+}
+
+function normalizeShopifyGid(kind, value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith(`gid://shopify/${kind}/`)) {
+    return normalized;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return `gid://shopify/${kind}/${normalized}`;
+  }
+
+  return normalized;
+}
+
+function uniqueValues(values) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function toIsoCountryCode(value) {
@@ -1552,6 +1614,321 @@ export async function createOrderRefund(
   };
 }
 
+function normalizeShopifyOrderId(payload) {
+  return (
+    normalizeShopifyGid("Order", payload?.admin_graphql_api_id) ||
+    normalizeShopifyGid("Order", payload?.id)
+  );
+}
+
+function getShopifyLineProductIdCandidates(lineItem) {
+  return uniqueValues([
+    normalizeShopifyGid("Product", lineItem?.product_id),
+    normalizeShopifyGid("Product", lineItem?.product?.id),
+    normalizeShopifyGid("Product", lineItem?.product?.admin_graphql_api_id),
+    normalizeText(lineItem?.product_id),
+  ]);
+}
+
+function getLineDiscountAmount(lineItem, currencyCode) {
+  const discountAllocations = Array.isArray(lineItem?.discount_allocations)
+    ? lineItem.discount_allocations
+    : [];
+
+  if (discountAllocations.length > 0) {
+    return discountAllocations.reduce((total, allocation) => {
+      const amount =
+        allocation?.amount_set?.shop_money?.amount ??
+        allocation?.amount_set?.presentment_money?.amount ??
+        allocation?.amount;
+
+      return total + moneyAmountToMinorUnits(amount, currencyCode);
+    }, 0);
+  }
+
+  return moneyAmountToMinorUnits(lineItem?.total_discount, currencyCode);
+}
+
+function getShopifyLineNetAmount(lineItem, currencyCode) {
+  const quantity = toPositiveInteger(lineItem?.quantity) || 0;
+  const unitAmount = moneyAmountToMinorUnits(
+    lineItem?.price_set?.shop_money?.amount ??
+      lineItem?.price_set?.presentment_money?.amount ??
+      lineItem?.price,
+    currencyCode,
+  );
+  const grossAmount = unitAmount * quantity;
+  const discountAmount = getLineDiscountAmount(lineItem, currencyCode);
+
+  return Math.max(0, grossAmount - discountAmount);
+}
+
+function compareProductMatchPriority(a, b, shopDomain) {
+  const aExact = normalizeLowercase(a?.shopDomain) === shopDomain ? 0 : 1;
+  const bExact = normalizeLowercase(b?.shopDomain) === shopDomain ? 0 : 1;
+
+  return aExact - bExact;
+}
+
+function getProductSeller(product) {
+  return (
+    product?.vendorStore?.seller ||
+    product?.vendorStore?.vendorAuth?.seller ||
+    null
+  );
+}
+
+function getProductVendor(product) {
+  return product?.vendorStore?.vendorAuth || getProductSeller(product)?.vendor || null;
+}
+
+function buildProductCandidateMap(products, shopDomain) {
+  const sortedProducts = [...products].sort((a, b) =>
+    compareProductMatchPriority(a, b, shopDomain),
+  );
+  const productMap = new Map();
+
+  for (const product of sortedProducts) {
+    for (const candidate of uniqueValues([
+      product?.shopifyProductId,
+      product?.shopifyProductId?.replace("gid://shopify/Product/", ""),
+    ])) {
+      if (!productMap.has(candidate)) {
+        productMap.set(candidate, product);
+      }
+    }
+  }
+
+  return productMap;
+}
+
+export async function processShopifyOrderPaidSettlement(
+  { payload, shop },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopifyOrderId = normalizeShopifyOrderId(payload);
+  const shopifyOrderName = normalizeText(payload?.name || payload?.order_number);
+  const currencyCode =
+    normalizeLowercase(payload?.currency || payload?.presentment_currency) ||
+    DEFAULT_ORDER_CURRENCY;
+  const lineItems = Array.isArray(payload?.line_items) ? payload.line_items : [];
+
+  if (!shopDomain || !shopifyOrderId || lineItems.length === 0) {
+    return {
+      ok: false,
+      reason: "invalid_shopify_order_payload",
+    };
+  }
+
+  const existingLedgerEntry = await prismaClient.ledgerEntry.findFirst({
+    where: {
+      entryType: "shopify_order_paid",
+      stripeObjectId: shopifyOrderId,
+    },
+  });
+
+  if (existingLedgerEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingLedgerEntry,
+    };
+  }
+
+  const productIdCandidates = uniqueValues(
+    lineItems.flatMap(getShopifyLineProductIdCandidates),
+  );
+
+  if (productIdCandidates.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_order_products_missing",
+    };
+  }
+
+  const products = await prismaClient.product.findMany({
+    where: {
+      shopifyProductId: {
+        in: productIdCandidates,
+      },
+      OR: [
+        {
+          shopDomain,
+        },
+        {
+          shopDomain: null,
+        },
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      approvalStatus: true,
+      shopifyProductId: true,
+      shopDomain: true,
+      vendorStoreId: true,
+      vendorStore: {
+        select: {
+          id: true,
+          storeName: true,
+          seller: {
+            select: {
+              id: true,
+              status: true,
+              stripeAccount: true,
+            },
+          },
+          vendorAuth: {
+            select: {
+              id: true,
+              handle: true,
+              storeName: true,
+              seller: {
+                select: {
+                  id: true,
+                  status: true,
+                  stripeAccount: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const productMap = buildProductCandidateMap(products, shopDomain);
+  const matchedLines = [];
+  const unmatchedProductIds = [];
+
+  for (const lineItem of lineItems) {
+    const candidates = getShopifyLineProductIdCandidates(lineItem);
+    const product = candidates.map((candidate) => productMap.get(candidate)).find(Boolean);
+
+    if (!product) {
+      unmatchedProductIds.push(candidates[0] || normalizeText(lineItem?.product_id) || null);
+      continue;
+    }
+
+    matchedLines.push({
+      lineItem,
+      product,
+      amount: getShopifyLineNetAmount(lineItem, currencyCode),
+    });
+  }
+
+  if (matchedLines.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_order_no_matching_products",
+      unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+    };
+  }
+
+  const sellerIds = uniqueValues(
+    matchedLines.map(({ product }) => getProductSeller(product)?.id),
+  );
+
+  if (sellerIds.length === 0) {
+    return {
+      ok: false,
+      reason: "shopify_order_seller_missing",
+    };
+  }
+
+  if (sellerIds.length > 1) {
+    return {
+      ok: false,
+      reason: "multi_seller_shopify_order_unsupported",
+      sellerIds,
+    };
+  }
+
+  const seller = getProductSeller(matchedLines[0].product);
+
+  if (seller.status !== "active") {
+    return {
+      ok: false,
+      reason: "seller_not_active",
+      sellerId: seller.id,
+    };
+  }
+
+  if (!seller.stripeAccount?.id || !seller.stripeAccount?.stripeAccountId) {
+    return {
+      ok: false,
+      reason: "stripe_account_missing",
+      sellerId: seller.id,
+    };
+  }
+
+  const settlementAmount = matchedLines.reduce(
+    (total, matchedLine) => total + matchedLine.amount,
+    0,
+  );
+
+  if (settlementAmount <= 0) {
+    return {
+      ok: false,
+      reason: "shopify_order_settlement_amount_empty",
+      sellerId: seller.id,
+    };
+  }
+
+  const occurredAt = payload?.processed_at
+    ? new Date(payload.processed_at)
+    : payload?.created_at
+      ? new Date(payload.created_at)
+      : new Date();
+  const vendor = getProductVendor(matchedLines[0].product);
+  const ledgerEntry = await createLedgerEntry(
+    {
+      sellerId: seller.id,
+      sellerStripeAccountId: seller.stripeAccount.id,
+      stripeAccountId: seller.stripeAccount.stripeAccountId,
+      entryType: "shopify_order_paid",
+      stripeObjectId: shopifyOrderId,
+      amount: settlementAmount,
+      currencyCode,
+      direction: "credit",
+      description: "Shopify order paid",
+      metadataJson: {
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        shopifyOrderNumericId: normalizeText(payload?.id),
+        vendorId: normalizeText(vendor?.id),
+        vendorHandle: normalizeText(vendor?.handle),
+        settlementMode: "shopify_order_to_connect_manual_payout",
+        matchedLineCount: matchedLines.length,
+        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+        lineItems: matchedLines.map(({ lineItem, product, amount }) => ({
+          shopifyLineItemId: normalizeText(lineItem?.id),
+          shopifyProductId: normalizeText(product.shopifyProductId),
+          localProductId: product.id,
+          localProductName: product.name,
+          quantity: toPositiveInteger(lineItem?.quantity) || 0,
+          amount,
+        })),
+      },
+      occurredAt,
+    },
+    { prismaClient },
+  );
+
+  return {
+    ok: true,
+    duplicate: false,
+    ledgerEntry,
+    sellerId: seller.id,
+    amount: settlementAmount,
+    currencyCode,
+    matchedLineCount: matchedLines.length,
+    unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+  };
+}
+
 async function createLedgerEntry(
   data,
   { prismaClient = prisma } = {},
@@ -2184,6 +2561,61 @@ export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } 
   };
 }
 
+const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
+  shopify_order_paid: 1,
+  charge: 1,
+  application_fee: -1,
+  application_fee_refund: 1,
+  refund: -1,
+  dispute_created: -1,
+  dispute_funds_reinstated: 1,
+  payout_paid: -1,
+};
+
+export function calculateSellerPayoutableLedgerBalance(entries = []) {
+  if (!Array.isArray(entries)) {
+    return 0;
+  }
+
+  return entries.reduce((total, entry) => {
+    const sign = SELLER_PAYOUT_LEDGER_ENTRY_SIGNS[entry?.entryType] || 0;
+
+    if (sign === 0) {
+      return total;
+    }
+
+    return total + sign * clampInteger(entry?.amount);
+  }, 0);
+}
+
+export async function getSellerPayoutableLedgerBalance(
+  { sellerId, currencyCode },
+  { prismaClient = prisma } = {},
+) {
+  const normalizedSellerId = normalizeText(sellerId);
+  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+
+  if (!normalizedSellerId) {
+    return 0;
+  }
+
+  const entries = await prismaClient.ledgerEntry.findMany({
+    where: {
+      sellerId: normalizedSellerId,
+      currencyCode: normalizedCurrency,
+      entryType: {
+        in: Object.keys(SELLER_PAYOUT_LEDGER_ENTRY_SIGNS),
+      },
+    },
+    select: {
+      entryType: true,
+      amount: true,
+    },
+  });
+
+  return calculateSellerPayoutableLedgerBalance(entries);
+}
+
 async function assertPayoutEligibleSeller(
   sellerId,
   { prismaClient = prisma } = {},
@@ -2243,6 +2675,24 @@ export async function createPayoutRun(
     };
   }
 
+  const availableLedgerBalance = await getSellerPayoutableLedgerBalance(
+    {
+      sellerId: eligibility.seller.id,
+      currencyCode: normalizedCurrency,
+    },
+    { prismaClient },
+  );
+
+  if (availableLedgerBalance < normalizedAmount) {
+    return {
+      ok: false,
+      reason: "insufficient_ledger_balance",
+      availableLedgerBalance,
+      requestedAmount: normalizedAmount,
+      currencyCode: normalizedCurrency,
+    };
+  }
+
   const payoutRun = await prismaClient.payoutRun.create({
     data: {
       sellerId: eligibility.seller.id,
@@ -2257,6 +2707,7 @@ export async function createPayoutRun(
   return {
     ok: true,
     payoutRun,
+    availableLedgerBalance,
   };
 }
 

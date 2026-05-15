@@ -3,14 +3,17 @@ import test from "node:test";
 
 import {
   approvePayoutRun,
+  calculateSellerPayoutableLedgerBalance,
   createCheckoutOrder,
   createCheckoutOrderPaymentIntent,
   createConnectedAccountPayout,
   createOrderRefund,
+  createPayoutRun,
   createSellerAccountSession,
   createSellerStripeAccount,
   executePayoutRun,
   handleStripeWebhook,
+  processShopifyOrderPaidSettlement,
   resetSellerStripeAccountForRecreate,
 } from "../../app/services/sellerPayments.server.js";
 
@@ -1051,6 +1054,368 @@ test("payout.created updates the run without ledger debit and payout.paid record
   assert.equal(state.ledgerEntries[0].entryType, "payout_paid");
   assert.equal(state.ledgerEntries[0].direction, "debit");
   assert.equal(state.ledgerEntries[0].amount, 5000);
+});
+
+test("processShopifyOrderPaidSettlement records a seller payable ledger entry", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "shopify_order_paid",
+          stripeObjectId: "gid://shopify/Order/1001",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany({ where }) {
+        assert.deepEqual(where.shopifyProductId.in, [
+          "gid://shopify/Product/911",
+          "911",
+        ]);
+        assert.deepEqual(where.OR, [
+          { shopDomain: "b30ize-1a.myshopify.com" },
+          { shopDomain: null },
+        ]);
+        return [
+          {
+            id: "product_1",
+            name: "Test Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Test Store",
+              seller: null,
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor",
+                storeName: "Test Store",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_123",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1001,
+        admin_graphql_api_id: "gid://shopify/Order/1001",
+        name: "#1001",
+        currency: "JPY",
+        processed_at: "2026-05-15T12:00:00Z",
+        line_items: [
+          {
+            id: 501,
+            product_id: 911,
+            price: "26948.00",
+            quantity: 1,
+            discount_allocations: [
+              {
+                amount: "100.00",
+              },
+            ],
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.sellerId, "seller_1");
+  assert.equal(result.amount, 26848);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "shopify_order_paid");
+  assert.equal(state.ledgerEntries[0].direction, "credit");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
+  assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
+  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Order/1001");
+  assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
+  assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
+});
+
+test("processShopifyOrderPaidSettlement is idempotent by Shopify order id", async () => {
+  const existingLedgerEntry = {
+    id: "ledger_existing",
+    entryType: "shopify_order_paid",
+    stripeObjectId: "gid://shopify/Order/1001",
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return existingLedgerEntry;
+      },
+      async create() {
+        throw new Error("duplicate order should not create another ledger entry");
+      },
+    },
+    product: {
+      async findMany() {
+        throw new Error("duplicate order should not load products");
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1001,
+        currency: "JPY",
+        line_items: [{ product_id: 911, price: "1000", quantity: 1 }],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    duplicate: true,
+    ledgerEntry: existingLedgerEntry,
+  });
+});
+
+test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor-1",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_1",
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "product_2",
+            name: "Product 2",
+            shopifyProductId: "gid://shopify/Product/2",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_2",
+                handle: "vendor-2",
+                seller: {
+                  id: "seller_2",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_2",
+                    stripeAccountId: "acct_2",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1002,
+        currency: "JPY",
+        line_items: [
+          { product_id: 1, price: "1000", quantity: 1 },
+          { product_id: 2, price: "2000", quantity: 1 },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "multi_seller_shopify_order_unsupported");
+  assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
+  assert.equal(state.ledgerEntries.length, 0);
+});
+
+test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payouts as deductions", () => {
+  const balance = calculateSellerPayoutableLedgerBalance([
+    { entryType: "shopify_order_paid", amount: 10000 },
+    { entryType: "charge", amount: 5000 },
+    { entryType: "application_fee", amount: 1000 },
+    { entryType: "application_fee_refund", amount: 200 },
+    { entryType: "refund", amount: 1500 },
+    { entryType: "dispute_created", amount: 700 },
+    { entryType: "dispute_funds_reinstated", amount: 700 },
+    { entryType: "payout_created", amount: 3000 },
+    { entryType: "payout_paid", amount: 2000 },
+  ]);
+
+  assert.equal(balance, 10700);
+});
+
+test("createPayoutRun refuses amounts above the seller payoutable ledger balance", async () => {
+  let payoutRunCreateCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique({ where }) {
+        assert.deepEqual(where, { id: "seller_1" });
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: {
+            id: "vendor_1",
+            storeName: "Test Store",
+          },
+          stripeAccount: {
+            id: "ssa_1",
+            stripeAccountId: "acct_123",
+          },
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany({ where, select }) {
+        assert.equal(where.sellerId, "seller_1");
+        assert.equal(where.currencyCode, "jpy");
+        assert.equal(where.entryType.in.includes("shopify_order_paid"), true);
+        assert.deepEqual(select, {
+          entryType: true,
+          amount: true,
+        });
+        return [
+          { entryType: "shopify_order_paid", amount: 1000 },
+          { entryType: "payout_paid", amount: 400 },
+        ];
+      },
+    },
+    payoutRun: {
+      async create() {
+        payoutRunCreateCalled = true;
+        throw new Error("payout run should not be created above ledger balance");
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "seller_1",
+      amount: 700,
+      currencyCode: "JPY",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "insufficient_ledger_balance");
+  assert.equal(result.availableLedgerBalance, 600);
+  assert.equal(result.requestedAmount, 700);
+  assert.equal(payoutRunCreateCalled, false);
+});
+
+test("createPayoutRun creates a draft only within the seller payoutable ledger balance", async () => {
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: {
+            id: "vendor_1",
+            storeName: "Test Store",
+          },
+          stripeAccount: {
+            id: "ssa_1",
+            stripeAccountId: "acct_123",
+          },
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [
+          { entryType: "shopify_order_paid", amount: 1000 },
+          { entryType: "application_fee", amount: 100 },
+        ];
+      },
+    },
+    payoutRun: {
+      async create({ data }) {
+        assert.deepEqual(data, {
+          sellerId: "seller_1",
+          sellerStripeAccountId: "ssa_1",
+          stripeAccountId: "acct_123",
+          amount: 900,
+          currencyCode: "jpy",
+          status: "draft",
+        });
+        return {
+          id: "pr_1",
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "seller_1",
+      amount: 900,
+      currencyCode: "jpy",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.availableLedgerBalance, 900);
+  assert.equal(result.payoutRun.id, "pr_1");
 });
 
 test("account.external_account.updated keeps the seller in admin review", async () => {
