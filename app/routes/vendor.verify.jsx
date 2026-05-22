@@ -1,22 +1,21 @@
-import { json, redirect, createCookie } from "@remix-run/node";
-import { useActionData, useNavigation } from "@remix-run/react";
+import { json, redirect } from "@remix-run/node";
+import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
 import prisma from "../db.server";
+import {
+  getVendorReturnTo,
+  sanitizeVendorReturnTo,
+  vendorAdminSessionCookie,
+} from "../services/vendorManagement.server";
 
+const DEFAULT_RETURN_TO = "/vendor/dashboard";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-const vendorAdminCookie = createCookie("vendor_admin_session", {
-  httpOnly: true,
-  path: "/",
-  sameSite: "lax",
-  secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 60 * 8,
-});
-
 export const loader = async ({ request }) => {
+  const returnTo = getVendorReturnTo(request, DEFAULT_RETURN_TO);
   const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = await vendorAdminCookie.parse(cookieHeader);
+  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
   if (sessionToken) {
     const session = await prisma.vendorAdminSession.findUnique({
@@ -25,23 +24,27 @@ export const loader = async ({ request }) => {
     });
 
     if (session && session.expiresAt > new Date()) {
-      return redirect(`https://vendor-register-pbjl.onrender.com/vendor/dashboard?vendor=${session.vendorId}`);
+      return redirect(returnTo);
     }
   }
 
-  return json({});
+  return json({ returnTo });
 };
 
 export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+  const returnTo = sanitizeVendorReturnTo(
+    formData.get("returnTo") || new URL(request.url).searchParams.get("returnTo"),
+    DEFAULT_RETURN_TO
+  );
 
   if (intent === "send-code") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
 
     if (!email) {
       return json(
-        { ok: false, step: "email", error: "メールアドレスを入力してください。" },
+        { ok: false, step: "email", error: "メールアドレスを入力してください。", returnTo },
         { status: 400 }
       );
     }
@@ -55,7 +58,12 @@ export const action = async ({ request }) => {
 
     if (!vendor) {
       return json(
-        { ok: false, step: "email", error: "このメールアドレスは管理用メールとして登録されていません。" },
+        {
+          ok: false,
+          step: "email",
+          error: "このメールアドレスは管理用メールとして登録されていません。",
+          returnTo,
+        },
         { status: 404 }
       );
     }
@@ -88,7 +96,12 @@ export const action = async ({ request }) => {
         console.error("❌ resend error:", error);
 
         return json(
-          { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+          {
+            ok: false,
+            step: "email",
+            error: "確認コードのメール送信に失敗しました。",
+            returnTo,
+          },
           { status: 500 }
         );
       }
@@ -96,7 +109,12 @@ export const action = async ({ request }) => {
       console.error("❌ verify mail error:", e);
 
       return json(
-        { ok: false, step: "email", error: "確認コードのメール送信に失敗しました。" },
+        {
+          ok: false,
+          step: "email",
+          error: "確認コードのメール送信に失敗しました。",
+          returnTo,
+        },
         { status: 500 }
       );
     }
@@ -107,6 +125,7 @@ export const action = async ({ request }) => {
       message: "確認コードを送信しました。",
       email,
       vendorId: vendor.id,
+      returnTo,
     });
   }
 
@@ -123,6 +142,7 @@ export const action = async ({ request }) => {
           error: "必要な情報が不足しています。もう一度やり直してください。",
           email,
           vendorId,
+          returnTo,
         },
         { status: 400 }
       );
@@ -134,7 +154,14 @@ export const action = async ({ request }) => {
 
     if (!vendor || vendor.managementEmail.toLowerCase() !== email || vendor.status !== "active") {
       return json(
-        { ok: false, step: "code", error: "管理対象の店舗が見つかりません。", email, vendorId },
+        {
+          ok: false,
+          step: "code",
+          error: "管理対象の店舗が見つかりません。",
+          email,
+          vendorId,
+          returnTo,
+        },
         { status: 404 }
       );
     }
@@ -152,7 +179,14 @@ export const action = async ({ request }) => {
 
     if (!loginCode) {
       return json(
-        { ok: false, step: "code", error: "確認コードが違うか、有効期限が切れています。", email, vendorId },
+        {
+          ok: false,
+          step: "code",
+          error: "確認コードが違うか、有効期限が切れています。",
+          email,
+          vendorId,
+          returnTo,
+        },
         { status: 400 }
       );
     }
@@ -173,17 +207,21 @@ export const action = async ({ request }) => {
       },
     });
 
-    return redirect(`https://vendor-register-pbjl.onrender.com/vendor/dashboard?vendor=${vendorId}`, {
+    return redirect(returnTo, {
       headers: {
-        "Set-Cookie": await vendorAdminCookie.serialize(sessionToken),
+        "Set-Cookie": await vendorAdminSessionCookie.serialize(sessionToken),
       },
     });
   }
 
-  return json({ ok: false, step: "email", error: "不正な操作です。" }, { status: 400 });
+  return json(
+    { ok: false, step: "email", error: "不正な操作です。", returnTo },
+    { status: 400 }
+  );
 };
 
 export default function VendorVerifyPage() {
+  const loaderData = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
 
@@ -192,6 +230,7 @@ export default function VendorVerifyPage() {
   const step = actionData?.step === "code" ? "code" : "email";
   const email = actionData?.email || "";
   const vendorId = actionData?.vendorId || "";
+  const returnTo = actionData?.returnTo || loaderData?.returnTo || DEFAULT_RETURN_TO;
 
   return (
     <div style={styles.page}>
@@ -209,6 +248,7 @@ export default function VendorVerifyPage() {
         {step === "email" ? (
           <form method="post" action="" style={styles.form}>
             <input type="hidden" name="intent" value="send-code" />
+            <input type="hidden" name="returnTo" value={returnTo} />
 
             <label style={styles.label}>
               管理用メールアドレス
@@ -230,6 +270,7 @@ export default function VendorVerifyPage() {
             <input type="hidden" name="intent" value="verify-code" />
             <input type="hidden" name="email" value={email} />
             <input type="hidden" name="vendorId" value={vendorId} />
+            <input type="hidden" name="returnTo" value={returnTo} />
 
             <label style={styles.label}>
               確認コード

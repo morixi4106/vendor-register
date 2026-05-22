@@ -28,6 +28,38 @@ export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
+export function sanitizeVendorReturnTo(value, fallback = "/vendor/dashboard") {
+  const returnTo = String(value || "").trim();
+
+  if (!returnTo || returnTo.startsWith("//")) {
+    return fallback;
+  }
+
+  if (!returnTo.startsWith("/")) {
+    return fallback;
+  }
+
+  if (
+    returnTo.startsWith("/vendor/verify") ||
+    returnTo.startsWith("/apps/vendors/verify")
+  ) {
+    return fallback;
+  }
+
+  return returnTo;
+}
+
+export function getVendorReturnTo(request, fallback = "/vendor/dashboard") {
+  const url = new URL(request.url);
+  return sanitizeVendorReturnTo(url.searchParams.get("returnTo"), fallback);
+}
+
+export function getVendorVerifyRedirectPath(request) {
+  const url = new URL(request.url);
+  const returnTo = sanitizeVendorReturnTo(`${url.pathname}${url.search}`);
+  return `/vendor/verify?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 export function formatMoney(amount, currencyCode = "JPY") {
   return formatCurrencyMoney(amount, currencyCode);
 }
@@ -689,7 +721,7 @@ export async function requireVendorSession(request, { includeProducts = false } 
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
   if (!sessionToken) {
-    throw redirect("/vendor/verify");
+    throw redirect(getVendorVerifyRedirectPath(request));
   }
 
   const vendorSession = await prisma.vendorAdminSession.findUnique({
@@ -714,7 +746,7 @@ export async function requireVendorSession(request, { includeProducts = false } 
   });
 
   if (!vendorSession || vendorSession.expiresAt < new Date()) {
-    throw redirect("/vendor/verify", {
+    throw redirect(getVendorVerifyRedirectPath(request), {
       headers: {
         "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
           maxAge: 0,

@@ -5,10 +5,39 @@ import {
   READ_DRAFT_ORDERS_SCOPE,
   VENDOR_DRAFT_ORDERS_PAGE_SIZE,
   buildVendorDraftOrdersSearchQuery,
+  getVendorReturnTo,
+  getVendorVerifyRedirectPath,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
+  sanitizeVendorReturnTo,
   serializeVendorProduct,
 } from "../../app/services/vendorManagement.server.js";
+
+test("sanitizeVendorReturnTo accepts only local non-verify paths", () => {
+  assert.equal(sanitizeVendorReturnTo("/seller/settings/payments"), "/seller/settings/payments");
+  assert.equal(sanitizeVendorReturnTo("//evil.example/path"), "/vendor/dashboard");
+  assert.equal(sanitizeVendorReturnTo("https://evil.example/path"), "/vendor/dashboard");
+  assert.equal(sanitizeVendorReturnTo("/vendor/verify?returnTo=/seller/settings/payments"), "/vendor/dashboard");
+});
+
+test("getVendorReturnTo reads safe returnTo query values", () => {
+  const request = new Request(
+    "https://vendor-register.example/vendor/verify?returnTo=%2Fseller%2Fsettings%2Fpayments",
+  );
+
+  assert.equal(getVendorReturnTo(request), "/seller/settings/payments");
+});
+
+test("getVendorVerifyRedirectPath preserves the protected route as returnTo", () => {
+  const request = new Request(
+    "https://vendor-register.example/seller/settings/payments?tab=wise",
+  );
+
+  assert.equal(
+    getVendorVerifyRedirectPath(request),
+    "/vendor/verify?returnTo=%2Fseller%2Fsettings%2Fpayments%3Ftab%3Dwise",
+  );
+});
 
 test("getVendorOrdersAccessState returns ready when read_draft_orders is granted", async () => {
   const result = await getVendorOrdersAccessState(
