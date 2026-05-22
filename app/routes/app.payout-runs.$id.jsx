@@ -1,11 +1,18 @@
 import { json } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { getPayoutRunDetail } = await import("../services/sellerPayments.server.js");
+  const { getPayoutRunDetail } =
+    await import("../services/sellerPayments.server.js");
 
   const payoutRun = await getPayoutRunDetail(params.id);
 
@@ -18,26 +25,39 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { approvePayoutRun, markPayoutRunManuallyPaid } = await import(
-    "../services/sellerPayments.server.js"
-  );
+  const {
+    approvePayoutRun,
+    executeWisePayoutRun,
+    markPayoutRunManuallyPaid,
+    syncWisePayoutRunStatus,
+  } = await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
   const result =
     intent === "approve"
       ? await approvePayoutRun({ payoutRunId: params.id, approvedBy: "admin" })
-      : intent === "markPaid"
-        ? await markPayoutRunManuallyPaid({
+      : intent === "executeWise"
+        ? await executeWisePayoutRun({
             payoutRunId: params.id,
             executedBy: "admin",
-            externalTransferId: formData.get("externalTransferId"),
-            transferMemo: formData.get("transferMemo"),
           })
-        : {
-            ok: false,
-            reason: "invalid_intent",
-          };
+        : intent === "syncWise"
+          ? await syncWisePayoutRunStatus({
+              payoutRunId: params.id,
+              executedBy: "admin",
+            })
+          : intent === "markPaid"
+            ? await markPayoutRunManuallyPaid({
+                payoutRunId: params.id,
+                executedBy: "admin",
+                externalTransferId: formData.get("externalTransferId"),
+                transferMemo: formData.get("transferMemo"),
+              })
+            : {
+                ok: false,
+                reason: "invalid_intent",
+              };
 
   if (!result.ok) {
     return json(
@@ -55,7 +75,15 @@ export const action = async ({ request, params }) => {
     message:
       intent === "approve"
         ? "出金予定を承認しました。"
-        : "手動送金済みとして記録しました。",
+        : intent === "executeWise"
+          ? result.pending
+            ? "Wise送金を開始しました。完了確認後に台帳へ反映します。"
+            : "Wise送金が完了し、台帳へ反映しました。"
+          : intent === "syncWise"
+            ? result.pending
+              ? "Wise送金ステータスを更新しました。"
+              : "Wise送金の完了を確認し、台帳へ反映しました。"
+            : "手動送金済みとして記録しました。",
   });
 };
 
@@ -68,6 +96,12 @@ export default function AdminPayoutRunDetailPage() {
     navigation.state !== "idle";
   const isMarkingPaid =
     navigation.formData?.get("intent") === "markPaid" &&
+    navigation.state !== "idle";
+  const isExecutingWise =
+    navigation.formData?.get("intent") === "executeWise" &&
+    navigation.state !== "idle";
+  const isSyncingWise =
+    navigation.formData?.get("intent") === "syncWise" &&
     navigation.state !== "idle";
 
   return (
@@ -155,22 +189,37 @@ export default function AdminPayoutRunDetailPage() {
 
       <div className="payout-detail__page">
         <section className="payout-detail__card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "wrap",
+            }}
+          >
             <div>
               <h1 className="payout-detail__title">{payoutRun.id}</h1>
               <p className="payout-detail__subtitle">
-                {payoutRun.sellerStoreName} / {formatMoney(payoutRun.amount, payoutRun.currencyCode)} /{" "}
+                {payoutRun.sellerStoreName} /{" "}
+                {formatMoney(payoutRun.amount, payoutRun.currencyCode)} /{" "}
                 {payoutRun.statusLabel}
               </p>
             </div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <Link className="payout-detail__button payout-detail__button--secondary" to="/app/payout-runs">
+              <Link
+                className="payout-detail__button payout-detail__button--secondary"
+                to="/app/payout-runs"
+              >
                 一覧へ戻る
               </Link>
               {payoutRun.status === "draft" ? (
                 <Form method="post">
                   <input type="hidden" name="intent" value="approve" />
-                  <button type="submit" className="payout-detail__button" disabled={isApproving}>
+                  <button
+                    type="submit"
+                    className="payout-detail__button"
+                    disabled={isApproving}
+                  >
                     {isApproving ? "承認中..." : "承認する"}
                   </button>
                 </Form>
@@ -178,20 +227,69 @@ export default function AdminPayoutRunDetailPage() {
             </div>
           </div>
           {actionData?.message ? (
-            <p className={actionData.ok ? "payout-detail__notice" : "payout-detail__error"}>
+            <p
+              className={
+                actionData.ok ? "payout-detail__notice" : "payout-detail__error"
+              }
+            >
               {actionData.message}
             </p>
           ) : null}
         </section>
 
+        {payoutRun.status === "approved" &&
+        payoutRun.transferMethod === "wise_api" ? (
+          <section className="payout-detail__card">
+            <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
+              Wise API送金
+            </h2>
+            <p className="payout-detail__subtitle">
+              承認済みの精算額をWise
+              APIで送金します。送金完了が確認できるまで、台帳の支払済みdebitは作成しません。
+            </p>
+            <Form method="post">
+              <input type="hidden" name="intent" value="executeWise" />
+              <button
+                type="submit"
+                className="payout-detail__button"
+                disabled={isExecutingWise}
+              >
+                {isExecutingWise ? "Wise送金中..." : "Wise APIで送金実行"}
+              </button>
+            </Form>
+          </section>
+        ) : null}
+
+        {payoutRun.status === "processing" &&
+        payoutRun.transferMethod === "wise_api" ? (
+          <section className="payout-detail__card">
+            <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
+              Wiseステータス確認
+            </h2>
+            <p className="payout-detail__subtitle">
+              Wise送金は処理中です。ステータスを確認し、完了していれば台帳へ反映します。
+            </p>
+            <Form method="post">
+              <input type="hidden" name="intent" value="syncWise" />
+              <button
+                type="submit"
+                className="payout-detail__button"
+                disabled={isSyncingWise}
+              >
+                {isSyncingWise ? "確認中..." : "Wiseステータスを確認"}
+              </button>
+            </Form>
+          </section>
+        ) : null}
+
         {payoutRun.status === "approved" ? (
           <section className="payout-detail__card">
             <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
-              手動送金の記録
+              手動精算の記録
             </h2>
             <p className="payout-detail__subtitle">
-              銀行振込やWiseなどで実際の送金を完了してから、この出金予定を送金済みにしてください。
-              Stripe Connect payoutはこの本番導線では実行しません。
+              銀行振込やWise管理画面などで実際の送金を完了してから、この出金予定を送金済みにしてください。
+              Wise APIに失敗した場合の手動フォールバックにも使えます。
             </p>
             <Form method="post" className="payout-detail__form">
               <input type="hidden" name="intent" value="markPaid" />
@@ -211,7 +309,11 @@ export default function AdminPayoutRunDetailPage() {
                   placeholder="例: 2026年5月分の手動振込"
                 />
               </label>
-              <button type="submit" className="payout-detail__button" disabled={isMarkingPaid}>
+              <button
+                type="submit"
+                className="payout-detail__button"
+                disabled={isMarkingPaid}
+              >
                 {isMarkingPaid ? "記録中..." : "手動送金済みにする"}
               </button>
             </Form>
@@ -224,17 +326,46 @@ export default function AdminPayoutRunDetailPage() {
               <tbody>
                 <Row label="出店者" value={payoutRun.sellerStoreName} />
                 <Row label="状態" value={payoutRun.statusLabel} />
-                <Row label="金額" value={formatMoney(payoutRun.amount, payoutRun.currencyCode)} />
+                <Row
+                  label="金額"
+                  value={formatMoney(payoutRun.amount, payoutRun.currencyCode)}
+                />
                 <Row label="送金方法" value={payoutRun.transferMethodLabel} />
-                <Row label="外部送金ID" value={payoutRun.externalTransferId || "-"} />
+                <Row
+                  label="外部送金ID"
+                  value={payoutRun.externalTransferId || "-"}
+                />
                 <Row label="送金メモ" value={payoutRun.transferMemo || "-"} />
-                <Row label="Stripe連携アカウント" value={payoutRun.stripeAccountId} />
-                <Row label="Stripe出金ID" value={payoutRun.stripePayoutId || "-"} />
+                <Row
+                  label="Wise受取先ID"
+                  value={payoutRun.payoutRecipient?.wiseRecipientId || "-"}
+                />
+                <Row
+                  label="Wise quote ID"
+                  value={payoutRun.wiseQuoteId || "-"}
+                />
+                <Row
+                  label="Wise transfer ID"
+                  value={payoutRun.wiseTransferId || "-"}
+                />
+                <Row
+                  label="Wise status"
+                  value={payoutRun.wiseTransferStatus || "-"}
+                />
                 <Row label="失敗コード" value={payoutRun.failureCode || "-"} />
                 <Row label="失敗理由" value={payoutRun.failureMessage || "-"} />
-                <Row label="承認日時" value={formatDateTime(payoutRun.approvedAt)} />
-                <Row label="送金記録日時" value={formatDateTime(payoutRun.executedAt)} />
-                <Row label="更新日時" value={formatDateTime(payoutRun.updatedAt)} />
+                <Row
+                  label="承認日時"
+                  value={formatDateTime(payoutRun.approvedAt)}
+                />
+                <Row
+                  label="送金記録日時"
+                  value={formatDateTime(payoutRun.executedAt)}
+                />
+                <Row
+                  label="更新日時"
+                  value={formatDateTime(payoutRun.updatedAt)}
+                />
               </tbody>
             </table>
           </div>
@@ -261,9 +392,13 @@ export default function AdminPayoutRunDetailPage() {
                 <tbody>
                   {payoutRun.ledgerEntries.map((entry) => (
                     <tr key={entry.id}>
-                      <td style={tdStyle}>{formatDateTime(entry.occurredAt)}</td>
+                      <td style={tdStyle}>
+                        {formatDateTime(entry.occurredAt)}
+                      </td>
                       <td style={tdStyle}>{entry.entryType}</td>
-                      <td style={tdStyle}>{formatMoney(entry.amount, entry.currencyCode)}</td>
+                      <td style={tdStyle}>
+                        {formatMoney(entry.amount, entry.currencyCode)}
+                      </td>
                       <td style={tdStyle}>{entry.direction}</td>
                       <td style={tdStyle}>{entry.stripeObjectId || "-"}</td>
                     </tr>
@@ -305,6 +440,22 @@ function createPayoutRunErrorMessage(reason) {
       return "この出金予定は送金済みにできない状態です。";
     case "seller_payout_restricted":
       return "この出店者は制限中または禁止中のため、出金対象外です。";
+    case "wise_payout_not_enabled":
+      return "Wise API送金モードが有効ではありません。";
+    case "wise_env_missing":
+      return "Wise APIの環境変数が不足しています。";
+    case "wise_live_transfers_disabled":
+      return "Wise live送金は明示的に有効化されていません。";
+    case "wise_recipient_missing":
+      return "Wise受取先が未登録または有効ではありません。";
+    case "insufficient_ledger_balance":
+      return "台帳上の出金可能残高が不足しています。";
+    case "wise_payout_execution_failed":
+      return "Wise API送金に失敗しました。";
+    case "wise_transfer_missing":
+      return "Wise transfer IDが未作成です。";
+    case "wise_transfer_failed":
+      return "Wise送金が失敗ステータスになりました。";
     default:
       return "出金予定の更新に失敗しました。";
   }

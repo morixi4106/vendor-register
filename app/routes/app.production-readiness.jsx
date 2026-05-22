@@ -5,9 +5,8 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-  const { getProductionReadiness } = await import(
-    "../services/productionReadiness.server.js"
-  );
+  const { getProductionReadiness } =
+    await import("../services/productionReadiness.server.js");
 
   return json(await getProductionReadiness());
 };
@@ -15,7 +14,9 @@ export const loader = async ({ request }) => {
 export default function ProductionReadinessPage() {
   const data = useLoaderData();
   const blockingChecks = data.checks.filter((check) => check.status === "fail");
-  const nonBlockingChecks = data.checks.filter((check) => check.status !== "fail");
+  const nonBlockingChecks = data.checks.filter(
+    (check) => check.status !== "fail",
+  );
 
   return (
     <div className="readiness-page">
@@ -173,7 +174,8 @@ export default function ProductionReadinessPage() {
           <div>
             <h1 className="readiness-title">本番運用チェック</h1>
             <p className="readiness-subtitle">
-              Stripe / Shopify / 出金運用の切り替え漏れを確認します。秘密鍵の値は表示しません。
+              Stripe / Shopify /
+              出金運用の切り替え漏れを確認します。秘密鍵の値は表示しません。
             </p>
           </div>
           <span
@@ -188,11 +190,29 @@ export default function ProductionReadinessPage() {
 
       <section className="readiness-card">
         <div className="readiness-grid">
-          <Metric label="Stripe mode" value={data.stripe.mode} />
+          <Metric
+            label="決済方針"
+            value={
+              data.operation?.paymentFlowLabel ||
+              "Shopify Payments + manual seller payouts"
+            }
+          />
+          <Metric
+            label="Stripe Connect"
+            value={
+              data.operation?.stripeConnectProductionEnabled
+                ? "本番使用"
+                : "未使用"
+            }
+          />
+          <Metric label="Stripe key mode" value={data.stripe.mode} />
           <Metric label="ブロッカー" value={data.summary.blockingCount} />
           <Metric label="注意" value={data.summary.warningCount} />
           <Metric label="外部確認" value={data.summary.manualCount} />
-          <Metric label="出店者" value={`${data.sellers.activeCount}/${data.sellers.totalCount}`} />
+          <Metric
+            label="出店者"
+            value={`${data.sellers.activeCount}/${data.sellers.totalCount}`}
+          />
         </div>
       </section>
 
@@ -242,9 +262,14 @@ export default function ProductionReadinessPage() {
       <section className="readiness-card">
         <h2 className="readiness-section-title">補足</h2>
         <p className="readiness-subtitle">
-          Shopify Paymentsの入金口座とWiseの受取口座は、アプリからは確認できません。
+          Shopify
+          Paymentsの入金口座とWiseの受取口座は、アプリからは確認できません。
           Shopify管理画面の決済設定で実口座を確認し、テストでは少額注文から返金、キャンセル、出金記録まで通してください。
-          出金管理は <Link className="readiness-link" to="/app/payout-runs">出金管理</Link> から確認できます。
+          出金管理は{" "}
+          <Link className="readiness-link" to="/app/payout-runs">
+            出金管理
+          </Link>{" "}
+          から確認できます。
         </p>
       </section>
     </div>

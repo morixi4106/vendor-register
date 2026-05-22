@@ -1,12 +1,22 @@
 import { NavLink } from "@remix-run/react";
 
 const NAV_ITEMS = [
-  { key: "dashboard", label: "ダッシュボード", to: "/vendor/dashboard", end: true },
+  {
+    key: "dashboard",
+    label: "ダッシュボード",
+    to: "/vendor/dashboard",
+    end: true,
+  },
   { key: "orders", label: "注文管理", to: "/vendor/orders", end: true },
   { key: "products", label: "商品管理", to: "/vendor/products", end: true },
   { key: "inventory", label: "在庫", to: "/vendor/inventory", end: true },
   { key: "settings", label: "設定", to: "/vendor/settings", end: true },
-  { key: "payments", label: "決済設定", to: "/seller/settings/payments", end: true },
+  {
+    key: "payments",
+    label: "精算設定",
+    to: "/seller/settings/payments",
+    end: true,
+  },
 ];
 
 export default function VendorSidebar({ activeItem }) {
@@ -20,7 +30,9 @@ export default function VendorSidebar({ activeItem }) {
             end={item.end}
             className={({ isActive }) =>
               `vendor-shell__nav-link${
-                (activeItem ? activeItem === item.key : isActive) ? " is-active" : ""
+                (activeItem ? activeItem === item.key : isActive)
+                  ? " is-active"
+                  : ""
               }`
             }
           >

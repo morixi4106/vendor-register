@@ -2,6 +2,7 @@ import { json, redirect } from '@remix-run/node';
 
 import prisma from '../db.server.js';
 import { draftOrderCheckout } from './draftOrderCheckout.server.js';
+import { shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -16,8 +17,46 @@ const INVALID_QUANTITY_MESSAGE = '商品の数量を確認してください。'
 const UNAVAILABLE_PRODUCT_MESSAGE =
   '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
 const INVALID_EMAIL_MESSAGE = 'メールアドレスの形式を確認してください。';
+const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DEFAULT_ADMIN_API_VERSION = '2025-01';
+
+const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
+  query ProductForDraftOrderCheckout($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      variants(first: 2) {
+        nodes {
+          id
+          title
+          price
+          inventoryItem {
+            requiresShipping
+          }
+        }
+      }
+    }
+  }
+`;
+
+const VARIANT_FOR_CHECKOUT_QUERY = `#graphql
+  query VariantForDraftOrderCheckout($id: ID!) {
+    productVariant(id: $id) {
+      id
+      title
+      price
+      product {
+        id
+        title
+      }
+      inventoryItem {
+        requiresShipping
+      }
+    }
+  }
+`;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -36,6 +75,24 @@ function normalizeEmail(value) {
 function normalizeShopDomain(value) {
   const normalized = normalizeText(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeShopifyGid(value, resourceType) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith(`gid://shopify/${resourceType}/`)) {
+    return normalized;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return `gid://shopify/${resourceType}/${normalized}`;
+  }
+
+  return null;
 }
 
 function isValidEmail(value) {
@@ -91,6 +148,9 @@ function buildServerTrustedCheckoutLine(product, quantity) {
 
   return {
     lineId: product.id,
+    ...(normalizeText(product.shopifyVariantId)
+      ? { variantId: normalizeText(product.shopifyVariantId) }
+      : {}),
     ...(normalizeText(product.shopifyProductId)
       ? { productId: normalizeText(product.shopifyProductId) }
       : {}),
@@ -98,8 +158,26 @@ function buildServerTrustedCheckoutLine(product, quantity) {
     originalUnitPrice,
     amountAfterItemDiscountBeforeOrderCoupon: originalUnitPrice * quantity,
     quantity,
-    requiresShipping: true,
+    requiresShipping: product.requiresShipping !== false,
   };
+}
+
+function getRequestedShopifyProductGid(item) {
+  return (
+    normalizeShopifyGid(item?.shopifyProductGid, 'Product') ||
+    normalizeShopifyGid(item?.shopifyProductId, 'Product')
+  );
+}
+
+function getRequestedShopifyVariantGid(item) {
+  return (
+    normalizeShopifyGid(item?.shopifyVariantGid, 'ProductVariant') ||
+    normalizeShopifyGid(item?.shopifyVariantId, 'ProductVariant')
+  );
+}
+
+function hasRequestedShopifyReference(item) {
+  return Boolean(getRequestedShopifyProductGid(item) || getRequestedShopifyVariantGid(item));
 }
 
 function buildCheckoutMetadata(vendorContext, checkoutSource = PUBLIC_CHECKOUT_SOURCE) {
@@ -288,6 +366,185 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
   };
 }
 
+async function resolveVendorStoreShopDomain({ vendorStoreId, prismaClient = prisma }) {
+  const products = await prismaClient.product.findMany({
+    where: {
+      vendorStoreId,
+      shopDomain: {
+        not: null,
+      },
+    },
+    select: {
+      shopDomain: true,
+    },
+  });
+  const shopDomains = Array.from(
+    new Set(products.map((product) => normalizeShopDomain(product.shopDomain)).filter(Boolean)),
+  );
+
+  return shopDomains.length === 1 ? shopDomains[0] : null;
+}
+
+function buildShopifyOnlyProductFromVariant({ variant, product, quantity }) {
+  const price = Number(variant?.price);
+  const productTitle = normalizeText(product?.title);
+  const variantTitle = normalizeText(variant?.title);
+  const title =
+    variantTitle && variantTitle !== 'Default Title' && productTitle
+      ? `${productTitle} - ${variantTitle}`
+      : productTitle || variantTitle;
+
+  if (!normalizeText(variant?.id) || !normalizeText(product?.id) || !title || !Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+
+  return {
+    id: normalizeText(variant.id),
+    name: title,
+    price,
+    calculatedPrice: price,
+    shopifyProductId: normalizeText(product.id),
+    shopifyVariantId: normalizeText(variant.id),
+    // Shopify-only fallback defaults to shipping-required when inventoryItem is missing.
+    requiresShipping: variant.inventoryItem?.requiresShipping !== false,
+    quantity,
+  };
+}
+
+async function fetchShopifyCheckoutProduct({
+  item,
+  shopDomain,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+}) {
+  const variantGid = getRequestedShopifyVariantGid(item);
+  const productGid = getRequestedShopifyProductGid(item);
+
+  if (variantGid) {
+    const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain,
+      apiVersion: DEFAULT_ADMIN_API_VERSION,
+      query: VARIANT_FOR_CHECKOUT_QUERY,
+      variables: {
+        id: variantGid,
+      },
+    });
+    const variant = data?.productVariant;
+    const product = variant?.product;
+
+    return buildShopifyOnlyProductFromVariant({
+      variant,
+      product,
+      quantity: item.quantity,
+    });
+  }
+
+  if (!productGid) {
+    return null;
+  }
+
+  const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: DEFAULT_ADMIN_API_VERSION,
+    query: PRODUCT_FOR_CHECKOUT_QUERY,
+    variables: {
+      id: productGid,
+    },
+  });
+  const product = data?.product;
+  const variants = Array.isArray(product?.variants?.nodes) ? product.variants.nodes : [];
+
+  if (variants.length !== 1) {
+    return {
+      error: VARIANT_REQUIRED_ERROR,
+    };
+  }
+
+  return buildShopifyOnlyProductFromVariant({
+    variant: variants[0],
+    product,
+    quantity: item.quantity,
+  });
+}
+
+async function buildShopifyFallbackCheckoutPayload({
+  resolvedVendorContext,
+  submission,
+  prismaClient = prisma,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  checkoutSource = PUBLIC_CHECKOUT_SOURCE,
+}) {
+  if (!submission.items.every(hasRequestedShopifyReference)) {
+    return {
+      ok: false,
+      error: INVALID_SELECTION_MESSAGE,
+    };
+  }
+
+  const shopDomain = await resolveVendorStoreShopDomain({
+    vendorStoreId: resolvedVendorContext.store.id,
+    prismaClient,
+  });
+
+  if (!shopDomain) {
+    return {
+      ok: false,
+      error: CHECKOUT_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  const selectedProducts = [];
+
+  for (const item of submission.items) {
+    const resolvedProduct = await fetchShopifyCheckoutProduct({
+      item,
+      shopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+    });
+
+    if (resolvedProduct?.error) {
+      return {
+        ok: false,
+        error: resolvedProduct.error,
+      };
+    }
+
+    if (!resolvedProduct) {
+      return {
+        ok: false,
+        error: INVALID_SELECTION_MESSAGE,
+      };
+    }
+
+    selectedProducts.push({
+      product: {
+        ...resolvedProduct,
+        shopDomain,
+      },
+      quantity: resolvedProduct.quantity,
+    });
+  }
+
+  const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
+
+  return {
+    ok: true,
+    payload: {
+      orderLike: {
+        lines: selectedProducts.map(({ product, quantity }) =>
+          buildServerTrustedCheckoutLine(product, quantity),
+        ),
+      },
+      shippingAddress: submission.shippingAddress,
+      customer: submission.customer,
+      email: submission.customer.email,
+      customerEmail: submission.customer.email,
+      ...(submission.note ? { note: submission.note } : {}),
+      shopDomain,
+      tags: metadata.tags,
+    },
+  };
+}
+
 function normalizeStorefrontCheckoutSubmission(formData) {
   const fieldErrors = buildDefaultFieldErrors();
   const items = [];
@@ -461,9 +718,13 @@ function normalizePublicCheckoutSubmission(body) {
     const productId = normalizeText(
       item?.localProductId || item?.lineId || item?.productId || item?.id,
     );
+    const shopifyProductId =
+      normalizeText(item?.shopifyProductGid) || normalizeText(item?.shopifyProductId);
+    const shopifyVariantId =
+      normalizeText(item?.shopifyVariantGid) || normalizeText(item?.shopifyVariantId);
     const quantity = parseQuantityInput(item?.quantity ?? item?.qty);
 
-    if (!productId || !quantity.isValid) {
+    if ((!productId && !shopifyProductId && !shopifyVariantId) || !quantity.isValid) {
       hasInvalidItem = true;
       continue;
     }
@@ -471,6 +732,8 @@ function normalizePublicCheckoutSubmission(body) {
     if (quantity.isSelected) {
       items.push({
         productId,
+        shopifyProductId,
+        shopifyVariantId,
         quantity: quantity.value,
       });
     }
@@ -566,6 +829,7 @@ async function buildServerTrustedCheckoutPayload({
   vendorHandle,
   submission,
   prismaClient = prisma,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
   checkoutSource = PUBLIC_CHECKOUT_SOURCE,
 }) {
   const resolvedVendorContext =
@@ -578,7 +842,9 @@ async function buildServerTrustedCheckoutPayload({
     };
   }
 
-  const uniqueProductIds = Array.from(new Set(submission.items.map((item) => item.productId)));
+  const uniqueProductIds = Array.from(
+    new Set(submission.items.map((item) => item.productId).filter(Boolean)),
+  );
   const products = await prismaClient.product.findMany({
     where: {
       id: { in: uniqueProductIds },
@@ -597,10 +863,13 @@ async function buildServerTrustedCheckoutPayload({
   });
 
   if (products.length !== uniqueProductIds.length) {
-    return {
-      ok: false,
-      error: INVALID_SELECTION_MESSAGE,
-    };
+    return buildShopifyFallbackCheckoutPayload({
+      resolvedVendorContext,
+      submission,
+      prismaClient,
+      shopifyGraphQLWithOfflineSessionImpl,
+      checkoutSource,
+    });
   }
 
   const productsById = new Map(products.map((product) => [product.id, product]));
@@ -610,10 +879,13 @@ async function buildServerTrustedCheckoutPayload({
     const product = productsById.get(item.productId);
 
     if (!product) {
-      return {
-        ok: false,
-        error: INVALID_SELECTION_MESSAGE,
-      };
+      return buildShopifyFallbackCheckoutPayload({
+        resolvedVendorContext,
+        submission,
+        prismaClient,
+        shopifyGraphQLWithOfflineSessionImpl,
+        checkoutSource,
+      });
     }
 
     const shopDomain = normalizeShopDomain(product.shopDomain);
@@ -671,6 +943,7 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
   formData,
   vendorContext,
   prismaClient = prisma,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
 }) {
   const submission = normalizeStorefrontCheckoutSubmission(formData);
 
@@ -682,6 +955,7 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
     vendorContext,
     submission: submission.submission,
     prismaClient,
+    shopifyGraphQLWithOfflineSessionImpl,
   });
 
   if (!trustedPayload.ok) {
@@ -703,6 +977,7 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
 export async function buildDraftOrderCheckoutInputFromPublicRequest({
   body,
   prismaClient = prisma,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
 }) {
   const submission = normalizePublicCheckoutSubmission(body);
 
@@ -726,6 +1001,7 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
     vendorContext,
     submission: submission.submission,
     prismaClient,
+    shopifyGraphQLWithOfflineSessionImpl,
   });
 
   if (!trustedPayload.ok) {
@@ -758,6 +1034,7 @@ export function createVendorStorefrontLoader({
 export function createVendorStorefrontAction({
   prismaClient = prisma,
   draftOrderCheckoutImpl = draftOrderCheckout,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
 } = {}) {
   return async function action({ request, params }) {
     const vendorContext = await getActiveVendorContextByHandle(params.handle, prismaClient);
@@ -771,6 +1048,7 @@ export function createVendorStorefrontAction({
       formData,
       vendorContext,
       prismaClient,
+      shopifyGraphQLWithOfflineSessionImpl,
     });
 
     if (!checkoutInput.ok) {
@@ -796,6 +1074,7 @@ export function createVendorStorefrontAction({
 export function createPublicVendorDraftOrderCheckoutAction({
   prismaClient = prisma,
   draftOrderCheckoutImpl = draftOrderCheckout,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
 } = {}) {
   return async function action({ request }) {
     if (request.method !== 'POST') {
@@ -813,6 +1092,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
     const checkoutInput = await buildDraftOrderCheckoutInputFromPublicRequest({
       body,
       prismaClient,
+      shopifyGraphQLWithOfflineSessionImpl,
     });
 
     if (!checkoutInput.ok) {

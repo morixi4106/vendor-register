@@ -1,19 +1,20 @@
 import { json } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
-const SELLER_STATUSES = [
-  "pending",
-  "active",
-  "review",
-  "restricted",
-  "banned",
-];
+const SELLER_STATUSES = ["pending", "active", "review", "restricted", "banned"];
 
 export const loader = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { getAdminSellerDetail } = await import("../services/sellerPayments.server.js");
+  const { getAdminSellerDetail } =
+    await import("../services/sellerPayments.server.js");
 
   const detail = await getAdminSellerDetail(params.id);
 
@@ -26,61 +27,21 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
-  const {
-    createSellerStripeAccount,
-    resetSellerStripeAccountForRecreate,
-    updateSellerStatus,
-  } = await import("../services/sellerPayments.server.js");
+  const { upsertSellerWiseRecipient, updateSellerStatus } =
+    await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
-  if (intent === "create_stripe_account") {
-    try {
-      const result = await createSellerStripeAccount({
-        sellerId: params.id,
-      });
-
-      if (!result.ok) {
-        return json(
-          {
-            ok: false,
-            reason: result.reason,
-            message: result.message
-              ? `Stripe連携アカウントの作成に失敗しました: ${result.message}`
-              : "Stripe連携アカウントの作成に失敗しました。",
-            stripeAccountId: result.stripeAccountId || null,
-            stripeError: result.stripeError || null,
-          },
-          { status: 400 },
-        );
-      }
-
-      return json({
-        ok: true,
-        message: "Stripe連携アカウントを作成しました。",
-      });
-    } catch (error) {
-      console.error("seller stripe account create error:", error);
-      return json(
-        {
-          ok: false,
-          reason: "internal_error",
-          message:
-            error instanceof Error && error.message
-              ? `Stripe連携アカウントの作成に失敗しました: ${error.message}`
-              : "Stripe連携アカウントの作成に失敗しました。",
-        },
-        { status: 500 },
-      );
-    }
-  }
-
-  if (intent === "reset_stripe_account") {
-    const result = await resetSellerStripeAccountForRecreate({
+  if (intent === "upsert_payout_recipient") {
+    const result = await upsertSellerWiseRecipient({
       sellerId: params.id,
-      changedBy: "admin",
-      reason: "stripe_platform_mismatch_recreate",
+      wiseRecipientId: formData.get("wiseRecipientId"),
+      currencyCode: formData.get("currencyCode"),
+      countryCode: formData.get("countryCode"),
+      accountHolderName: formData.get("accountHolderName"),
+      accountSummary: formData.get("accountSummary"),
+      status: formData.get("recipientStatus"),
     });
 
     if (!result.ok) {
@@ -88,11 +49,7 @@ export const action = async ({ request, params }) => {
         {
           ok: false,
           reason: result.reason,
-          message:
-            result.reason === "stripe_account_reset_blocked"
-              ? "売上・台帳・出金履歴があるため、Stripe連携アカウントをリセットできません。"
-              : "Stripe連携アカウントのリセットに失敗しました。",
-          blockers: result.blockers || null,
+          message: "Wise受取先の保存に失敗しました。",
         },
         { status: 400 },
       );
@@ -100,9 +57,7 @@ export const action = async ({ request, params }) => {
 
     return json({
       ok: true,
-      message: result.reset
-        ? `Stripe連携アカウントをリセットしました。古い未決済注文 ${result.staleOrdersUpdated} 件を失敗扱いにしました。`
-        : "リセット対象のStripe連携アカウントはありませんでした。",
+      message: "Wise受取先を保存しました。",
     });
   }
 
@@ -137,7 +92,9 @@ export const action = async ({ request, params }) => {
 
   return json({
     ok: true,
-    message: result.changed ? "決済状態を更新しました。" : "決済状態に変更はありません。",
+    message: result.changed
+      ? "決済状態を更新しました。"
+      : "決済状態に変更はありません。",
   });
 };
 
@@ -179,11 +136,8 @@ export default function AdminSellerDetailPage() {
   const navigation = useNavigation();
   const isStatusSubmitting =
     navigation.formData?.get("intent") === "update_status";
-  const isStripeCreating =
-    navigation.formData?.get("intent") === "create_stripe_account" &&
-    navigation.state !== "idle";
-  const isStripeResetting =
-    navigation.formData?.get("intent") === "reset_stripe_account" &&
+  const isRecipientSaving =
+    navigation.formData?.get("intent") === "upsert_payout_recipient" &&
     navigation.state !== "idle";
 
   return (
@@ -316,16 +270,25 @@ export default function AdminSellerDetailPage() {
 
       <div className="seller-detail__page">
         <section className="seller-detail__card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "wrap",
+            }}
+          >
             <div>
               <h1 className="seller-detail__title">{data.vendor.storeName}</h1>
               <p className="seller-detail__subtitle">
-                出店者の決済状態、Stripe連携アカウント、出金履歴、
-                webhook受信履歴、売上台帳を確認します。
+                出店者の精算状態、受取先、支払履歴、売上台帳を確認します。
               </p>
             </div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <Link className="seller-detail__button seller-detail__button--secondary" to="/app/sellers">
+              <Link
+                className="seller-detail__button seller-detail__button--secondary"
+                to="/app/sellers"
+              >
                 一覧へ戻る
               </Link>
               <a
@@ -334,7 +297,7 @@ export default function AdminSellerDetailPage() {
                 target="_blank"
                 rel="noreferrer"
               >
-                出店者側の決済設定
+                出店者側の精算設定
               </a>
             </div>
           </div>
@@ -345,7 +308,9 @@ export default function AdminSellerDetailPage() {
 
         <div className="seller-detail__grid">
           <section className="seller-detail__card">
-            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>出店者決済</h2>
+            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+              出店者決済
+            </h2>
             <div className="seller-detail__description">
               <div className="seller-detail__row">
                 <div className="seller-detail__term">決済レコードID</div>
@@ -365,86 +330,140 @@ export default function AdminSellerDetailPage() {
               </div>
               <div className="seller-detail__row">
                 <div className="seller-detail__term">管理メール</div>
-                <div className="seller-detail__value">{data.vendor.managementEmail}</div>
+                <div className="seller-detail__value">
+                  {data.vendor.managementEmail}
+                </div>
               </div>
             </div>
           </section>
 
           <section className="seller-detail__card">
-            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>Stripe連携アカウント</h2>
+            <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+              Wise受取先
+            </h2>
             <div className="seller-detail__description">
               <div className="seller-detail__row">
-                <div className="seller-detail__term">連携アカウント</div>
+                <div className="seller-detail__term">受取先ID</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount?.stripeAccountId || "未作成"}
+                  {data.payoutRecipient?.wiseRecipientId || "未登録"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">登録情報の提出</div>
+                <div className="seller-detail__term">状態</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? (data.stripeAccount.detailsSubmitted ? "完了" : "未完了") : "-"}
+                  {data.payoutRecipient?.status || "-"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">決済受付</div>
+                <div className="seller-detail__term">通貨</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? (data.stripeAccount.chargesEnabled ? "有効" : "無効") : "-"}
+                  {String(
+                    data.payoutRecipient?.currencyCode || "jpy",
+                  ).toUpperCase()}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">出金可否</div>
+                <div className="seller-detail__term">口座名義</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount ? (data.stripeAccount.payoutsEnabled ? "有効" : "無効") : "-"}
+                  {data.payoutRecipient?.accountHolderName || "-"}
                 </div>
               </div>
               <div className="seller-detail__row">
-                <div className="seller-detail__term">出金方式</div>
+                <div className="seller-detail__term">概要</div>
                 <div className="seller-detail__value">
-                  {data.stripeAccount?.payoutSchedule === "manual" ? "手動" : data.stripeAccount?.payoutSchedule || "-"}
+                  {data.payoutRecipient?.accountSummary || "-"}
                 </div>
               </div>
             </div>
-            {!data.stripeAccount ? (
-              <Form method="post">
-                <input type="hidden" name="intent" value="create_stripe_account" />
+            <Form
+              method="post"
+              className="seller-detail__form"
+              style={{ marginTop: "16px" }}
+            >
+              <input
+                type="hidden"
+                name="intent"
+                value="upsert_payout_recipient"
+              />
+              <div className="seller-detail__field">
+                <label htmlFor="wiseRecipientId">Wise recipient ID</label>
+                <input
+                  id="wiseRecipientId"
+                  name="wiseRecipientId"
+                  className="seller-detail__input"
+                  defaultValue={data.payoutRecipient?.wiseRecipientId || ""}
+                  placeholder="例: 123456789"
+                  required
+                />
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="recipientStatus">状態</label>
+                <select
+                  id="recipientStatus"
+                  name="recipientStatus"
+                  className="seller-detail__select"
+                  defaultValue={data.payoutRecipient?.status || "active"}
+                >
+                  <option value="active">active</option>
+                  <option value="pending">pending</option>
+                  <option value="restricted">restricted</option>
+                </select>
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="currencyCode">受取通貨</label>
+                <input
+                  id="currencyCode"
+                  name="currencyCode"
+                  className="seller-detail__input"
+                  defaultValue={data.payoutRecipient?.currencyCode || "jpy"}
+                />
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="countryCode">国コード</label>
+                <input
+                  id="countryCode"
+                  name="countryCode"
+                  className="seller-detail__input"
+                  defaultValue={data.payoutRecipient?.countryCode || ""}
+                  placeholder="例: JP"
+                />
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="accountHolderName">口座名義</label>
+                <input
+                  id="accountHolderName"
+                  name="accountHolderName"
+                  className="seller-detail__input"
+                  defaultValue={data.payoutRecipient?.accountHolderName || ""}
+                />
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="accountSummary">概要</label>
+                <input
+                  id="accountSummary"
+                  name="accountSummary"
+                  className="seller-detail__input"
+                  defaultValue={data.payoutRecipient?.accountSummary || ""}
+                  placeholder="例: Wise recipient / JP bank"
+                />
+              </div>
+              <div>
                 <button
                   type="submit"
                   className="seller-detail__button"
-                  disabled={isStripeCreating}
+                  disabled={Boolean(isRecipientSaving)}
                 >
-                  {isStripeCreating ? "作成中..." : "Stripe連携アカウントを作成"}
+                  {isRecipientSaving ? "保存中..." : "Wise受取先を保存"}
                 </button>
-              </Form>
-            ) : null}
-            {data.stripeAccount ? (
-              <Form
-                method="post"
-                onSubmit={(event) => {
-                  if (
-                    !window.confirm(
-                      "このStripe連携アカウントをリセットします。未決済のテスト注文は失敗扱いになります。続行しますか？",
-                    )
-                  ) {
-                    event.preventDefault();
-                  }
-                }}
-              >
-                <input type="hidden" name="intent" value="reset_stripe_account" />
-                <button
-                  type="submit"
-                  className="seller-detail__button seller-detail__button--secondary"
-                  disabled={isStripeResetting}
-                  style={{ marginTop: "12px" }}
-                >
-                  {isStripeResetting ? "リセット中..." : "Stripe連携を作り直す"}
-                </button>
-              </Form>
-            ) : null}
+              </div>
+            </Form>
           </section>
         </div>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>決済状態の変更</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            決済状態の変更
+          </h2>
           <Form method="post" className="seller-detail__form">
             <input type="hidden" name="intent" value="update_status" />
             <div className="seller-detail__field">
@@ -485,7 +504,9 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>状態変更履歴</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            状態変更履歴
+          </h2>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
@@ -500,9 +521,17 @@ export default function AdminSellerDetailPage() {
               <tbody>
                 {data.statusHistory.map((item) => (
                   <tr key={item.id}>
-                    <td style={tdStyle}>{new Date(item.createdAt).toLocaleString("ja-JP")}</td>
-                    <td style={tdStyle}>{item.fromStatus ? sellerStatusOptionLabel(item.fromStatus) : "-"}</td>
-                    <td style={tdStyle}>{sellerStatusOptionLabel(item.toStatus)}</td>
+                    <td style={tdStyle}>
+                      {new Date(item.createdAt).toLocaleString("ja-JP")}
+                    </td>
+                    <td style={tdStyle}>
+                      {item.fromStatus
+                        ? sellerStatusOptionLabel(item.fromStatus)
+                        : "-"}
+                    </td>
+                    <td style={tdStyle}>
+                      {sellerStatusOptionLabel(item.toStatus)}
+                    </td>
                     <td style={tdStyle}>{item.changedBy || "-"}</td>
                     <td style={tdStyle}>{item.reason || "-"}</td>
                   </tr>
@@ -513,35 +542,43 @@ export default function AdminSellerDetailPage() {
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の注文</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            最近の注文
+          </h2>
           <SimpleTable
-            headers={["注文ID", "状態", "金額", "PaymentIntent", "Charge"]}
+            headers={["注文ID", "状態", "金額", "決済参照"]}
             rows={data.orders.map((order) => [
               order.id,
               order.status,
               `${order.totalAmount} ${order.currencyCode.toUpperCase()}`,
-              order.stripePaymentIntentId || "-",
-              order.stripeChargeId || "-",
+              order.stripePaymentIntentId || order.stripeChargeId || "-",
             ])}
           />
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の出金予定</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            最近の出金予定
+          </h2>
           <SimpleTable
-            headers={["出金ID", "状態", "金額", "Stripe出金ID", "更新日時"]}
+            headers={["出金ID", "状態", "金額", "送金ID", "更新日時"]}
             rows={data.payoutRuns.map((run) => [
               run.id,
               run.statusLabel,
               `${run.amount} ${run.currencyCode.toUpperCase()}`,
-              run.stripePayoutId || "-",
+              run.wiseTransferId ||
+                run.externalTransferId ||
+                run.stripePayoutId ||
+                "-",
               new Date(run.updatedAt).toLocaleString("ja-JP"),
             ])}
           />
         </section>
 
         <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近の売上台帳</h2>
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            最近の売上台帳
+          </h2>
           <SimpleTable
             headers={["日時", "種別", "金額", "方向", "対象ID"]}
             rows={data.ledgerEntries.map((entry) => [
@@ -550,19 +587,6 @@ export default function AdminSellerDetailPage() {
               `${entry.amount} ${entry.currencyCode.toUpperCase()}`,
               entry.direction,
               entry.stripeObjectId || "-",
-            ])}
-          />
-        </section>
-
-        <section className="seller-detail__card">
-          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>最近のStripeイベント</h2>
-          <SimpleTable
-            headers={["日時", "種別", "アカウント", "処理状態"]}
-            rows={data.stripeEvents.map((event) => [
-              new Date(event.createdAt).toLocaleString("ja-JP"),
-              event.type,
-              event.stripeAccountId || "-",
-              event.processingStatus,
             ])}
           />
         </section>

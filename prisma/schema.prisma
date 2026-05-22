@@ -28,18 +28,18 @@ model Session {
 }
 
 model VendorStore {
-  id         String   @id @default(cuid())
-  ownerName  String
-  storeName  String
-  email      String
-  phone      String
-  address    String
-  country    String
-  category   String
-  note       String?
-  ageCheck   String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  ownerName String
+  storeName String
+  email     String
+  phone     String
+  address   String
+  country   String
+  category  String
+  note      String?
+  ageCheck  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   vendorAuth Vendor?
   seller     Seller?
@@ -47,44 +47,44 @@ model VendorStore {
 }
 
 model Product {
-  id               String      @id @default(cuid())
-  name             String
-  description      String?
-  imageUrl         String?
-  category         String?
-  price            Int
-  costAmount       Decimal?    @db.Decimal(12, 2)
-  costCurrency     String      @default("JPY")
-  url              String?
-  vendorStoreId    String
-  approvalStatus   String      @default("pending")
-  shopifyProductId String?
-  shopDomain       String?
-  calculatedPrice  Int?
-  usedFxRate       Float?
-  usedMargin       Float?
-  usedDutyRate     Float?
-  usedFee          Json?
-  roundingResult   Json?
-  calculatedAt     DateTime?
-  priceSyncStatus  String      @default("calculated_not_applied")
-  priceSyncError   String?
-  priceAppliedAt   DateTime?
+  id                      String    @id @default(cuid())
+  name                    String
+  description             String?
+  imageUrl                String?
+  category                String?
+  price                   Int
+  costAmount              Decimal?  @db.Decimal(12, 2)
+  costCurrency            String    @default("JPY")
+  url                     String?
+  vendorStoreId           String
+  approvalStatus          String    @default("pending")
+  shopifyProductId        String?
+  shopDomain              String?
+  calculatedPrice         Int?
+  usedFxRate              Float?
+  usedMargin              Float?
+  usedDutyRate            Float?
+  usedFee                 Json?
+  roundingResult          Json?
+  calculatedAt            DateTime?
+  priceSyncStatus         String    @default("calculated_not_applied")
+  priceSyncError          String?
+  priceAppliedAt          DateTime?
   lastPriceApplyAttemptAt DateTime?
-  priceFormulaVersion String?
-  priceSnapshotJson Json?
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  priceFormulaVersion     String?
+  priceSnapshotJson       Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
-  vendorStore      VendorStore @relation(fields: [vendorStoreId], references: [id])
-  priceApplyLogs   ProductPriceApplyLog[]
+  vendorStore    VendorStore            @relation(fields: [vendorStoreId], references: [id])
+  priceApplyLogs ProductPriceApplyLog[]
 
   @@unique([shopDomain, shopifyProductId])
   @@index([shopifyProductId])
 }
 
 model ProductPriceApplyLog {
-  id                  String    @id @default(cuid())
+  id                  String   @id @default(cuid())
   productId           String?
   shopifyProductId    String?
   shopDomain          String?
@@ -93,9 +93,9 @@ model ProductPriceApplyLog {
   status              String
   errorSummary        String?
   priceSnapshotJson   Json?
-  attemptedAt         DateTime  @default(now())
+  attemptedAt         DateTime @default(now())
 
-  product             Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([productId, attemptedAt])
   @@index([shopifyProductId, shopDomain, attemptedAt])
@@ -118,90 +118,120 @@ model Vendor {
 }
 
 model Seller {
-  id                String                @id @default(cuid())
-  vendorId          String                @unique
-  vendorStoreId     String                @unique
-  status            String                @default("pending")
-  statusReason      String?
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  id            String   @id @default(cuid())
+  vendorId      String   @unique
+  vendorStoreId String   @unique
+  status        String   @default("pending")
+  statusReason  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  vendor            Vendor                @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  vendorStore       VendorStore           @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
-  stripeAccount     SellerStripeAccount?
-  statusHistory     SellerStatusHistory[]
-  orders            Order[]
-  ledgerEntries     LedgerEntry[]
-  payoutRuns        PayoutRun[]
+  vendor          Vendor                 @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorStore     VendorStore            @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
+  stripeAccount   SellerStripeAccount?
+  payoutRecipient SellerPayoutRecipient?
+  statusHistory   SellerStatusHistory[]
+  orders          Order[]
+  ledgerEntries   LedgerEntry[]
+  payoutRuns      PayoutRun[]
 
   @@index([status, createdAt])
   @@map("sellers")
 }
 
 model SellerStripeAccount {
-  id                   String        @id @default(cuid())
-  sellerId             String        @unique
-  stripeAccountId      String        @unique
-  countryCode          String?
-  defaultCurrency      String?
-  detailsSubmitted     Boolean       @default(false)
-  chargesEnabled       Boolean       @default(false)
-  payoutsEnabled       Boolean       @default(false)
-  payoutSchedule       String        @default("manual")
-  dashboardType        String        @default("none")
+  id                    String    @id @default(cuid())
+  sellerId              String    @unique
+  stripeAccountId       String    @unique
+  countryCode           String?
+  defaultCurrency       String?
+  detailsSubmitted      Boolean   @default(false)
+  chargesEnabled        Boolean   @default(false)
+  payoutsEnabled        Boolean   @default(false)
+  payoutSchedule        String    @default("manual")
+  dashboardType         String    @default("none")
   onboardingCompletedAt DateTime?
-  requirementsJson     Json?
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  requirementsJson      Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  seller               Seller        @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  orders               Order[]
-  ledgerEntries        LedgerEntry[]
-  payoutRuns           PayoutRun[]
+  seller        Seller        @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  orders        Order[]
+  ledgerEntries LedgerEntry[]
+  payoutRuns    PayoutRun[]
 
   @@map("seller_stripe_accounts")
 }
 
-model SellerStatusHistory {
-  id          String    @id @default(cuid())
-  sellerId    String
-  fromStatus  String?
-  toStatus    String
-  changedBy   String?
-  reason      String?
-  createdAt   DateTime  @default(now())
+model SellerPayoutRecipient {
+  id                   String    @id @default(cuid())
+  sellerId             String    @unique
+  provider             String    @default("wise")
+  status               String    @default("pending")
+  countryCode          String?
+  currencyCode         String    @default("jpy")
+  legalType            String?
+  accountHolderName    String?
+  wiseProfileId        String?
+  wiseRecipientId      String?   @unique
+  wiseRecipientHash    String?
+  accountSummary       String?
+  longAccountSummary   String?
+  recipientPayloadJson Json?
+  requirementsJson     Json?
+  verificationJson     Json?
+  lastSyncedAt         DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  seller      Seller    @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller     Seller      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  payoutRuns PayoutRun[]
+
+  @@index([provider, status])
+  @@index([wiseRecipientId])
+  @@map("seller_payout_recipients")
+}
+
+model SellerStatusHistory {
+  id         String   @id @default(cuid())
+  sellerId   String
+  fromStatus String?
+  toStatus   String
+  changedBy  String?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   @@index([sellerId, createdAt])
   @@map("seller_status_history")
 }
 
 model Order {
-  id                   String               @id @default(cuid())
-  sellerId             String
+  id                    String    @id @default(cuid())
+  sellerId              String
   sellerStripeAccountId String?
-  stripeAccountId      String?
-  status               String               @default("draft")
-  currencyCode         String               @default("jpy")
-  subtotalAmount       Int
-  applicationFeeAmount Int
-  totalAmount          Int
-  customerEmail        String
-  customerFirstName    String?
-  customerLastName     String?
-  customerPhone        String?
-  shippingAddressJson  Json?
-  lineItemsJson        Json
-  stripePaymentIntentId String?            @unique
-  stripeChargeId       String?             @unique
-  paidAt               DateTime?
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  stripeAccountId       String?
+  status                String    @default("draft")
+  currencyCode          String    @default("jpy")
+  subtotalAmount        Int
+  applicationFeeAmount  Int
+  totalAmount           Int
+  customerEmail         String
+  customerFirstName     String?
+  customerLastName      String?
+  customerPhone         String?
+  shippingAddressJson   Json?
+  lineItemsJson         Json
+  stripePaymentIntentId String?   @unique
+  stripeChargeId        String?   @unique
+  paidAt                DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  seller               Seller              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  sellerStripeAccount  SellerStripeAccount? @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
-  ledgerEntries        LedgerEntry[]
+  seller              Seller               @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  sellerStripeAccount SellerStripeAccount? @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
+  ledgerEntries       LedgerEntry[]
 
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
@@ -209,18 +239,18 @@ model Order {
 }
 
 model StripeEvent {
-  id               String       @id @default(cuid())
-  stripeEventId    String       @unique
+  id               String    @id @default(cuid())
+  stripeEventId    String    @unique
   stripeAccountId  String?
   type             String
-  livemode         Boolean      @default(false)
+  livemode         Boolean   @default(false)
   payloadJson      Json
-  processingStatus String       @default("pending")
+  processingStatus String    @default("pending")
   processedAt      DateTime?
   errorMessage     String?
-  createdAt        DateTime     @default(now())
+  createdAt        DateTime  @default(now())
 
-  ledgerEntries    LedgerEntry[]
+  ledgerEntries LedgerEntry[]
 
   @@index([type, createdAt])
   @@index([stripeAccountId, createdAt])
@@ -228,28 +258,28 @@ model StripeEvent {
 }
 
 model LedgerEntry {
-  id                   String              @id @default(cuid())
-  sellerId             String?
+  id                    String   @id @default(cuid())
+  sellerId              String?
   sellerStripeAccountId String?
-  orderId              String?
-  stripeEventId        String?
-  payoutRunId          String?
-  stripeAccountId      String?
-  entryType            String
-  stripeObjectId       String?
-  amount               Int
-  currencyCode         String              @default("jpy")
-  direction            String
-  description          String?
-  metadataJson         Json?
-  occurredAt           DateTime
-  createdAt            DateTime            @default(now())
+  orderId               String?
+  stripeEventId         String?
+  payoutRunId           String?
+  stripeAccountId       String?
+  entryType             String
+  stripeObjectId        String?
+  amount                Int
+  currencyCode          String   @default("jpy")
+  direction             String
+  description           String?
+  metadataJson          Json?
+  occurredAt            DateTime
+  createdAt             DateTime @default(now())
 
-  seller               Seller?             @relation(fields: [sellerId], references: [id], onDelete: SetNull)
-  sellerStripeAccount  SellerStripeAccount? @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
-  order                Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  stripeEvent          StripeEvent?        @relation(fields: [stripeEventId], references: [id], onDelete: SetNull)
-  payoutRun            PayoutRun?          @relation(fields: [payoutRunId], references: [id], onDelete: SetNull)
+  seller              Seller?              @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  sellerStripeAccount SellerStripeAccount? @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
+  order               Order?               @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  stripeEvent         StripeEvent?         @relation(fields: [stripeEventId], references: [id], onDelete: SetNull)
+  payoutRun           PayoutRun?           @relation(fields: [payoutRunId], references: [id], onDelete: SetNull)
 
   @@index([sellerId, occurredAt])
   @@index([orderId, occurredAt])
@@ -258,45 +288,82 @@ model LedgerEntry {
 }
 
 model PayoutRun {
-  id                   String               @id @default(cuid())
-  sellerId             String
-  sellerStripeAccountId String
-  stripeAccountId      String
-  amount               Int
-  currencyCode         String               @default("jpy")
-  status               String               @default("draft")
-  transferMethod       String               @default("manual_bank_transfer")
-  stripePayoutId       String?              @unique
-  externalTransferId   String?
-  transferMemo         String?
-  approvedAt           DateTime?
-  approvedBy           String?
-  executedAt           DateTime?
-  executedBy           String?
-  failureCode          String?
-  failureMessage       String?
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
+  id                        String    @id @default(cuid())
+  sellerId                  String
+  sellerStripeAccountId     String?
+  sellerPayoutRecipientId   String?
+  stripeAccountId           String?
+  amount                    Int
+  currencyCode              String    @default("jpy")
+  status                    String    @default("draft")
+  transferMethod            String    @default("manual_bank_transfer")
+  stripePayoutId            String?   @unique
+  wiseQuoteId               String?
+  wiseTransferId            String?   @unique
+  wiseTransferStatus        String?
+  wiseCustomerTransactionId String?   @unique
+  wiseSourceCurrency        String?
+  wiseTargetCurrency        String?
+  wiseSourceAmount          Decimal?  @db.Decimal(18, 6)
+  wiseTargetAmount          Decimal?  @db.Decimal(18, 6)
+  wiseFeeAmount             Decimal?  @db.Decimal(18, 6)
+  wiseRate                  Decimal?  @db.Decimal(18, 10)
+  wiseFailureCode           String?
+  wiseFailureMessage        String?
+  wisePayloadJson           Json?
+  externalTransferId        String?
+  transferMemo              String?
+  approvedAt                DateTime?
+  approvedBy                String?
+  executedAt                DateTime?
+  executedBy                String?
+  failureCode               String?
+  failureMessage            String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 
-  seller               Seller               @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  sellerStripeAccount  SellerStripeAccount  @relation(fields: [sellerStripeAccountId], references: [id], onDelete: Cascade)
-  ledgerEntries        LedgerEntry[]
+  seller                Seller                 @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  sellerStripeAccount   SellerStripeAccount?   @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
+  sellerPayoutRecipient SellerPayoutRecipient? @relation(fields: [sellerPayoutRecipientId], references: [id], onDelete: SetNull)
+  ledgerEntries         LedgerEntry[]
+  wiseEvents            WiseTransferEvent[]
 
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
+  @@index([sellerPayoutRecipientId, createdAt])
+  @@index([wiseTransferStatus, updatedAt])
   @@map("payout_runs")
 }
 
-model VendorLoginCode {
-  id         String   @id @default(cuid())
-  vendorId   String
-  email      String
-  code       String
-  expiresAt  DateTime
-  usedAt     DateTime?
-  createdAt  DateTime @default(now())
+model WiseTransferEvent {
+  id               String    @id @default(cuid())
+  wiseEventId      String    @unique
+  wiseTransferId   String?
+  payoutRunId      String?
+  eventType        String
+  payloadJson      Json
+  processingStatus String    @default("pending")
+  processedAt      DateTime?
+  errorMessage     String?
+  createdAt        DateTime  @default(now())
 
-  vendor     Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  payoutRun PayoutRun? @relation(fields: [payoutRunId], references: [id], onDelete: SetNull)
+
+  @@index([wiseTransferId, createdAt])
+  @@index([payoutRunId, createdAt])
+  @@map("wise_transfer_events")
+}
+
+model VendorLoginCode {
+  id        String    @id @default(cuid())
+  vendorId  String
+  email     String
+  code      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
 
   @@index([email])
   @@index([code])
@@ -310,7 +377,7 @@ model VendorAdminSession {
   expiresAt    DateTime
   createdAt    DateTime @default(now())
 
-  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
 
   @@index([vendorId])
   @@index([expiresAt])
@@ -336,12 +403,12 @@ model FixedReplyCandidate {
 }
 
 model FixedReplyRule {
-  id         String   @id @default(cuid())
-  keyword    String
-  replyText  String
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  keyword   String
+  replyText String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model FxRate {

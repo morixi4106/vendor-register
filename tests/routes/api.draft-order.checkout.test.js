@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createDraftOrderCheckout } from '../../app/services/draftOrderCheckout.server.js';
 import { createDraftOrderCheckoutLoader } from '../../app/services/draftOrderCheckout.server.js';
 import { createPublicVendorDraftOrderCheckoutAction } from '../../app/services/vendorStorefront.server.js';
 
@@ -144,6 +145,70 @@ function createValidBody(overrides = {}) {
   };
 }
 
+function createShopifyFallbackBody(overrides = {}) {
+  return createValidBody({
+    items: [
+      {
+        shopifyProductId: 'gid://shopify/Product/999',
+        quantity: 1,
+        price: 1,
+      },
+    ],
+    shopDomain: 'evil-shop.myshopify.com',
+    ...overrides,
+  });
+}
+
+function createShopifyGraphQLStub({ productVariants, variant } = {}) {
+  return async ({ shopDomain, query, variables }) => {
+    assert.equal(shopDomain, 'shop-a.myshopify.com');
+    assert.equal(query.includes('requiresShipping'), true);
+    assert.equal(query.includes('inventoryItem'), true);
+
+    if (query.includes('productVariant')) {
+      return {
+        data: {
+          productVariant:
+            variant ?? {
+              id: variables.id,
+              title: 'Default Title',
+              price: '1234',
+              inventoryItem: {
+                requiresShipping: true,
+              },
+              product: {
+                id: 'gid://shopify/Product/999',
+                title: 'Shopify Only Bottle',
+              },
+            },
+        },
+      };
+    }
+
+    return {
+      data: {
+        product: {
+          id: variables.id,
+          title: 'Shopify Only Bottle',
+          variants: {
+            nodes:
+              productVariants ?? [
+                {
+                  id: 'gid://shopify/ProductVariant/9991',
+                  title: 'Default Title',
+                  price: '1234',
+                  inventoryItem: {
+                    requiresShipping: true,
+                  },
+                },
+              ],
+          },
+        },
+      },
+    };
+  };
+}
+
 test('api.draft-order.checkout returns 405 for non-POST loader requests', async () => {
   const loader = createDraftOrderCheckoutLoader();
   const request = new Request('http://localhost/api/draft-order/checkout');
@@ -274,6 +339,258 @@ test('api.draft-order.checkout rejects unapproved products', async () => {
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
   assert.deepEqual(payload.errors, [INVALID_SELECTION_MESSAGE]);
+});
+
+test('api.draft-order.checkout falls back to Shopify product when local product id is absent', async () => {
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma(),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+
+      return {
+        ok: true,
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        applied: true,
+        reason: null,
+        shippingAmount: 420,
+      };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(createShopifyFallbackBody()),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedPayload.shopDomain, 'shop-a.myshopify.com');
+  assert.equal(receivedPayload.orderLike.lines[0].variantId, 'gid://shopify/ProductVariant/9991');
+  assert.equal(receivedPayload.orderLike.lines[0].productId, 'gid://shopify/Product/999');
+  assert.equal(receivedPayload.orderLike.lines[0].originalUnitPrice, 1234);
+  assert.equal(receivedPayload.orderLike.lines[0].amountAfterItemDiscountBeforeOrderCoupon, 1234);
+  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, true);
+  assert.equal(JSON.stringify(receivedPayload).includes('shipping_v2_snapshot'), false);
+});
+
+test('api.draft-order.checkout uses requested Shopify variant before product fallback', async () => {
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma(),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
+      variant: {
+        id: 'gid://shopify/ProductVariant/selected',
+        title: '750ml',
+        price: '2345',
+        inventoryItem: {
+          requiresShipping: false,
+        },
+        product: {
+          id: 'gid://shopify/Product/999',
+          title: 'Shopify Only Bottle',
+        },
+      },
+    }),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+      return {
+        ok: true,
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        applied: true,
+        shippingAmount: 420,
+      };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createShopifyFallbackBody({
+        items: [
+          {
+            shopifyProductId: 'gid://shopify/Product/999',
+            shopifyVariantId: 'gid://shopify/ProductVariant/selected',
+            quantity: 2,
+            price: 1,
+          },
+        ],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedPayload.orderLike.lines[0].variantId, 'gid://shopify/ProductVariant/selected');
+  assert.equal(receivedPayload.orderLike.lines[0].originalUnitPrice, 2345);
+  assert.equal(receivedPayload.orderLike.lines[0].amountAfterItemDiscountBeforeOrderCoupon, 4690);
+  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, false);
+});
+
+test('api.draft-order.checkout does not require ProductVariant.requiresShipping in Shopify fallback result', async () => {
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma(),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
+      variant: {
+        id: 'gid://shopify/ProductVariant/selected',
+        title: '750ml',
+        price: '2345',
+        product: {
+          id: 'gid://shopify/Product/999',
+          title: 'Shopify Only Bottle',
+        },
+        inventoryItem: null,
+      },
+    }),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+      return {
+        ok: true,
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        applied: true,
+        shippingAmount: 420,
+      };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createShopifyFallbackBody({
+        items: [
+          {
+            shopifyVariantId: 'gid://shopify/ProductVariant/selected',
+            quantity: 1,
+          },
+        ],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, true);
+});
+
+test('api.draft-order.checkout returns variant_required for multi-variant Shopify products', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma(),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
+      productVariants: [
+        {
+          id: 'gid://shopify/ProductVariant/1',
+          title: 'Small',
+          price: '1200',
+          inventoryItem: {
+            requiresShipping: true,
+          },
+        },
+        {
+          id: 'gid://shopify/ProductVariant/2',
+          title: 'Large',
+          price: '1400',
+          inventoryItem: {
+            requiresShipping: true,
+          },
+        },
+      ],
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(createShopifyFallbackBody()),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.errors, ['variant_required']);
+});
+
+test('api.draft-order.checkout prepares Shopify fallback shipping once without caller snapshots', async () => {
+  let prepareCallCount = 0;
+  let receivedPrepareInput = null;
+  const checkout = createDraftOrderCheckout({
+    prepareShippingV2WriterPayloadImpl: async (input) => {
+      prepareCallCount += 1;
+      receivedPrepareInput = input;
+
+      return {
+        applied: true,
+        reason: null,
+        payload: {
+          ...input.payload,
+          shippingAmount: 420,
+        },
+      };
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async () => ({
+      data: {
+        draftOrderCreate: {
+          draftOrder: {
+            id: 'gid://shopify/DraftOrder/1',
+            invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+          },
+          userErrors: [],
+        },
+      },
+    }),
+  });
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma(),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
+    draftOrderCheckoutImpl: checkout,
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(createShopifyFallbackBody()),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(prepareCallCount, 1);
+  assert.equal(JSON.stringify(receivedPrepareInput).includes('shipping_v2_snapshot'), false);
+  assert.equal(payload.invoiceUrl, 'https://shop-a.myshopify.com/invoices/1');
+  assert.equal(payload.applied, true);
+  assert.equal(payload.shippingAmount, 420);
 });
 
 test('api.draft-order.checkout sanitizes service failures', async () => {

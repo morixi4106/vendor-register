@@ -13,7 +13,8 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-  const { listAdminSellerRows } = await import("../services/sellerPayments.server.js");
+  const { listAdminSellerRows } =
+    await import("../services/sellerPayments.server.js");
 
   return json({
     sellers: await listAdminSellerRows(),
@@ -22,7 +23,8 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   await authenticate.admin(request);
-  const { ensureSellerForVendor } = await import("../services/sellerPayments.server.js");
+  const { ensureSellerForVendor } =
+    await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
@@ -47,7 +49,9 @@ export const action = async ({ request }) => {
 
     return json({
       ok: true,
-      message: result.created ? "出店者決済レコードを作成しました。" : "出店者決済レコードは作成済みです。",
+      message: result.created
+        ? "出店者決済レコードを作成しました。"
+        : "出店者決済レコードは作成済みです。",
     });
   } catch (error) {
     console.error("seller initialize error:", error);
@@ -180,8 +184,7 @@ export default function AdminSellersPage() {
         <section className="seller-admin__card">
           <h1 className="seller-admin__title">出店者決済</h1>
           <p className="seller-admin__subtitle">
-            既存の出店者に対して、Stripe連携アカウントの作成、決済可否の管理、
-            売上台帳の確認、出金処理を行います。
+            既存の出店者に対して、精算状態、受取先、売上台帳、支払処理を管理します。
           </p>
           {actionData?.message ? (
             <div className="seller-admin__notice">{actionData.message}</div>
@@ -200,13 +203,14 @@ export default function AdminSellersPage() {
                     <th style={thStyle}>ハンドル</th>
                     <th style={thStyle}>メール</th>
                     <th style={thStyle}>決済状態</th>
-                    <th style={thStyle}>Stripe</th>
+                    <th style={thStyle}>受取先</th>
                     <th style={thStyle}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sellers.map((seller) => {
-                    const isInitializing = submittingVendorId === seller.vendorId;
+                    const isInitializing =
+                      submittingVendorId === seller.vendorId;
 
                     return (
                       <tr key={seller.vendorId}>
@@ -215,15 +219,21 @@ export default function AdminSellersPage() {
                         <td style={tdStyle}>{seller.managementEmail}</td>
                         <td style={tdStyle}>
                           {seller.sellerId ? (
-                            <span className={badgeClassName(seller.sellerStatus)}>
+                            <span
+                              className={badgeClassName(seller.sellerStatus)}
+                            >
                               {seller.sellerStatusLabel}
                             </span>
                           ) : (
-                            <span className={badgeClassName("pending")}>未作成</span>
+                            <span className={badgeClassName("pending")}>
+                              未作成
+                            </span>
                           )}
                         </td>
                         <td style={tdStyle}>
-                          {seller.stripeAccount?.stripeAccountId || "-"}
+                          {seller.payoutRecipient?.provider === "wise"
+                            ? `Wise / ${seller.payoutRecipient.status}`
+                            : "-"}
                         </td>
                         <td style={tdStyle}>
                           {seller.sellerId ? (
@@ -235,14 +245,24 @@ export default function AdminSellersPage() {
                             </Link>
                           ) : (
                             <Form method="post">
-                              <input type="hidden" name="intent" value="initialize_seller" />
-                              <input type="hidden" name="vendorId" value={seller.vendorId} />
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="initialize_seller"
+                              />
+                              <input
+                                type="hidden"
+                                name="vendorId"
+                                value={seller.vendorId}
+                              />
                               <button
                                 type="submit"
                                 className="seller-admin__button"
                                 disabled={isInitializing}
                               >
-                                {isInitializing ? "作成中..." : "決済レコード作成"}
+                                {isInitializing
+                                  ? "作成中..."
+                                  : "決済レコード作成"}
                               </button>
                             </Form>
                           )}

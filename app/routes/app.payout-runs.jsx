@@ -47,7 +47,8 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   await authenticate.admin(request);
-  const { createPayoutRun } = await import("../services/sellerPayments.server.js");
+  const { createPayoutRun } =
+    await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
   const result = await createPayoutRun({
@@ -77,8 +78,7 @@ export default function AdminPayoutRunsPage() {
   const location = useLocation();
   const navigation = useNavigation();
   const isCreating =
-    navigation.formData?.has("sellerId") &&
-    navigation.state !== "idle";
+    navigation.formData?.has("sellerId") && navigation.state !== "idle";
   const isDetailRoute = location.pathname.startsWith("/app/payout-runs/");
 
   if (isDetailRoute) {
@@ -204,7 +204,12 @@ export default function AdminPayoutRunsPage() {
           <Form method="post" className="payout-admin__form">
             <div className="payout-admin__field">
               <label htmlFor="sellerId">出店者</label>
-              <select id="sellerId" name="sellerId" className="payout-admin__select" required>
+              <select
+                id="sellerId"
+                name="sellerId"
+                className="payout-admin__select"
+                required
+              >
                 <option value="">出店者を選択</option>
                 {sellers.map((seller) => (
                   <option key={seller.sellerId} value={seller.sellerId}>
@@ -240,7 +245,11 @@ export default function AdminPayoutRunsPage() {
               />
             </div>
             <div className="payout-admin__field" style={{ alignSelf: "end" }}>
-              <button type="submit" className="payout-admin__button" disabled={isCreating}>
+              <button
+                type="submit"
+                className="payout-admin__button"
+                disabled={isCreating}
+              >
                 {isCreating ? "作成中..." : "出金予定を作成"}
               </button>
             </div>
@@ -249,8 +258,13 @@ export default function AdminPayoutRunsPage() {
           {sellers.length > 0 ? (
             <div className="payout-admin__balance-grid">
               {sellers.map((seller) => (
-                <div className="payout-admin__balance-card" key={seller.sellerId}>
-                  <p className="payout-admin__balance-label">{seller.vendorStoreName}</p>
+                <div
+                  className="payout-admin__balance-card"
+                  key={seller.sellerId}
+                >
+                  <p className="payout-admin__balance-label">
+                    {seller.vendorStoreName}
+                  </p>
                   <p className="payout-admin__balance-amount">
                     {formatMoney(
                       seller.payoutableLedgerBalance,
@@ -258,7 +272,8 @@ export default function AdminPayoutRunsPage() {
                     )}
                   </p>
                   <p className="payout-admin__balance-status">
-                    状態: {seller.sellerStatusLabel || seller.sellerStatus || "-"}
+                    状態:{" "}
+                    {seller.sellerStatusLabel || seller.sellerStatus || "-"}
                   </p>
                 </div>
               ))}
@@ -280,7 +295,7 @@ export default function AdminPayoutRunsPage() {
                     <th style={thStyle}>金額</th>
                     <th style={thStyle}>送金方法</th>
                     <th style={thStyle}>状態</th>
-                    <th style={thStyle}>Stripe出金ID</th>
+                    <th style={thStyle}>送金ID</th>
                     <th style={thStyle}>更新日時</th>
                   </tr>
                 </thead>
@@ -291,10 +306,17 @@ export default function AdminPayoutRunsPage() {
                         <Link to={`/app/payout-runs/${run.id}`}>{run.id}</Link>
                       </td>
                       <td style={tdStyle}>{run.sellerStoreName}</td>
-                      <td style={tdStyle}>{formatMoney(run.amount, run.currencyCode)}</td>
+                      <td style={tdStyle}>
+                        {formatMoney(run.amount, run.currencyCode)}
+                      </td>
                       <td style={tdStyle}>{run.transferMethodLabel || "-"}</td>
                       <td style={tdStyle}>{run.statusLabel}</td>
-                      <td style={tdStyle}>{run.stripePayoutId || "-"}</td>
+                      <td style={tdStyle}>
+                        {run.wiseTransferId ||
+                          run.externalTransferId ||
+                          run.stripePayoutId ||
+                          "-"}
+                      </td>
                       <td style={tdStyle}>
                         {new Date(run.updatedAt).toLocaleString("ja-JP")}
                       </td>
@@ -328,8 +350,10 @@ function createPayoutRunErrorMessage(result) {
       return "出店者の決済状態が有効ではないため、出金予定を作成できません。";
     case "seller_payout_restricted":
       return "この出店者は制限中または禁止中のため、出金対象外です。";
-    case "stripe_account_missing":
-      return "Stripe連携アカウントが未作成のため、出金予定を作成できません。";
+    case "seller_not_found":
+      return "出店者が見つかりません。";
+    case "wise_recipient_missing":
+      return "Wise受取先が未登録または有効ではないため、出金予定を作成できません。";
     default:
       return "出金予定の作成に失敗しました。";
   }

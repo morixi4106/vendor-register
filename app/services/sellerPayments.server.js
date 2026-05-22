@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 
 import Stripe from "stripe";
@@ -21,12 +22,14 @@ export const SELLER_STATUSES = [
 export const PAYOUT_RUN_STATUSES = [
   "draft",
   "approved",
+  "processing",
   "executed",
   "failed",
 ];
 
 export const PAYOUT_TRANSFER_METHODS = [
   "manual_bank_transfer",
+  "wise_api",
   "stripe_connect_payout",
 ];
 
@@ -85,10 +88,7 @@ const SHOPIFY_ORDER_RISK_ENTRY_TYPES = [
   ...SHOPIFY_ORDER_SETTLEMENT_ENTRY_TYPES,
   ...SHOPIFY_ORDER_DISPUTE_ENTRY_TYPES,
 ];
-const SHOPIFY_DISPUTE_RELEASE_STATUSES = new Set([
-  "charge_refunded",
-  "won",
-]);
+const SHOPIFY_DISPUTE_RELEASE_STATUSES = new Set(["charge_refunded", "won"]);
 
 let stripeClientSingleton = null;
 
@@ -159,7 +159,8 @@ function moneyAmountToMinorUnits(value, currencyCode = DEFAULT_ORDER_CURRENCY) {
     return 0;
   }
 
-  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
 
   return ZERO_DECIMAL_CURRENCIES.has(normalizedCurrency)
     ? Math.round(numeric)
@@ -235,7 +236,10 @@ function toDisplayPrice(product) {
   return 0;
 }
 
-function calculatePlatformFeeAmount(totalAmount, feeBps = DEFAULT_PLATFORM_FEE_BPS) {
+function calculatePlatformFeeAmount(
+  totalAmount,
+  feeBps = DEFAULT_PLATFORM_FEE_BPS,
+) {
   const normalizedTotal = clampInteger(totalAmount, 0);
   const normalizedBps = Number.isFinite(Number(feeBps))
     ? Math.max(0, Math.round(Number(feeBps)))
@@ -248,7 +252,9 @@ function calculatePlatformFeeAmount(totalAmount, feeBps = DEFAULT_PLATFORM_FEE_B
 }
 
 export function getPlatformFeeBps() {
-  return Number(process.env.STRIPE_PLATFORM_FEE_BPS || DEFAULT_PLATFORM_FEE_BPS);
+  return Number(
+    process.env.STRIPE_PLATFORM_FEE_BPS || DEFAULT_PLATFORM_FEE_BPS,
+  );
 }
 
 function getStripeSecretKey() {
@@ -299,6 +305,188 @@ export function getStripeClient() {
   return stripeClientSingleton;
 }
 
+function getConfiguredSellerPayoutProvider(env = process.env) {
+  return normalizeLowercase(env.SELLER_PAYOUT_PROVIDER) === "wise"
+    ? "wise"
+    : "manual";
+}
+
+function getWisePayoutConfig(env = process.env) {
+  const apiBaseUrl = normalizeText(env.WISE_API_BASE_URL)?.replace(/\/+$/, "");
+  const apiToken = normalizeText(env.WISE_API_TOKEN);
+  const profileId = normalizeText(env.WISE_PROFILE_ID);
+  const sourceCurrency =
+    normalizeUppercase(env.WISE_SOURCE_CURRENCY) ||
+    DEFAULT_ORDER_CURRENCY.toUpperCase();
+  const liveTransfersEnabled = ["1", "true", "yes", "on"].includes(
+    normalizeLowercase(env.WISE_LIVE_TRANSFERS_ENABLED) || "",
+  );
+  const normalizedBaseUrl = apiBaseUrl || "https://api.wise-sandbox.com";
+
+  const missing = [];
+  if (!apiToken) missing.push("WISE_API_TOKEN");
+  if (!profileId) missing.push("WISE_PROFILE_ID");
+  if (!normalizedBaseUrl) missing.push("WISE_API_BASE_URL");
+  if (!sourceCurrency) missing.push("WISE_SOURCE_CURRENCY");
+
+  return {
+    apiBaseUrl: normalizedBaseUrl,
+    apiToken,
+    profileId,
+    sourceCurrency,
+    missing,
+    isSandbox: /sandbox/i.test(normalizedBaseUrl),
+    liveTransfersEnabled,
+  };
+}
+
+function decimalAmountFromMinorUnits(
+  amount,
+  currencyCode = DEFAULT_ORDER_CURRENCY,
+) {
+  const normalizedAmount = clampInteger(amount, 0);
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+
+  if (ZERO_DECIMAL_CURRENCIES.has(normalizedCurrency)) {
+    return normalizedAmount;
+  }
+
+  return Math.round(normalizedAmount) / 100;
+}
+
+function normalizeWiseRecipientId(value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : normalized;
+}
+
+function normalizeWiseTransferId(value) {
+  const normalized = normalizeText(value);
+  return normalized || null;
+}
+
+function createWiseReference(payoutRunId) {
+  return `Settlement ${String(payoutRunId || "").slice(0, 24)}`;
+}
+
+async function wiseApiRequest(
+  { path, method = "GET", body = null },
+  { config, fetchImpl = fetch } = {},
+) {
+  const response = await fetchImpl(`${config.apiBaseUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${config.apiToken}`,
+      "Content-Type": "application/json",
+    },
+    body: body == null ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+    const firstError = errors[0] || payload?.error || payload;
+    const message =
+      normalizeText(firstError?.message) ||
+      normalizeText(firstError?.code) ||
+      `Wise API request failed with ${response.status}.`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.code =
+      normalizeText(firstError?.code) || normalizeText(payload?.code);
+    error.payload = payload;
+    throw error;
+  }
+
+  return payload;
+}
+
+async function createWiseQuote(
+  { payoutRun, recipient, config },
+  { fetchImpl = fetch } = {},
+) {
+  const sourceCurrency =
+    normalizeUppercase(config.sourceCurrency) ||
+    DEFAULT_ORDER_CURRENCY.toUpperCase();
+  const targetCurrency =
+    normalizeUppercase(recipient.currencyCode) ||
+    normalizeUppercase(payoutRun.currencyCode) ||
+    sourceCurrency;
+
+  return wiseApiRequest(
+    {
+      path: `/v3/profiles/${config.profileId}/quotes`,
+      method: "POST",
+      body: {
+        sourceCurrency,
+        targetCurrency,
+        sourceAmount: decimalAmountFromMinorUnits(
+          payoutRun.amount,
+          sourceCurrency,
+        ),
+        targetAmount: null,
+        targetAccount: normalizeWiseRecipientId(recipient.wiseRecipientId),
+      },
+    },
+    { config, fetchImpl },
+  );
+}
+
+async function createWiseTransfer(
+  { payoutRun, recipient, quote, customerTransactionId, config },
+  { fetchImpl = fetch } = {},
+) {
+  return wiseApiRequest(
+    {
+      path: "/v1/transfers",
+      method: "POST",
+      body: {
+        targetAccount: normalizeWiseRecipientId(recipient.wiseRecipientId),
+        quoteUuid: normalizeText(quote?.id),
+        customerTransactionId,
+        details: {
+          reference: createWiseReference(payoutRun.id),
+        },
+      },
+    },
+    { config, fetchImpl },
+  );
+}
+
+async function fundWiseTransfer(
+  { transferId, config },
+  { fetchImpl = fetch } = {},
+) {
+  return wiseApiRequest(
+    {
+      path: `/v3/profiles/${config.profileId}/transfers/${transferId}/payments`,
+      method: "POST",
+      body: {
+        type: "BALANCE",
+      },
+    },
+    { config, fetchImpl },
+  );
+}
+
+async function retrieveWiseTransfer(
+  { transferId, config },
+  { fetchImpl = fetch } = {},
+) {
+  return wiseApiRequest(
+    {
+      path: `/v1/transfers/${transferId}`,
+    },
+    { config, fetchImpl },
+  );
+}
+
 export async function createConnectedAccountPayout({
   stripeAccountId,
   amount,
@@ -315,7 +503,10 @@ export async function createConnectedAccountPayout({
 
   const body = new URLSearchParams();
   body.set("amount", String(clampInteger(amount)));
-  body.set("currency", normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY);
+  body.set(
+    "currency",
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
+  );
   body.set("description", `Manual payout ${payoutRunId}`);
   body.set("metadata[payoutRunId]", payoutRunId);
   body.set("metadata[sellerId]", sellerId);
@@ -369,6 +560,8 @@ function createPayoutRunStatusLabel(status) {
       return "下書き";
     case "approved":
       return "承認済み";
+    case "processing":
+      return "送金処理中";
     case "executed":
       return "実行済み";
     case "failed":
@@ -381,9 +574,11 @@ function createPayoutRunStatusLabel(status) {
 function createPayoutTransferMethodLabel(method) {
   switch (method) {
     case "manual_bank_transfer":
-      return "手動送金";
+      return "手動精算";
+    case "wise_api":
+      return "Wise API送金";
     case "stripe_connect_payout":
-      return "Stripe Connect payout";
+      return "Stripe Connect payout (legacy)";
     default:
       return method || "-";
   }
@@ -410,9 +605,34 @@ function serializeStripeAccountSummary(stripeAccount) {
   };
 }
 
+function serializePayoutRecipientSummary(payoutRecipient) {
+  if (!payoutRecipient) {
+    return null;
+  }
+
+  return {
+    id: payoutRecipient.id,
+    sellerId: payoutRecipient.sellerId,
+    provider: payoutRecipient.provider || "wise",
+    status: payoutRecipient.status || "pending",
+    countryCode: payoutRecipient.countryCode || null,
+    currencyCode: payoutRecipient.currencyCode || DEFAULT_ORDER_CURRENCY,
+    legalType: payoutRecipient.legalType || null,
+    accountHolderName: payoutRecipient.accountHolderName || null,
+    wiseProfileId: payoutRecipient.wiseProfileId || null,
+    wiseRecipientId: payoutRecipient.wiseRecipientId || null,
+    accountSummary: payoutRecipient.accountSummary || null,
+    longAccountSummary: payoutRecipient.longAccountSummary || null,
+    lastSyncedAt: payoutRecipient.lastSyncedAt || null,
+    createdAt: payoutRecipient.createdAt,
+    updatedAt: payoutRecipient.updatedAt,
+  };
+}
+
 function serializeSellerSummary(vendor) {
   const seller = vendor?.seller;
   const stripeAccount = seller?.stripeAccount;
+  const payoutRecipient = seller?.payoutRecipient;
 
   return {
     vendorId: vendor.id,
@@ -424,12 +644,16 @@ function serializeSellerSummary(vendor) {
     sellerStatus: seller?.status || null,
     sellerStatusLabel: createSellerStatusLabel(seller?.status),
     stripeAccount: serializeStripeAccountSummary(stripeAccount),
+    payoutRecipient: serializePayoutRecipientSummary(payoutRecipient),
     createdAt: seller?.createdAt || vendor.createdAt,
     updatedAt: seller?.updatedAt || vendor.updatedAt,
   };
 }
 
-async function loadVendorForSellerInitialization(vendorId, prismaClient = prisma) {
+async function loadVendorForSellerInitialization(
+  vendorId,
+  prismaClient = prisma,
+) {
   return prismaClient.vendor.findUnique({
     where: { id: vendorId },
     include: {
@@ -437,6 +661,7 @@ async function loadVendorForSellerInitialization(vendorId, prismaClient = prisma
       seller: {
         include: {
           stripeAccount: true,
+          payoutRecipient: true,
         },
       },
     },
@@ -452,7 +677,10 @@ export async function ensureSellerForVendor(
     reason = "seller_initialized",
   } = {},
 ) {
-  const vendor = await loadVendorForSellerInitialization(vendorId, prismaClient);
+  const vendor = await loadVendorForSellerInitialization(
+    vendorId,
+    prismaClient,
+  );
 
   if (!vendor?.vendorStore) {
     throw new Error("VENDOR_NOT_FOUND");
@@ -508,6 +736,7 @@ export async function listAdminSellerRows({ prismaClient = prisma } = {}) {
       seller: {
         include: {
           stripeAccount: true,
+          payoutRecipient: true,
         },
       },
     },
@@ -516,7 +745,10 @@ export async function listAdminSellerRows({ prismaClient = prisma } = {}) {
   return vendors.map(serializeSellerSummary);
 }
 
-export async function getAdminSellerDetail(sellerId, { prismaClient = prisma } = {}) {
+export async function getAdminSellerDetail(
+  sellerId,
+  { prismaClient = prisma } = {},
+) {
   const seller = await prismaClient.seller.findUnique({
     where: { id: sellerId },
     include: {
@@ -526,6 +758,7 @@ export async function getAdminSellerDetail(sellerId, { prismaClient = prisma } =
         },
       },
       stripeAccount: true,
+      payoutRecipient: true,
       statusHistory: {
         orderBy: [{ createdAt: "desc" }],
         take: 20,
@@ -586,6 +819,7 @@ export async function getAdminSellerDetail(sellerId, { prismaClient = prisma } =
       category: seller.vendor.vendorStore.category,
     },
     stripeAccount: serializeStripeAccountSummary(seller.stripeAccount),
+    payoutRecipient: serializePayoutRecipientSummary(seller.payoutRecipient),
     statusHistory: seller.statusHistory,
     orders: seller.orders,
     payoutRuns: seller.payoutRuns.map((run) => ({
@@ -656,6 +890,75 @@ export async function updateSellerStatus(
   };
 }
 
+export async function upsertSellerWiseRecipient(
+  {
+    sellerId,
+    wiseRecipientId,
+    currencyCode = DEFAULT_ORDER_CURRENCY,
+    countryCode = null,
+    accountHolderName = null,
+    accountSummary = null,
+    status = "active",
+  },
+  { prismaClient = prisma } = {},
+) {
+  const normalizedSellerId = normalizeText(sellerId);
+  const normalizedWiseRecipientId = normalizeText(wiseRecipientId);
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const normalizedStatus = normalizeLowercase(status) || "active";
+
+  if (!normalizedSellerId || !normalizedWiseRecipientId) {
+    return {
+      ok: false,
+      reason: "invalid_wise_recipient",
+    };
+  }
+
+  const seller = await prismaClient.seller.findUnique({
+    where: { id: normalizedSellerId },
+  });
+
+  if (!seller) {
+    return {
+      ok: false,
+      reason: "seller_not_found",
+    };
+  }
+
+  const payoutRecipient = await prismaClient.sellerPayoutRecipient.upsert({
+    where: { sellerId: normalizedSellerId },
+    create: {
+      sellerId: normalizedSellerId,
+      provider: "wise",
+      status: normalizedStatus,
+      countryCode: normalizeUppercase(countryCode),
+      currencyCode: normalizedCurrency,
+      accountHolderName: normalizeText(accountHolderName),
+      wiseProfileId: normalizeText(process.env.WISE_PROFILE_ID),
+      wiseRecipientId: normalizedWiseRecipientId,
+      accountSummary: normalizeText(accountSummary),
+      lastSyncedAt: new Date(),
+    },
+    update: {
+      provider: "wise",
+      status: normalizedStatus,
+      countryCode: normalizeUppercase(countryCode),
+      currencyCode: normalizedCurrency,
+      accountHolderName: normalizeText(accountHolderName),
+      wiseProfileId: normalizeText(process.env.WISE_PROFILE_ID),
+      wiseRecipientId: normalizedWiseRecipientId,
+      accountSummary: normalizeText(accountSummary),
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  return {
+    ok: true,
+    payoutRecipient,
+  };
+}
+
 function createStripeAccountResetBlockers(seller) {
   const blockingOrders = (seller?.orders || []).filter((order) => {
     if (order.paidAt || order.stripeChargeId) return true;
@@ -689,11 +992,7 @@ function hasStripeAccountResetBlockers(blockers) {
 }
 
 export async function resetSellerStripeAccountForRecreate(
-  {
-    sellerId,
-    changedBy = "admin",
-    reason = STRIPE_ACCOUNT_RESET_REASON,
-  },
+  { sellerId, changedBy = "admin", reason = STRIPE_ACCOUNT_RESET_REASON },
   { prismaClient = prisma } = {},
 ) {
   const seller = await prismaClient.seller.findUnique({
@@ -965,7 +1264,8 @@ async function setConnectedAccountManualPayouts(stripeClient, stripeAccountId) {
       method: "balance_settings",
     };
   } catch (balanceSettingsError) {
-    const balanceSettingsStripeError = normalizeStripeError(balanceSettingsError);
+    const balanceSettingsStripeError =
+      normalizeStripeError(balanceSettingsError);
 
     if (!stripeClient.accounts?.update) {
       return {
@@ -976,18 +1276,15 @@ async function setConnectedAccountManualPayouts(stripeClient, stripeAccountId) {
     }
 
     try {
-      await stripeClient.accounts.update(
-        stripeAccountId,
-        {
-          settings: {
-            payouts: {
-              schedule: {
-                interval: "manual",
-              },
+      await stripeClient.accounts.update(stripeAccountId, {
+        settings: {
+          payouts: {
+            schedule: {
+              interval: "manual",
             },
           },
         },
-      );
+      });
 
       return {
         ok: true,
@@ -1007,10 +1304,7 @@ async function setConnectedAccountManualPayouts(stripeClient, stripeAccountId) {
 
 export async function createSellerStripeAccount(
   { sellerId },
-  {
-    prismaClient = prisma,
-    stripeClient = getStripeClient(),
-  } = {},
+  { prismaClient = prisma, stripeClient = getStripeClient() } = {},
 ) {
   const seller = await loadSellerWithStripeContext(sellerId, prismaClient);
 
@@ -1075,7 +1369,9 @@ export async function createSellerStripeAccount(
       payoutSchedule: "manual",
       dashboardType: "none",
       onboardingCompletedAt: account.details_submitted ? new Date() : null,
-      requirementsJson: isPlainObject(account.requirements) ? account.requirements : null,
+      requirementsJson: isPlainObject(account.requirements)
+        ? account.requirements
+        : null,
     },
   });
 
@@ -1117,15 +1413,14 @@ export async function syncSellerStripeAccountFromAccountUpdate(
         account?.details_submitted && !existing.onboardingCompletedAt
           ? new Date()
           : existing.onboardingCompletedAt,
-      requirementsJson: isPlainObject(account?.requirements) ? account.requirements : null,
+      requirementsJson: isPlainObject(account?.requirements)
+        ? account.requirements
+        : null,
     },
   });
 }
 
-async function processAccountUpdated(
-  event,
-  { prismaClient = prisma } = {},
-) {
+async function processAccountUpdated(event, { prismaClient = prisma } = {}) {
   const updatedStripeAccount = await syncSellerStripeAccountFromAccountUpdate(
     event.data?.object,
     { prismaClient },
@@ -1194,6 +1489,7 @@ export async function getSellerPaymentsPageData(
       seller: {
         include: {
           stripeAccount: true,
+          payoutRecipient: true,
         },
       },
     },
@@ -1223,7 +1519,10 @@ export async function getSellerPaymentsPageData(
         }
       : null,
     stripeAccount: serializeStripeAccountSummary(vendor.seller?.stripeAccount),
-    stripePublishableKey: getStripePublishableKey(),
+    payoutRecipient: serializePayoutRecipientSummary(
+      vendor.seller?.payoutRecipient,
+    ),
+    payoutProvider: getConfiguredSellerPayoutProvider(),
   };
 }
 
@@ -1250,10 +1549,7 @@ function buildAccountSessionComponents() {
 
 export async function createSellerAccountSession(
   { vendorId },
-  {
-    prismaClient = prisma,
-    stripeClient = getStripeClient(),
-  } = {},
+  { prismaClient = prisma, stripeClient = getStripeClient() } = {},
 ) {
   const vendor = await prismaClient.vendor.findUnique({
     where: { id: vendorId },
@@ -1423,7 +1719,9 @@ export async function createCheckoutOrder(
     };
   }
 
-  const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
+  const uniqueProductIds = Array.from(
+    new Set(items.map((item) => item.productId)),
+  );
   const products = await prismaClient.product.findMany({
     where: {
       id: { in: uniqueProductIds },
@@ -1445,7 +1743,9 @@ export async function createCheckoutOrder(
     };
   }
 
-  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsById = new Map(
+    products.map((product) => [product.id, product]),
+  );
   const lineItems = serializeOrderLineItems(productsById, items);
   const subtotalAmount = lineItems.reduce(
     (sum, lineItem) => sum + lineItem.totalAmount,
@@ -1506,10 +1806,7 @@ async function loadCheckoutOrder(orderId, prismaClient = prisma) {
 
 export async function createCheckoutOrderPaymentIntent(
   { orderId },
-  {
-    prismaClient = prisma,
-    stripeClient = getStripeClient(),
-  } = {},
+  { prismaClient = prisma, stripeClient = getStripeClient() } = {},
 ) {
   const order = await loadCheckoutOrder(orderId, prismaClient);
 
@@ -1567,7 +1864,8 @@ export async function createCheckoutOrderPaymentIntent(
   const paymentIntent = await stripeClient.paymentIntents.create(
     {
       amount: order.totalAmount,
-      currency: normalizeLowercase(order.currencyCode) || DEFAULT_ORDER_CURRENCY,
+      currency:
+        normalizeLowercase(order.currencyCode) || DEFAULT_ORDER_CURRENCY,
       application_fee_amount: order.applicationFeeAmount,
       automatic_payment_methods: {
         enabled: true,
@@ -1604,10 +1902,7 @@ export async function createCheckoutOrderPaymentIntent(
 
 export async function createOrderRefund(
   { orderId, amount = null, refundApplicationFee },
-  {
-    prismaClient = prisma,
-    stripeClient = getStripeClient(),
-  } = {},
+  { prismaClient = prisma, stripeClient = getStripeClient() } = {},
 ) {
   if (typeof refundApplicationFee !== "boolean") {
     return {
@@ -1844,7 +2139,10 @@ function summarizeShopifyOrderLedgerEntries(entries, sellerId = null) {
 }
 
 function summarizeShopifyOrderRiskLedgerEntries(entries, sellerId = null) {
-  const settlementSummary = summarizeShopifyOrderLedgerEntries(entries, sellerId);
+  const settlementSummary = summarizeShopifyOrderLedgerEntries(
+    entries,
+    sellerId,
+  );
   const sellerLedgerEntries = sellerId
     ? entries.filter((entry) => entry?.sellerId === sellerId)
     : entries;
@@ -1854,7 +2152,10 @@ function summarizeShopifyOrderRiskLedgerEntries(entries, sellerId = null) {
   const disputeReleasedAmount = sellerLedgerEntries
     .filter((entry) => entry?.entryType === "dispute_funds_reinstated")
     .reduce((total, entry) => total + clampInteger(entry?.amount), 0);
-  const disputeHeldAmount = Math.max(0, disputeHoldAmount - disputeReleasedAmount);
+  const disputeHeldAmount = Math.max(
+    0,
+    disputeHoldAmount - disputeReleasedAmount,
+  );
 
   return {
     ...settlementSummary,
@@ -1892,7 +2193,11 @@ function getProductSeller(product) {
 }
 
 function getProductVendor(product) {
-  return product?.vendorStore?.vendorAuth || getProductSeller(product)?.vendor || null;
+  return (
+    product?.vendorStore?.vendorAuth ||
+    getProductSeller(product)?.vendor ||
+    null
+  );
 }
 
 function buildProductCandidateMap(products, shopDomain) {
@@ -1919,13 +2224,19 @@ export async function processShopifyOrderPaidSettlement(
   { payload, shop },
   { prismaClient = prisma } = {},
 ) {
-  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopDomain = normalizeLowercase(
+    shop || payload?.shop_domain || payload?.shop,
+  );
   const shopifyOrderId = normalizeShopifyOrderId(payload);
-  const shopifyOrderName = normalizeText(payload?.name || payload?.order_number);
+  const shopifyOrderName = normalizeText(
+    payload?.name || payload?.order_number,
+  );
   const currencyCode =
     normalizeLowercase(payload?.currency || payload?.presentment_currency) ||
     DEFAULT_ORDER_CURRENCY;
-  const lineItems = Array.isArray(payload?.line_items) ? payload.line_items : [];
+  const lineItems = Array.isArray(payload?.line_items)
+    ? payload.line_items
+    : [];
 
   if (!shopDomain || !shopifyOrderId || lineItems.length === 0) {
     return {
@@ -2017,10 +2328,14 @@ export async function processShopifyOrderPaidSettlement(
 
   for (const lineItem of lineItems) {
     const candidates = getShopifyLineProductIdCandidates(lineItem);
-    const product = candidates.map((candidate) => productMap.get(candidate)).find(Boolean);
+    const product = candidates
+      .map((candidate) => productMap.get(candidate))
+      .find(Boolean);
 
     if (!product) {
-      unmatchedProductIds.push(candidates[0] || normalizeText(lineItem?.product_id) || null);
+      unmatchedProductIds.push(
+        candidates[0] || normalizeText(lineItem?.product_id) || null,
+      );
       continue;
     }
 
@@ -2068,14 +2383,6 @@ export async function processShopifyOrderPaidSettlement(
     };
   }
 
-  if (!seller.stripeAccount?.id || !seller.stripeAccount?.stripeAccountId) {
-    return {
-      ok: false,
-      reason: "stripe_account_missing",
-      sellerId: seller.id,
-    };
-  }
-
   const settlementAmount = matchedLines.reduce(
     (total, matchedLine) => total + matchedLine.amount,
     0,
@@ -2098,8 +2405,8 @@ export async function processShopifyOrderPaidSettlement(
   const ledgerEntry = await createLedgerEntry(
     {
       sellerId: seller.id,
-      sellerStripeAccountId: seller.stripeAccount.id,
-      stripeAccountId: seller.stripeAccount.stripeAccountId,
+      sellerStripeAccountId: seller.stripeAccount?.id || null,
+      stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
       entryType: "shopify_order_paid",
       stripeObjectId: shopifyOrderId,
       amount: settlementAmount,
@@ -2113,7 +2420,7 @@ export async function processShopifyOrderPaidSettlement(
         shopifyOrderNumericId: normalizeText(payload?.id),
         vendorId: normalizeText(vendor?.id),
         vendorHandle: normalizeText(vendor?.handle),
-        settlementMode: "shopify_order_to_connect_manual_payout",
+        settlementMode: "shopify_order_to_monthly_settlement",
         matchedLineCount: matchedLines.length,
         unmatchedProductIds: unmatchedProductIds.filter(Boolean),
         lineItems: matchedLines.map(({ lineItem, product, amount }) => ({
@@ -2146,7 +2453,9 @@ export async function processShopifyRefundSettlement(
   { payload, shop },
   { prismaClient = prisma } = {},
 ) {
-  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopDomain = normalizeLowercase(
+    shop || payload?.shop_domain || payload?.shop,
+  );
   const shopifyRefundId = normalizeShopifyRefundId(payload);
   const shopifyOrderId = normalizeShopifyGid("Order", payload?.order_id);
   const refundLineItems = Array.isArray(payload?.refund_line_items)
@@ -2244,7 +2553,9 @@ export async function processShopifyRefundSettlement(
 
   for (const refundLineItem of refundLineItems) {
     const candidates = getShopifyRefundLineProductIdCandidates(refundLineItem);
-    const product = candidates.map((candidate) => productMap.get(candidate)).find(Boolean);
+    const product = candidates
+      .map((candidate) => productMap.get(candidate))
+      .find(Boolean);
 
     if (!product) {
       unmatchedProductIds.push(
@@ -2292,14 +2603,6 @@ export async function processShopifyRefundSettlement(
 
   const seller = getProductSeller(matchedLines[0].product);
 
-  if (!seller.stripeAccount?.id || !seller.stripeAccount?.stripeAccountId) {
-    return {
-      ok: false,
-      reason: "stripe_account_missing",
-      sellerId: seller.id,
-    };
-  }
-
   const requestedSettlementAmount = matchedLines.reduce(
     (total, matchedLine) => total + matchedLine.amount,
     0,
@@ -2336,8 +2639,8 @@ export async function processShopifyRefundSettlement(
   const ledgerEntry = await createLedgerEntry(
     {
       sellerId: seller.id,
-      sellerStripeAccountId: seller.stripeAccount.id,
-      stripeAccountId: seller.stripeAccount.stripeAccountId,
+      sellerStripeAccountId: seller.stripeAccount?.id || null,
+      stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
       entryType: "refund",
       stripeObjectId: shopifyRefundId,
       amount: settlementAmount,
@@ -2352,7 +2655,7 @@ export async function processShopifyRefundSettlement(
         shopifyOrderNumericId: normalizeText(payload?.order_id),
         vendorId: normalizeText(vendor?.id),
         vendorHandle: normalizeText(vendor?.handle),
-        settlementMode: "shopify_refund_to_connect_manual_payout",
+        settlementMode: "shopify_refund_to_monthly_settlement",
         matchedLineCount: matchedLines.length,
         unmatchedProductIds: unmatchedProductIds.filter(Boolean),
         lineItems: matchedLines.map(({ refundLineItem, product, amount }) => ({
@@ -2386,9 +2689,13 @@ export async function processShopifyOrderCancelledSettlement(
   { payload, shop },
   { prismaClient = prisma } = {},
 ) {
-  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopDomain = normalizeLowercase(
+    shop || payload?.shop_domain || payload?.shop,
+  );
   const shopifyOrderId = normalizeShopifyOrderId(payload);
-  const shopifyOrderName = normalizeText(payload?.name || payload?.order_number);
+  const shopifyOrderName = normalizeText(
+    payload?.name || payload?.order_number,
+  );
   const currencyCode =
     normalizeLowercase(payload?.currency || payload?.presentment_currency) ||
     DEFAULT_ORDER_CURRENCY;
@@ -2482,7 +2789,7 @@ export async function processShopifyOrderCancelledSettlement(
         shopifyOrderNumericId: normalizeText(payload?.id),
         cancelReason: normalizeText(payload?.cancel_reason),
         cancelledAt: normalizeText(payload?.cancelled_at),
-        settlementMode: "shopify_cancelled_order_to_connect_manual_payout",
+        settlementMode: "shopify_cancelled_order_to_monthly_settlement",
         paidAmount: orderLedgerSummary.paidAmount,
         reversedAmountBeforeCancellation: orderLedgerSummary.reversedAmount,
       },
@@ -2505,7 +2812,9 @@ export async function processShopifyDisputeSettlement(
   { payload, shop, topic },
   { prismaClient = prisma } = {},
 ) {
-  const shopDomain = normalizeLowercase(shop || payload?.shop_domain || payload?.shop);
+  const shopDomain = normalizeLowercase(
+    shop || payload?.shop_domain || payload?.shop,
+  );
   const shopifyDisputeId = normalizeShopifyDisputeId(payload);
   const shopifyOrderId = normalizeShopifyDisputeOrderId(payload);
   const disputeStatus = normalizeLowercase(payload?.status);
@@ -2578,7 +2887,7 @@ export async function processShopifyDisputeSettlement(
     evidenceSentOn: normalizeText(payload?.evidence_sent_on),
     finalizedOn: normalizeText(payload?.finalized_on),
     disputeEventType: normalizedTopic,
-    settlementMode: "shopify_dispute_to_connect_manual_payout",
+    settlementMode: "shopify_dispute_to_monthly_settlement",
   };
 
   if (SHOPIFY_DISPUTE_RELEASE_STATUSES.has(disputeStatus)) {
@@ -2712,10 +3021,7 @@ export async function processShopifyDisputeSettlement(
   };
 }
 
-async function createLedgerEntry(
-  data,
-  { prismaClient = prisma } = {},
-) {
+async function createLedgerEntry(data, { prismaClient = prisma } = {}) {
   return prismaClient.ledgerEntry.create({ data });
 }
 
@@ -2757,7 +3063,10 @@ async function findOrderByChargeId(chargeId, prismaClient = prisma) {
   });
 }
 
-async function findOrderByPaymentIntentId(paymentIntentId, prismaClient = prisma) {
+async function findOrderByPaymentIntentId(
+  paymentIntentId,
+  prismaClient = prisma,
+) {
   if (!paymentIntentId) {
     return null;
   }
@@ -2831,8 +3140,11 @@ async function processPaymentIntentSucceeded(
       stripeAccountId: stripeAccountId || order.stripeAccountId,
       entryType: "charge",
       stripeObjectId: latestChargeId || paymentIntentId,
-      amount: clampInteger(paymentIntent?.amount_received ?? paymentIntent?.amount),
-      currencyCode: normalizeLowercase(paymentIntent?.currency) || order.currencyCode,
+      amount: clampInteger(
+        paymentIntent?.amount_received ?? paymentIntent?.amount,
+      ),
+      currencyCode:
+        normalizeLowercase(paymentIntent?.currency) || order.currencyCode,
       direction: "credit",
       description: "Direct charge paid",
       metadataJson: {
@@ -2851,7 +3163,9 @@ async function processApplicationFeeCreated(
   const applicationFee = event.data?.object;
   const chargeId = normalizeText(applicationFee?.charge);
   const order = await findOrderByChargeId(chargeId, prismaClient);
-  const occurredAt = new Date((applicationFee?.created || event.created) * 1000);
+  const occurredAt = new Date(
+    (applicationFee?.created || event.created) * 1000,
+  );
 
   await createLedgerEntry(
     {
@@ -2859,11 +3173,13 @@ async function processApplicationFeeCreated(
       sellerStripeAccountId: order?.sellerStripeAccountId || null,
       orderId: order?.id || null,
       stripeEventId: stripeEventRecordId,
-      stripeAccountId: normalizeText(event.account) || order?.stripeAccountId || null,
+      stripeAccountId:
+        normalizeText(event.account) || order?.stripeAccountId || null,
       entryType: "application_fee",
       stripeObjectId: normalizeText(applicationFee?.id),
       amount: clampInteger(applicationFee?.amount),
-      currencyCode: normalizeLowercase(applicationFee?.currency) || DEFAULT_ORDER_CURRENCY,
+      currencyCode:
+        normalizeLowercase(applicationFee?.currency) || DEFAULT_ORDER_CURRENCY,
       direction: "credit",
       description: "Application fee created",
       metadataJson: {
@@ -2890,11 +3206,13 @@ async function processApplicationFeeRefunded(
       sellerStripeAccountId: order?.sellerStripeAccountId || null,
       orderId: order?.id || null,
       stripeEventId: stripeEventRecordId,
-      stripeAccountId: normalizeText(event.account) || order?.stripeAccountId || null,
+      stripeAccountId:
+        normalizeText(event.account) || order?.stripeAccountId || null,
       entryType: "application_fee_refund",
       stripeObjectId: normalizeText(object?.id),
       amount: clampInteger(object?.amount_refunded ?? object?.amount),
-      currencyCode: normalizeLowercase(object?.currency) || DEFAULT_ORDER_CURRENCY,
+      currencyCode:
+        normalizeLowercase(object?.currency) || DEFAULT_ORDER_CURRENCY,
       direction: "debit",
       description: "Application fee refunded",
       metadataJson: {
@@ -2931,11 +3249,13 @@ async function processChargeRefunded(
       sellerStripeAccountId: order?.sellerStripeAccountId || null,
       orderId: order?.id || null,
       stripeEventId: stripeEventRecordId,
-      stripeAccountId: normalizeText(event.account) || order?.stripeAccountId || null,
+      stripeAccountId:
+        normalizeText(event.account) || order?.stripeAccountId || null,
       entryType: "refund",
       stripeObjectId: chargeId,
       amount: clampInteger(charge?.amount_refunded),
-      currencyCode: normalizeLowercase(charge?.currency) || DEFAULT_ORDER_CURRENCY,
+      currencyCode:
+        normalizeLowercase(charge?.currency) || DEFAULT_ORDER_CURRENCY,
       direction: "debit",
       description: "Charge refunded",
       metadataJson: {
@@ -2971,11 +3291,13 @@ async function processRefundEvent(
       sellerStripeAccountId: order?.sellerStripeAccountId || null,
       orderId: order?.id || null,
       stripeEventId: stripeEventRecordId,
-      stripeAccountId: normalizeText(event.account) || order?.stripeAccountId || null,
+      stripeAccountId:
+        normalizeText(event.account) || order?.stripeAccountId || null,
       entryType: "refund",
       stripeObjectId: normalizeText(refund?.id),
       amount: clampInteger(refund?.amount),
-      currencyCode: normalizeLowercase(refund?.currency) || DEFAULT_ORDER_CURRENCY,
+      currencyCode:
+        normalizeLowercase(refund?.currency) || DEFAULT_ORDER_CURRENCY,
       direction: "debit",
       description: "Refund updated",
       metadataJson: {
@@ -3035,11 +3357,13 @@ async function processDisputeEvent(
       sellerStripeAccountId: order?.sellerStripeAccountId || null,
       orderId: order?.id || null,
       stripeEventId: stripeEventRecordId,
-      stripeAccountId: normalizeText(event.account) || order?.stripeAccountId || null,
+      stripeAccountId:
+        normalizeText(event.account) || order?.stripeAccountId || null,
       entryType: type,
       stripeObjectId: normalizeText(dispute?.id),
       amount: clampInteger(dispute?.amount),
-      currencyCode: normalizeLowercase(dispute?.currency) || DEFAULT_ORDER_CURRENCY,
+      currencyCode:
+        normalizeLowercase(dispute?.currency) || DEFAULT_ORDER_CURRENCY,
       direction: type === "dispute_funds_reinstated" ? "credit" : "debit",
       description:
         type === "dispute_created"
@@ -3117,11 +3441,13 @@ async function processPayoutEvent(
         sellerStripeAccountId: payoutRun?.sellerStripeAccountId || null,
         stripeEventId: stripeEventRecordId,
         payoutRunId: payoutRun?.id || null,
-        stripeAccountId: normalizeText(event.account) || payoutRun?.stripeAccountId || null,
+        stripeAccountId:
+          normalizeText(event.account) || payoutRun?.stripeAccountId || null,
         entryType: type,
         stripeObjectId: normalizeText(payout?.id),
         amount: clampInteger(payout?.amount),
-        currencyCode: normalizeLowercase(payout?.currency) || DEFAULT_ORDER_CURRENCY,
+        currencyCode:
+          normalizeLowercase(payout?.currency) || DEFAULT_ORDER_CURRENCY,
         direction: "debit",
         description: `Payout ${type}`,
         metadataJson: {
@@ -3147,14 +3473,23 @@ async function processStripeEventByType(
       await processExternalAccountUpdated(event, { prismaClient });
       return;
     case "payment_intent.succeeded":
-      await processPaymentIntentSucceeded(event, { prismaClient, stripeEventRecordId });
+      await processPaymentIntentSucceeded(event, {
+        prismaClient,
+        stripeEventRecordId,
+      });
       return;
     case "application_fee.created":
-      await processApplicationFeeCreated(event, { prismaClient, stripeEventRecordId });
+      await processApplicationFeeCreated(event, {
+        prismaClient,
+        stripeEventRecordId,
+      });
       return;
     case "application_fee.refunded":
     case "application_fee.refund.updated":
-      await processApplicationFeeRefunded(event, { prismaClient, stripeEventRecordId });
+      await processApplicationFeeRefunded(event, {
+        prismaClient,
+        stripeEventRecordId,
+      });
       return;
     case "charge.refunded":
       await processChargeRefunded(event, { prismaClient, stripeEventRecordId });
@@ -3218,10 +3553,7 @@ async function processStripeEventByType(
 
 export async function handleStripeWebhook(
   { rawBody, signature },
-  {
-    prismaClient = prisma,
-    stripeClient = getStripeClient(),
-  } = {},
+  { prismaClient = prisma, stripeClient = getStripeClient() } = {},
 ) {
   const webhookSecrets = getStripeWebhookSecrets();
   let event = null;
@@ -3317,7 +3649,10 @@ export async function listPayoutRuns({ prismaClient = prisma } = {}) {
   }));
 }
 
-export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } = {}) {
+export async function getPayoutRunDetail(
+  payoutRunId,
+  { prismaClient = prisma } = {},
+) {
   const payoutRun = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
@@ -3325,8 +3660,10 @@ export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } 
         include: {
           vendor: true,
           stripeAccount: true,
+          payoutRecipient: true,
         },
       },
+      sellerPayoutRecipient: true,
       ledgerEntries: {
         orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
       },
@@ -3340,9 +3677,16 @@ export async function getPayoutRunDetail(payoutRunId, { prismaClient = prisma } 
   return {
     ...payoutRun,
     statusLabel: createPayoutRunStatusLabel(payoutRun.status),
-    transferMethodLabel: createPayoutTransferMethodLabel(payoutRun.transferMethod),
+    transferMethodLabel: createPayoutTransferMethodLabel(
+      payoutRun.transferMethod,
+    ),
     sellerStoreName: payoutRun.seller.vendor.storeName,
-    stripeAccount: serializeStripeAccountSummary(payoutRun.seller.stripeAccount),
+    stripeAccount: serializeStripeAccountSummary(
+      payoutRun.seller.stripeAccount,
+    ),
+    payoutRecipient: serializePayoutRecipientSummary(
+      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+    ),
   };
 }
 
@@ -3379,7 +3723,8 @@ export async function getSellerPayoutableLedgerBalance(
   { prismaClient = prisma } = {},
 ) {
   const normalizedSellerId = normalizeText(sellerId);
-  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
 
   if (!normalizedSellerId) {
     return 0;
@@ -3411,13 +3756,14 @@ async function assertPayoutEligibleSeller(
     include: {
       vendor: true,
       stripeAccount: true,
+      payoutRecipient: true,
     },
   });
 
-  if (!seller?.vendor || !seller?.stripeAccount) {
+  if (!seller?.vendor) {
     return {
       ok: false,
-      reason: "stripe_account_missing",
+      reason: "seller_not_found",
     };
   }
 
@@ -3445,14 +3791,18 @@ export async function createPayoutRun(
   { sellerId, amount, currencyCode },
   { prismaClient = prisma } = {},
 ) {
-  const eligibility = await assertPayoutEligibleSeller(sellerId, { prismaClient });
+  const eligibility = await assertPayoutEligibleSeller(sellerId, {
+    prismaClient,
+  });
 
   if (!eligibility.ok) {
     return eligibility;
   }
 
   const normalizedAmount = toPositiveInteger(amount);
-  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const payoutProvider = getConfiguredSellerPayoutProvider();
 
   if (normalizedAmount == null) {
     return {
@@ -3479,15 +3829,34 @@ export async function createPayoutRun(
     };
   }
 
+  const payoutRecipient =
+    payoutProvider === "wise" ? eligibility.seller.payoutRecipient : null;
+
+  if (
+    payoutProvider === "wise" &&
+    (!payoutRecipient ||
+      payoutRecipient.provider !== "wise" ||
+      payoutRecipient.status !== "active" ||
+      !payoutRecipient.wiseRecipientId)
+  ) {
+    return {
+      ok: false,
+      reason: "wise_recipient_missing",
+    };
+  }
+
   const payoutRun = await prismaClient.payoutRun.create({
     data: {
       sellerId: eligibility.seller.id,
-      sellerStripeAccountId: eligibility.seller.stripeAccount.id,
-      stripeAccountId: eligibility.seller.stripeAccount.stripeAccountId,
+      sellerStripeAccountId: eligibility.seller.stripeAccount?.id || null,
+      sellerPayoutRecipientId: payoutRecipient?.id || null,
+      stripeAccountId:
+        eligibility.seller.stripeAccount?.stripeAccountId || null,
       amount: normalizedAmount,
       currencyCode: normalizedCurrency,
       status: "draft",
-      transferMethod: "manual_bank_transfer",
+      transferMethod:
+        payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
     },
   });
 
@@ -3636,9 +4005,481 @@ export async function markPayoutRunManuallyPaid(
   });
 }
 
-async function getConnectedAccountAvailableBalanceAmount(
-  { stripeClient, stripeAccountId, currencyCode },
+const WISE_TRANSFER_COMPLETED_STATUSES = new Set(["outgoing_payment_sent"]);
+const WISE_TRANSFER_FAILED_STATUSES = new Set([
+  "bounced_back",
+  "cancelled",
+  "charged_back",
+  "funds_refunded",
+]);
+
+function toNullableNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function getWiseQuoteFeeAmount(quote) {
+  const directFee =
+    toNullableNumber(quote?.fee) ||
+    toNullableNumber(quote?.feeAmount) ||
+    toNullableNumber(quote?.totalFee);
+
+  if (directFee != null) {
+    return directFee;
+  }
+
+  const paymentOptions = Array.isArray(quote?.paymentOptions)
+    ? quote.paymentOptions
+    : [];
+  const balanceOption = paymentOptions.find(
+    (option) => normalizeLowercase(option?.payIn) === "balance",
+  );
+  return (
+    toNullableNumber(balanceOption?.fee?.total) ||
+    toNullableNumber(paymentOptions[0]?.fee?.total)
+  );
+}
+
+function getWiseTransferStatus(...payloads) {
+  for (const payload of payloads) {
+    const status =
+      normalizeLowercase(payload?.status) ||
+      normalizeLowercase(payload?.current_state) ||
+      normalizeLowercase(payload?.data?.current_state);
+
+    if (status) {
+      return status;
+    }
+  }
+
+  return null;
+}
+
+function mergeWisePayload(existingPayload, patch) {
+  return {
+    ...(isPlainObject(existingPayload) ? existingPayload : {}),
+    ...patch,
+  };
+}
+
+async function markWisePayoutRunCompleted(
+  { payoutRun, transferStatus, transferPayload = null, executedBy = "admin" },
+  { prismaClient = prisma } = {},
 ) {
+  const now = new Date();
+
+  return prismaClient.$transaction(async (tx) => {
+    const updated = await tx.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        status: "executed",
+        executedAt: payoutRun.executedAt || now,
+        executedBy: payoutRun.executedBy || executedBy,
+        wiseTransferStatus: transferStatus,
+        wisePayloadJson: mergeWisePayload(payoutRun.wisePayloadJson, {
+          finalTransfer: transferPayload,
+        }),
+        failureCode: null,
+        failureMessage: null,
+        wiseFailureCode: null,
+        wiseFailureMessage: null,
+      },
+    });
+
+    const existingPaidEntry = await tx.ledgerEntry.findFirst({
+      where: {
+        payoutRunId: payoutRun.id,
+        entryType: "payout_paid",
+      },
+    });
+
+    if (!existingPaidEntry) {
+      await createLedgerEntry(
+        {
+          sellerId: payoutRun.sellerId,
+          sellerStripeAccountId: payoutRun.sellerStripeAccountId,
+          payoutRunId: payoutRun.id,
+          stripeAccountId: payoutRun.stripeAccountId,
+          entryType: "payout_paid",
+          stripeObjectId:
+            normalizeWiseTransferId(payoutRun.wiseTransferId) || payoutRun.id,
+          amount: payoutRun.amount,
+          currencyCode: payoutRun.currencyCode,
+          direction: "debit",
+          description: "Wise seller settlement paid",
+          metadataJson: {
+            transferMethod: "wise_api",
+            wiseTransferId: normalizeWiseTransferId(payoutRun.wiseTransferId),
+            wiseTransferStatus: transferStatus,
+            executedBy,
+          },
+          occurredAt: now,
+        },
+        { prismaClient: tx },
+      );
+    }
+
+    return {
+      ok: true,
+      payoutRun: updated,
+      ledgerEntryCreated: !existingPaidEntry,
+    };
+  });
+}
+
+async function markWisePayoutRunFailed(
+  { payoutRun, transferStatus, failureCode = null, failureMessage = null },
+  { prismaClient = prisma } = {},
+) {
+  const updated = await prismaClient.payoutRun.update({
+    where: { id: payoutRun.id },
+    data: {
+      status: "failed",
+      wiseTransferStatus: transferStatus,
+      wiseFailureCode: normalizeText(failureCode) || transferStatus,
+      wiseFailureMessage: normalizeText(failureMessage),
+      failureCode: normalizeText(failureCode) || transferStatus,
+      failureMessage: normalizeText(failureMessage),
+    },
+  });
+
+  await setSellerReviewStatus(
+    {
+      sellerId: payoutRun.sellerId,
+      reason: SELLER_REVIEW_REASON_PAYOUT_FAILED,
+      changedBy: "wise.transfer.failed",
+    },
+    { prismaClient },
+  );
+
+  return {
+    ok: false,
+    reason: "wise_transfer_failed",
+    payoutRun: updated,
+  };
+}
+
+async function applyWiseTransferStatus(
+  { payoutRun, transferStatus, transferPayload = null, executedBy = "admin" },
+  { prismaClient = prisma } = {},
+) {
+  if (WISE_TRANSFER_COMPLETED_STATUSES.has(transferStatus)) {
+    return markWisePayoutRunCompleted(
+      {
+        payoutRun,
+        transferStatus,
+        transferPayload,
+        executedBy,
+      },
+      { prismaClient },
+    );
+  }
+
+  if (WISE_TRANSFER_FAILED_STATUSES.has(transferStatus)) {
+    return markWisePayoutRunFailed(
+      {
+        payoutRun,
+        transferStatus,
+        failureCode: transferStatus,
+        failureMessage: `Wise transfer ended with status ${transferStatus}.`,
+      },
+      { prismaClient },
+    );
+  }
+
+  const updated = await prismaClient.payoutRun.update({
+    where: { id: payoutRun.id },
+    data: {
+      status: "processing",
+      wiseTransferStatus: transferStatus,
+      wisePayloadJson: mergeWisePayload(payoutRun.wisePayloadJson, {
+        latestTransfer: transferPayload,
+      }),
+    },
+  });
+
+  return {
+    ok: true,
+    pending: true,
+    payoutRun: updated,
+  };
+}
+
+export async function executeWisePayoutRun(
+  { payoutRunId, executedBy = "admin" },
+  { prismaClient = prisma, fetchImpl = fetch, env = process.env } = {},
+) {
+  if (getConfiguredSellerPayoutProvider(env) !== "wise") {
+    return {
+      ok: false,
+      reason: "wise_payout_not_enabled",
+    };
+  }
+
+  const config = getWisePayoutConfig(env);
+
+  if (config.missing.length > 0) {
+    return {
+      ok: false,
+      reason: "wise_env_missing",
+      missing: config.missing,
+    };
+  }
+
+  if (!config.isSandbox && !config.liveTransfersEnabled) {
+    return {
+      ok: false,
+      reason: "wise_live_transfers_disabled",
+    };
+  }
+
+  const payoutRun = await prismaClient.payoutRun.findUnique({
+    where: { id: payoutRunId },
+    include: {
+      seller: {
+        include: {
+          payoutRecipient: true,
+        },
+      },
+      sellerPayoutRecipient: true,
+    },
+  });
+
+  if (!payoutRun?.seller) {
+    return {
+      ok: false,
+      reason: "payout_run_not_found",
+    };
+  }
+
+  if (payoutRun.status !== "approved") {
+    return {
+      ok: false,
+      reason: "payout_run_not_executable",
+    };
+  }
+
+  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
+    return {
+      ok: false,
+      reason: "seller_payout_restricted",
+    };
+  }
+
+  const payoutRecipient =
+    payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
+
+  if (
+    !payoutRecipient ||
+    payoutRecipient.provider !== "wise" ||
+    payoutRecipient.status !== "active" ||
+    !payoutRecipient.wiseRecipientId
+  ) {
+    return {
+      ok: false,
+      reason: "wise_recipient_missing",
+    };
+  }
+
+  const availableLedgerBalance = await getSellerPayoutableLedgerBalance(
+    {
+      sellerId: payoutRun.sellerId,
+      currencyCode: payoutRun.currencyCode,
+    },
+    { prismaClient },
+  );
+
+  if (availableLedgerBalance < payoutRun.amount) {
+    return {
+      ok: false,
+      reason: "insufficient_ledger_balance",
+      availableLedgerBalance,
+      requestedAmount: payoutRun.amount,
+      currencyCode: payoutRun.currencyCode,
+    };
+  }
+
+  const customerTransactionId =
+    payoutRun.wiseCustomerTransactionId || randomUUID();
+  const sourceCurrency =
+    normalizeUppercase(config.sourceCurrency) ||
+    DEFAULT_ORDER_CURRENCY.toUpperCase();
+  const targetCurrency =
+    normalizeUppercase(payoutRecipient.currencyCode) ||
+    normalizeUppercase(payoutRun.currencyCode) ||
+    sourceCurrency;
+  const sourceAmount = decimalAmountFromMinorUnits(
+    payoutRun.amount,
+    sourceCurrency,
+  );
+
+  const preparedPayoutRun = await prismaClient.payoutRun.update({
+    where: { id: payoutRun.id },
+    data: {
+      transferMethod: "wise_api",
+      sellerPayoutRecipientId: payoutRecipient.id,
+      wiseCustomerTransactionId: customerTransactionId,
+      wiseSourceCurrency: sourceCurrency,
+      wiseTargetCurrency: targetCurrency,
+      wiseSourceAmount: sourceAmount,
+      failureCode: null,
+      failureMessage: null,
+      wiseFailureCode: null,
+      wiseFailureMessage: null,
+    },
+  });
+
+  try {
+    const quote = await createWiseQuote(
+      {
+        payoutRun: preparedPayoutRun,
+        recipient: payoutRecipient,
+        config,
+      },
+      { fetchImpl },
+    );
+    const quoteId = normalizeText(quote?.id);
+
+    if (!quoteId) {
+      throw new Error("Wise quote response did not include an id.");
+    }
+
+    await prismaClient.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        wiseQuoteId: quoteId,
+        wiseSourceAmount: toNullableNumber(quote.sourceAmount) || sourceAmount,
+        wiseTargetAmount: toNullableNumber(quote.targetAmount),
+        wiseFeeAmount: getWiseQuoteFeeAmount(quote),
+        wiseRate: toNullableNumber(quote.rate),
+        wisePayloadJson: mergeWisePayload(preparedPayoutRun.wisePayloadJson, {
+          quote,
+        }),
+      },
+    });
+
+    const transfer = await createWiseTransfer(
+      {
+        payoutRun: preparedPayoutRun,
+        recipient: payoutRecipient,
+        quote,
+        customerTransactionId,
+        config,
+      },
+      { fetchImpl },
+    );
+    const transferId = normalizeWiseTransferId(transfer?.id);
+
+    if (!transferId) {
+      throw new Error("Wise transfer response did not include an id.");
+    }
+
+    const funding = await fundWiseTransfer(
+      { transferId, config },
+      { fetchImpl },
+    );
+    const transferStatus =
+      getWiseTransferStatus(funding, transfer) || "processing";
+
+    const processingPayoutRun = await prismaClient.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        status: "processing",
+        executedAt: new Date(),
+        executedBy,
+        transferMethod: "wise_api",
+        wiseTransferId: transferId,
+        wiseTransferStatus: transferStatus,
+        externalTransferId: transferId,
+        wisePayloadJson: mergeWisePayload(preparedPayoutRun.wisePayloadJson, {
+          quote,
+          transfer,
+          funding,
+        }),
+      },
+    });
+
+    return applyWiseTransferStatus(
+      {
+        payoutRun: processingPayoutRun,
+        transferStatus,
+        transferPayload: transfer,
+        executedBy,
+      },
+      { prismaClient },
+    );
+  } catch (error) {
+    const code = normalizeText(error?.code) || "wise_api_error";
+    const message = error instanceof Error ? error.message : String(error);
+    const updated = await prismaClient.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        status: "failed",
+        failureCode: code,
+        failureMessage: normalizeText(message),
+        wiseFailureCode: code,
+        wiseFailureMessage: normalizeText(message),
+      },
+    });
+
+    return {
+      ok: false,
+      reason: "wise_payout_execution_failed",
+      payoutRun: updated,
+    };
+  }
+}
+
+export async function syncWisePayoutRunStatus(
+  { payoutRunId, executedBy = "admin" },
+  { prismaClient = prisma, fetchImpl = fetch, env = process.env } = {},
+) {
+  const config = getWisePayoutConfig(env);
+
+  if (config.missing.length > 0) {
+    return {
+      ok: false,
+      reason: "wise_env_missing",
+      missing: config.missing,
+    };
+  }
+
+  const payoutRun = await prismaClient.payoutRun.findUnique({
+    where: { id: payoutRunId },
+  });
+
+  if (!payoutRun?.wiseTransferId) {
+    return {
+      ok: false,
+      reason: "wise_transfer_missing",
+    };
+  }
+
+  const transfer = await retrieveWiseTransfer(
+    {
+      transferId: payoutRun.wiseTransferId,
+      config,
+    },
+    { fetchImpl },
+  );
+  const transferStatus = getWiseTransferStatus(transfer) || "processing";
+
+  return applyWiseTransferStatus(
+    {
+      payoutRun,
+      transferStatus,
+      transferPayload: transfer,
+      executedBy,
+    },
+    { prismaClient },
+  );
+}
+
+async function getConnectedAccountAvailableBalanceAmount({
+  stripeClient,
+  stripeAccountId,
+  currencyCode,
+}) {
   if (!stripeClient?.balance?.retrieve || !stripeAccountId) {
     return null;
   }
@@ -3649,8 +4490,11 @@ async function getConnectedAccountAvailableBalanceAmount(
       stripeAccount: stripeAccountId,
     },
   );
-  const normalizedCurrency = normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
-  const availableRows = Array.isArray(balance?.available) ? balance.available : [];
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const availableRows = Array.isArray(balance?.available)
+    ? balance.available
+    : [];
 
   return availableRows
     .filter((row) => normalizeLowercase(row?.currency) === normalizedCurrency)
@@ -3706,7 +4550,10 @@ export async function executePayoutRun(
 
   try {
     const balanceStripeClient =
-      stripeClient || (createPayout === createConnectedAccountPayout ? getStripeClient() : null);
+      stripeClient ||
+      (createPayout === createConnectedAccountPayout
+        ? getStripeClient()
+        : null);
     const availableBalance = await getConnectedAccountAvailableBalanceAmount({
       stripeClient: balanceStripeClient,
       stripeAccountId: payoutRun.stripeAccountId,

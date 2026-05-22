@@ -3,6 +3,32 @@ import Stripe from "stripe";
 import prisma from "../db.server.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
+const STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES = new Set([
+  "1",
+  "true",
+  "yes",
+  "on",
+]);
+
+const PAYMENT_PROVIDER_SHOPIFY_PAYMENTS = "shopify_payments";
+const SELLER_PAYOUT_PROVIDER_MANUAL = "manual";
+const SELLER_PAYOUT_PROVIDER_WISE = "wise";
+const DEFAULT_PAYMENT_PROVIDER = PAYMENT_PROVIDER_SHOPIFY_PAYMENTS;
+const DEFAULT_SELLER_PAYOUT_PROVIDER = SELLER_PAYOUT_PROVIDER_MANUAL;
+const SUPPORTED_PAYMENT_PROVIDERS = new Set([
+  PAYMENT_PROVIDER_SHOPIFY_PAYMENTS,
+]);
+const SUPPORTED_SELLER_PAYOUT_PROVIDERS = new Set([
+  SELLER_PAYOUT_PROVIDER_MANUAL,
+  SELLER_PAYOUT_PROVIDER_WISE,
+]);
+const PAYMENT_PROVIDER_LABELS = {
+  [PAYMENT_PROVIDER_SHOPIFY_PAYMENTS]: "Shopify Payments",
+};
+const SELLER_PAYOUT_PROVIDER_LABELS = {
+  [SELLER_PAYOUT_PROVIDER_MANUAL]: "Manual bank/Wise transfer",
+  [SELLER_PAYOUT_PROVIDER_WISE]: "Wise API payout",
+};
 
 const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_products",
@@ -68,6 +94,63 @@ function createCheck({ id, category, status, title, detail, action }) {
   };
 }
 
+function isStripeConnectProductionEnabled(env) {
+  return STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES.has(
+    String(env.STRIPE_CONNECT_PRODUCTION_ENABLED || "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function normalizeProvider(value, fallback) {
+  return String(value || fallback)
+    .trim()
+    .toLowerCase();
+}
+
+function inspectOperationEnvironment(env = process.env) {
+  const configuredPaymentProvider = normalizeText(env.PAYMENT_PROVIDER);
+  const configuredSellerPayoutProvider = normalizeText(
+    env.SELLER_PAYOUT_PROVIDER,
+  );
+  const paymentProvider = normalizeProvider(
+    configuredPaymentProvider,
+    DEFAULT_PAYMENT_PROVIDER,
+  );
+  const sellerPayoutProvider = normalizeProvider(
+    configuredSellerPayoutProvider,
+    DEFAULT_SELLER_PAYOUT_PROVIDER,
+  );
+  const stripeConnectProductionEnabled =
+    isStripeConnectProductionEnabled(env) ||
+    paymentProvider === "stripe_connect" ||
+    sellerPayoutProvider === "stripe_connect";
+
+  return {
+    paymentProvider,
+    sellerPayoutProvider,
+    paymentProviderLabel:
+      PAYMENT_PROVIDER_LABELS[paymentProvider] || paymentProvider,
+    sellerPayoutProviderLabel:
+      SELLER_PAYOUT_PROVIDER_LABELS[sellerPayoutProvider] ||
+      sellerPayoutProvider,
+    paymentProviderConfigured: Boolean(configuredPaymentProvider),
+    sellerPayoutProviderConfigured: Boolean(configuredSellerPayoutProvider),
+    paymentProviderSupported: SUPPORTED_PAYMENT_PROVIDERS.has(paymentProvider),
+    sellerPayoutProviderSupported:
+      SUPPORTED_SELLER_PAYOUT_PROVIDERS.has(sellerPayoutProvider),
+    stripeConnectProductionEnabled,
+  };
+}
+
+function requiredOrWarningStatus(passes, required) {
+  if (passes) {
+    return "pass";
+  }
+
+  return required ? "fail" : "warning";
+}
+
 export function inspectStripeEnvironment(env = process.env) {
   const secretKey = normalizeText(env.STRIPE_SECRET_KEY);
   const publishableKey = normalizeText(env.STRIPE_PUBLISHABLE_KEY);
@@ -88,12 +171,8 @@ export function inspectStripeEnvironment(env = process.env) {
     publishableKey,
     secretKeyMode,
     publishableKeyMode,
-    isLive:
-      secretKeyMode === "live" &&
-      publishableKeyMode === "live",
-    isTest:
-      secretKeyMode === "test" ||
-      publishableKeyMode === "test",
+    isLive: secretKeyMode === "live" && publishableKeyMode === "live",
+    isTest: secretKeyMode === "test" || publishableKeyMode === "test",
     modesMatch:
       secretKeyMode !== "missing" &&
       publishableKeyMode !== "missing" &&
@@ -112,24 +191,109 @@ export function inspectStripeEnvironment(env = process.env) {
   };
 }
 
-function buildEnvironmentChecks({ stripeEnv, env }) {
+function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const checks = [];
   const isProductionRuntime = env.NODE_ENV === "production";
+  const {
+    paymentProvider,
+    sellerPayoutProvider,
+    paymentProviderLabel,
+    sellerPayoutProviderLabel,
+    paymentProviderConfigured,
+    sellerPayoutProviderConfigured,
+    paymentProviderSupported,
+    sellerPayoutProviderSupported,
+    stripeConnectProductionEnabled,
+  } = operationEnv;
+  const stripeSecretKeyLive = stripeEnv.secretKeyMode === "live";
+  const stripePublishableKeyLive = stripeEnv.publishableKeyMode === "live";
+  const stripeKeysBothMissing =
+    stripeEnv.secretKeyMode === "missing" &&
+    stripeEnv.publishableKeyMode === "missing";
+  const stripeKeyModesAcceptable =
+    stripeEnv.modesMatch ||
+    (!stripeConnectProductionEnabled && stripeKeysBothMissing);
+
+  checks.push(
+    createCheck({
+      id: "payment_provider",
+      category: "app",
+      status: paymentProviderSupported
+        ? paymentProviderConfigured
+          ? "pass"
+          : "warning"
+        : "fail",
+      title: "Payment provider",
+      detail: paymentProviderSupported
+        ? paymentProviderConfigured
+          ? `PAYMENT_PROVIDER is ${paymentProvider}.`
+          : `PAYMENT_PROVIDER is not set. Defaulting to ${DEFAULT_PAYMENT_PROVIDER}.`
+        : `PAYMENT_PROVIDER is ${paymentProvider}. The current production flow supports ${DEFAULT_PAYMENT_PROVIDER}.`,
+      action: paymentProviderSupported
+        ? paymentProviderConfigured
+          ? ""
+          : "Set PAYMENT_PROVIDER=shopify_payments in Render so the production mode is explicit."
+        : "Keep Shopify Checkout / Shopify Payments as the production payment provider, or add a separate readiness profile for another provider.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "seller_payout_provider",
+      category: "payout",
+      status: sellerPayoutProviderSupported
+        ? sellerPayoutProviderConfigured
+          ? "pass"
+          : "warning"
+        : "fail",
+      title: "Seller payout provider",
+      detail: sellerPayoutProviderSupported
+        ? sellerPayoutProviderConfigured
+          ? `SELLER_PAYOUT_PROVIDER is ${sellerPayoutProvider}.`
+          : `SELLER_PAYOUT_PROVIDER is not set. Defaulting to ${DEFAULT_SELLER_PAYOUT_PROVIDER}.`
+        : `SELLER_PAYOUT_PROVIDER is ${sellerPayoutProvider}. Supported values are manual or wise.`,
+      action: sellerPayoutProviderSupported
+        ? sellerPayoutProviderConfigured
+          ? ""
+          : "Set SELLER_PAYOUT_PROVIDER=manual or SELLER_PAYOUT_PROVIDER=wise in Render."
+        : "Use manual payouts or Wise API payouts for the Shopify Payments production flow.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "production_payment_flow",
+      category: "app",
+      status: "manual",
+      title: "Production payment flow",
+      detail: stripeConnectProductionEnabled
+        ? "Stripe Connect production checks are enabled by STRIPE_CONNECT_PRODUCTION_ENABLED or provider configuration."
+        : `Production checkout uses ${paymentProviderLabel}. Seller payouts use ${sellerPayoutProviderLabel}.`,
+      action: stripeConnectProductionEnabled
+        ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode."
+        : "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes.",
+    }),
+  );
 
   checks.push(
     createCheck({
       id: "stripe_secret_key_live",
       category: "stripe",
-      status: stripeEnv.secretKeyMode === "live" ? "pass" : "fail",
+      status: requiredOrWarningStatus(
+        stripeSecretKeyLive,
+        stripeConnectProductionEnabled,
+      ),
       title: "Stripe secret key",
-      detail:
-        stripeEnv.secretKeyMode === "live"
-          ? "STRIPE_SECRET_KEY is a live key."
-          : `Current mode is ${stripeEnv.secretKeyMode}. Live operation needs sk_live_...`,
-      action:
-        stripeEnv.secretKeyMode === "live"
-          ? ""
-          : "Set the live secret key in Render, then redeploy or restart the service.",
+      detail: stripeSecretKeyLive
+        ? "STRIPE_SECRET_KEY is a live key."
+        : stripeConnectProductionEnabled
+          ? `Current mode is ${stripeEnv.secretKeyMode}. Live Stripe Connect operation needs sk_live_...`
+          : `Current mode is ${stripeEnv.secretKeyMode}. This is not a production blocker while Shopify Payments and manual seller payouts are the active flow.`,
+      action: stripeSecretKeyLive
+        ? ""
+        : stripeConnectProductionEnabled
+          ? "Set the live secret key in Render, then redeploy or restart the service."
+          : "Only set a live Stripe secret key before enabling Stripe Connect direct charges or Connect payouts.",
     }),
   );
 
@@ -137,16 +301,21 @@ function buildEnvironmentChecks({ stripeEnv, env }) {
     createCheck({
       id: "stripe_publishable_key_live",
       category: "stripe",
-      status: stripeEnv.publishableKeyMode === "live" ? "pass" : "fail",
+      status: requiredOrWarningStatus(
+        stripePublishableKeyLive,
+        stripeConnectProductionEnabled,
+      ),
       title: "Stripe publishable key",
-      detail:
-        stripeEnv.publishableKeyMode === "live"
-          ? "STRIPE_PUBLISHABLE_KEY is a live key."
-          : `Current mode is ${stripeEnv.publishableKeyMode}. Live operation needs pk_live_...`,
-      action:
-        stripeEnv.publishableKeyMode === "live"
-          ? ""
-          : "Set the live publishable key in Render, then redeploy or restart the service.",
+      detail: stripePublishableKeyLive
+        ? "STRIPE_PUBLISHABLE_KEY is a live key."
+        : stripeConnectProductionEnabled
+          ? `Current mode is ${stripeEnv.publishableKeyMode}. Live Stripe Connect operation needs pk_live_...`
+          : `Current mode is ${stripeEnv.publishableKeyMode}. This is not a production blocker while Shopify Payments and manual seller payouts are the active flow.`,
+      action: stripePublishableKeyLive
+        ? ""
+        : stripeConnectProductionEnabled
+          ? "Set the live publishable key in Render, then redeploy or restart the service."
+          : "Only set a live Stripe publishable key before enabling embedded Stripe Connect account management.",
     }),
   );
 
@@ -154,14 +323,21 @@ function buildEnvironmentChecks({ stripeEnv, env }) {
     createCheck({
       id: "stripe_key_modes_match",
       category: "stripe",
-      status: stripeEnv.modesMatch ? "pass" : "fail",
+      status: requiredOrWarningStatus(
+        stripeKeyModesAcceptable,
+        stripeConnectProductionEnabled,
+      ),
       title: "Stripe key mode match",
-      detail: stripeEnv.modesMatch
-        ? "Secret key and publishable key use the same mode."
+      detail: stripeKeyModesAcceptable
+        ? stripeKeysBothMissing
+          ? "No Stripe keys are configured. This is acceptable for the current Shopify Payments flow."
+          : "Secret key and publishable key use the same mode."
         : `Secret key mode is ${stripeEnv.secretKeyMode}; publishable key mode is ${stripeEnv.publishableKeyMode}.`,
-      action: stripeEnv.modesMatch
+      action: stripeKeyModesAcceptable
         ? ""
-        : "Use keys from the same Stripe account and the same live/test mode.",
+        : stripeConnectProductionEnabled
+          ? "Use keys from the same Stripe account and the same live/test mode."
+          : "Clean this up before enabling Stripe Connect features in production.",
     }),
   );
 
@@ -169,20 +345,26 @@ function buildEnvironmentChecks({ stripeEnv, env }) {
     createCheck({
       id: "stripe_platform_webhook_secret",
       category: "stripe",
-      status:
+      status: requiredOrWarningStatus(
+        stripeEnv.hasPlatformWebhookSecret &&
+          stripeEnv.platformWebhookSecretLooksValid,
+        stripeConnectProductionEnabled,
+      ),
+      title: "Stripe platform webhook secret",
+      detail:
         stripeEnv.hasPlatformWebhookSecret &&
         stripeEnv.platformWebhookSecretLooksValid
-          ? "pass"
-          : "fail",
-      title: "Stripe platform webhook secret",
-      detail: stripeEnv.hasPlatformWebhookSecret
-        ? "STRIPE_WEBHOOK_SECRET is configured."
-        : "STRIPE_WEBHOOK_SECRET is missing.",
+          ? "STRIPE_WEBHOOK_SECRET is configured."
+          : stripeConnectProductionEnabled
+            ? "STRIPE_WEBHOOK_SECRET is missing or invalid."
+            : "STRIPE_WEBHOOK_SECRET is missing or invalid. This is only required for live Stripe webhook processing.",
       action:
         stripeEnv.hasPlatformWebhookSecret &&
         stripeEnv.platformWebhookSecretLooksValid
           ? ""
-          : "Create the live platform webhook endpoint in Stripe and set its whsec_... value.",
+          : stripeConnectProductionEnabled
+            ? "Create the live platform webhook endpoint in Stripe and set its whsec_... value."
+            : "Leave unset unless Stripe platform webhook events are enabled for production.",
     }),
   );
 
@@ -190,20 +372,26 @@ function buildEnvironmentChecks({ stripeEnv, env }) {
     createCheck({
       id: "stripe_connect_webhook_secret",
       category: "stripe",
-      status:
+      status: requiredOrWarningStatus(
+        stripeEnv.hasConnectWebhookSecret &&
+          stripeEnv.connectWebhookSecretLooksValid,
+        stripeConnectProductionEnabled,
+      ),
+      title: "Stripe Connect webhook secret",
+      detail:
         stripeEnv.hasConnectWebhookSecret &&
         stripeEnv.connectWebhookSecretLooksValid
-          ? "pass"
-          : "fail",
-      title: "Stripe Connect webhook secret",
-      detail: stripeEnv.hasConnectWebhookSecret
-        ? "STRIPE_CONNECT_WEBHOOK_SECRET is configured."
-        : "STRIPE_CONNECT_WEBHOOK_SECRET is missing.",
+          ? "STRIPE_CONNECT_WEBHOOK_SECRET is configured."
+          : stripeConnectProductionEnabled
+            ? "STRIPE_CONNECT_WEBHOOK_SECRET is missing or invalid."
+            : "STRIPE_CONNECT_WEBHOOK_SECRET is missing or invalid. This is only required for live Connect events.",
       action:
         stripeEnv.hasConnectWebhookSecret &&
         stripeEnv.connectWebhookSecretLooksValid
           ? ""
-          : "Create a live Connect webhook endpoint for events on connected accounts and set its whsec_... value.",
+          : stripeConnectProductionEnabled
+            ? "Create a live Connect webhook endpoint for events on connected accounts and set its whsec_... value."
+            : "Leave unset unless Stripe Connect account events are enabled for production.",
     }),
   );
 
@@ -211,14 +399,21 @@ function buildEnvironmentChecks({ stripeEnv, env }) {
     createCheck({
       id: "stripe_platform_fee_bps",
       category: "stripe",
-      status: stripeEnv.platformFeeBpsValid ? "pass" : "fail",
+      status: requiredOrWarningStatus(
+        stripeEnv.platformFeeBpsValid,
+        stripeConnectProductionEnabled,
+      ),
       title: "Stripe platform fee bps",
       detail: stripeEnv.platformFeeBpsValid
         ? `STRIPE_PLATFORM_FEE_BPS is ${stripeEnv.platformFeeBps}.`
-        : "STRIPE_PLATFORM_FEE_BPS must be an integer from 0 to 10000.",
+        : stripeConnectProductionEnabled
+          ? "STRIPE_PLATFORM_FEE_BPS must be an integer from 0 to 10000."
+          : "STRIPE_PLATFORM_FEE_BPS is invalid, but Stripe fee collection is not part of the current production flow.",
       action: stripeEnv.platformFeeBpsValid
         ? ""
-        : "Set STRIPE_PLATFORM_FEE_BPS explicitly in Render.",
+        : stripeConnectProductionEnabled
+          ? "Set STRIPE_PLATFORM_FEE_BPS explicitly in Render."
+          : "Fix this before enabling Stripe Connect checkout or fee collection.",
     }),
   );
 
@@ -295,8 +490,73 @@ function buildShopifyChecks({ configuredScopes, grantedScopes }) {
   ];
 }
 
-function buildPayoutChecks({ env }) {
-  const hasWiseApi = Boolean(normalizeText(env.WISE_API_TOKEN));
+function buildPayoutChecks({ env, operationEnv }) {
+  const wiseChecks = [];
+  const wiseConfig = {
+    hasApiToken: Boolean(normalizeText(env.WISE_API_TOKEN)),
+    hasProfileId: Boolean(normalizeText(env.WISE_PROFILE_ID)),
+    hasApiBaseUrl: Boolean(normalizeText(env.WISE_API_BASE_URL)),
+    hasWebhookSecret: Boolean(normalizeText(env.WISE_WEBHOOK_SECRET)),
+    sourceCurrency: normalizeText(env.WISE_SOURCE_CURRENCY),
+  };
+  const wiseConfigReady =
+    wiseConfig.hasApiToken &&
+    wiseConfig.hasProfileId &&
+    wiseConfig.hasApiBaseUrl &&
+    Boolean(wiseConfig.sourceCurrency);
+
+  if (operationEnv.sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE) {
+    wiseChecks.push(
+      createCheck({
+        id: "wise_api_environment",
+        category: "payout",
+        status: wiseConfigReady ? "pass" : "fail",
+        title: "Wise API environment",
+        detail: wiseConfigReady
+          ? `Wise API env is configured for source currency ${wiseConfig.sourceCurrency}.`
+          : "Wise payout mode needs WISE_API_TOKEN, WISE_PROFILE_ID, WISE_API_BASE_URL, and WISE_SOURCE_CURRENCY.",
+        action: wiseConfigReady
+          ? ""
+          : "Configure Wise sandbox or production credentials in Render before enabling Wise payout execution.",
+      }),
+      createCheck({
+        id: "wise_webhook_secret",
+        category: "payout",
+        status: wiseConfig.hasWebhookSecret ? "pass" : "warning",
+        title: "Wise webhook secret",
+        detail: wiseConfig.hasWebhookSecret
+          ? "WISE_WEBHOOK_SECRET is configured."
+          : "WISE_WEBHOOK_SECRET is missing. Polling can be used during early testing, but webhook verification should be configured before relying on asynchronous completion.",
+        action: wiseConfig.hasWebhookSecret
+          ? ""
+          : "Create a Wise transfer state-change webhook subscription and set the webhook verification secret.",
+      }),
+      createCheck({
+        id: "wise_execution_safety",
+        category: "payout",
+        status: "manual",
+        title: "Wise execution safety",
+        detail:
+          "Wise payout execution must stay behind admin approval, idempotency keys, and sandbox/dry-run testing until live transfers are explicitly enabled.",
+        action:
+          "Do not execute live Wise funding from an automatic job until sandbox transfer, failure, retry, and webhook idempotency tests pass.",
+      }),
+    );
+  } else {
+    wiseChecks.push(
+      createCheck({
+        id: "wise_api_connection",
+        category: "payout",
+        status: wiseConfig.hasApiToken ? "warning" : "manual",
+        title: "Wise API connection",
+        detail: wiseConfig.hasApiToken
+          ? "WISE_API_TOKEN is present, but SELLER_PAYOUT_PROVIDER is not wise."
+          : "No Wise API token is configured. This is expected for the current manual payout flow.",
+        action:
+          "Set SELLER_PAYOUT_PROVIDER=wise only after recipient storage, quote/transfer creation, funding, and webhook handling are tested.",
+      }),
+    );
+  }
 
   return [
     createCheck({
@@ -305,21 +565,15 @@ function buildPayoutChecks({ env }) {
       status: "manual",
       title: "Seller payout transfer mode",
       detail:
-        "This app records seller payouts as manual bank/Wise transfers. It does not send money through Wise API.",
+        operationEnv.sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+          ? "Seller payouts are configured for Wise API payout runs, with admin approval required before execution."
+          : "Seller payouts are recorded as manual bank/Wise transfers after the real transfer is completed outside the app.",
       action:
-        "After the actual transfer is completed outside the app, record the external transfer ID on the payout run.",
+        operationEnv.sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+          ? "Use Wise API only after the payout run is approved and the ledger balance is recalculated."
+          : "After the actual transfer is completed outside the app, record the external transfer ID on the payout run.",
     }),
-    createCheck({
-      id: "wise_api_connection",
-      category: "payout",
-      status: hasWiseApi ? "warning" : "manual",
-      title: "Wise API connection",
-      detail: hasWiseApi
-        ? "WISE_API_TOKEN is present, but the current payout code still uses manual payout records."
-        : "No Wise API token is configured. This is expected for the current manual payout flow.",
-      action:
-        "For automated seller remittance, add a separate Wise API integration and reconciliation flow before enabling it.",
-    }),
+    ...wiseChecks,
   ];
 }
 
@@ -398,66 +652,98 @@ async function probeConnectedAccounts({ stripeEnv, sellerRows }) {
   return results;
 }
 
-function buildSellerChecks({ sellerRows, connectedAccountProbe }) {
+function buildSellerChecks({
+  sellerRows,
+  connectedAccountProbe,
+  operationEnv,
+}) {
+  const { sellerPayoutProvider, stripeConnectProductionEnabled } = operationEnv;
   const activeSellers = sellerRows.filter((row) => row.status === "active");
-  const activeSellersWithoutStripe = activeSellers.filter(
-    (row) => !row.stripeAccount?.stripeAccountId,
+  const activeSellersWithoutPayoutRecord =
+    sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+      ? activeSellers.filter((row) => !row.payoutRecipient?.wiseRecipientId)
+      : [];
+  const invalidConnectedAccounts = connectedAccountProbe.filter(
+    (row) => !row.ok,
   );
-  const invalidConnectedAccounts = connectedAccountProbe.filter((row) => !row.ok);
   const unavailableConnectedAccounts = connectedAccountProbe.filter(
-    (row) => row.ok && (!row.detailsSubmitted || !row.chargesEnabled || !row.payoutsEnabled),
+    (row) =>
+      row.ok &&
+      (!row.detailsSubmitted || !row.chargesEnabled || !row.payoutsEnabled),
   );
 
   return [
     createCheck({
       id: "active_sellers_have_stripe_accounts",
       category: "seller",
-      status: activeSellersWithoutStripe.length === 0 ? "pass" : "fail",
-      title: "Active sellers have payout records",
+      status: activeSellersWithoutPayoutRecord.length === 0 ? "pass" : "fail",
+      title: "Active sellers have payout recipient records",
       detail:
-        activeSellersWithoutStripe.length === 0
-          ? "All active sellers have a Stripe account record."
-          : `${activeSellersWithoutStripe.length} active seller(s) have no Stripe account record.`,
+        activeSellersWithoutPayoutRecord.length === 0
+          ? sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+            ? "All active sellers have Wise recipient records."
+            : "Manual settlement mode does not require seller Stripe accounts or Wise recipient records before go-live."
+          : sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+            ? `${activeSellersWithoutPayoutRecord.length} active seller(s) have no Wise recipient record.`
+            : `${activeSellersWithoutPayoutRecord.length} active seller(s) have no seller payout bookkeeping record.`,
       action:
-        activeSellersWithoutStripe.length === 0
+        activeSellersWithoutPayoutRecord.length === 0
           ? ""
-          : "Create or reconnect the seller payment account before allowing payouts.",
+          : sellerPayoutProvider === SELLER_PAYOUT_PROVIDER_WISE
+            ? "Collect and verify the seller's Wise recipient details, or keep the seller inactive until payouts are not required."
+            : "Keep manual settlement approval based on ledger balance and external transfer records.",
     }),
     createCheck({
       id: "connected_accounts_match_current_stripe_key",
       category: "seller",
-      status: invalidConnectedAccounts.length === 0 ? "pass" : "fail",
+      status: stripeConnectProductionEnabled
+        ? invalidConnectedAccounts.length === 0
+          ? "pass"
+          : "fail"
+        : "manual",
       title: "Connected accounts match current Stripe key",
-      detail:
-        invalidConnectedAccounts.length === 0
+      detail: stripeConnectProductionEnabled
+        ? invalidConnectedAccounts.length === 0
           ? "Connected account probes succeeded for the sampled sellers."
-          : `${invalidConnectedAccounts.length} sampled connected account(s) could not be retrieved with the current Stripe key.`,
-      action:
-        invalidConnectedAccounts.length === 0
+          : `${invalidConnectedAccounts.length} sampled connected account(s) could not be retrieved with the current Stripe key.`
+        : "Skipped because Stripe Connect is not the production checkout or payout rail.",
+      action: stripeConnectProductionEnabled
+        ? invalidConnectedAccounts.length === 0
           ? ""
-          : "Accounts created under a test platform cannot be used with live keys. Recreate those seller Stripe accounts after switching to live keys.",
+          : "Accounts created under a test platform cannot be used with live keys. Recreate those seller Stripe accounts after switching to live keys."
+        : "Only verify or recreate connected accounts if enabling Stripe Connect direct charges or Connect payouts.",
     }),
     createCheck({
       id: "connected_accounts_ready",
       category: "seller",
-      status: unavailableConnectedAccounts.length === 0 ? "pass" : "warning",
+      status: stripeConnectProductionEnabled
+        ? unavailableConnectedAccounts.length === 0
+          ? "pass"
+          : "warning"
+        : "manual",
       title: "Connected accounts are enabled",
-      detail:
-        unavailableConnectedAccounts.length === 0
+      detail: stripeConnectProductionEnabled
+        ? unavailableConnectedAccounts.length === 0
           ? "Sampled connected accounts are submitted and enabled."
-          : `${unavailableConnectedAccounts.length} sampled connected account(s) are not fully enabled.`,
-      action:
-        unavailableConnectedAccounts.length === 0
+          : `${unavailableConnectedAccounts.length} sampled connected account(s) are not fully enabled.`
+        : "Not required for the current manual seller payout flow.",
+      action: stripeConnectProductionEnabled
+        ? unavailableConnectedAccounts.length === 0
           ? ""
-          : "Ask the seller to complete the embedded payment settings, then review the seller before payout.",
+          : "Ask the seller to complete the embedded payment settings, then review the seller before payout."
+        : "Keep seller payout approval based on ledger balance and the external bank/Wise transfer record.",
     }),
   ];
 }
 
-export async function getProductionReadiness(
-  { prismaClient = prisma, env = process.env } = {},
-) {
+export async function getProductionReadiness({
+  prismaClient = prisma,
+  env = process.env,
+} = {}) {
   const stripeEnv = inspectStripeEnvironment(env);
+  const operationEnv = inspectOperationEnvironment(env);
+  const stripeConnectProductionEnabled =
+    operationEnv.stripeConnectProductionEnabled;
   const [sessions, sellerRows, platformStripeAccount] = await Promise.all([
     prismaClient.session.findMany({
       where: {
@@ -474,22 +760,38 @@ export async function getProductionReadiness(
       include: {
         vendor: true,
         stripeAccount: true,
+        payoutRecipient: true,
       },
     }),
-    getPlatformStripeAccount(stripeEnv),
+    stripeConnectProductionEnabled
+      ? getPlatformStripeAccount(stripeEnv)
+      : Promise.resolve({
+          ok: false,
+          reason: "stripe_connect_not_enabled",
+        }),
   ]);
 
-  const connectedAccountProbe = await probeConnectedAccounts({
-    stripeEnv,
-    sellerRows,
-  });
+  const connectedAccountProbe = stripeConnectProductionEnabled
+    ? await probeConnectedAccounts({
+        stripeEnv,
+        sellerRows,
+      })
+    : [];
   const configuredScopes = parseScopes(env.SCOPES);
   const grantedScopes = parseScopes(sessions[0]?.scope);
   const checks = [
-    ...buildEnvironmentChecks({ stripeEnv, env }),
+    ...buildEnvironmentChecks({
+      stripeEnv,
+      env,
+      operationEnv,
+    }),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
-    ...buildSellerChecks({ sellerRows, connectedAccountProbe }),
-    ...buildPayoutChecks({ env }),
+    ...buildSellerChecks({
+      sellerRows,
+      connectedAccountProbe,
+      operationEnv,
+    }),
+    ...buildPayoutChecks({ env, operationEnv }),
   ];
   const blockingChecks = checks.filter((check) => check.status === "fail");
   const warningChecks = checks.filter((check) => check.status === "warning");
@@ -504,6 +806,15 @@ export async function getProductionReadiness(
       warningCount: warningChecks.length,
       manualCount: manualChecks.length,
     },
+    operation: {
+      paymentFlow: `${operationEnv.paymentProvider}_${operationEnv.sellerPayoutProvider}_payout`,
+      paymentFlowLabel: `${operationEnv.paymentProviderLabel} + ${operationEnv.sellerPayoutProviderLabel}`,
+      paymentProvider: operationEnv.paymentProvider,
+      paymentProviderLabel: operationEnv.paymentProviderLabel,
+      sellerPayoutProvider: operationEnv.sellerPayoutProvider,
+      sellerPayoutProviderLabel: operationEnv.sellerPayoutProviderLabel,
+      stripeConnectProductionEnabled,
+    },
     stripe: {
       mode: stripeEnv.isLive ? "live" : stripeEnv.isTest ? "test" : "unknown",
       secretKeyMode: stripeEnv.secretKeyMode,
@@ -513,11 +824,14 @@ export async function getProductionReadiness(
     shopify: {
       configuredScopes,
       grantedScopes,
-      offlineSessionShops: sessions.map((session) => session.shop).filter(Boolean),
+      offlineSessionShops: sessions
+        .map((session) => session.shop)
+        .filter(Boolean),
     },
     sellers: {
       totalCount: sellerRows.length,
-      activeCount: sellerRows.filter((seller) => seller.status === "active").length,
+      activeCount: sellerRows.filter((seller) => seller.status === "active")
+        .length,
       connectedAccountProbe,
       probeLimit: STRIPE_ACCOUNT_PROBE_LIMIT,
     },

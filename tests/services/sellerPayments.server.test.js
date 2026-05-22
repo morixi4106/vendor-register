@@ -12,6 +12,7 @@ import {
   createSellerAccountSession,
   createSellerStripeAccount,
   executePayoutRun,
+  executeWisePayoutRun,
   handleStripeWebhook,
   markPayoutRunManuallyPaid,
   processShopifyDisputeSettlement,
@@ -19,6 +20,7 @@ import {
   processShopifyOrderPaidSettlement,
   processShopifyRefundSettlement,
   resetSellerStripeAccountForRecreate,
+  syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
 
 test("createSellerStripeAccount creates a connected account with manual payouts and no hosted dashboard", async () => {
@@ -1160,9 +1162,75 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
   assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
   assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
   assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
-  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Order/1001");
+  assert.equal(
+    state.ledgerEntries[0].stripeObjectId,
+    "gid://shopify/Order/1001",
+  );
   assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
+});
+
+test("processShopifyOrderPaidSettlement does not require a Stripe account in Shopify settlement mode", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: "le_1",
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Test Product",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1001,
+        currency: "JPY",
+        line_items: [{ product_id: 911, price: "99", quantity: 1 }],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, null);
+  assert.equal(state.ledgerEntries[0].stripeAccountId, null);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.settlementMode,
+    "shopify_order_to_monthly_settlement",
+  );
 });
 
 test("processShopifyOrderPaidSettlement is idempotent by Shopify order id", async () => {
@@ -1177,7 +1245,9 @@ test("processShopifyOrderPaidSettlement is idempotent by Shopify order id", asyn
         return existingLedgerEntry;
       },
       async create() {
-        throw new Error("duplicate order should not create another ledger entry");
+        throw new Error(
+          "duplicate order should not create another ledger entry",
+        );
       },
     },
     product: {
@@ -1420,8 +1490,14 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
   assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
   assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
   assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
-  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Refund/2001");
-  assert.equal(state.ledgerEntries[0].metadataJson.shopifyOrderId, "gid://shopify/Order/1001");
+  assert.equal(
+    state.ledgerEntries[0].stripeObjectId,
+    "gid://shopify/Refund/2001",
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.shopifyOrderId,
+    "gid://shopify/Order/1001",
+  );
   assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 99);
 });
@@ -1438,7 +1514,9 @@ test("processShopifyRefundSettlement is idempotent by Shopify refund id", async 
         return existingLedgerEntry;
       },
       async create() {
-        throw new Error("duplicate refund should not create another ledger entry");
+        throw new Error(
+          "duplicate refund should not create another ledger entry",
+        );
       },
     },
     product: {
@@ -1736,7 +1814,10 @@ test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout b
   assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
   assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
   assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_123");
-  assert.equal(state.ledgerEntries[0].stripeObjectId, "gid://shopify/Order/1001");
+  assert.equal(
+    state.ledgerEntries[0].stripeObjectId,
+    "gid://shopify/Order/1001",
+  );
   assert.equal(state.ledgerEntries[0].metadataJson.cancelReason, "customer");
 });
 
@@ -1918,7 +1999,10 @@ test("processShopifyDisputeSettlement holds seller payout balance and marks sell
     state.ledgerEntries[0].metadataJson.shopifyOrderId,
     "gid://shopify/Order/1001",
   );
-  assert.equal(state.ledgerEntries[0].metadataJson.disputeStatus, "needs_response");
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.disputeStatus,
+    "needs_response",
+  );
 });
 
 test("processShopifyDisputeSettlement releases held funds when dispute is won", async () => {
@@ -2059,7 +2143,9 @@ test("createPayoutRun refuses amounts above the seller payoutable ledger balance
     payoutRun: {
       async create() {
         payoutRunCreateCalled = true;
-        throw new Error("payout run should not be created above ledger balance");
+        throw new Error(
+          "payout run should not be created above ledger balance",
+        );
       },
     },
   };
@@ -2111,6 +2197,7 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
         assert.deepEqual(data, {
           sellerId: "seller_1",
           sellerStripeAccountId: "ssa_1",
+          sellerPayoutRecipientId: null,
           stripeAccountId: "acct_123",
           amount: 900,
           currencyCode: "jpy",
@@ -2137,6 +2224,128 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
   assert.equal(result.ok, true);
   assert.equal(result.availableLedgerBalance, 900);
   assert.equal(result.payoutRun.id, "pr_1");
+});
+
+test("createPayoutRun allows manual settlement without a Stripe account", async () => {
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: {
+            id: "vendor_1",
+          },
+          stripeAccount: null,
+          payoutRecipient: null,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 1200 }];
+      },
+    },
+    payoutRun: {
+      async create({ data }) {
+        assert.deepEqual(data, {
+          sellerId: "seller_1",
+          sellerStripeAccountId: null,
+          sellerPayoutRecipientId: null,
+          stripeAccountId: null,
+          amount: 1200,
+          currencyCode: "jpy",
+          status: "draft",
+          transferMethod: "manual_bank_transfer",
+        });
+        return {
+          id: "pr_manual",
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "seller_1",
+      amount: 1200,
+      currencyCode: "jpy",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.payoutRun.id, "pr_manual");
+});
+
+test("createPayoutRun creates Wise payout runs only when a Wise recipient exists", async () => {
+  const originalProvider = process.env.SELLER_PAYOUT_PROVIDER;
+  process.env.SELLER_PAYOUT_PROVIDER = "wise";
+
+  try {
+    const fakePrisma = {
+      seller: {
+        async findUnique() {
+          return {
+            id: "seller_1",
+            status: "active",
+            vendor: {
+              id: "vendor_1",
+            },
+            stripeAccount: null,
+            payoutRecipient: {
+              id: "spr_1",
+              provider: "wise",
+              status: "active",
+              wiseRecipientId: "123456",
+            },
+          };
+        },
+      },
+      ledgerEntry: {
+        async findMany() {
+          return [{ entryType: "shopify_order_paid", amount: 1200 }];
+        },
+      },
+      payoutRun: {
+        async create({ data }) {
+          assert.deepEqual(data, {
+            sellerId: "seller_1",
+            sellerStripeAccountId: null,
+            sellerPayoutRecipientId: "spr_1",
+            stripeAccountId: null,
+            amount: 1000,
+            currencyCode: "jpy",
+            status: "draft",
+            transferMethod: "wise_api",
+          });
+          return {
+            id: "pr_wise",
+            ...data,
+          };
+        },
+      },
+    };
+
+    const result = await createPayoutRun(
+      {
+        sellerId: "seller_1",
+        amount: 1000,
+        currencyCode: "jpy",
+      },
+      { prismaClient: fakePrisma },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.payoutRun.transferMethod, "wise_api");
+  } finally {
+    if (originalProvider) {
+      process.env.SELLER_PAYOUT_PROVIDER = originalProvider;
+    } else {
+      delete process.env.SELLER_PAYOUT_PROVIDER;
+    }
+  }
 });
 
 test("account.external_account.updated keeps the seller in admin review", async () => {
@@ -2552,7 +2761,234 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
   assert.equal(state.ledgerEntries[0].direction, "debit");
   assert.equal(state.ledgerEntries[0].amount, 9900);
   assert.equal(state.ledgerEntries[0].stripeObjectId, "bank_tx_123");
-  assert.equal(state.ledgerEntries[0].metadataJson.transferMethod, "manual_bank_transfer");
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.transferMethod,
+    "manual_bank_transfer",
+  );
+});
+
+test("executeWisePayoutRun creates and funds a Wise transfer after approval", async () => {
+  const env = {
+    SELLER_PAYOUT_PROVIDER: "wise",
+    WISE_API_TOKEN: "wise-token",
+    WISE_PROFILE_ID: "30000000",
+    WISE_API_BASE_URL: "https://api.wise-sandbox.com",
+    WISE_SOURCE_CURRENCY: "JPY",
+  };
+  const calls = [];
+  const state = {
+    payoutRun: {
+      id: "pr_wise",
+      sellerId: "seller_1",
+      sellerStripeAccountId: null,
+      sellerPayoutRecipientId: "spr_1",
+      stripeAccountId: null,
+      amount: 9900,
+      currencyCode: "jpy",
+      status: "approved",
+      transferMethod: "wise_api",
+      wiseCustomerTransactionId: null,
+      wisePayloadJson: null,
+      seller: {
+        id: "seller_1",
+        status: "active",
+        payoutRecipient: {
+          id: "spr_1",
+          provider: "wise",
+          status: "active",
+          wiseRecipientId: "123456",
+          currencyCode: "jpy",
+        },
+      },
+      sellerPayoutRecipient: {
+        id: "spr_1",
+        provider: "wise",
+        status: "active",
+        wiseRecipientId: "123456",
+        currencyCode: "jpy",
+      },
+    },
+  };
+  const fakePrisma = {
+    payoutRun: {
+      async findUnique() {
+        return state.payoutRun;
+      },
+      async update({ data }) {
+        state.payoutRun = {
+          ...state.payoutRun,
+          ...data,
+        };
+        return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 9900 }];
+      },
+    },
+  };
+  async function fetchImpl(url, init) {
+    calls.push({ url, init });
+
+    if (url.endsWith("/v3/profiles/30000000/quotes")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            id: "quote-uuid",
+            sourceAmount: 9900,
+            targetAmount: 9900,
+            rate: 1,
+          };
+        },
+      };
+    }
+
+    if (url.endsWith("/v1/transfers")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            id: 987654,
+            status: "incoming_payment_waiting",
+          };
+        },
+      };
+    }
+
+    if (url.endsWith("/v3/profiles/30000000/transfers/987654/payments")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: "processing",
+          };
+        },
+      };
+    }
+
+    throw new Error(`Unexpected Wise URL: ${url}`);
+  }
+
+  const result = await executeWisePayoutRun(
+    {
+      payoutRunId: "pr_wise",
+      executedBy: "admin_user",
+    },
+    {
+      prismaClient: fakePrisma,
+      fetchImpl,
+      env,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.pending, true);
+  assert.equal(state.payoutRun.status, "processing");
+  assert.equal(state.payoutRun.wiseQuoteId, "quote-uuid");
+  assert.equal(state.payoutRun.wiseTransferId, "987654");
+  assert.equal(state.payoutRun.wiseTransferStatus, "processing");
+  assert.equal(calls.length, 3);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    sourceCurrency: "JPY",
+    targetCurrency: "JPY",
+    sourceAmount: 9900,
+    targetAmount: null,
+    targetAccount: 123456,
+  });
+  assert.equal(JSON.parse(calls[1].init.body).quoteUuid, "quote-uuid");
+  assert.equal(JSON.parse(calls[2].init.body).type, "BALANCE");
+});
+
+test("syncWisePayoutRunStatus records payout_paid only after Wise completion", async () => {
+  const env = {
+    WISE_API_TOKEN: "wise-token",
+    WISE_PROFILE_ID: "30000000",
+    WISE_API_BASE_URL: "https://api.wise-sandbox.com",
+    WISE_SOURCE_CURRENCY: "JPY",
+  };
+  const state = {
+    ledgerEntries: [],
+    payoutRun: {
+      id: "pr_wise",
+      sellerId: "seller_1",
+      sellerStripeAccountId: null,
+      stripeAccountId: null,
+      amount: 9900,
+      currencyCode: "jpy",
+      status: "processing",
+      transferMethod: "wise_api",
+      wiseTransferId: "987654",
+      wiseTransferStatus: "processing",
+      wisePayloadJson: null,
+      executedAt: new Date("2026-05-20T00:00:00Z"),
+      executedBy: "admin_user",
+    },
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    payoutRun: {
+      async findUnique() {
+        return state.payoutRun;
+      },
+      async update({ data }) {
+        state.payoutRun = {
+          ...state.payoutRun,
+          ...data,
+        };
+        return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+  async function fetchImpl(url) {
+    assert.equal(url, "https://api.wise-sandbox.com/v1/transfers/987654");
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: 987654,
+          status: "outgoing_payment_sent",
+        };
+      },
+    };
+  }
+
+  const result = await syncWisePayoutRunStatus(
+    {
+      payoutRunId: "pr_wise",
+      executedBy: "admin_user",
+    },
+    {
+      prismaClient: fakePrisma,
+      fetchImpl,
+      env,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ledgerEntryCreated, true);
+  assert.equal(state.payoutRun.status, "executed");
+  assert.equal(state.payoutRun.wiseTransferStatus, "outgoing_payment_sent");
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "payout_paid");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].stripeObjectId, "987654");
+  assert.equal(state.ledgerEntries[0].metadataJson.transferMethod, "wise_api");
 });
 
 test("executePayoutRun refuses to create a payout above connected account available balance", async () => {

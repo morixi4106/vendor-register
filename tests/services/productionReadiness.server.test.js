@@ -1,7 +1,72 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { inspectStripeEnvironment } from "../../app/services/productionReadiness.server.js";
+import {
+  getProductionReadiness,
+  inspectStripeEnvironment,
+} from "../../app/services/productionReadiness.server.js";
+
+const REQUIRED_SCOPE_STRING = [
+  "read_products",
+  "write_products",
+  "read_orders",
+  "read_shipping",
+  "write_shipping",
+  "read_publications",
+  "write_publications",
+  "read_shopify_payments_disputes",
+].join(",");
+
+function createFakePrisma({ sellerRows = [], sessions = null } = {}) {
+  return {
+    session: {
+      findMany: async () =>
+        sessions || [
+          {
+            id: "offline_session",
+            shop: "example.myshopify.com",
+            scope: REQUIRED_SCOPE_STRING,
+          },
+        ],
+    },
+    seller: {
+      findMany: async () => sellerRows,
+    },
+  };
+}
+
+function createActiveSeller({
+  stripeAccount = true,
+  payoutRecipient = false,
+} = {}) {
+  return {
+    id: "seller_1",
+    status: "active",
+    vendor: {
+      handle: "vendor-one",
+      storeName: "Vendor One",
+    },
+    stripeAccount: stripeAccount
+      ? {
+          id: "seller_stripe_1",
+          stripeAccountId: "acct_test_123",
+          detailsSubmitted: false,
+          chargesEnabled: false,
+          payoutsEnabled: false,
+        }
+      : null,
+    payoutRecipient: payoutRecipient
+      ? {
+          id: "seller_payout_recipient_1",
+          provider: "wise",
+          status: "active",
+          currencyCode: "jpy",
+          countryCode: "JP",
+          wiseRecipientId: "40000000",
+        }
+      : null,
+  };
+}
 
 test("inspectStripeEnvironment detects live Stripe keys", () => {
   const result = inspectStripeEnvironment({
@@ -41,4 +106,157 @@ test("inspectStripeEnvironment rejects invalid fee bps", () => {
   });
 
   assert.equal(result.platformFeeBpsValid, false);
+});
+
+test("getProductionReadiness does not block missing Stripe live keys for Shopify Payments manual payout flow", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller()],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(result.operation.paymentFlow, "shopify_payments_manual_payout");
+  assert.equal(result.operation.paymentProvider, "shopify_payments");
+  assert.equal(result.operation.sellerPayoutProvider, "manual");
+  assert.equal(result.operation.stripeConnectProductionEnabled, false);
+  assert.equal(checksById.get("stripe_secret_key_live").status, "warning");
+  assert.equal(checksById.get("stripe_publishable_key_live").status, "warning");
+  assert.equal(checksById.get("stripe_key_modes_match").status, "pass");
+  assert.equal(
+    checksById.get("connected_accounts_match_current_stripe_key").status,
+    "manual",
+  );
+  assert.equal(checksById.get("connected_accounts_ready").status, "manual");
+});
+
+test("getProductionReadiness allows manual payout flow without seller Stripe accounts", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(
+    checksById.get("active_sellers_have_stripe_accounts").status,
+    "pass",
+  );
+});
+
+test("getProductionReadiness blocks Wise mode when active sellers have no Wise recipient", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      PAYMENT_PROVIDER: "shopify_payments",
+      SELLER_PAYOUT_PROVIDER: "wise",
+      WISE_API_TOKEN: "wise-token",
+      WISE_PROFILE_ID: "30000000",
+      WISE_API_BASE_URL: "https://api.wise-sandbox.com",
+      WISE_WEBHOOK_SECRET: "wise-webhook-secret",
+      WISE_SOURCE_CURRENCY: "JPY",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(
+    checksById.get("active_sellers_have_stripe_accounts").status,
+    "fail",
+  );
+});
+
+test("getProductionReadiness blocks Stripe env checks when Connect production checks are enabled", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller()],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      STRIPE_CONNECT_PRODUCTION_ENABLED: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(result.operation.stripeConnectProductionEnabled, true);
+  assert.equal(checksById.get("stripe_secret_key_live").status, "fail");
+  assert.equal(checksById.get("stripe_publishable_key_live").status, "fail");
+  assert.equal(checksById.get("stripe_connect_webhook_secret").status, "fail");
+});
+
+test("getProductionReadiness allows Shopify Payments and Wise mode without Stripe accounts when Wise env and recipients exist", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [
+        createActiveSeller({
+          stripeAccount: false,
+          payoutRecipient: true,
+        }),
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      PAYMENT_PROVIDER: "shopify_payments",
+      SELLER_PAYOUT_PROVIDER: "wise",
+      WISE_API_TOKEN: "wise-token",
+      WISE_PROFILE_ID: "30000000",
+      WISE_API_BASE_URL: "https://api.wise-sandbox.com",
+      WISE_WEBHOOK_SECRET: "wise-webhook-secret",
+      WISE_SOURCE_CURRENCY: "JPY",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(result.operation.paymentFlow, "shopify_payments_wise_payout");
+  assert.equal(result.operation.paymentProvider, "shopify_payments");
+  assert.equal(result.operation.sellerPayoutProvider, "wise");
+  assert.equal(result.operation.stripeConnectProductionEnabled, false);
+  assert.equal(checksById.get("stripe_secret_key_live").status, "warning");
+  assert.equal(
+    checksById.get("active_sellers_have_stripe_accounts").status,
+    "pass",
+  );
+  assert.equal(checksById.get("wise_api_environment").status, "pass");
+  assert.equal(checksById.get("wise_webhook_secret").status, "pass");
+});
+
+test("getProductionReadiness blocks Wise mode when Wise env is incomplete", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [
+        createActiveSeller({
+          stripeAccount: false,
+          payoutRecipient: true,
+        }),
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      PAYMENT_PROVIDER: "shopify_payments",
+      SELLER_PAYOUT_PROVIDER: "wise",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(checksById.get("wise_api_environment").status, "fail");
 });
