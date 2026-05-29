@@ -10,6 +10,7 @@ import {
   getCarrierCallbackUrl,
   toShopifyCarrierSubunits,
   upsertShippingV2CarrierService,
+  validateCarrierEuDeliveryPolicy,
 } from '../../app/services/carrierShippingRates.server.js';
 import {
   clearShippingDiagnosticEvents,
@@ -17,6 +18,8 @@ import {
 } from '../../app/services/shippingDiagnostics.server.js';
 
 function createCarrierRequest(overrides = {}) {
+  const { rate: rateOverrides = {}, ...rest } = overrides;
+
   return {
     rate: {
       currency: 'JPY',
@@ -35,9 +38,9 @@ function createCarrierRequest(overrides = {}) {
           requires_shipping: true,
         },
       ],
-      ...overrides.rate,
+      ...rateOverrides,
     },
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -193,6 +196,127 @@ test('carrier shipping rates returns rates from Shipping V2 quote response', asy
       },
     ],
   });
+});
+
+test('carrier shipping rates blocks EU checkout when the current product EU status is not approved', async () => {
+  clearShippingDiagnosticEvents();
+  let quoteCallCount = 0;
+  let productQuery = null;
+  const action = createCarrierShippingRatesAction({
+    prismaClient: {
+      product: {
+        async findMany(query) {
+          productQuery = query;
+          return [
+            {
+              id: 'prod_1',
+              shopifyProductId: 'gid://shopify/Product/9044842447011',
+              approvalStatus: 'approved',
+              productEuStatus: 'REJECTED_HIGH_RISK',
+              countryPolicy: null,
+              vendorStore: {
+                vendorAuth: {
+                  id: 'vendor_1',
+                  handle: 'amber-cellar',
+                  seller: {
+                    id: 'seller_1',
+                    euSellerStatus: 'FULL_KYBC_APPROVED',
+                  },
+                },
+              },
+            },
+          ];
+        },
+      },
+    },
+    fetchShippingV2QuoteImpl: async () => {
+      quoteCallCount += 1;
+      return {};
+    },
+    logInfo: () => {},
+    logError: () => {},
+  });
+  const response = await action({
+    request: new Request('http://localhost/carrier/shipping-rates', {
+      method: 'POST',
+      body: JSON.stringify(
+        createCarrierRequest({
+          rate: {
+            destination: {
+              country: 'FR',
+              zip: '75001',
+              city: 'Paris',
+            },
+          },
+        }),
+      ),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }),
+  });
+
+  assert.deepEqual(await response.json(), { rates: [] });
+  assert.equal(quoteCallCount, 0);
+  assert.deepEqual(productQuery.where.shopifyProductId.in, [
+    '9044842447011',
+    'gid://shopify/Product/9044842447011',
+  ]);
+  assert.equal(
+    listShippingDiagnosticEvents({ limit: 10 }).some(
+      (event) =>
+        event.source === 'carrier' &&
+        event.message === 'eu_delivery_blocked' &&
+        event.details.policy.reason === 'eu_product_not_allowed',
+    ),
+    true,
+  );
+});
+
+test('validateCarrierEuDeliveryPolicy allows EU delivery only for approved seller and product', async () => {
+  const quoteRequest = buildCarrierShippingV2QuoteRequest(
+    createCarrierRequest({
+      rate: {
+        destination: {
+          country: 'FR',
+          zip: '75001',
+          city: 'Paris',
+        },
+      },
+    }),
+  );
+  const result = await validateCarrierEuDeliveryPolicy({
+    quoteRequest,
+    prismaClient: {
+      product: {
+        async findMany() {
+          return [
+            {
+              id: 'prod_1',
+              shopifyProductId: 'gid://shopify/Product/9044842447011',
+              approvalStatus: 'approved',
+              productEuStatus: 'APPROVED_LOW_RISK',
+              countryPolicy: {
+                allowedCountries: ['FR'],
+                blockedCountries: [],
+              },
+              vendorStore: {
+                vendorAuth: {
+                  seller: {
+                    euSellerStatus: 'FULL_KYBC_APPROVED',
+                  },
+                },
+              },
+            },
+          ];
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.countryCode, 'FR');
+  assert.equal(result.productCount, 1);
 });
 
 test('carrier shipping rates GET loader does not parse a body', async () => {

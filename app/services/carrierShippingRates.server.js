@@ -9,12 +9,47 @@ import {
   recordShippingDiagnosticEvent,
 } from './shippingDiagnostics.server.js';
 import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
+import prisma from '../db.server.js';
 
 const CARRIER_SERVICE_NAME = 'Shipping V2';
 const CARRIER_SERVICE_DISPLAY_NAME = '地域別配送';
 const CARRIER_SERVICE_CODE = 'shipping_v2';
 const CARRIER_SERVICE_DESCRIPTION = '配送先に基づく送料';
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
+const EU_COUNTRY_CODES = new Set([
+  'AT',
+  'BE',
+  'BG',
+  'HR',
+  'CY',
+  'CZ',
+  'DK',
+  'EE',
+  'FI',
+  'FR',
+  'DE',
+  'GR',
+  'HU',
+  'IE',
+  'IT',
+  'LV',
+  'LT',
+  'LU',
+  'MT',
+  'NL',
+  'PL',
+  'PT',
+  'RO',
+  'SK',
+  'SI',
+  'ES',
+  'SE',
+]);
+const EU_SELLER_ALLOWED_STATUSES = new Set([
+  'ALLOWED_UNDER_SMALL_PLATFORM_POLICY',
+  'FULL_KYBC_APPROVED',
+]);
+const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
 const CARRIER_SERVICES_QUERY = `#graphql
   query ShippingV2CarrierServices {
@@ -75,6 +110,11 @@ function normalizeText(value) {
   return normalized || null;
 }
 
+function normalizeCountryCode(value) {
+  const normalized = normalizeText(value);
+  return normalized ? normalized.toUpperCase() : null;
+}
+
 function toFiniteNumber(value) {
   if (value == null || value === '') {
     return null;
@@ -94,7 +134,7 @@ function normalizeCarrierDestination(destination) {
   const postalCode = normalizeText(
     normalized.zip || normalized.postal_code || normalized.postalCode,
   );
-  const country = normalizeText(
+  const country = normalizeCountryCode(
     normalized.country || normalized.country_code || normalized.countryCode,
   );
 
@@ -106,6 +146,182 @@ function normalizeCarrierDestination(destination) {
     city: normalizeText(normalized.city),
     country,
     countryCode: country,
+  };
+}
+
+function normalizeShopifyProductGid(value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith('gid://shopify/Product/')) {
+    return normalized;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return `gid://shopify/Product/${normalized}`;
+  }
+
+  return normalized;
+}
+
+function normalizeCountryList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(normalizeCountryCode).filter(Boolean);
+}
+
+function getCarrierProductIdCandidates(lines) {
+  const candidates = new Set();
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const productId = normalizeText(line?.productId);
+    const productGid = normalizeShopifyProductGid(productId);
+
+    if (productId) {
+      candidates.add(productId);
+    }
+
+    if (productGid) {
+      candidates.add(productGid);
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+export async function validateCarrierEuDeliveryPolicy({
+  quoteRequest,
+  prismaClient = prisma,
+} = {}) {
+  const countryCode = normalizeCountryCode(
+    quoteRequest?.shippingAddress?.countryCode ||
+      quoteRequest?.shippingAddress?.country,
+  );
+
+  if (!countryCode || !EU_COUNTRY_CODES.has(countryCode)) {
+    return {
+      ok: true,
+      reason: null,
+      checked: false,
+    };
+  }
+
+  const lines = Array.isArray(quoteRequest?.orderLike?.lines)
+    ? quoteRequest.orderLike.lines
+    : [];
+  const productIdCandidates = getCarrierProductIdCandidates(lines);
+
+  if (productIdCandidates.length === 0) {
+    return {
+      ok: true,
+      reason: null,
+      checked: true,
+      countryCode,
+      productCount: 0,
+    };
+  }
+
+  const products = await prismaClient.product.findMany({
+    where: {
+      shopifyProductId: {
+        in: productIdCandidates,
+      },
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      productEuStatus: true,
+      approvalStatus: true,
+      countryPolicy: true,
+      vendorStore: {
+        select: {
+          vendorAuth: {
+            select: {
+              id: true,
+              handle: true,
+              seller: {
+                select: {
+                  id: true,
+                  euSellerStatus: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  for (const product of products) {
+    const sellerEuStatus = normalizeText(
+      product.vendorStore?.vendorAuth?.seller?.euSellerStatus,
+    )?.toUpperCase();
+
+    if (!EU_SELLER_ALLOWED_STATUSES.has(sellerEuStatus)) {
+      return {
+        ok: false,
+        reason: 'eu_seller_not_allowed',
+        countryCode,
+        productId: product.id,
+        shopifyProductId: product.shopifyProductId,
+        sellerEuStatus: sellerEuStatus || 'DISABLED',
+      };
+    }
+
+    if (
+      product.approvalStatus !== 'approved' ||
+      !EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus || 'DISABLED')
+    ) {
+      return {
+        ok: false,
+        reason: 'eu_product_not_allowed',
+        countryCode,
+        productId: product.id,
+        shopifyProductId: product.shopifyProductId,
+        productEuStatus: product.productEuStatus || 'DISABLED',
+        approvalStatus: product.approvalStatus || null,
+      };
+    }
+
+    const blockedCountries = normalizeCountryList(
+      product.countryPolicy?.blockedCountries,
+    );
+    const allowedCountries = normalizeCountryList(
+      product.countryPolicy?.allowedCountries,
+    );
+
+    if (blockedCountries.includes(countryCode)) {
+      return {
+        ok: false,
+        reason: 'country_blocked',
+        countryCode,
+        productId: product.id,
+        shopifyProductId: product.shopifyProductId,
+      };
+    }
+
+    if (allowedCountries.length > 0 && !allowedCountries.includes(countryCode)) {
+      return {
+        ok: false,
+        reason: 'country_not_allowed',
+        countryCode,
+        productId: product.id,
+        shopifyProductId: product.shopifyProductId,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    checked: true,
+    countryCode,
+    productCount: products.length,
   };
 }
 
@@ -359,6 +575,7 @@ export function createCarrierShippingRatesLoader({ logInfo = console.log } = {})
 
 export function createCarrierShippingRatesAction({
   fetchShippingV2QuoteImpl = fetchShippingV2Quote,
+  prismaClient = prisma,
   logInfo = console.log,
   logError = console.error,
 } = {}) {
@@ -433,6 +650,28 @@ export function createCarrierShippingRatesAction({
     });
 
     try {
+      const euDeliveryPolicy = await validateCarrierEuDeliveryPolicy({
+        quoteRequest,
+        prismaClient,
+      });
+
+      if (!euDeliveryPolicy.ok) {
+        logInfo?.('carrier shipping rates blocked by eu delivery policy:', {
+          requestId,
+          ...euDeliveryPolicy,
+        });
+        recordCarrierDiagnostic({
+          requestId,
+          level: 'warn',
+          message: 'eu_delivery_blocked',
+          details: {
+            policy: euDeliveryPolicy,
+            quoteRequest: quoteRequestSummary,
+          },
+        });
+        return json({ rates: [] });
+      }
+
       const quoteResponse = await fetchShippingV2QuoteImpl({
         quoteRequest,
         diagnosticRequestId: requestId,
