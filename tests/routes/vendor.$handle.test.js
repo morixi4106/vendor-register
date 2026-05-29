@@ -44,6 +44,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/1',
       approvalStatus: 'approved',
       vendorStoreId: 'store_1',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
     {
       id: 'prod_pending',
@@ -57,6 +59,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/2',
       approvalStatus: 'pending',
       vendorStoreId: 'store_1',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
     {
       id: 'prod_other',
@@ -70,6 +74,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/3',
       approvalStatus: 'approved',
       vendorStoreId: 'store_2',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
   ];
 }
@@ -216,9 +222,13 @@ test('vendor.$handle buildDraftOrderCheckoutInputFromStorefrontForm creates a se
       'vendor-storefront',
       'vendor:amber-cellar',
     ],
+    customAttributes: [
+      { key: 'seller_name', value: 'Amber Cellar' },
+      { key: 'seller_country', value: 'JP' },
+      { key: 'seller_of_record', value: 'marketplace_seller' },
+    ],
   });
   assert.equal(JSON.stringify(result.payload).includes('evil-shop.myshopify.com'), false);
-  assert.equal('customAttributes' in result.payload, false);
   assert.equal(
     JSON.stringify(result.payload).includes('localProductId'),
     false,

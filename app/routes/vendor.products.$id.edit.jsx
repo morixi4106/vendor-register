@@ -37,6 +37,10 @@ const COPY = {
   cloudinaryMissing: "Cloudinary の環境変数が足りません。",
 };
 
+function isCheckedInput(value) {
+  return value === "on" || value === "true" || value === true;
+}
+
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
   sameSite: "lax",
@@ -197,6 +201,10 @@ export const action = async ({ request, params }) => {
     const costCurrency = String(formData.get("costCurrency") || "JPY")
       .trim()
       .toUpperCase();
+    const euSaleRequested = isCheckedInput(formData.get("euSaleRequested"));
+    const regulatorySelfCertified = isCheckedInput(
+      formData.get("regulatorySelfCertified")
+    );
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -239,6 +247,15 @@ export const action = async ({ request, params }) => {
       url: url || null,
       imageUrl: imageUrl || null,
       approvalStatus: "pending",
+      euSaleRequested,
+      productEuStatus: euSaleRequested ? "PENDING_REVIEW" : "DISABLED",
+      regulatorySelfCertificationJson: {
+        version: "seller-product-self-cert-v1",
+        regulatorySelfCertified,
+        certifiedAt: regulatorySelfCertified
+          ? new Date().toISOString()
+          : product.regulatorySelfCertificationJson?.certifiedAt || null,
+      },
       priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
       priceSyncError: null,
     };

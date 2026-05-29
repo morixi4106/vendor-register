@@ -1,6 +1,12 @@
 import { Form, Link, useActionData, useLoaderData, useNavigation } from '@remix-run/react';
 import { useMemo, useState } from 'react';
 
+const EU_COUNTRY_CODES = new Set([
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR',
+  'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK',
+  'SI', 'ES', 'SE',
+]);
+
 function hiddenVendorStorefrontResponse() {
   throw new Response('Not Found', {
     status: 404,
@@ -48,6 +54,7 @@ export default function VendorStorefrontPage() {
     country: 'JP',
   });
   const [note, setNote] = useState('');
+  const [importResponsibilityAccepted, setImportResponsibilityAccepted] = useState(false);
 
   const selectedCount = useMemo(
     () =>
@@ -56,6 +63,9 @@ export default function VendorStorefrontPage() {
         return sum + (Number.isInteger(numeric) && numeric > 0 ? numeric : 0);
       }, 0),
     [quantities],
+  );
+  const requiresImportWarning = EU_COUNTRY_CODES.has(
+    String(shippingAddress.country || '').trim().toUpperCase(),
   );
 
   return (
@@ -96,6 +106,8 @@ export default function VendorStorefrontPage() {
         .field-error{color:#9d1d1d;font-size:12px;font-weight:700;}
         .checkout-summary{padding:18px;border-radius:18px;background:#fbf3eb;border:1px solid rgba(95,72,52,0.12);}
         .checkout-summary strong{display:block;margin-bottom:6px;font-size:18px;}
+        .import-warning{display:grid;gap:10px;padding:14px 16px;border-radius:16px;background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;font-size:13px;line-height:1.7;}
+        .warning-check{display:flex;gap:8px;align-items:flex-start;font-weight:800;color:#7c2d12;}
         .checkout-submit{width:100%;height:56px;border:none;border-radius:999px;background:#221a15;color:#fff;font-size:16px;font-weight:900;cursor:pointer;}
         .checkout-submit:disabled{cursor:not-allowed;opacity:0.65;}
         @media (max-width: 960px){.storefront-grid{grid-template-columns:1fr;}.product-card{grid-template-columns:96px 1fr;}.product-side{grid-column:1 / -1;justify-items:start;}}
@@ -387,6 +399,29 @@ export default function VendorStorefrontPage() {
                   onChange={(event) => setNote(event.target.value)}
                 />
               </label>
+
+              {requiresImportWarning ? (
+                <div className="import-warning">
+                  <strong>配送先国と輸入条件の確認</strong>
+                  <span>
+                    この商品は国際配送商品です。購入者は配送先国における輸入制限、関税、税金、通関手続き、受取可否を確認する責任を負います。ただし、商品に欠陥がある場合、または適用法により購入者に認められる権利は、この確認により制限されません。
+                  </span>
+                  <label className="warning-check">
+                    <input
+                      type="checkbox"
+                      name="importResponsibilityAccepted"
+                      checked={importResponsibilityAccepted}
+                      onChange={(event) => setImportResponsibilityAccepted(event.target.checked)}
+                    />
+                    配送先国と輸入条件を確認しました
+                  </label>
+                  {actionData?.fieldErrors?.importResponsibility ? (
+                    <span className="field-error">
+                      {actionData.fieldErrors.importResponsibility}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
 
               <button className="checkout-submit" type="submit" disabled={isSubmitting}>
                 {isSubmitting ? '決済画面を準備中...' : '送料つきで決済へ進む'}

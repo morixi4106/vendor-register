@@ -42,6 +42,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/1',
       approvalStatus: 'approved',
       vendorStoreId: 'store_1',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
   ];
 }
@@ -143,7 +145,11 @@ test('vendors.$handle buildDraftOrderCheckoutInputFromStorefrontForm keeps vendo
     'vendor-storefront',
     'vendor:amber-cellar',
   ]);
-  assert.equal('customAttributes' in result.payload, false);
+  assert.deepEqual(result.payload.customAttributes, [
+    { key: 'seller_name', value: 'Amber Cellar' },
+    { key: 'seller_country', value: 'JP' },
+    { key: 'seller_of_record', value: 'marketplace_seller' },
+  ]);
 });
 
 test('vendors.$handle action redirects to invoiceUrl on success', async () => {

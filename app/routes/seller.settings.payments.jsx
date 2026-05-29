@@ -139,6 +139,65 @@ export default function SellerPaymentsSettingsPage() {
             </div>
           )}
         </section>
+
+        <section className="seller-payments__card">
+          <h2 className="seller-payments__title">初回精算前の確認</h2>
+          <p className="seller-payments__subtitle">
+            安全な取引、なりすまし防止、返金・配送トラブル対応、正確な月次精算のため、初回のお支払い前に確認を行います。
+          </p>
+
+          {data.seller?.payoutVerification ? (
+            <div className="seller-payments__description">
+              <Row
+                label="確認状態"
+                value={data.seller.payoutVerification.sellerVerificationStatusLabel}
+              />
+              <Row
+                label="電話番号確認"
+                value={
+                  data.seller.payoutVerification.phoneVerified
+                    ? "確認済み"
+                    : "未確認"
+                }
+              />
+              <Row
+                label="本人確認書類"
+                value={
+                  data.seller.payoutVerification.documentVerificationStatusLabel
+                }
+              />
+              <Row
+                label="受取先登録"
+                value={
+                  data.seller.payoutVerification.payoutDestinationRegistered
+                    ? "登録済み"
+                    : "未登録"
+                }
+              />
+              <Row
+                label="名義一致"
+                value={
+                  data.seller.payoutVerification.nameMatched &&
+                  data.seller.payoutVerification.payoutNameMatched
+                    ? "確認済み"
+                    : "確認待ち"
+                }
+              />
+              <Row
+                label="精算可否"
+                value={
+                  data.seller.payoutVerification.complete
+                    ? "精算可能"
+                    : "確認完了まで精算予定額は保留されます"
+                }
+              />
+            </div>
+          ) : (
+            <div className="seller-payments__notice">
+              精算確認の状態はまだ作成されていません。
+            </div>
+          )}
+        </section>
       </div>
     </VendorManagementShell>
   );

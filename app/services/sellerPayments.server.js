@@ -19,6 +19,34 @@ export const SELLER_STATUSES = [
   "banned",
 ];
 
+export const SELLER_VERIFICATION_STATUSES = [
+  "NONE",
+  "PHONE_REQUIRED",
+  "PHONE_VERIFIED",
+  "DOCUMENT_REQUIRED",
+  "DOCUMENT_PENDING",
+  "VERIFIED",
+  "REJECTED",
+  "SUSPENDED",
+];
+
+export const DOCUMENT_VERIFICATION_STATUSES = [
+  "NONE",
+  "PENDING",
+  "VERIFIED",
+  "REJECTED",
+];
+
+export const SELLER_EU_STATUSES = [
+  "DISABLED",
+  "SELF_CERT_REQUIRED",
+  "PHONE_REQUIRED",
+  "ALLOWED_UNDER_SMALL_PLATFORM_POLICY",
+  "FULL_KYBC_REQUIRED",
+  "FULL_KYBC_APPROVED",
+  "SUSPENDED",
+];
+
 export const PAYOUT_RUN_STATUSES = [
   "draft",
   "approved",
@@ -105,6 +133,20 @@ function normalizeLowercase(value) {
 function normalizeUppercase(value) {
   const normalized = normalizeText(value);
   return normalized ? normalized.toUpperCase() : null;
+}
+
+function normalizeBooleanInput(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (value == null) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(
+    String(value).trim().toLowerCase(),
+  );
 }
 
 function isPlainObject(value) {
@@ -571,6 +613,62 @@ function createPayoutRunStatusLabel(status) {
   }
 }
 
+function createSellerVerificationStatusLabel(status) {
+  switch (status) {
+    case "VERIFIED":
+      return "確認済み";
+    case "PHONE_REQUIRED":
+      return "電話確認待ち";
+    case "PHONE_VERIFIED":
+      return "電話確認済み";
+    case "DOCUMENT_REQUIRED":
+      return "本人確認書類待ち";
+    case "DOCUMENT_PENDING":
+      return "本人確認中";
+    case "REJECTED":
+      return "差し戻し";
+    case "SUSPENDED":
+      return "停止中";
+    case "NONE":
+    default:
+      return "未確認";
+  }
+}
+
+function createDocumentVerificationStatusLabel(status) {
+  switch (status) {
+    case "VERIFIED":
+      return "確認済み";
+    case "PENDING":
+      return "確認中";
+    case "REJECTED":
+      return "差し戻し";
+    case "NONE":
+    default:
+      return "未確認";
+  }
+}
+
+function createSellerEuStatusLabel(status) {
+  switch (status) {
+    case "SELF_CERT_REQUIRED":
+      return "自己申告待ち";
+    case "PHONE_REQUIRED":
+      return "電話確認待ち";
+    case "ALLOWED_UNDER_SMALL_PLATFORM_POLICY":
+      return "限定許可";
+    case "FULL_KYBC_REQUIRED":
+      return "KYBC待ち";
+    case "FULL_KYBC_APPROVED":
+      return "EU販売確認済み";
+    case "SUSPENDED":
+      return "停止中";
+    case "DISABLED":
+    default:
+      return "EU販売OFF";
+  }
+}
+
 function createPayoutTransferMethodLabel(method) {
   switch (method) {
     case "manual_bank_transfer":
@@ -629,10 +727,74 @@ function serializePayoutRecipientSummary(payoutRecipient) {
   };
 }
 
+function isActivePayoutRecipient(payoutRecipient) {
+  return Boolean(
+    payoutRecipient &&
+      payoutRecipient.status === "active" &&
+      (payoutRecipient.wiseRecipientId ||
+        payoutRecipient.accountHolderName ||
+        payoutRecipient.accountSummary),
+  );
+}
+
+export function getSellerPayoutVerificationState(seller) {
+  const phoneVerified = Boolean(seller?.phoneVerifiedAt);
+  const documentVerified =
+    normalizeUppercase(seller?.documentVerificationStatus) === "VERIFIED";
+  const payoutDestinationRegistered = isActivePayoutRecipient(
+    seller?.payoutRecipient,
+  );
+  const nameMatched = Boolean(seller?.verificationNameMatched);
+  const payoutNameMatched = Boolean(seller?.payoutNameMatched);
+  const complete =
+    phoneVerified &&
+    documentVerified &&
+    payoutDestinationRegistered &&
+    nameMatched &&
+    payoutNameMatched;
+
+  const missing = [];
+  if (!phoneVerified) missing.push("phone_verification");
+  if (!documentVerified) missing.push("document_verification");
+  if (!payoutDestinationRegistered) missing.push("payout_destination");
+  if (!nameMatched) missing.push("name_match");
+  if (!payoutNameMatched) missing.push("payout_name_match");
+
+  return {
+    complete,
+    missing,
+    phoneVerified,
+    phoneVerifiedAt: seller?.phoneVerifiedAt || null,
+    documentVerificationStatus:
+      normalizeUppercase(seller?.documentVerificationStatus) || "NONE",
+    documentVerificationStatusLabel: createDocumentVerificationStatusLabel(
+      normalizeUppercase(seller?.documentVerificationStatus) || "NONE",
+    ),
+    documentVerifiedAt: seller?.documentVerifiedAt || null,
+    payoutDestinationRegistered,
+    nameMatched,
+    payoutNameMatched,
+    sellerVerificationStatus:
+      normalizeUppercase(seller?.sellerVerificationStatus) || "NONE",
+    sellerVerificationStatusLabel: createSellerVerificationStatusLabel(
+      normalizeUppercase(seller?.sellerVerificationStatus) || "NONE",
+    ),
+    euSellerStatus: normalizeUppercase(seller?.euSellerStatus) || "DISABLED",
+    euSellerStatusLabel: createSellerEuStatusLabel(
+      normalizeUppercase(seller?.euSellerStatus) || "DISABLED",
+    ),
+    reviewNotes: seller?.verificationReviewNotes || null,
+  };
+}
+
 function serializeSellerSummary(vendor) {
   const seller = vendor?.seller;
   const stripeAccount = seller?.stripeAccount;
   const payoutRecipient = seller?.payoutRecipient;
+  const verification = getSellerPayoutVerificationState({
+    ...seller,
+    payoutRecipient,
+  });
 
   return {
     vendorId: vendor.id,
@@ -643,6 +805,11 @@ function serializeSellerSummary(vendor) {
     sellerId: seller?.id || null,
     sellerStatus: seller?.status || null,
     sellerStatusLabel: createSellerStatusLabel(seller?.status),
+    sellerVerificationStatus: verification.sellerVerificationStatus,
+    sellerVerificationStatusLabel: verification.sellerVerificationStatusLabel,
+    euSellerStatus: verification.euSellerStatus,
+    euSellerStatusLabel: verification.euSellerStatusLabel,
+    payoutVerification: verification,
     stripeAccount: serializeStripeAccountSummary(stripeAccount),
     payoutRecipient: serializePayoutRecipientSummary(payoutRecipient),
     createdAt: seller?.createdAt || vendor.createdAt,
@@ -662,6 +829,10 @@ async function loadVendorForSellerInitialization(
         include: {
           stripeAccount: true,
           payoutRecipient: true,
+          verificationRecords: {
+            orderBy: [{ createdAt: "desc" }],
+            take: 3,
+          },
         },
       },
     },
@@ -763,6 +934,10 @@ export async function getAdminSellerDetail(
         orderBy: [{ createdAt: "desc" }],
         take: 20,
       },
+      verificationRecords: {
+        orderBy: [{ createdAt: "desc" }],
+        take: 10,
+      },
       orders: {
         orderBy: [{ createdAt: "desc" }],
         take: 20,
@@ -798,6 +973,28 @@ export async function getAdminSellerDetail(
       status: seller.status,
       statusLabel: createSellerStatusLabel(seller.status),
       statusReason: seller.statusReason || null,
+      sellerLegalRole: seller.sellerLegalRole || "MARKETPLACE_SELLER",
+      verificationStatus: seller.sellerVerificationStatus || "NONE",
+      verificationStatusLabel: createSellerVerificationStatusLabel(
+        seller.sellerVerificationStatus || "NONE",
+      ),
+      euSellerStatus: seller.euSellerStatus || "DISABLED",
+      euSellerStatusLabel: createSellerEuStatusLabel(
+        seller.euSellerStatus || "DISABLED",
+      ),
+      phoneVerifiedAt: seller.phoneVerifiedAt || null,
+      documentVerificationStatus:
+        seller.documentVerificationStatus || "NONE",
+      documentVerificationStatusLabel:
+        createDocumentVerificationStatusLabel(
+          seller.documentVerificationStatus || "NONE",
+        ),
+      documentVerifiedAt: seller.documentVerifiedAt || null,
+      documentVerifiedBy: seller.documentVerifiedBy || null,
+      verificationNameMatched: Boolean(seller.verificationNameMatched),
+      payoutNameMatched: Boolean(seller.payoutNameMatched),
+      verificationReviewNotes: seller.verificationReviewNotes || null,
+      payoutVerification: getSellerPayoutVerificationState(seller),
       createdAt: seller.createdAt,
       updatedAt: seller.updatedAt,
     },
@@ -821,6 +1018,7 @@ export async function getAdminSellerDetail(
     stripeAccount: serializeStripeAccountSummary(seller.stripeAccount),
     payoutRecipient: serializePayoutRecipientSummary(seller.payoutRecipient),
     statusHistory: seller.statusHistory,
+    verificationRecords: seller.verificationRecords,
     orders: seller.orders,
     payoutRuns: seller.payoutRuns.map((run) => ({
       ...run,
@@ -956,6 +1154,141 @@ export async function upsertSellerWiseRecipient(
   return {
     ok: true,
     payoutRecipient,
+  };
+}
+
+function deriveSellerVerificationStatus({
+  phoneVerified,
+  documentVerificationStatus,
+  nameMatched,
+  payoutNameMatched,
+}) {
+  const normalizedDocumentStatus =
+    normalizeUppercase(documentVerificationStatus) || "NONE";
+
+  if (normalizedDocumentStatus === "REJECTED") {
+    return "REJECTED";
+  }
+
+  if (!phoneVerified) {
+    return "PHONE_REQUIRED";
+  }
+
+  if (normalizedDocumentStatus === "PENDING") {
+    return "DOCUMENT_PENDING";
+  }
+
+  if (normalizedDocumentStatus !== "VERIFIED") {
+    return "DOCUMENT_REQUIRED";
+  }
+
+  if (!nameMatched || !payoutNameMatched) {
+    return "DOCUMENT_PENDING";
+  }
+
+  return "VERIFIED";
+}
+
+export async function updateSellerVerification(
+  {
+    sellerId,
+    phoneVerified = false,
+    documentVerificationStatus = "NONE",
+    verificationNameMatched = false,
+    payoutNameMatched = false,
+    documentType = null,
+    documentCountry = null,
+    documentLast4 = null,
+    reviewNotes = null,
+    changedBy = "admin",
+  },
+  { prismaClient = prisma } = {},
+) {
+  const normalizedSellerId = normalizeText(sellerId);
+  const normalizedDocumentStatus =
+    normalizeUppercase(documentVerificationStatus) || "NONE";
+
+  if (!normalizedSellerId) {
+    return { ok: false, reason: "seller_not_found" };
+  }
+
+  if (!DOCUMENT_VERIFICATION_STATUSES.includes(normalizedDocumentStatus)) {
+    return {
+      ok: false,
+      reason: "invalid_document_verification_status",
+    };
+  }
+
+  const seller = await prismaClient.seller.findUnique({
+    where: { id: normalizedSellerId },
+  });
+
+  if (!seller) {
+    return { ok: false, reason: "seller_not_found" };
+  }
+
+  const now = new Date();
+  const nextPhoneVerifiedAt = normalizeBooleanInput(phoneVerified)
+    ? seller.phoneVerifiedAt || now
+    : null;
+  const nextDocumentVerifiedAt =
+    normalizedDocumentStatus === "VERIFIED"
+      ? seller.documentVerifiedAt || now
+      : null;
+  const nameMatched = normalizeBooleanInput(verificationNameMatched);
+  const payoutMatched = normalizeBooleanInput(payoutNameMatched);
+  const nextVerificationStatus = deriveSellerVerificationStatus({
+    phoneVerified: Boolean(nextPhoneVerifiedAt),
+    documentVerificationStatus: normalizedDocumentStatus,
+    nameMatched,
+    payoutNameMatched: payoutMatched,
+  });
+
+  const updatedSeller = await prismaClient.$transaction(async (tx) => {
+    const updated = await tx.seller.update({
+      where: { id: normalizedSellerId },
+      data: {
+        sellerVerificationStatus: nextVerificationStatus,
+        phoneVerifiedAt: nextPhoneVerifiedAt,
+        documentVerificationStatus: normalizedDocumentStatus,
+        documentVerifiedAt: nextDocumentVerifiedAt,
+        documentVerifiedBy:
+          normalizedDocumentStatus === "VERIFIED"
+            ? normalizeText(changedBy) || seller.documentVerifiedBy
+            : null,
+        verificationNameMatched: nameMatched,
+        payoutNameMatched: payoutMatched,
+        verificationReviewNotes: normalizeText(reviewNotes),
+      },
+    });
+
+    await tx.sellerVerificationRecord.create({
+      data: {
+        sellerId: normalizedSellerId,
+        status: nextVerificationStatus,
+        verifiedAt: nextVerificationStatus === "VERIFIED" ? now : null,
+        verifiedBy:
+          nextVerificationStatus === "VERIFIED"
+            ? normalizeText(changedBy) || "admin"
+            : null,
+        verificationMethod: "admin_review",
+        documentType: normalizeText(documentType),
+        documentCountry: normalizeUppercase(documentCountry),
+        documentLast4: normalizeText(documentLast4),
+        nameMatched,
+        payoutNameMatched: payoutMatched,
+        phoneVerifiedAt: nextPhoneVerifiedAt,
+        reviewNotes: normalizeText(reviewNotes),
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    ok: true,
+    seller: updatedSeller,
+    verification: getSellerPayoutVerificationState(updatedSeller),
   };
 }
 
@@ -1516,6 +1849,18 @@ export async function getSellerPaymentsPageData(
           status: vendor.seller.status,
           statusLabel: createSellerStatusLabel(vendor.seller.status),
           statusReason: vendor.seller.statusReason || null,
+          verificationStatus:
+            vendor.seller.sellerVerificationStatus || "NONE",
+          verificationStatusLabel: createSellerVerificationStatusLabel(
+            vendor.seller.sellerVerificationStatus || "NONE",
+          ),
+          euSellerStatus: vendor.seller.euSellerStatus || "DISABLED",
+          euSellerStatusLabel: createSellerEuStatusLabel(
+            vendor.seller.euSellerStatus || "DISABLED",
+          ),
+          payoutVerification: getSellerPayoutVerificationState(
+            vendor.seller,
+          ),
         }
       : null,
     stripeAccount: serializeStripeAccountSummary(vendor.seller?.stripeAccount),
@@ -3781,9 +4126,20 @@ async function assertPayoutEligibleSeller(
     };
   }
 
+  const payoutVerification = getSellerPayoutVerificationState(seller);
+
+  if (!payoutVerification.complete) {
+    return {
+      ok: false,
+      reason: "seller_verification_required",
+      verification: payoutVerification,
+    };
+  }
+
   return {
     ok: true,
     seller,
+    verification: payoutVerification,
   };
 }
 
@@ -3874,7 +4230,12 @@ export async function approvePayoutRun(
   const payoutRun = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
-      seller: true,
+      seller: {
+        include: {
+          payoutRecipient: true,
+        },
+      },
+      sellerPayoutRecipient: true,
     },
   });
 
@@ -3896,6 +4257,20 @@ export async function approvePayoutRun(
     return {
       ok: false,
       reason: "seller_payout_restricted",
+    };
+  }
+
+  const payoutVerification = getSellerPayoutVerificationState({
+    ...payoutRun.seller,
+    payoutRecipient:
+      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  });
+
+  if (!payoutVerification.complete) {
+    return {
+      ok: false,
+      reason: "seller_verification_required",
+      verification: payoutVerification,
     };
   }
 
@@ -3929,8 +4304,10 @@ export async function markPayoutRunManuallyPaid(
       seller: {
         include: {
           stripeAccount: true,
+          payoutRecipient: true,
         },
       },
+      sellerPayoutRecipient: true,
     },
   });
 
@@ -3952,6 +4329,20 @@ export async function markPayoutRunManuallyPaid(
     return {
       ok: false,
       reason: "seller_payout_restricted",
+    };
+  }
+
+  const payoutVerification = getSellerPayoutVerificationState({
+    ...payoutRun.seller,
+    payoutRecipient:
+      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  });
+
+  if (!payoutVerification.complete) {
+    return {
+      ok: false,
+      reason: "seller_verification_required",
+      verification: payoutVerification,
     };
   }
 
@@ -4263,6 +4654,20 @@ export async function executeWisePayoutRun(
     return {
       ok: false,
       reason: "seller_payout_restricted",
+    };
+  }
+
+  const payoutVerification = getSellerPayoutVerificationState({
+    ...payoutRun.seller,
+    payoutRecipient:
+      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  });
+
+  if (!payoutVerification.complete) {
+    return {
+      ok: false,
+      reason: "seller_verification_required",
+      verification: payoutVerification,
     };
   }
 

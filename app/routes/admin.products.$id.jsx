@@ -23,6 +23,40 @@ const SHOPIFY_PRODUCT_CREATE_CLAIMABLE_STATUSES = [
   "rejected",
   "approved",
 ];
+const PRODUCT_EU_STATUS_OPTIONS = [
+  { value: "DISABLED", label: "EU販売なし" },
+  { value: "PENDING_REVIEW", label: "EU審査待ち" },
+  { value: "APPROVED_LOW_RISK", label: "EU低リスク承認" },
+  { value: "REJECTED_HIGH_RISK", label: "EU高リスク却下" },
+  { value: "REQUIRES_ADDITIONAL_DOCS", label: "追加資料待ち" },
+];
+
+const PRODUCT_EU_STATUS_VALUES = new Set(
+  PRODUCT_EU_STATUS_OPTIONS.map((option) => option.value),
+);
+
+function parseCountryCodeList(value) {
+  return String(value || "")
+    .split(/[\s,、]+/)
+    .map((entry) => entry.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function formatCountryCodeList(value) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value.join(", ");
+}
+
+function getProductEuStatusLabel(status) {
+  return (
+    PRODUCT_EU_STATUS_OPTIONS.find((option) => option.value === status)?.label ||
+    status ||
+    "-"
+  );
+}
 
 function isReconnectableShopifyError(message = "") {
   return (
@@ -339,6 +373,7 @@ export const loader = async ({ params }) => {
     where: { id },
     include: {
       vendorStore: true,
+      countryPolicy: true,
     },
   });
 
@@ -577,11 +612,65 @@ export const action = async ({ request }) => {
       where: { id: productId },
       include: {
         vendorStore: true,
+        countryPolicy: true,
       },
     });
 
     if (!product) {
       return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
+    }
+
+    if (intent === "update-eu-policy") {
+      const productEuStatus = String(
+        formData.get("productEuStatus") || "DISABLED",
+      )
+        .trim()
+        .toUpperCase();
+
+      if (!PRODUCT_EU_STATUS_VALUES.has(productEuStatus)) {
+        return json(
+          { ok: false, error: "EU販売ステータスが不正です" },
+          { status: 400 },
+        );
+      }
+
+      const allowedCountries = parseCountryCodeList(
+        formData.get("allowedCountries"),
+      );
+      const blockedCountries = parseCountryCodeList(
+        formData.get("blockedCountries"),
+      );
+      const requiresWarningCountries = parseCountryCodeList(
+        formData.get("requiresWarningCountries"),
+      );
+
+      await prisma.$transaction([
+        prisma.product.update({
+          where: { id: productId },
+          data: {
+            productEuStatus,
+            euSaleRequested: productEuStatus !== "DISABLED",
+          },
+        }),
+        prisma.productCountryPolicy.upsert({
+          where: { productId },
+          create: {
+            productId,
+            euSaleStatus: productEuStatus,
+            allowedCountries,
+            blockedCountries,
+            requiresWarningCountries,
+          },
+          update: {
+            euSaleStatus: productEuStatus,
+            allowedCountries,
+            blockedCountries,
+            requiresWarningCountries,
+          },
+        }),
+      ]);
+
+      return redirect(`/admin/products/${productId}`);
     }
 
     let productWithResolvedShopDomain = product;
@@ -1039,6 +1128,119 @@ export default function AdminProductDetail() {
       ) : null}
 
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
+        <div>
+          <h3>EU販売審査</h3>
+          <div
+            style={{
+              marginTop: "10px",
+              padding: "14px",
+              borderRadius: "8px",
+              background: "#f9fafb",
+              border: "1px solid #e5e7eb",
+            }}
+          >
+            <p>現在: {getProductEuStatusLabel(product.productEuStatus)}</p>
+            <p>
+              出店者希望: {product.euSaleRequested ? "あり" : "なし"}
+            </p>
+            <p style={{ color: "#6b7280", fontSize: "14px" }}>
+              高リスク商品は承認せず、低リスク商品だけEU向けcheckoutを許可します。
+            </p>
+
+            <Form method="post" style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+              <input type="hidden" name="intent" value="update-eu-policy" />
+              <input type="hidden" name="productId" value={product.id} />
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                EU販売ステータス
+                <select
+                  name="productEuStatus"
+                  defaultValue={product.productEuStatus || "DISABLED"}
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                >
+                  {PRODUCT_EU_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                許可国コード
+                <input
+                  name="allowedCountries"
+                  defaultValue={formatCountryCodeList(
+                    product.countryPolicy?.allowedCountries,
+                  )}
+                  placeholder="DE, FR, NL"
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                ブロック国コード
+                <input
+                  name="blockedCountries"
+                  defaultValue={formatCountryCodeList(
+                    product.countryPolicy?.blockedCountries,
+                  )}
+                  placeholder="例: FR, IT"
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                警告必須国コード
+                <input
+                  name="requiresWarningCountries"
+                  defaultValue={formatCountryCodeList(
+                    product.countryPolicy?.requiresWarningCountries,
+                  )}
+                  placeholder="空欄ならEU向けは警告承諾必須"
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                />
+              </label>
+
+              <button
+                type="submit"
+                style={{
+                  height: "40px",
+                  padding: "0 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                EU審査を保存
+              </button>
+            </Form>
+          </div>
+        </div>
+
         <div>
           <h3>基本情報</h3>
           {priceBreakdown ? (

@@ -18,6 +18,11 @@ export default function VendorProductForm({
   backTo = "/vendor/dashboard",
   backLabel = "ダッシュボードへ戻る",
 }) {
+  const regulatorySelfCertified = Boolean(
+    initialValues.regulatorySelfCertified ||
+      initialValues.regulatorySelfCertificationJson?.regulatorySelfCertified,
+  );
+
   return (
     <section className="vendor-card">
       <div className="vendor-form">
@@ -99,6 +104,30 @@ export default function VendorProductForm({
                 placeholder="例: スキンケア"
                 type="text"
               />
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label">
+                <input
+                  defaultChecked={Boolean(initialValues.euSaleRequested)}
+                  name="euSaleRequested"
+                  type="checkbox"
+                  value="1"
+                />
+                EU向け販売を希望する
+              </label>
+              <label className="vendor-form__label">
+                <input
+                  defaultChecked={regulatorySelfCertified}
+                  name="regulatorySelfCertified"
+                  type="checkbox"
+                  value="1"
+                />
+                禁止商品・規制対象・知財侵害品ではなく、販売先国の法令確認が必要なことを理解しています
+              </label>
+              <div className="vendor-helper-text">
+                EU向け販売を希望した商品は、管理者の追加審査が完了するまでEU宛には販売できません。
+              </div>
             </div>
 
             <div className="vendor-form__field">

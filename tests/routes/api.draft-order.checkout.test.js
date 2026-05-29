@@ -24,6 +24,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/1',
       approvalStatus: 'approved',
       vendorStoreId: 'store_1',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
     {
       id: 'prod_pending',
@@ -37,6 +39,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/2',
       approvalStatus: 'pending',
       vendorStoreId: 'store_1',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
     {
       id: 'prod_other',
@@ -50,6 +54,8 @@ function createProducts() {
       shopifyProductId: 'gid://shopify/Product/3',
       approvalStatus: 'approved',
       vendorStoreId: 'store_2',
+      productEuStatus: 'DISABLED',
+      countryPolicy: null,
     },
   ];
 }
@@ -70,7 +76,11 @@ function projectProduct(product, select) {
   return projected;
 }
 
-function createFakePrisma({ products = createProducts() } = {}) {
+function createFakePrisma({
+  products = createProducts(),
+  seller = null,
+  buyerWarningRecords = [],
+} = {}) {
   return {
     vendor: {
       async findUnique({ where }) {
@@ -84,6 +94,7 @@ function createFakePrisma({ products = createProducts() } = {}) {
           storeName: 'Amber Cellar',
           managementEmail: 'owner@example.com',
           status: 'active',
+          seller,
           vendorStore: {
             id: 'store_1',
             storeName: 'Amber Cellar',
@@ -114,6 +125,16 @@ function createFakePrisma({ products = createProducts() } = {}) {
             return true;
           })
           .map((product) => projectProduct(product, select));
+      },
+    },
+    buyerWarningAcceptance: {
+      async create({ data }) {
+        const record = {
+          id: `bwa_${buyerWarningRecords.length + 1}`,
+          ...data,
+        };
+        buyerWarningRecords.push(record);
+        return record;
       },
     },
   };
@@ -260,7 +281,11 @@ test('api.draft-order.checkout creates a server-trusted payload and ignores shop
     'vendor-storefront',
     'vendor:amber-cellar',
   ]);
-  assert.equal('customAttributes' in receivedPayload, false);
+  assert.deepEqual(receivedPayload.customAttributes, [
+    { key: 'seller_name', value: 'Amber Cellar' },
+    { key: 'seller_country', value: 'JP' },
+    { key: 'seller_of_record', value: 'marketplace_seller' },
+  ]);
   assert.equal(JSON.stringify(receivedPayload).includes('vendorId'), false);
   assert.equal(JSON.stringify(receivedPayload).includes('vendorStoreId'), false);
   assert.equal(JSON.stringify(receivedPayload).includes('localProductId'), false);
@@ -277,6 +302,151 @@ test('api.draft-order.checkout creates a server-trusted payload and ignores shop
     reason: null,
     shippingAmount: 420,
   });
+});
+
+test('api.draft-order.checkout rejects EU checkout before product EU approval', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: {
+        id: 'seller_1',
+        euSellerStatus: 'FULL_KYBC_APPROVED',
+      },
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        shippingAddress: {
+          ...createValidBody().shippingAddress,
+          country: 'DE',
+        },
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.deepEqual(payload.errors, [
+    '選択した商品はEU向け販売の審査が完了していないため、指定国には販売できません。',
+  ]);
+});
+
+test('api.draft-order.checkout requires EU import warning acceptance', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: {
+        id: 'seller_1',
+        euSellerStatus: 'FULL_KYBC_APPROVED',
+      },
+      products: createProducts().map((product) =>
+        product.id === 'prod_1'
+          ? { ...product, productEuStatus: 'APPROVED_LOW_RISK' }
+          : product,
+      ),
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        shippingAddress: {
+          ...createValidBody().shippingAddress,
+          country: 'DE',
+        },
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.errors, ['配送先国と輸入条件の確認に同意してください。']);
+});
+
+test('api.draft-order.checkout records EU import warning acceptance after checkout', async () => {
+  const buyerWarningRecords = [];
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      buyerWarningRecords,
+      seller: {
+        id: 'seller_1',
+        euSellerStatus: 'FULL_KYBC_APPROVED',
+      },
+      products: createProducts().map((product) =>
+        product.id === 'prod_1'
+          ? { ...product, productEuStatus: 'APPROVED_LOW_RISK' }
+          : product,
+      ),
+    }),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+
+      return {
+        ok: true,
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+      };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        importResponsibilityAccepted: true,
+        shippingAddress: {
+          ...createValidBody().shippingAddress,
+          country: 'DE',
+        },
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'node-test',
+    },
+  });
+
+  const response = await action({ request });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedPayload.buyerWarningAcceptance.shippingCountry, 'DE');
+  assert.deepEqual(receivedPayload.customAttributes, [
+    { key: 'seller_name', value: 'Amber Cellar' },
+    { key: 'seller_country', value: 'JP' },
+    { key: 'seller_of_record', value: 'marketplace_seller' },
+    { key: 'buyer_import_warning_version', value: 'import-responsibility-v1' },
+    { key: 'buyer_import_responsibility_accepted', value: 'true' },
+  ]);
+  assert.equal(buyerWarningRecords.length, 1);
+  assert.equal(buyerWarningRecords[0].orderId, 'gid://shopify/DraftOrder/1');
+  assert.equal(buyerWarningRecords[0].shippingCountry, 'DE');
+  assert.equal(buyerWarningRecords[0].importResponsibilityAccepted, true);
 });
 
 test('api.draft-order.checkout rejects items from another vendor store', async () => {

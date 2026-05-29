@@ -2105,6 +2105,69 @@ test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payou
   assert.equal(balance, 9900);
 });
 
+const VERIFIED_PAYOUT_SELLER_FIELDS = {
+  phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+  documentVerificationStatus: "VERIFIED",
+  verificationNameMatched: true,
+  payoutNameMatched: true,
+  payoutRecipient: {
+    id: "spr_manual",
+    provider: "manual",
+    status: "active",
+    accountHolderName: "Test Store",
+    accountSummary: "Bank transfer destination",
+  },
+};
+
+test("createPayoutRun requires first payout verification before settlement", async () => {
+  let ledgerReadCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: {
+            id: "vendor_1",
+          },
+          stripeAccount: null,
+          payoutRecipient: null,
+          phoneVerifiedAt: null,
+          documentVerificationStatus: "NONE",
+          verificationNameMatched: false,
+          payoutNameMatched: false,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        ledgerReadCalled = true;
+        return [];
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "seller_1",
+      amount: 1000,
+      currencyCode: "JPY",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "seller_verification_required");
+  assert.deepEqual(result.verification.missing, [
+    "phone_verification",
+    "document_verification",
+    "payout_destination",
+    "name_match",
+    "payout_name_match",
+  ]);
+  assert.equal(ledgerReadCalled, false);
+});
+
 test("createPayoutRun refuses amounts above the seller payoutable ledger balance", async () => {
   let payoutRunCreateCalled = false;
   const fakePrisma = {
@@ -2122,6 +2185,7 @@ test("createPayoutRun refuses amounts above the seller payoutable ledger balance
             id: "ssa_1",
             stripeAccountId: "acct_123",
           },
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
         };
       },
     },
@@ -2181,6 +2245,7 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
             id: "ssa_1",
             stripeAccountId: "acct_123",
           },
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
         };
       },
     },
@@ -2237,7 +2302,7 @@ test("createPayoutRun allows manual settlement without a Stripe account", async 
             id: "vendor_1",
           },
           stripeAccount: null,
-          payoutRecipient: null,
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
         };
       },
     },
@@ -2300,6 +2365,10 @@ test("createPayoutRun creates Wise payout runs only when a Wise recipient exists
               status: "active",
               wiseRecipientId: "123456",
             },
+            phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+            documentVerificationStatus: "VERIFIED",
+            verificationNameMatched: true,
+            payoutNameMatched: true,
           };
         },
       },
@@ -2633,10 +2702,26 @@ test("payout runs require approval and execute on the connected account only whe
       seller: {
         id: "seller_1",
         status: "active",
+        phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        documentVerificationStatus: "VERIFIED",
+        verificationNameMatched: true,
+        payoutNameMatched: true,
+        payoutRecipient: {
+          id: "spr_manual",
+          provider: "manual",
+          status: "active",
+          accountHolderName: "Test Store",
+        },
         stripeAccount: {
           id: "ssa_1",
           payoutsEnabled: true,
         },
+      },
+      sellerPayoutRecipient: {
+        id: "spr_manual",
+        provider: "manual",
+        status: "active",
+        accountHolderName: "Test Store",
       },
     },
   };
@@ -2706,10 +2791,26 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
       seller: {
         id: "seller_1",
         status: "active",
+        phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        documentVerificationStatus: "VERIFIED",
+        verificationNameMatched: true,
+        payoutNameMatched: true,
+        payoutRecipient: {
+          id: "spr_manual",
+          provider: "manual",
+          status: "active",
+          accountHolderName: "Test Store",
+        },
         stripeAccount: {
           id: "ssa_1",
           payoutsEnabled: true,
         },
+      },
+      sellerPayoutRecipient: {
+        id: "spr_manual",
+        provider: "manual",
+        status: "active",
+        accountHolderName: "Test Store",
       },
     },
   };
@@ -2792,6 +2893,10 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
       seller: {
         id: "seller_1",
         status: "active",
+        phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        documentVerificationStatus: "VERIFIED",
+        verificationNameMatched: true,
+        payoutNameMatched: true,
         payoutRecipient: {
           id: "spr_1",
           provider: "wise",

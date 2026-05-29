@@ -275,6 +275,12 @@ export default function AdminPayoutRunsPage() {
                     状態:{" "}
                     {seller.sellerStatusLabel || seller.sellerStatus || "-"}
                   </p>
+                  <p className="payout-admin__balance-status">
+                    初回精算確認:{" "}
+                    {seller.payoutVerification?.complete
+                      ? "通過"
+                      : seller.sellerVerificationStatusLabel || "未確認"}
+                  </p>
                 </div>
               ))}
             </div>
@@ -354,6 +360,10 @@ function createPayoutRunErrorMessage(result) {
       return "出店者が見つかりません。";
     case "wise_recipient_missing":
       return "Wise受取先が未登録または有効ではないため、出金予定を作成できません。";
+    case "seller_verification_required":
+      return `初回精算前確認が完了していないため、出金予定を作成できません。未完了: ${
+        result.verification?.missing?.join(", ") || "-"
+      }`;
     default:
       return "出金予定の作成に失敗しました。";
   }

@@ -27,7 +27,11 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   await authenticate.admin(request);
-  const { upsertSellerWiseRecipient, updateSellerStatus } =
+  const {
+    updateSellerStatus,
+    updateSellerVerification,
+    upsertSellerWiseRecipient,
+  } =
     await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
@@ -58,6 +62,37 @@ export const action = async ({ request, params }) => {
     return json({
       ok: true,
       message: "Wise受取先を保存しました。",
+    });
+  }
+
+  if (intent === "update_verification") {
+    const result = await updateSellerVerification({
+      sellerId: params.id,
+      phoneVerified: formData.get("phoneVerified"),
+      documentVerificationStatus: formData.get("documentVerificationStatus"),
+      verificationNameMatched: formData.get("verificationNameMatched"),
+      payoutNameMatched: formData.get("payoutNameMatched"),
+      documentType: formData.get("documentType"),
+      documentCountry: formData.get("documentCountry"),
+      documentLast4: formData.get("documentLast4"),
+      reviewNotes: formData.get("reviewNotes"),
+      changedBy: "admin",
+    });
+
+    if (!result.ok) {
+      return json(
+        {
+          ok: false,
+          reason: result.reason,
+          message: "初回精算前確認の保存に失敗しました。",
+        },
+        { status: 400 },
+      );
+    }
+
+    return json({
+      ok: true,
+      message: "初回精算前確認を保存しました。",
     });
   }
 
@@ -138,6 +173,9 @@ export default function AdminSellerDetailPage() {
     navigation.formData?.get("intent") === "update_status";
   const isRecipientSaving =
     navigation.formData?.get("intent") === "upsert_payout_recipient" &&
+    navigation.state !== "idle";
+  const isVerificationSaving =
+    navigation.formData?.get("intent") === "update_verification" &&
     navigation.state !== "idle";
 
   return (
@@ -250,13 +288,27 @@ export default function AdminSellerDetailPage() {
           gap:8px;
         }
         .seller-detail__input,
-        .seller-detail__select{
+        .seller-detail__select,
+        .seller-detail__textarea{
           min-height:44px;
           border:1px solid #d1d5db;
           border-radius:10px;
           padding:0 12px;
           font-size:14px;
           box-sizing:border-box;
+        }
+        .seller-detail__textarea{
+          min-height:88px;
+          padding:12px;
+          resize:vertical;
+        }
+        .seller-detail__checkbox{
+          display:flex;
+          align-items:center;
+          gap:8px;
+          font-size:14px;
+          color:#111827;
+          font-weight:700;
         }
         .seller-detail__notice{
           border:1px solid #d1d5db;
@@ -459,6 +511,129 @@ export default function AdminSellerDetailPage() {
             </Form>
           </section>
         </div>
+
+        <section className="seller-detail__card">
+          <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>
+            初回精算前確認
+          </h2>
+          <p className="seller-detail__subtitle">
+            初回精算前に、電話番号確認、本人確認書類、受取先名義の一致を確認します。未完了の場合は出金予定を作成できません。
+          </p>
+
+          <div className="seller-detail__description" style={{ marginBottom: "16px" }}>
+            <div className="seller-detail__row">
+              <div className="seller-detail__term">確認状態</div>
+              <div className="seller-detail__value">
+                {data.seller.verificationStatusLabel}
+              </div>
+            </div>
+            <div className="seller-detail__row">
+              <div className="seller-detail__term">精算ゲート</div>
+              <div className="seller-detail__value">
+                {data.seller.payoutVerification?.complete
+                  ? "通過"
+                  : `保留中: ${
+                      data.seller.payoutVerification?.missing?.join(", ") || "-"
+                    }`}
+              </div>
+            </div>
+            <div className="seller-detail__row">
+              <div className="seller-detail__term">EU販売状態</div>
+              <div className="seller-detail__value">
+                {data.seller.euSellerStatusLabel}
+              </div>
+            </div>
+          </div>
+
+          <Form method="post" className="seller-detail__form">
+            <input type="hidden" name="intent" value="update_verification" />
+            <label className="seller-detail__checkbox">
+              <input
+                type="checkbox"
+                name="phoneVerified"
+                defaultChecked={Boolean(data.seller.phoneVerifiedAt)}
+              />
+              電話番号確認済み
+            </label>
+            <div className="seller-detail__field">
+              <label htmlFor="documentVerificationStatus">本人確認書類</label>
+              <select
+                id="documentVerificationStatus"
+                name="documentVerificationStatus"
+                className="seller-detail__select"
+                defaultValue={data.seller.documentVerificationStatus || "NONE"}
+              >
+                <option value="NONE">未確認</option>
+                <option value="PENDING">確認中</option>
+                <option value="VERIFIED">確認済み</option>
+                <option value="REJECTED">差し戻し</option>
+              </select>
+            </div>
+            <div className="seller-detail__grid" style={{ gap: "12px" }}>
+              <div className="seller-detail__field">
+                <label htmlFor="documentType">書類種別</label>
+                <input
+                  id="documentType"
+                  name="documentType"
+                  className="seller-detail__input"
+                  placeholder="passport / driver_license など"
+                />
+              </div>
+              <div className="seller-detail__field">
+                <label htmlFor="documentCountry">書類国</label>
+                <input
+                  id="documentCountry"
+                  name="documentCountry"
+                  className="seller-detail__input"
+                  placeholder="JP"
+                />
+              </div>
+            </div>
+            <div className="seller-detail__field">
+              <label htmlFor="documentLast4">書類番号下4桁など</label>
+              <input
+                id="documentLast4"
+                name="documentLast4"
+                className="seller-detail__input"
+                placeholder="フル番号は保存しない"
+              />
+            </div>
+            <label className="seller-detail__checkbox">
+              <input
+                type="checkbox"
+                name="verificationNameMatched"
+                defaultChecked={Boolean(data.seller.verificationNameMatched)}
+              />
+              登録名義と本人確認名義が一致
+            </label>
+            <label className="seller-detail__checkbox">
+              <input
+                type="checkbox"
+                name="payoutNameMatched"
+                defaultChecked={Boolean(data.seller.payoutNameMatched)}
+              />
+              受取先名義と本人確認名義が一致
+            </label>
+            <div className="seller-detail__field">
+              <label htmlFor="reviewNotes">確認メモ</label>
+              <textarea
+                id="reviewNotes"
+                name="reviewNotes"
+                className="seller-detail__textarea"
+                defaultValue={data.seller.verificationReviewNotes || ""}
+              />
+            </div>
+            <div>
+              <button
+                type="submit"
+                className="seller-detail__button"
+                disabled={Boolean(isVerificationSaving)}
+              >
+                {isVerificationSaving ? "保存中..." : "確認状態を保存"}
+              </button>
+            </div>
+          </Form>
+        </section>
 
         <section className="seller-detail__card">
           <h2 className="seller-detail__title" style={{ fontSize: "18px" }}>

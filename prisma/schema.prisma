@@ -47,40 +47,45 @@ model VendorStore {
 }
 
 model Product {
-  id                      String    @id @default(cuid())
-  name                    String
-  description             String?
-  imageUrl                String?
-  category                String?
-  price                   Int
-  costAmount              Decimal?  @db.Decimal(12, 2)
-  costCurrency            String    @default("JPY")
-  url                     String?
-  vendorStoreId           String
-  approvalStatus          String    @default("pending")
-  shopifyProductId        String?
-  shopDomain              String?
-  calculatedPrice         Int?
-  usedFxRate              Float?
-  usedMargin              Float?
-  usedDutyRate            Float?
-  usedFee                 Json?
-  roundingResult          Json?
-  calculatedAt            DateTime?
-  priceSyncStatus         String    @default("calculated_not_applied")
-  priceSyncError          String?
-  priceAppliedAt          DateTime?
-  lastPriceApplyAttemptAt DateTime?
-  priceFormulaVersion     String?
-  priceSnapshotJson       Json?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  id                              String    @id @default(cuid())
+  name                            String
+  description                     String?
+  imageUrl                        String?
+  category                        String?
+  price                           Int
+  costAmount                      Decimal?  @db.Decimal(12, 2)
+  costCurrency                    String    @default("JPY")
+  url                             String?
+  vendorStoreId                   String
+  approvalStatus                  String    @default("pending")
+  shopifyProductId                String?
+  shopDomain                      String?
+  calculatedPrice                 Int?
+  usedFxRate                      Float?
+  usedMargin                      Float?
+  usedDutyRate                    Float?
+  usedFee                         Json?
+  roundingResult                  Json?
+  calculatedAt                    DateTime?
+  priceSyncStatus                 String    @default("calculated_not_applied")
+  priceSyncError                  String?
+  priceAppliedAt                  DateTime?
+  lastPriceApplyAttemptAt         DateTime?
+  priceFormulaVersion             String?
+  priceSnapshotJson               Json?
+  productEuStatus                 String    @default("DISABLED")
+  euSaleRequested                 Boolean   @default(false)
+  regulatorySelfCertificationJson Json?
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime  @updatedAt
 
   vendorStore    VendorStore            @relation(fields: [vendorStoreId], references: [id])
   priceApplyLogs ProductPriceApplyLog[]
+  countryPolicy  ProductCountryPolicy?
 
   @@unique([shopDomain, shopifyProductId])
   @@index([shopifyProductId])
+  @@index([productEuStatus, updatedAt])
 }
 
 model ProductPriceApplyLog {
@@ -118,25 +123,62 @@ model Vendor {
 }
 
 model Seller {
-  id            String   @id @default(cuid())
-  vendorId      String   @unique
-  vendorStoreId String   @unique
-  status        String   @default("pending")
-  statusReason  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                         String    @id @default(cuid())
+  vendorId                   String    @unique
+  vendorStoreId              String    @unique
+  status                     String    @default("pending")
+  statusReason               String?
+  sellerLegalRole            String    @default("MARKETPLACE_SELLER")
+  sellerVerificationStatus   String    @default("NONE")
+  euSellerStatus             String    @default("DISABLED")
+  phoneVerifiedAt            DateTime?
+  documentVerificationStatus String    @default("NONE")
+  documentVerifiedAt         DateTime?
+  documentVerifiedBy         String?
+  verificationNameMatched    Boolean   @default(false)
+  payoutNameMatched          Boolean   @default(false)
+  verificationReviewNotes    String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
-  vendor          Vendor                 @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  vendorStore     VendorStore            @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
-  stripeAccount   SellerStripeAccount?
-  payoutRecipient SellerPayoutRecipient?
-  statusHistory   SellerStatusHistory[]
-  orders          Order[]
-  ledgerEntries   LedgerEntry[]
-  payoutRuns      PayoutRun[]
+  vendor              Vendor                     @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorStore         VendorStore                @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
+  stripeAccount       SellerStripeAccount?
+  payoutRecipient     SellerPayoutRecipient?
+  statusHistory       SellerStatusHistory[]
+  verificationRecords SellerVerificationRecord[]
+  orders              Order[]
+  ledgerEntries       LedgerEntry[]
+  payoutRuns          PayoutRun[]
 
   @@index([status, createdAt])
+  @@index([sellerVerificationStatus, updatedAt])
+  @@index([euSellerStatus, updatedAt])
   @@map("sellers")
+}
+
+model SellerVerificationRecord {
+  id                 String    @id @default(cuid())
+  sellerId           String
+  status             String
+  verifiedAt         DateTime?
+  verifiedBy         String?
+  verificationMethod String?
+  documentType       String?
+  documentCountry    String?
+  documentLast4      String?
+  nameMatched        Boolean   @default(false)
+  payoutNameMatched  Boolean   @default(false)
+  phoneVerifiedAt    DateTime?
+  rejectionReason    String?
+  reviewNotes        String?
+  createdAt          DateTime  @default(now())
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([sellerId, createdAt])
+  @@index([status, createdAt])
+  @@map("seller_verification_records")
 }
 
 model SellerStripeAccount {
@@ -333,6 +375,43 @@ model PayoutRun {
   @@index([sellerPayoutRecipientId, createdAt])
   @@index([wiseTransferStatus, updatedAt])
   @@map("payout_runs")
+}
+
+model ProductCountryPolicy {
+  id                       String   @id @default(cuid())
+  productId                String   @unique
+  allowedCountries         Json?
+  blockedCountries         Json?
+  requiresWarningCountries Json?
+  euSaleStatus             String   @default("DISABLED")
+  warningVersion           String   @default("import-responsibility-v1")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([euSaleStatus, updatedAt])
+  @@map("product_country_policies")
+}
+
+model BuyerWarningAcceptance {
+  id                           String   @id @default(cuid())
+  orderId                      String?
+  buyerId                      String?
+  selectedCountry              String?
+  shippingCountry              String
+  productIds                   Json
+  warningVersion               String
+  acceptedAt                   DateTime @default(now())
+  ipAddress                    String?
+  userAgent                    String?
+  importResponsibilityAccepted Boolean  @default(false)
+  metadataJson                 Json?
+  createdAt                    DateTime @default(now())
+
+  @@index([orderId])
+  @@index([shippingCountry, acceptedAt])
+  @@map("buyer_warning_acceptances")
 }
 
 model WiseTransferEvent {

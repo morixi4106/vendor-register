@@ -21,6 +21,41 @@ const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
+const BUYER_IMPORT_WARNING_VERSION = 'import-responsibility-v1';
+const EU_COUNTRY_CODES = new Set([
+  'AT',
+  'BE',
+  'BG',
+  'HR',
+  'CY',
+  'CZ',
+  'DK',
+  'EE',
+  'FI',
+  'FR',
+  'DE',
+  'GR',
+  'HU',
+  'IE',
+  'IT',
+  'LV',
+  'LT',
+  'LU',
+  'MT',
+  'NL',
+  'PL',
+  'PT',
+  'RO',
+  'SK',
+  'SI',
+  'ES',
+  'SE',
+]);
+const EU_SELLER_ALLOWED_STATUSES = new Set([
+  'ALLOWED_UNDER_SMALL_PLATFORM_POLICY',
+  'FULL_KYBC_APPROVED',
+]);
+const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
 const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
   query ProductForDraftOrderCheckout($id: ID!) {
@@ -70,6 +105,18 @@ function normalizeText(value) {
 function normalizeEmail(value) {
   const normalized = normalizeText(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeBooleanInput(value) {
+  if (typeof value === 'boolean') return value;
+  if (value == null) return false;
+
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeCountryCode(value) {
+  const normalized = normalizeText(value);
+  return normalized ? normalized.toUpperCase() : null;
 }
 
 function normalizeShopDomain(value) {
@@ -189,6 +236,157 @@ function buildCheckoutMetadata(vendorContext, checkoutSource = PUBLIC_CHECKOUT_S
   };
 }
 
+function normalizeCountryList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(normalizeCountryCode).filter(Boolean);
+}
+
+function evaluateCheckoutCountryPolicy({
+  vendorContext,
+  products,
+  shippingCountry,
+  importResponsibilityAccepted,
+}) {
+  const countryCode = normalizeCountryCode(shippingCountry);
+
+  if (!countryCode || !EU_COUNTRY_CODES.has(countryCode)) {
+    return {
+      ok: true,
+      requiresWarning: false,
+    };
+  }
+
+  const sellerEuStatus =
+    normalizeText(vendorContext?.vendor?.euSellerStatus).toUpperCase() ||
+    'DISABLED';
+
+  if (!EU_SELLER_ALLOWED_STATUSES.has(sellerEuStatus)) {
+    return {
+      ok: false,
+      error:
+        'この出店者はEU向け販売の確認が完了していないため、指定国には販売できません。',
+      reason: 'eu_seller_not_allowed',
+    };
+  }
+
+  const blockedProduct = products.find(
+    (product) => !EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus || 'DISABLED'),
+  );
+
+  if (blockedProduct) {
+    return {
+      ok: false,
+      error:
+        '選択した商品はEU向け販売の審査が完了していないため、指定国には販売できません。',
+      reason: 'eu_product_not_allowed',
+      productId: blockedProduct.id,
+    };
+  }
+
+  for (const product of products) {
+    const policy = product.countryPolicy;
+    const blockedCountries = normalizeCountryList(policy?.blockedCountries);
+    const allowedCountries = normalizeCountryList(policy?.allowedCountries);
+
+    if (blockedCountries.includes(countryCode)) {
+      return {
+        ok: false,
+        error: '選択した商品は指定国には販売できません。',
+        reason: 'country_blocked',
+        productId: product.id,
+      };
+    }
+
+    if (allowedCountries.length > 0 && !allowedCountries.includes(countryCode)) {
+      return {
+        ok: false,
+        error: '選択した商品は指定国には販売できません。',
+        reason: 'country_not_allowed',
+        productId: product.id,
+      };
+    }
+  }
+
+  if (!importResponsibilityAccepted) {
+    return {
+      ok: false,
+      error: '配送先国と輸入条件の確認に同意してください。',
+      reason: 'buyer_warning_required',
+    };
+  }
+
+  return {
+    ok: true,
+    requiresWarning: true,
+    acceptance: {
+      selectedCountry: countryCode,
+      shippingCountry: countryCode,
+      productIds: products.map((product) => product.id).filter(Boolean),
+      warningVersion: BUYER_IMPORT_WARNING_VERSION,
+      importResponsibilityAccepted: true,
+      metadataJson: {
+        sellerId: vendorContext?.vendor?.sellerId || null,
+        vendorId: vendorContext?.vendor?.id || null,
+        vendorHandle: vendorContext?.vendor?.handle || null,
+      },
+    },
+  };
+}
+
+function buildCheckoutCustomAttributes(vendorContext, countryPolicy) {
+  const attributes = [
+    { key: 'seller_name', value: vendorContext.vendor.storeName },
+    { key: 'seller_country', value: vendorContext.store.country || '' },
+    { key: 'seller_of_record', value: 'marketplace_seller' },
+  ];
+
+  if (countryPolicy?.requiresWarning) {
+    attributes.push(
+      { key: 'buyer_import_warning_version', value: countryPolicy.acceptance.warningVersion },
+      { key: 'buyer_import_responsibility_accepted', value: 'true' },
+    );
+  }
+
+  return attributes;
+}
+
+export async function recordBuyerWarningAcceptance({
+  prismaClient = prisma,
+  acceptance,
+  orderId = null,
+  request = null,
+} = {}) {
+  if (!acceptance || !prismaClient?.buyerWarningAcceptance?.create) {
+    return null;
+  }
+
+  try {
+    return await prismaClient.buyerWarningAcceptance.create({
+      data: {
+        orderId: normalizeText(orderId),
+        selectedCountry: normalizeCountryCode(acceptance.selectedCountry),
+        shippingCountry: normalizeCountryCode(acceptance.shippingCountry),
+        productIds: acceptance.productIds || [],
+        warningVersion: acceptance.warningVersion || BUYER_IMPORT_WARNING_VERSION,
+        importResponsibilityAccepted: Boolean(
+          acceptance.importResponsibilityAccepted,
+        ),
+        ipAddress:
+          normalizeText(request?.headers?.get?.('x-forwarded-for')) ||
+          normalizeText(request?.headers?.get?.('cf-connecting-ip')),
+        userAgent: normalizeText(request?.headers?.get?.('user-agent')),
+        metadataJson: acceptance.metadataJson || null,
+      },
+    });
+  } catch (error) {
+    console.error('buyer warning acceptance record failed:', error);
+    return null;
+  }
+}
+
 function buildNotFoundResponse() {
   return new Response('Not Found', { status: 404 });
 }
@@ -221,6 +419,7 @@ function buildDefaultFieldErrors() {
     province: null,
     postalCode: null,
     country: null,
+    importResponsibility: null,
   };
 }
 
@@ -305,6 +504,12 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
           note: true,
         },
       },
+      seller: {
+        select: {
+          id: true,
+          euSellerStatus: true,
+        },
+      },
     },
   });
 
@@ -318,6 +523,8 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
       handle: vendor.handle,
       storeName: vendor.storeName,
       managementEmail: vendor.managementEmail || null,
+      sellerId: vendor.seller?.id || null,
+      euSellerStatus: vendor.seller?.euSellerStatus || 'DISABLED',
     },
     store: {
       id: vendor.vendorStore.id,
@@ -360,6 +567,8 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
         price,
         shopDomain,
         shopifyProductId: normalizeText(product.shopifyProductId),
+        productEuStatus: product.productEuStatus || 'DISABLED',
+        euSaleRequested: Boolean(product.euSaleRequested),
         isPurchasable: Boolean(shopDomain && price > 0),
       };
     }),
@@ -524,6 +733,20 @@ async function buildShopifyFallbackCheckoutPayload({
     });
   }
 
+  const countryPolicy = evaluateCheckoutCountryPolicy({
+    vendorContext: resolvedVendorContext,
+    products: selectedProducts.map(({ product }) => product),
+    shippingCountry: submission.shippingAddress.countryCode,
+    importResponsibilityAccepted: submission.importResponsibilityAccepted,
+  });
+
+  if (!countryPolicy.ok) {
+    return {
+      ok: false,
+      error: countryPolicy.error,
+    };
+  }
+
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
 
   return {
@@ -541,6 +764,13 @@ async function buildShopifyFallbackCheckoutPayload({
       ...(submission.note ? { note: submission.note } : {}),
       shopDomain,
       tags: metadata.tags,
+      customAttributes: buildCheckoutCustomAttributes(
+        resolvedVendorContext,
+        countryPolicy,
+      ),
+      ...(countryPolicy.acceptance
+        ? { buyerWarningAcceptance: countryPolicy.acceptance }
+        : {}),
     },
   };
 }
@@ -586,6 +816,9 @@ function normalizeStorefrontCheckoutSubmission(formData) {
   const postalCode = normalizeText(formData.get('postalCode'));
   const country = normalizeText(formData.get('country'));
   const note = normalizeText(formData.get('note'));
+  const importResponsibilityAccepted = normalizeBooleanInput(
+    formData.get('importResponsibilityAccepted'),
+  );
 
   if (hasInvalidQuantity) {
     fieldErrors.cart = INVALID_QUANTITY_MESSAGE;
@@ -663,6 +896,7 @@ function normalizeStorefrontCheckoutSubmission(formData) {
         countryCode: country.toUpperCase(),
         phone,
       },
+      importResponsibilityAccepted,
     },
   };
 }
@@ -713,6 +947,11 @@ function normalizePublicCheckoutSubmission(body) {
   const postalCode = normalizeText(shippingAddress.postalCode || shippingAddress.zip);
   const country = normalizeText(shippingAddress.country || shippingAddress.countryCode);
   const note = normalizeText(body.note);
+  const importResponsibilityAccepted = normalizeBooleanInput(
+    body.importResponsibilityAccepted ||
+      body.import_responsibility_accepted ||
+      body.buyerWarningAccepted,
+  );
 
   for (const item of requestedItems) {
     const productId = normalizeText(
@@ -820,6 +1059,7 @@ function normalizePublicCheckoutSubmission(body) {
         countryCode: country.toUpperCase(),
         phone,
       },
+      importResponsibilityAccepted,
     },
   };
 }
@@ -859,6 +1099,8 @@ async function buildServerTrustedCheckoutPayload({
       url: true,
       shopifyProductId: true,
       shopDomain: true,
+      productEuStatus: true,
+      countryPolicy: true,
     },
   });
 
@@ -918,6 +1160,20 @@ async function buildServerTrustedCheckoutPayload({
     };
   }
 
+  const countryPolicy = evaluateCheckoutCountryPolicy({
+    vendorContext: resolvedVendorContext,
+    products: selectedProducts.map(({ product }) => product),
+    shippingCountry: submission.shippingAddress.countryCode,
+    importResponsibilityAccepted: submission.importResponsibilityAccepted,
+  });
+
+  if (!countryPolicy.ok) {
+    return {
+      ok: false,
+      error: countryPolicy.error,
+    };
+  }
+
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
 
   return {
@@ -935,6 +1191,13 @@ async function buildServerTrustedCheckoutPayload({
       ...(submission.note ? { note: submission.note } : {}),
       shopDomain: shopDomains[0],
       tags: metadata.tags,
+      customAttributes: buildCheckoutCustomAttributes(
+        resolvedVendorContext,
+        countryPolicy,
+      ),
+      ...(countryPolicy.acceptance
+        ? { buyerWarningAcceptance: countryPolicy.acceptance }
+        : {}),
     },
   };
 }
@@ -1063,6 +1326,13 @@ export function createVendorStorefrontAction({
         throw new Error('draftOrderCheckout did not return invoiceUrl');
       }
 
+      await recordBuyerWarningAcceptance({
+        prismaClient,
+        acceptance: checkoutInput.payload.buyerWarningAcceptance,
+        orderId: result?.draftOrder?.id,
+        request,
+      });
+
       return redirect(invoiceUrl);
     } catch (error) {
       console.error('vendor storefront checkout error:', error);
@@ -1100,7 +1370,16 @@ export function createPublicVendorDraftOrderCheckoutAction({
     }
 
     try {
-      return json(await draftOrderCheckoutImpl(checkoutInput.payload));
+      const result = await draftOrderCheckoutImpl(checkoutInput.payload);
+
+      await recordBuyerWarningAcceptance({
+        prismaClient,
+        acceptance: checkoutInput.payload.buyerWarningAcceptance,
+        orderId: result?.draftOrder?.id,
+        request,
+      });
+
+      return json(result);
     } catch (error) {
       console.error('public vendor checkout api error:', error);
       return buildPublicApiCheckoutErrorResponse(error);

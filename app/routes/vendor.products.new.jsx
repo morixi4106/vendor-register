@@ -32,6 +32,10 @@ const COPY = {
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+function isCheckedInput(value) {
+  return value === "on" || value === "true" || value === true;
+}
+
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
   sameSite: "lax",
@@ -150,6 +154,10 @@ export const action = async ({ request }) => {
     const costCurrency = String(formData.get("costCurrency") || "JPY")
       .trim()
       .toUpperCase();
+    const euSaleRequested = isCheckedInput(formData.get("euSaleRequested"));
+    const regulatorySelfCertified = isCheckedInput(
+      formData.get("regulatorySelfCertified")
+    );
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -196,6 +204,13 @@ export const action = async ({ request }) => {
         vendorStoreId: store.id,
         shopDomain,
         approvalStatus: "pending",
+        euSaleRequested,
+        productEuStatus: euSaleRequested ? "PENDING_REVIEW" : "DISABLED",
+        regulatorySelfCertificationJson: {
+          version: "seller-product-self-cert-v1",
+          regulatorySelfCertified,
+          certifiedAt: regulatorySelfCertified ? new Date().toISOString() : null,
+        },
         priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
         priceSyncError: null,
       },
