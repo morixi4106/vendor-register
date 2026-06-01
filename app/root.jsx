@@ -17,7 +17,7 @@ export default function App() {
           rel="stylesheet"
           href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
         />
-        <link rel="icon" href="/favicon.ico?v=20260602" />
+        <link rel="icon" type="image/png" href="/favicon.png?v=20260602" />
         <Meta />
         <Links />
       </head>
