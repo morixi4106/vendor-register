@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
+import { useState } from "react";
 
 import prisma from "../db.server";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
@@ -239,7 +240,32 @@ function CountryChips({ countries, emptyText }) {
   );
 }
 
-function DeliveryRestrictionDetails({ product }) {
+function getDeliveryRestrictionCountries(summary) {
+  const countries = new Map();
+
+  for (const country of summary?.unavailableCountries || []) {
+    countries.set(country.code, country);
+  }
+
+  if (summary?.hasAllowedCountryLimit) {
+    const allowedCountryCodes = new Set(
+      (summary.allowedCountries || []).map((country) => country.code),
+    );
+
+    for (const country of COUNTRY_OPTIONS) {
+      if (country.value && !allowedCountryCodes.has(country.value)) {
+        countries.set(country.value, {
+          code: country.value,
+          label: country.label,
+        });
+      }
+    }
+  }
+
+  return Array.from(countries.values());
+}
+
+function DeliveryRestrictionButton({ product, onOpen }) {
   const summary = product.deliveryRestrictionSummary;
 
   if (!summary?.hasRestrictions) {
@@ -247,34 +273,90 @@ function DeliveryRestrictionDetails({ product }) {
   }
 
   return (
-    <details className="preview-restriction">
-      <summary>購入できない配送先を見る</summary>
-      <div className="preview-restriction-popover">
-        <p>{summary.message}</p>
-        {summary.hasAllowedCountryLimit ? (
+    <button
+      className="preview-restriction-button"
+      type="button"
+      onClick={() => onOpen(product)}
+    >
+      購入できない配送先を見る
+    </button>
+  );
+}
+
+function DeliveryRestrictionModal({ product, onClose }) {
+  const summary = product?.deliveryRestrictionSummary;
+
+  if (!product || !summary?.hasRestrictions) {
+    return null;
+  }
+
+  const unavailableCountries = getDeliveryRestrictionCountries(summary);
+
+  return (
+    <div
+      className="preview-modal-backdrop"
+      role="presentation"
+      tabIndex={-1}
+      onClick={onClose}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          onClose();
+        }
+      }}
+    >
+      <section
+        className="preview-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="preview-delivery-modal-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="preview-modal-header">
+          <div>
+            <p className="preview-modal-kicker">配送先の確認</p>
+            <h2 id="preview-delivery-modal-title">{product.name}</h2>
+          </div>
+          <button
+            className="preview-modal-close"
+            type="button"
+            aria-label="閉じる"
+            onClick={onClose}
+          >
+            x
+          </button>
+        </div>
+
+        <p className="preview-modal-message">{summary.message}</p>
+
+        <div className="preview-restriction-block">
+          <strong>購入できない配送先</strong>
+          <CountryChips
+            countries={unavailableCountries}
+            emptyText="配送先を選択すると、この商品の購入可否を確認できます。"
+          />
+        </div>
+
+        {summary.warningCountries?.length ? (
           <div className="preview-restriction-block">
-            <strong>購入できる配送先</strong>
-            <CountryChips
-              countries={summary.allowedCountries}
-              emptyText="販売対象国が未設定です"
-            />
-            <small>ここに表示されていない配送先では購入できません。</small>
+            <strong>注意確認が必要な配送先</strong>
+            <CountryChips countries={summary.warningCountries} />
           </div>
         ) : null}
-        {summary.unavailableCountries?.length ? (
-          <div className="preview-restriction-block">
-            <strong>購入できない配送先</strong>
-            <CountryChips countries={summary.unavailableCountries} />
-          </div>
-        ) : null}
-      </div>
-    </details>
+
+        <p className="preview-modal-note">
+          配送先を選択すると、現在の登録情報にもとづいて購入可否を確認できます。
+        </p>
+      </section>
+    </div>
   );
 }
 
 export default function PublicVendorPreviewPage() {
   const data = useLoaderData();
   const hasDeliveryCountry = Boolean(data.deliveryCountry);
+  const [restrictionProductId, setRestrictionProductId] = useState(null);
+  const activeRestrictionProduct =
+    data.products.find((product) => product.id === restrictionProductId) || null;
 
   return (
     <main className="preview-page">
@@ -529,12 +611,8 @@ export default function PublicVendorPreviewPage() {
         .preview-message--warning{
           color:#8a4a08;
         }
-        .preview-restriction{
-          position:relative;
-        }
-        .preview-restriction summary{
+        .preview-restriction-button{
           display:inline-flex;
-          width:max-content;
           max-width:100%;
           min-height:34px;
           align-items:center;
@@ -546,12 +624,9 @@ export default function PublicVendorPreviewPage() {
           font-size:12px;
           font-weight:900;
           cursor:pointer;
-          list-style:none;
+          text-align:left;
         }
-        .preview-restriction summary::-webkit-details-marker{
-          display:none;
-        }
-        .preview-restriction summary::after{
+        .preview-restriction-button::after{
           content:"";
           width:7px;
           height:7px;
@@ -560,28 +635,76 @@ export default function PublicVendorPreviewPage() {
           border-bottom:2px solid currentColor;
           transform:rotate(45deg) translateY(-2px);
         }
-        .preview-restriction[open] summary::after{
-          transform:rotate(225deg) translate(-1px, -1px);
+        .preview-restriction-button:hover,
+        .preview-restriction-button:focus-visible{
+          border-color:#9aa7b5;
+          background:#f8fafc;
         }
-        .preview-restriction-popover{
-          position:absolute;
-          z-index:4;
-          left:0;
-          top:42px;
-          width:min(360px, calc(100vw - 44px));
+        .preview-modal-backdrop{
+          position:fixed;
+          inset:0;
+          z-index:20;
           display:grid;
-          gap:12px;
-          padding:14px;
+          place-items:center;
+          padding:18px;
+          background:rgba(23,32,42,.34);
+        }
+        .preview-modal{
+          width:min(480px, 100%);
+          max-height:min(640px, calc(100vh - 36px));
+          overflow:auto;
+          display:grid;
+          gap:16px;
+          padding:18px;
           border:1px solid #cbd3dc;
           border-radius:8px;
           background:#fff;
-          box-shadow:0 18px 44px rgba(23,32,42,.16);
+          box-shadow:0 24px 70px rgba(23,32,42,.28);
         }
-        .preview-restriction-popover p{
+        .preview-modal-header{
+          display:grid;
+          grid-template-columns:1fr auto;
+          gap:14px;
+          align-items:start;
+        }
+        .preview-modal-kicker{
+          margin:0 0 4px;
+          color:#5b6674;
+          font-size:12px;
+          font-weight:900;
+        }
+        .preview-modal h2{
+          margin:0;
+          color:#17202a;
+          font-size:22px;
+          line-height:1.3;
+          letter-spacing:0;
+        }
+        .preview-modal-close{
+          width:34px;
+          height:34px;
+          border:1px solid #cbd3dc;
+          border-radius:8px;
+          background:#fff;
+          color:#344254;
+          font-size:18px;
+          font-weight:900;
+          line-height:1;
+          cursor:pointer;
+        }
+        .preview-modal-close:hover,
+        .preview-modal-close:focus-visible{
+          background:#f1f4f7;
+        }
+        .preview-modal-message,
+        .preview-modal-note{
           margin:0;
           color:#344254;
           font-size:13px;
           line-height:1.7;
+        }
+        .preview-modal-note{
+          color:#5b6674;
         }
         .preview-restriction-block{
           display:grid;
@@ -782,7 +905,12 @@ export default function PublicVendorPreviewPage() {
                   ) : null}
 
                   {!hasDeliveryCountry ? (
-                    <DeliveryRestrictionDetails product={product} />
+                    <DeliveryRestrictionButton
+                      product={product}
+                      onOpen={(selectedProduct) =>
+                        setRestrictionProductId(selectedProduct.id)
+                      }
+                    />
                   ) : null}
                 </div>
               </article>
@@ -803,6 +931,11 @@ export default function PublicVendorPreviewPage() {
           <code className="preview-code">{data.rawApiUrl}</code>
         </section>
       </div>
+
+      <DeliveryRestrictionModal
+        product={activeRestrictionProduct}
+        onClose={() => setRestrictionProductId(null)}
+      />
     </main>
   );
 }
