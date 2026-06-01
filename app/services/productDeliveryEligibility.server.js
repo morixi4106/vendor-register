@@ -1,5 +1,6 @@
 import prisma from '../db.server.js';
 import {
+  buildDeliveryRestrictionSummary,
   evaluateProductDeliveryEligibility,
   normalizeCountryCode,
   normalizeText,
@@ -150,6 +151,10 @@ export function createProductDeliveryEligibilityLoader({
         vendorHandle: product.vendorStore?.vendorAuth?.handle || null,
       },
       deliveryEligibility: serializePublicDeliveryEligibility(eligibility),
+      deliveryRestrictionSummary: buildDeliveryRestrictionSummary({
+        product,
+        seller,
+      }),
     });
   };
 }

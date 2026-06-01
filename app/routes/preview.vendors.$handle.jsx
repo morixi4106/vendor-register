@@ -217,6 +217,55 @@ function StatusBadge({ product }) {
   );
 }
 
+function CountryChips({ countries, emptyText }) {
+  if (!countries?.length) {
+    return <span className="preview-restriction-empty">{emptyText}</span>;
+  }
+
+  return (
+    <span className="preview-country-chips">
+      {countries.map((country) => (
+        <span className="preview-country-chip" key={country.code}>
+          {country.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function DeliveryRestrictionDetails({ product }) {
+  const summary = product.deliveryRestrictionSummary;
+
+  if (!summary?.hasRestrictions) {
+    return null;
+  }
+
+  return (
+    <details className="preview-restriction">
+      <summary>購入できない配送先を見る</summary>
+      <div className="preview-restriction-popover">
+        <p>{summary.message}</p>
+        {summary.hasAllowedCountryLimit ? (
+          <div className="preview-restriction-block">
+            <strong>購入できる配送先</strong>
+            <CountryChips
+              countries={summary.allowedCountries}
+              emptyText="販売対象国が未設定です"
+            />
+            <small>ここに表示されていない配送先では購入できません。</small>
+          </div>
+        ) : null}
+        {summary.unavailableCountries?.length ? (
+          <div className="preview-restriction-block">
+            <strong>購入できない配送先</strong>
+            <CountryChips countries={summary.unavailableCountries} />
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 export default function PublicVendorPreviewPage() {
   const data = useLoaderData();
   const hasDeliveryCountry = Boolean(data.deliveryCountry);
@@ -474,6 +523,91 @@ export default function PublicVendorPreviewPage() {
         .preview-message--warning{
           color:#8a4a08;
         }
+        .preview-restriction{
+          position:relative;
+        }
+        .preview-restriction summary{
+          display:inline-flex;
+          width:max-content;
+          max-width:100%;
+          min-height:34px;
+          align-items:center;
+          padding:0 10px;
+          border:1px solid #cbd3dc;
+          border-radius:8px;
+          background:#fff;
+          color:#344254;
+          font-size:12px;
+          font-weight:900;
+          cursor:pointer;
+          list-style:none;
+        }
+        .preview-restriction summary::-webkit-details-marker{
+          display:none;
+        }
+        .preview-restriction summary::after{
+          content:"";
+          width:7px;
+          height:7px;
+          margin-left:8px;
+          border-right:2px solid currentColor;
+          border-bottom:2px solid currentColor;
+          transform:rotate(45deg) translateY(-2px);
+        }
+        .preview-restriction[open] summary::after{
+          transform:rotate(225deg) translate(-1px, -1px);
+        }
+        .preview-restriction-popover{
+          position:absolute;
+          z-index:4;
+          left:0;
+          top:42px;
+          width:min(360px, calc(100vw - 44px));
+          display:grid;
+          gap:12px;
+          padding:14px;
+          border:1px solid #cbd3dc;
+          border-radius:8px;
+          background:#fff;
+          box-shadow:0 18px 44px rgba(23,32,42,.16);
+        }
+        .preview-restriction-popover p{
+          margin:0;
+          color:#344254;
+          font-size:13px;
+          line-height:1.7;
+        }
+        .preview-restriction-block{
+          display:grid;
+          gap:8px;
+        }
+        .preview-restriction-block strong{
+          font-size:12px;
+          color:#17202a;
+        }
+        .preview-restriction-block small,
+        .preview-restriction-empty{
+          color:#5b6674;
+          font-size:12px;
+          line-height:1.6;
+        }
+        .preview-country-chips{
+          display:flex;
+          flex-wrap:wrap;
+          gap:6px;
+        }
+        .preview-country-chip{
+          display:inline-flex;
+          align-items:center;
+          min-height:26px;
+          padding:0 8px;
+          border:1px solid #dfe4ea;
+          border-radius:8px;
+          background:#f8fafc;
+          color:#344254;
+          font-size:12px;
+          font-weight:800;
+        }
         .preview-empty{
           padding:32px;
           background:#fff;
@@ -634,6 +768,10 @@ export default function PublicVendorPreviewPage() {
                     <p className={`preview-message preview-message--${tone}`}>
                       {product.deliveryEligibility.message}
                     </p>
+                  ) : null}
+
+                  {!hasDeliveryCountry ? (
+                    <DeliveryRestrictionDetails product={product} />
                   ) : null}
                 </div>
               </article>

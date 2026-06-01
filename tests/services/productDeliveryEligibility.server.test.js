@@ -79,4 +79,11 @@ test('product delivery eligibility blocks rejected EU products', async () => {
   assert.equal(body.deliveryEligibility.message, 'この配送先には販売できません。');
   assert.equal('sellerEuStatus' in body.deliveryEligibility, false);
   assert.equal('productEuStatus' in body.deliveryEligibility, false);
+  assert.equal(body.deliveryRestrictionSummary.hasRestrictions, true);
+  assert.equal(
+    body.deliveryRestrictionSummary.unavailableCountries.some(
+      (country) => country.code === 'DE',
+    ),
+    true,
+  );
 });

@@ -3,6 +3,7 @@ import {
   buildVendorCollectionUrl,
 } from "./vendorCollectionHandles.js";
 import {
+  buildDeliveryRestrictionSummary,
   evaluateProductDeliveryEligibility,
   normalizeCountryCode,
   serializePublicDeliveryEligibility,
@@ -69,6 +70,10 @@ export function serializePublicVendorStorefront({
         seller,
         deliveryCountry: countryCode,
       });
+      const deliveryRestrictionSummary = buildDeliveryRestrictionSummary({
+        product,
+        seller,
+      });
       const publicDeliveryEligibility =
         serializePublicDeliveryEligibility(deliveryEligibility);
       const isPurchasable =
@@ -87,6 +92,7 @@ export function serializePublicVendorStorefront({
         isPurchasable,
         basePurchasable,
         deliveryEligibility: publicDeliveryEligibility,
+        deliveryRestrictionSummary,
       };
     });
   const visibleProducts =

@@ -59,6 +59,13 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
   assert.equal(storefront.products[0].isPurchasable, true);
   assert.equal(storefront.products[0].basePurchasable, true);
   assert.equal(storefront.products[0].deliveryEligibility.status, "UNKNOWN_COUNTRY");
+  assert.equal(storefront.products[0].deliveryRestrictionSummary.hasRestrictions, true);
+  assert.equal(
+    storefront.products[0].deliveryRestrictionSummary.unavailableCountries.some(
+      (country) => country.code === "FR",
+    ),
+    true,
+  );
 });
 
 test("serializePublicVendorStorefront can filter products by selected delivery country", () => {
@@ -117,4 +124,8 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
     "配送先国によって、関税・税金・通関手数料が発生する場合があります。",
   );
   assert.equal("internalMessage" in storefront.products[0].deliveryEligibility, false);
+  assert.equal(
+    storefront.products[0].deliveryRestrictionSummary.hasRestrictions,
+    false,
+  );
 });

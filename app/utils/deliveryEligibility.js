@@ -64,6 +64,42 @@ export const PUBLIC_DELIVERY_ELIGIBILITY_LABELS = {
   [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNPURCHASABLE]: '購入できません',
 };
 
+export const PUBLIC_COUNTRY_LABELS_JA = {
+  AT: 'オーストリア',
+  AU: 'オーストラリア',
+  BE: 'ベルギー',
+  BG: 'ブルガリア',
+  CY: 'キプロス',
+  CZ: 'チェコ',
+  DE: 'ドイツ',
+  DK: 'デンマーク',
+  EE: 'エストニア',
+  ES: 'スペイン',
+  FI: 'フィンランド',
+  FR: 'フランス',
+  GB: 'イギリス',
+  GR: 'ギリシャ',
+  HR: 'クロアチア',
+  HU: 'ハンガリー',
+  IE: 'アイルランド',
+  IT: 'イタリア',
+  JP: '日本',
+  KR: '韓国',
+  LT: 'リトアニア',
+  LU: 'ルクセンブルク',
+  LV: 'ラトビア',
+  MT: 'マルタ',
+  NL: 'オランダ',
+  PL: 'ポーランド',
+  PT: 'ポルトガル',
+  RO: 'ルーマニア',
+  SE: 'スウェーデン',
+  SG: 'シンガポール',
+  SI: 'スロベニア',
+  SK: 'スロバキア',
+  US: 'アメリカ',
+};
+
 export function normalizeText(value) {
   const normalized = String(value || '').trim();
   return normalized || null;
@@ -85,6 +121,24 @@ export function normalizeCountryList(value) {
 export function isEuCountry(value) {
   const countryCode = normalizeCountryCode(value);
   return Boolean(countryCode && EU_COUNTRY_CODES.has(countryCode));
+}
+
+export function formatPublicCountryLabel(countryCode) {
+  const code = normalizeCountryCode(countryCode);
+  return code ? PUBLIC_COUNTRY_LABELS_JA[code] || code : null;
+}
+
+function serializeCountryCodes(countryCodes) {
+  return Array.from(new Set(countryCodes.map(normalizeCountryCode).filter(Boolean)))
+    .sort((left, right) => {
+      const leftLabel = formatPublicCountryLabel(left) || left;
+      const rightLabel = formatPublicCountryLabel(right) || right;
+      return leftLabel.localeCompare(rightLabel, 'ja-JP');
+    })
+    .map((code) => ({
+      code,
+      label: formatPublicCountryLabel(code) || code,
+    }));
 }
 
 function getSellerEuStatus(sellerOrVendorContext) {
@@ -140,6 +194,72 @@ export function getPublicDeliveryEligibilityStatus(eligibility = {}) {
   }
 
   return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE;
+}
+
+export function buildDeliveryRestrictionSummary({
+  product,
+  seller,
+  vendorContext,
+} = {}) {
+  const sellerEuStatus = getSellerEuStatus(
+    seller ||
+      product?.seller ||
+      product?.vendorStore?.seller ||
+      product?.vendorStore?.vendorAuth?.seller ||
+      vendorContext,
+  );
+  const blockedCountries = normalizeCountryList(
+    product?.countryPolicy?.blockedCountries,
+  );
+  const allowedCountries = normalizeCountryList(
+    product?.countryPolicy?.allowedCountries,
+  );
+  const requiresWarningCountries = normalizeCountryList(
+    product?.countryPolicy?.requiresWarningCountries,
+  );
+  const unavailableCountryCodes = new Set(blockedCountries);
+
+  if (
+    !EU_SELLER_ALLOWED_STATUSES.has(sellerEuStatus) ||
+    !EU_PRODUCT_ALLOWED_STATUSES.has(product?.productEuStatus || 'DISABLED')
+  ) {
+    for (const code of EU_COUNTRY_CODES) {
+      unavailableCountryCodes.add(code);
+    }
+  }
+
+  const unavailableCountries = serializeCountryCodes(
+    Array.from(unavailableCountryCodes),
+  );
+  const allowedCountryList = serializeCountryCodes(
+    allowedCountries.filter((code) => !unavailableCountryCodes.has(code)),
+  );
+  const warningCountryList = serializeCountryCodes(
+    requiresWarningCountries.filter(
+      (code) => !unavailableCountryCodes.has(code),
+    ),
+  );
+  const isAllowedCountryLimited = allowedCountryList.length > 0;
+  const hasUnavailableCountries = unavailableCountries.length > 0;
+  const hasRestrictions = hasUnavailableCountries || isAllowedCountryLimited;
+  const label = hasRestrictions
+    ? '一部の配送先では購入できません'
+    : '主な販売制限なし';
+  const message = hasRestrictions
+    ? isAllowedCountryLimited
+      ? 'この商品は販売対象国が限定されています。配送先を選択すると購入可否を確認できます。'
+      : 'この商品は一部の配送先では購入できません。配送先を選択すると購入可否を確認できます。'
+    : '配送先を選択すると購入可否を確認できます。';
+
+  return {
+    hasRestrictions,
+    label,
+    message,
+    unavailableCountries,
+    allowedCountries: allowedCountryList,
+    warningCountries: warningCountryList,
+    hasAllowedCountryLimit: isAllowedCountryLimited,
+  };
 }
 
 function buildEligibilityResult({

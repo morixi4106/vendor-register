@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildDeliveryRestrictionSummary,
   DELIVERY_ELIGIBILITY_STATUS,
   evaluateCartDeliveryEligibility,
   evaluateProductDeliveryEligibility,
@@ -107,4 +108,73 @@ test('evaluateCartDeliveryEligibility returns acceptance metadata after EU warni
     warningVersion: 'import-responsibility-v1',
     importResponsibilityAccepted: true,
   });
+});
+
+test('buildDeliveryRestrictionSummary lists unavailable countries before country selection', () => {
+  const summary = buildDeliveryRestrictionSummary({
+    product: createProduct({
+      productEuStatus: 'REJECTED_HIGH_RISK',
+      countryPolicy: {
+        blockedCountries: ['US'],
+        allowedCountries: [],
+        requiresWarningCountries: [],
+      },
+    }),
+    seller: approvedSeller,
+  });
+
+  assert.equal(summary.hasRestrictions, true);
+  assert.equal(summary.label, '一部の配送先では購入できません');
+  assert.equal(
+    summary.unavailableCountries.some((country) => country.code === 'FR'),
+    true,
+  );
+  assert.equal(
+    summary.unavailableCountries.some((country) => country.code === 'US'),
+    true,
+  );
+});
+
+test('buildDeliveryRestrictionSummary reports allowed-country limits', () => {
+  const summary = buildDeliveryRestrictionSummary({
+    product: createProduct({
+      countryPolicy: {
+        blockedCountries: [],
+        allowedCountries: ['JP', 'US'],
+        requiresWarningCountries: [],
+      },
+    }),
+    seller: approvedSeller,
+  });
+
+  assert.equal(summary.hasRestrictions, true);
+  assert.equal(summary.hasAllowedCountryLimit, true);
+  assert.deepEqual(
+    summary.allowedCountries.map((country) => country.code).sort(),
+    ['JP', 'US'],
+  );
+});
+
+test('buildDeliveryRestrictionSummary does not list unavailable countries as allowed', () => {
+  const summary = buildDeliveryRestrictionSummary({
+    product: createProduct({
+      productEuStatus: 'REJECTED_HIGH_RISK',
+      countryPolicy: {
+        blockedCountries: [],
+        allowedCountries: ['FR', 'JP'],
+        requiresWarningCountries: [],
+      },
+    }),
+    seller: approvedSeller,
+  });
+
+  assert.equal(summary.hasAllowedCountryLimit, true);
+  assert.equal(
+    summary.allowedCountries.some((country) => country.code === 'FR'),
+    false,
+  );
+  assert.equal(
+    summary.allowedCountries.some((country) => country.code === 'JP'),
+    true,
+  );
 });
