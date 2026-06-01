@@ -59,6 +59,19 @@ test('evaluateProductDeliveryEligibility blocks EU products before product appro
   );
 });
 
+test('evaluateProductDeliveryEligibility omits public copy for plainly available products', () => {
+  const result = evaluateProductDeliveryEligibility({
+    product: createProduct(),
+    seller: approvedSeller,
+    deliveryCountry: 'JP',
+  });
+
+  assert.equal(result.status, DELIVERY_ELIGIBILITY_STATUS.AVAILABLE);
+  assert.equal(result.isAvailable, true);
+  assert.equal(result.label, null);
+  assert.equal(result.message, null);
+});
+
 test('evaluateCartDeliveryEligibility blocks mixed EU carts when any product is unavailable', () => {
   const result = evaluateCartDeliveryEligibility({
     products: [

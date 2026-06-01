@@ -209,10 +209,16 @@ function Metric({ label, value }) {
 function StatusBadge({ product }) {
   const status = product.deliveryEligibility?.status || "UNKNOWN_COUNTRY";
   const tone = getStatusTone(product);
+  const label =
+    product.deliveryEligibility?.label || STATUS_LABELS[status] || status;
+
+  if (status === "AVAILABLE" || !label) {
+    return null;
+  }
 
   return (
     <span className={`preview-status preview-status--${tone}`}>
-      {product.deliveryEligibility?.label || STATUS_LABELS[status] || status}
+      {label}
     </span>
   );
 }
@@ -729,6 +735,9 @@ export default function PublicVendorPreviewPage() {
         <section className="preview-products">
           {data.products.map((product) => {
             const tone = getStatusTone(product);
+            const status = product.deliveryEligibility?.status || "UNKNOWN_COUNTRY";
+            const shouldShowStatus = status !== "AVAILABLE";
+            const shouldShowStatusRow = shouldShowStatus || product.category;
 
             return (
               <article
@@ -755,14 +764,16 @@ export default function PublicVendorPreviewPage() {
                     <p className="preview-description">{product.description}</p>
                   ) : null}
 
-                  <div className="preview-status-row">
-                    <StatusBadge product={product} />
-                    {product.category ? (
-                      <span className="preview-status preview-status--info">
-                        {product.category}
-                      </span>
-                    ) : null}
-                  </div>
+                  {shouldShowStatusRow ? (
+                    <div className="preview-status-row">
+                      {shouldShowStatus ? <StatusBadge product={product} /> : null}
+                      {product.category ? (
+                        <span className="preview-status preview-status--info">
+                          {product.category}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {product.deliveryEligibility?.message ? (
                     <p className={`preview-message preview-message--${tone}`}>

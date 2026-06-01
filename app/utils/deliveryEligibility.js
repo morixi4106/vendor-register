@@ -57,7 +57,7 @@ export const EU_SELLER_ALLOWED_STATUSES = new Set([
 export const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
 export const PUBLIC_DELIVERY_ELIGIBILITY_LABELS = {
-  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE]: '販売可能',
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE]: null,
   [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY]: '配送先未選択',
   [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.REQUIRES_IMPORT_WARNING]: '注意確認が必要',
   [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE]: '販売できません',
@@ -171,7 +171,7 @@ export function getPublicDeliveryEligibilityMessage({
     return 'この配送先には販売できません。';
   }
 
-  return 'この配送先に購入できます。';
+  return null;
 }
 
 export function getPublicDeliveryEligibilityStatus(eligibility = {}) {
@@ -194,6 +194,19 @@ export function getPublicDeliveryEligibilityStatus(eligibility = {}) {
   }
 
   return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE;
+}
+
+export function getPublicDeliveryEligibilityLabel(publicStatus) {
+  if (
+    Object.prototype.hasOwnProperty.call(
+      PUBLIC_DELIVERY_ELIGIBILITY_LABELS,
+      publicStatus,
+    )
+  ) {
+    return PUBLIC_DELIVERY_ELIGIBILITY_LABELS[publicStatus];
+  }
+
+  return publicStatus;
 }
 
 export function buildDeliveryRestrictionSummary({
@@ -299,7 +312,7 @@ function buildEligibilityResult({
     requiresImportWarning,
     severity,
     warningVersion: requiresImportWarning ? BUYER_IMPORT_WARNING_VERSION : null,
-    label: PUBLIC_DELIVERY_ELIGIBILITY_LABELS[publicStatus] || publicStatus,
+    label: getPublicDeliveryEligibilityLabel(publicStatus),
     publicStatus,
     message: buyerMessage,
     publicMessage: buyerMessage,
@@ -331,7 +344,7 @@ export function serializePublicDeliveryEligibility(eligibility) {
     requiresImportWarning: eligibility.requiresImportWarning,
     severity: eligibility.severity,
     warningVersion: eligibility.warningVersion,
-    label: PUBLIC_DELIVERY_ELIGIBILITY_LABELS[publicStatus] || publicStatus,
+    label: getPublicDeliveryEligibilityLabel(publicStatus),
     message: publicMessage,
     publicMessage,
   };
