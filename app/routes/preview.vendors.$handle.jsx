@@ -224,15 +224,18 @@ function StatusBadge({ product }) {
   );
 }
 
-function CountryChips({ countries, emptyText }) {
+function CountryChips({ countries, emptyText, tone = "blocked" }) {
   if (!countries?.length) {
     return <span className="preview-restriction-empty">{emptyText}</span>;
   }
 
   return (
-    <span className="preview-country-chips">
+    <span className={`preview-country-chips preview-country-chips--${tone}`}>
       {countries.map((country) => (
-        <span className="preview-country-chip" key={country.code}>
+        <span
+          className={`preview-country-chip preview-country-chip--${tone}`}
+          key={country.code}
+        >
           {country.label}
         </span>
       ))}
@@ -312,10 +315,7 @@ function DeliveryRestrictionModal({ product, onClose }) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="preview-modal-header">
-          <div>
-            <p className="preview-modal-kicker">配送先の確認</p>
-            <h2 id="preview-delivery-modal-title">{product.name}</h2>
-          </div>
+          <h2 id="preview-delivery-modal-title">{product.name}</h2>
           <button
             className="preview-modal-close"
             type="button"
@@ -328,8 +328,11 @@ function DeliveryRestrictionModal({ product, onClose }) {
 
         <p className="preview-modal-message">{summary.message}</p>
 
-        <div className="preview-restriction-block">
-          <strong>購入できない配送先</strong>
+        <div className="preview-restriction-card preview-restriction-card--blocked">
+          <div className="preview-restriction-heading">
+            <strong>購入できない配送先</strong>
+            <span>{unavailableCountries.length}件</span>
+          </div>
           <CountryChips
             countries={unavailableCountries}
             emptyText="購入できない配送先は登録されていません。"
@@ -337,15 +340,14 @@ function DeliveryRestrictionModal({ product, onClose }) {
         </div>
 
         {summary.warningCountries?.length ? (
-          <div className="preview-restriction-block">
-            <strong>注意確認が必要な配送先</strong>
-            <CountryChips countries={summary.warningCountries} />
+          <div className="preview-restriction-card preview-restriction-card--warning">
+            <div className="preview-restriction-heading">
+              <strong>注意確認が必要な配送先</strong>
+              <span>{summary.warningCountries.length}件</span>
+            </div>
+            <CountryChips countries={summary.warningCountries} tone="warning" />
           </div>
         ) : null}
-
-        <p className="preview-modal-note">
-          配送先ごとの制限は、店舗と商品の現在の登録情報にもとづいて表示しています。
-        </p>
       </section>
     </div>
   );
@@ -650,12 +652,12 @@ export default function PublicVendorPreviewPage() {
           background:rgba(23,32,42,.34);
         }
         .preview-modal{
-          width:min(480px, 100%);
+          width:min(560px, 100%);
           max-height:min(640px, calc(100vh - 36px));
           overflow:auto;
           display:grid;
-          gap:16px;
-          padding:18px;
+          gap:18px;
+          padding:22px;
           border:1px solid #cbd3dc;
           border-radius:8px;
           background:#fff;
@@ -666,12 +668,6 @@ export default function PublicVendorPreviewPage() {
           grid-template-columns:1fr auto;
           gap:14px;
           align-items:start;
-        }
-        .preview-modal-kicker{
-          margin:0 0 4px;
-          color:#5b6674;
-          font-size:12px;
-          font-weight:900;
         }
         .preview-modal h2{
           margin:0;
@@ -696,46 +692,99 @@ export default function PublicVendorPreviewPage() {
         .preview-modal-close:focus-visible{
           background:#f1f4f7;
         }
-        .preview-modal-message,
-        .preview-modal-note{
+        .preview-modal-message{
           margin:0;
           color:#344254;
           font-size:13px;
           line-height:1.7;
         }
-        .preview-modal-note{
-          color:#5b6674;
-        }
-        .preview-restriction-block{
+        .preview-restriction-card{
           display:grid;
-          gap:8px;
+          gap:12px;
+          padding:14px;
+          border:1px solid #dfe4ea;
+          border-radius:8px;
+          background:#f8fafc;
         }
-        .preview-restriction-block strong{
+        .preview-restriction-card--blocked{
+          border-color:#f0c7c7;
+          background:#fff8f8;
+        }
+        .preview-restriction-card--warning{
+          border-color:#f4d49a;
+          background:#fffaf0;
+        }
+        .preview-restriction-heading{
+          display:flex;
+          flex-wrap:wrap;
+          gap:8px;
+          align-items:center;
+          justify-content:space-between;
+        }
+        .preview-restriction-heading strong{
           font-size:12px;
           color:#17202a;
         }
-        .preview-restriction-block small,
+        .preview-restriction-heading span{
+          display:inline-flex;
+          min-height:22px;
+          align-items:center;
+          padding:0 8px;
+          border-radius:999px;
+          background:#fff;
+          color:#5b6674;
+          font-size:11px;
+          font-weight:900;
+        }
         .preview-restriction-empty{
           color:#5b6674;
           font-size:12px;
           line-height:1.6;
         }
         .preview-country-chips{
-          display:flex;
-          flex-wrap:wrap;
+          display:grid;
+          grid-template-columns:repeat(auto-fit, minmax(104px, 1fr));
           gap:6px;
         }
         .preview-country-chip{
           display:inline-flex;
           align-items:center;
-          min-height:26px;
-          padding:0 8px;
+          gap:6px;
+          min-height:30px;
+          padding:0 9px;
           border:1px solid #dfe4ea;
           border-radius:8px;
-          background:#f8fafc;
+          background:#fff;
           color:#344254;
           font-size:12px;
           font-weight:800;
+        }
+        .preview-country-chip::before{
+          display:inline-grid;
+          place-items:center;
+          width:16px;
+          height:16px;
+          border-radius:999px;
+          font-size:11px;
+          line-height:1;
+        }
+        .preview-country-chip--blocked{
+          border-color:#f0c7c7;
+          color:#7d1d1d;
+        }
+        .preview-country-chip--blocked::before{
+          content:"×";
+          background:#fbe3e3;
+          color:#9d1d1d;
+        }
+        .preview-country-chip--warning{
+          border-color:#f4d49a;
+          color:#744207;
+        }
+        .preview-country-chip--warning::before{
+          content:"!";
+          background:#fff0c7;
+          color:#8a4a08;
         }
         .preview-empty{
           padding:32px;
