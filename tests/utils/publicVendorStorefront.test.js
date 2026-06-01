@@ -112,4 +112,9 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
     storefront.products[0].deliveryEligibility.status,
     "REQUIRES_IMPORT_WARNING",
   );
+  assert.equal(
+    storefront.products[0].deliveryEligibility.message,
+    "配送先国によって、関税・税金・通関手数料が発生する場合があります。",
+  );
+  assert.equal("internalMessage" in storefront.products[0].deliveryEligibility, false);
 });

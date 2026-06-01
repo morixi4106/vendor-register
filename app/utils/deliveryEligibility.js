@@ -11,6 +11,14 @@ export const DELIVERY_ELIGIBILITY_STATUS = {
   UNAVAILABLE_PRODUCT_UNAPPROVED: 'UNAVAILABLE_PRODUCT_UNAPPROVED',
 };
 
+export const PUBLIC_DELIVERY_ELIGIBILITY_STATUS = {
+  AVAILABLE: 'AVAILABLE',
+  UNKNOWN_COUNTRY: 'UNKNOWN_COUNTRY',
+  REQUIRES_IMPORT_WARNING: 'REQUIRES_IMPORT_WARNING',
+  UNAVAILABLE: 'UNAVAILABLE',
+  UNPURCHASABLE: 'UNPURCHASABLE',
+};
+
 export const EU_COUNTRY_CODES = new Set([
   'AT',
   'BE',
@@ -48,6 +56,14 @@ export const EU_SELLER_ALLOWED_STATUSES = new Set([
 
 export const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
+export const PUBLIC_DELIVERY_ELIGIBILITY_LABELS = {
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE]: '販売可能',
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY]: '配送先未選択',
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.REQUIRES_IMPORT_WARNING]: '注意確認が必要',
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE]: '販売できません',
+  [PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNPURCHASABLE]: '購入できません',
+};
+
 export function normalizeText(value) {
   const normalized = String(value || '').trim();
   return normalized || null;
@@ -80,6 +96,52 @@ function getSellerEuStatus(sellerOrVendorContext) {
   );
 }
 
+export function getPublicDeliveryEligibilityMessage({
+  status,
+  isAvailable = false,
+  requiresImportWarning = false,
+} = {}) {
+  if (status === DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY) {
+    return '配送先を選択すると、この商品を購入できるか確認できます。';
+  }
+
+  if (requiresImportWarning) {
+    return '配送先国によって、関税・税金・通関手数料が発生する場合があります。';
+  }
+
+  if (status === DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_PRODUCT_UNAPPROVED) {
+    return 'この商品は現在購入できません。';
+  }
+
+  if (!isAvailable || String(status || '').startsWith('UNAVAILABLE')) {
+    return 'この配送先には販売できません。';
+  }
+
+  return 'この配送先に購入できます。';
+}
+
+export function getPublicDeliveryEligibilityStatus(eligibility = {}) {
+  if (eligibility.status === DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY) {
+    return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY;
+  }
+
+  if (
+    eligibility.status === DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_PRODUCT_UNAPPROVED
+  ) {
+    return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNPURCHASABLE;
+  }
+
+  if (!eligibility.isAvailable || String(eligibility.status || '').startsWith('UNAVAILABLE')) {
+    return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE;
+  }
+
+  if (eligibility.requiresImportWarning) {
+    return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.REQUIRES_IMPORT_WARNING;
+  }
+
+  return PUBLIC_DELIVERY_ELIGIBILITY_STATUS.AVAILABLE;
+}
+
 function buildEligibilityResult({
   status,
   countryCode = null,
@@ -89,8 +151,22 @@ function buildEligibilityResult({
   requiresImportWarning = false,
   severity = 'block',
   message,
+  publicMessage,
   reason,
 }) {
+  const publicStatus = getPublicDeliveryEligibilityStatus({
+    status,
+    isAvailable,
+    requiresImportWarning,
+  });
+  const buyerMessage =
+    publicMessage ||
+    getPublicDeliveryEligibilityMessage({
+      status,
+      isAvailable,
+      requiresImportWarning,
+    });
+
   return {
     status,
     reason: reason || status.toLowerCase(),
@@ -103,7 +179,41 @@ function buildEligibilityResult({
     requiresImportWarning,
     severity,
     warningVersion: requiresImportWarning ? BUYER_IMPORT_WARNING_VERSION : null,
-    message,
+    label: PUBLIC_DELIVERY_ELIGIBILITY_LABELS[publicStatus] || publicStatus,
+    publicStatus,
+    message: buyerMessage,
+    publicMessage: buyerMessage,
+    internalMessage: message || buyerMessage,
+  };
+}
+
+export function serializePublicDeliveryEligibility(eligibility) {
+  if (!eligibility || typeof eligibility !== 'object') {
+    return eligibility;
+  }
+
+  const publicStatus = getPublicDeliveryEligibilityStatus(eligibility);
+  const publicMessage =
+    eligibility.publicMessage ||
+    getPublicDeliveryEligibilityMessage({
+      status: eligibility.status,
+      isAvailable: eligibility.isAvailable,
+      requiresImportWarning: eligibility.requiresImportWarning,
+    });
+
+  return {
+    status: publicStatus,
+    reason: publicStatus.toLowerCase(),
+    countryCode: eligibility.countryCode,
+    productId: eligibility.productId,
+    shopifyProductId: eligibility.shopifyProductId,
+    isAvailable: eligibility.isAvailable,
+    requiresImportWarning: eligibility.requiresImportWarning,
+    severity: eligibility.severity,
+    warningVersion: eligibility.warningVersion,
+    label: PUBLIC_DELIVERY_ELIGIBILITY_LABELS[publicStatus] || publicStatus,
+    message: publicMessage,
+    publicMessage,
   };
 }
 

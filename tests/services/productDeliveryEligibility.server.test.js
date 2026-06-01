@@ -49,6 +49,12 @@ test('product delivery eligibility returns EU warning status for approved produc
   assert.equal(body.deliveryCountry, 'FR');
   assert.equal(body.deliveryEligibility.status, 'REQUIRES_IMPORT_WARNING');
   assert.equal(body.deliveryEligibility.isAvailable, true);
+  assert.equal(body.deliveryEligibility.label, '注意確認が必要');
+  assert.equal(
+    body.deliveryEligibility.message,
+    '配送先国によって、関税・税金・通関手数料が発生する場合があります。',
+  );
+  assert.equal('internalMessage' in body.deliveryEligibility, false);
 });
 
 test('product delivery eligibility blocks rejected EU products', async () => {
@@ -67,6 +73,10 @@ test('product delivery eligibility blocks rejected EU products', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(body.deliveryEligibility.status, 'UNAVAILABLE_PRODUCT_EU_REVIEW');
-  assert.equal(body.deliveryEligibility.reason, 'eu_product_not_allowed');
+  assert.equal(body.deliveryEligibility.status, 'UNAVAILABLE');
+  assert.equal(body.deliveryEligibility.reason, 'unavailable');
+  assert.equal(body.deliveryEligibility.label, '販売できません');
+  assert.equal(body.deliveryEligibility.message, 'この配送先には販売できません。');
+  assert.equal('sellerEuStatus' in body.deliveryEligibility, false);
+  assert.equal('productEuStatus' in body.deliveryEligibility, false);
 });

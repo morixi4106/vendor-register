@@ -31,11 +31,13 @@ const STATUS_LABELS = {
   AVAILABLE: "販売可能",
   UNKNOWN_COUNTRY: "配送先未選択",
   REQUIRES_IMPORT_WARNING: "注意確認が必要",
-  UNAVAILABLE_PRODUCT_EU_REVIEW: "EU商品審査未完了",
-  UNAVAILABLE_SELLER_EU_REVIEW: "出店者EU確認未完了",
-  UNAVAILABLE_COUNTRY_BLOCKED: "販売不可国",
-  UNAVAILABLE_COUNTRY_NOT_ALLOWED: "販売対象国外",
-  UNAVAILABLE_PRODUCT_UNAPPROVED: "商品未承認",
+  UNAVAILABLE: "販売できません",
+  UNPURCHASABLE: "購入できません",
+  UNAVAILABLE_PRODUCT_EU_REVIEW: "販売できません",
+  UNAVAILABLE_SELLER_EU_REVIEW: "販売できません",
+  UNAVAILABLE_COUNTRY_BLOCKED: "販売できません",
+  UNAVAILABLE_COUNTRY_NOT_ALLOWED: "販売できません",
+  UNAVAILABLE_PRODUCT_UNAPPROVED: "購入できません",
 };
 
 export const meta = () => [
@@ -210,7 +212,7 @@ function StatusBadge({ product }) {
 
   return (
     <span className={`preview-status preview-status--${tone}`}>
-      {STATUS_LABELS[status] || status}
+      {product.deliveryEligibility?.label || STATUS_LABELS[status] || status}
     </span>
   );
 }

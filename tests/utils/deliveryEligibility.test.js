@@ -33,6 +33,11 @@ test('evaluateProductDeliveryEligibility returns warning-required for EU approve
   assert.equal(result.isAvailable, true);
   assert.equal(result.requiresImportWarning, true);
   assert.equal(result.warningVersion, 'import-responsibility-v1');
+  assert.equal(result.label, '注意確認が必要');
+  assert.equal(
+    result.message,
+    '配送先国によって、関税・税金・通関手数料が発生する場合があります。',
+  );
 });
 
 test('evaluateProductDeliveryEligibility blocks EU products before product approval', () => {
@@ -45,6 +50,12 @@ test('evaluateProductDeliveryEligibility blocks EU products before product appro
   assert.equal(result.status, DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_PRODUCT_EU_REVIEW);
   assert.equal(result.reason, 'eu_product_not_allowed');
   assert.equal(result.isAvailable, false);
+  assert.equal(result.label, '販売できません');
+  assert.equal(result.message, 'この配送先には販売できません。');
+  assert.equal(
+    result.internalMessage,
+    'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
+  );
 });
 
 test('evaluateCartDeliveryEligibility blocks mixed EU carts when any product is unavailable', () => {

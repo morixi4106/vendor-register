@@ -3,6 +3,7 @@ import {
   evaluateProductDeliveryEligibility,
   normalizeCountryCode,
   normalizeText,
+  serializePublicDeliveryEligibility,
 } from '../utils/deliveryEligibility.js';
 
 function normalizeShopifyProductGid(value) {
@@ -148,7 +149,7 @@ export function createProductDeliveryEligibilityLoader({
         shopifyProductId: product.shopifyProductId,
         vendorHandle: product.vendorStore?.vendorAuth?.handle || null,
       },
-      deliveryEligibility: eligibility,
+      deliveryEligibility: serializePublicDeliveryEligibility(eligibility),
     });
   };
 }

@@ -340,7 +340,7 @@ test('api.draft-order.checkout rejects EU checkout before product EU approval', 
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
   assert.deepEqual(payload.errors, [
-    'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
+    'この配送先には販売できません。',
   ]);
 });
 
@@ -398,7 +398,7 @@ test('api.draft-order.checkout rejects mixed EU carts when any item is not eligi
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
   assert.deepEqual(payload.errors, [
-    'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
+    'この配送先には販売できません。',
   ]);
 });
 

@@ -5,6 +5,7 @@ import {
 import {
   evaluateProductDeliveryEligibility,
   normalizeCountryCode,
+  serializePublicDeliveryEligibility,
 } from "./deliveryEligibility.js";
 
 function normalizeText(value) {
@@ -68,9 +69,11 @@ export function serializePublicVendorStorefront({
         seller,
         deliveryCountry: countryCode,
       });
+      const publicDeliveryEligibility =
+        serializePublicDeliveryEligibility(deliveryEligibility);
       const isPurchasable =
         basePurchasable &&
-        (!countryCode || deliveryEligibility.isAvailable);
+        (!countryCode || publicDeliveryEligibility.isAvailable);
 
       return {
         id: product.id,
@@ -83,7 +86,7 @@ export function serializePublicVendorStorefront({
         formattedPrice: formatPublicJpyPrice(price),
         isPurchasable,
         basePurchasable,
-        deliveryEligibility,
+        deliveryEligibility: publicDeliveryEligibility,
       };
     });
   const visibleProducts =
