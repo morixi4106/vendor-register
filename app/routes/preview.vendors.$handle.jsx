@@ -332,7 +332,7 @@ function DeliveryRestrictionModal({ product, onClose }) {
           <strong>購入できない配送先</strong>
           <CountryChips
             countries={unavailableCountries}
-            emptyText="配送先を選択すると、この商品の購入可否を確認できます。"
+            emptyText="購入できない配送先は登録されていません。"
           />
         </div>
 
@@ -344,7 +344,7 @@ function DeliveryRestrictionModal({ product, onClose }) {
         ) : null}
 
         <p className="preview-modal-note">
-          配送先を選択すると、現在の登録情報にもとづいて購入可否を確認できます。
+          配送先ごとの制限は、店舗と商品の現在の登録情報にもとづいて表示しています。
         </p>
       </section>
     </div>

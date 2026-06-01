@@ -156,7 +156,7 @@ export function getPublicDeliveryEligibilityMessage({
   requiresImportWarning = false,
 } = {}) {
   if (status === DELIVERY_ELIGIBILITY_STATUS.UNKNOWN_COUNTRY) {
-    return '配送先を選択すると、この商品を購入できるか確認できます。';
+    return '配送先によって購入可否が変わります。';
   }
 
   if (requiresImportWarning) {
@@ -260,9 +260,9 @@ export function buildDeliveryRestrictionSummary({
     : '主な販売制限なし';
   const message = hasRestrictions
     ? isAllowedCountryLimited
-      ? 'この商品は販売対象国が限定されています。配送先を選択すると購入可否を確認できます。'
-      : 'この商品は一部の配送先では購入できません。配送先を選択すると購入可否を確認できます。'
-    : '配送先を選択すると購入可否を確認できます。';
+      ? 'この商品は配送先が限定されています。購入できない配送先があります。'
+      : 'この商品は一部の配送先では購入できません。'
+    : '配送先によって購入条件が変わる場合があります。';
 
   return {
     hasRestrictions,
