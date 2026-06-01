@@ -2,6 +2,10 @@ import {
   buildVendorCollectionHandle,
   buildVendorCollectionUrl,
 } from "./vendorCollectionHandles.js";
+import {
+  evaluateProductDeliveryEligibility,
+  normalizeCountryCode,
+} from "./deliveryEligibility.js";
 
 function normalizeText(value) {
   const normalized = String(value || "").trim();
@@ -39,12 +43,56 @@ export function formatPublicJpyPrice(amount) {
   }).format(numericAmount);
 }
 
-export function serializePublicVendorStorefront({ vendor, store, products = [] }) {
+export function serializePublicVendorStorefront({
+  vendor,
+  store,
+  products = [],
+  deliveryCountry = null,
+  filterByDeliveryEligibility = false,
+}) {
   const handle = normalizeText(vendor?.handle);
 
   if (!handle || !store?.id) {
     return null;
   }
+
+  const countryCode = normalizeCountryCode(deliveryCountry);
+  const seller = vendor?.seller || null;
+  const serializedProducts = products
+    .map((product) => {
+      const price = getPublicProductDisplayPrice(product);
+      const shopDomain = normalizeShopDomain(product.shopDomain);
+      const basePurchasable = Boolean(shopDomain && price > 0);
+      const deliveryEligibility = evaluateProductDeliveryEligibility({
+        product,
+        seller,
+        deliveryCountry: countryCode,
+      });
+      const isPurchasable =
+        basePurchasable &&
+        (!countryCode || deliveryEligibility.isAvailable);
+
+      return {
+        id: product.id,
+        name: product.name,
+        description: product.description || "",
+        imageUrl: product.imageUrl || null,
+        category: product.category || null,
+        price,
+        currency: "JPY",
+        formattedPrice: formatPublicJpyPrice(price),
+        isPurchasable,
+        basePurchasable,
+        deliveryEligibility,
+      };
+    });
+  const visibleProducts =
+    filterByDeliveryEligibility && countryCode
+      ? serializedProducts.filter(
+          (product) =>
+            product.isPurchasable && product.deliveryEligibility.isAvailable,
+        )
+      : serializedProducts;
 
   return {
     vendor: {
@@ -64,21 +112,11 @@ export function serializePublicVendorStorefront({ vendor, store, products = [] }
       address: store.address || null,
       note: store.note || null,
     },
-    products: products.map((product) => {
-      const price = getPublicProductDisplayPrice(product);
-      const shopDomain = normalizeShopDomain(product.shopDomain);
-
-      return {
-        id: product.id,
-        name: product.name,
-        description: product.description || "",
-        imageUrl: product.imageUrl || null,
-        category: product.category || null,
-        price,
-        currency: "JPY",
-        formattedPrice: formatPublicJpyPrice(price),
-        isPurchasable: Boolean(shopDomain && price > 0),
-      };
-    }),
+    deliveryCountry: countryCode,
+    deliveryCountrySelected: Boolean(countryCode),
+    productCount: serializedProducts.length,
+    visibleProductCount: visibleProducts.length,
+    hiddenProductCount: serializedProducts.length - visibleProducts.length,
+    products: visibleProducts,
   };
 }

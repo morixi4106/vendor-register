@@ -1,11 +1,9 @@
 import { Form, Link, useActionData, useLoaderData, useNavigation } from '@remix-run/react';
 import { useMemo, useState } from 'react';
-
-const EU_COUNTRY_CODES = new Set([
-  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR',
-  'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK',
-  'SI', 'ES', 'SE',
-]);
+import {
+  evaluateProductDeliveryEligibility,
+  isEuCountry,
+} from '../utils/deliveryEligibility.js';
 
 function hiddenVendorStorefrontResponse() {
   throw new Response('Not Found', {
@@ -31,7 +29,7 @@ function formatMoney(amount, currencyCode = 'JPY') {
 }
 
 export default function VendorStorefrontPage() {
-  const { store, products } = useLoaderData();
+  const { vendor, store, products } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === 'submitting';
@@ -64,9 +62,36 @@ export default function VendorStorefrontPage() {
       }, 0),
     [quantities],
   );
-  const requiresImportWarning = EU_COUNTRY_CODES.has(
-    String(shippingAddress.country || '').trim().toUpperCase(),
+  const deliveryCountry = String(shippingAddress.country || '').trim().toUpperCase();
+  const productEligibilityById = useMemo(
+    () =>
+      Object.fromEntries(
+        products.map((product) => [
+          product.id,
+          evaluateProductDeliveryEligibility({
+            product,
+            vendorContext: { vendor },
+            deliveryCountry,
+          }),
+        ]),
+      ),
+    [deliveryCountry, products, vendor],
   );
+  const selectedProducts = useMemo(
+    () =>
+      products.filter((product) => {
+        const numeric = Number(quantities[product.id]);
+        return Number.isInteger(numeric) && numeric > 0;
+      }),
+    [products, quantities],
+  );
+  const selectedUnavailableProducts = selectedProducts.filter(
+    (product) => !productEligibilityById[product.id]?.isAvailable,
+  );
+  const requiresImportWarning =
+    selectedProducts.some(
+      (product) => productEligibilityById[product.id]?.requiresImportWarning,
+    ) || (selectedCount > 0 && isEuCountry(deliveryCountry));
 
   return (
     <div className="storefront-page">
@@ -94,6 +119,9 @@ export default function VendorStorefrontPage() {
         .product-description{margin:0;color:#6a5446;font-size:14px;line-height:1.7;}
         .product-side{display:grid;align-content:space-between;justify-items:end;gap:12px;min-width:110px;}
         .product-price{font-size:20px;font-weight:900;}
+        .product-eligibility{margin-top:10px;font-size:12px;line-height:1.6;color:#6a5446;font-weight:700;}
+        .product-eligibility--block{color:#9d1d1d;}
+        .product-eligibility--warning{color:#7c2d12;}
         .quantity-label{display:grid;gap:6px;justify-items:end;font-size:12px;color:#6a5446;font-weight:700;}
         .quantity-input{width:84px;height:44px;border-radius:14px;border:1px solid rgba(95,72,52,0.18);background:#fff;text-align:center;font-size:18px;font-weight:800;color:#221a15;}
         .product-disabled{font-size:12px;color:#9d1d1d;font-weight:700;}
@@ -138,47 +166,60 @@ export default function VendorStorefrontPage() {
             </p>
 
             <div className="product-list">
-              {products.map((product) => (
-                <article className="product-card" key={product.id}>
-                  {product.imageUrl ? (
-                    <img className="product-image" src={product.imageUrl} alt={product.name} />
-                  ) : (
-                    <div className="product-image-placeholder">NO IMAGE</div>
-                  )}
+              {products.map((product) => {
+                const eligibility = productEligibilityById[product.id];
+                const canSelectProduct =
+                  product.isPurchasable && eligibility?.isAvailable;
 
-                  <div>
-                    <h3 className="product-title">{product.name}</h3>
-                    <p className="product-description">
-                      {product.description || '商品説明はありません。'}
-                    </p>
-                  </div>
+                return (
+                  <article className="product-card" key={product.id}>
+                    {product.imageUrl ? (
+                      <img className="product-image" src={product.imageUrl} alt={product.name} />
+                    ) : (
+                      <div className="product-image-placeholder">NO IMAGE</div>
+                    )}
 
-                  <div className="product-side">
-                    <div className="product-price">{formatMoney(product.price)}</div>
-                    <label className="quantity-label">
-                      数量
-                      <input
-                        className="quantity-input"
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        name={`quantity:${product.id}`}
-                        value={quantities[product.id] || '0'}
-                        onChange={(event) =>
-                          setQuantities((current) => ({
-                            ...current,
-                            [product.id]: event.target.value,
-                          }))
-                        }
-                        disabled={!product.isPurchasable || isSubmitting}
-                      />
-                    </label>
-                    {!product.isPurchasable ? (
-                      <div className="product-disabled">現在この商品は購入できません。</div>
-                    ) : null}
-                  </div>
-                </article>
-              ))}
+                    <div>
+                      <h3 className="product-title">{product.name}</h3>
+                      <p className="product-description">
+                        {product.description || '商品説明はありません。'}
+                      </p>
+                      {eligibility?.message ? (
+                        <div
+                          className={`product-eligibility product-eligibility--${eligibility.severity}`}
+                        >
+                          {eligibility.message}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="product-side">
+                      <div className="product-price">{formatMoney(product.price)}</div>
+                      <label className="quantity-label">
+                        数量
+                        <input
+                          className="quantity-input"
+                          type="number"
+                          min="0"
+                          inputMode="numeric"
+                          name={`quantity:${product.id}`}
+                          value={quantities[product.id] || '0'}
+                          onChange={(event) =>
+                            setQuantities((current) => ({
+                              ...current,
+                              [product.id]: event.target.value,
+                            }))
+                          }
+                          disabled={!canSelectProduct || isSubmitting}
+                        />
+                      </label>
+                      {!canSelectProduct ? (
+                        <div className="product-disabled">この配送先には購入できません。</div>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
 
@@ -202,6 +243,11 @@ export default function VendorStorefrontPage() {
                 {actionData?.fieldErrors?.cart ? (
                   <div className="field-error" style={{ marginTop: '8px' }}>
                     {actionData.fieldErrors.cart}
+                  </div>
+                ) : null}
+                {selectedUnavailableProducts.length > 0 ? (
+                  <div className="field-error" style={{ marginTop: '8px' }}>
+                    選択中の商品に、この配送先国へ販売できない商品があります。
                   </div>
                 ) : null}
               </div>
@@ -377,12 +423,13 @@ export default function VendorStorefrontPage() {
                     name="country"
                     placeholder="JP"
                     value={shippingAddress.country}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setShippingAddress((current) => ({
                         ...current,
                         country: event.target.value,
-                      }))
-                    }
+                      }));
+                      setImportResponsibilityAccepted(false);
+                    }}
                   />
                   {actionData?.fieldErrors?.country ? (
                     <span className="field-error">{actionData.fieldErrors.country}</span>
@@ -404,7 +451,9 @@ export default function VendorStorefrontPage() {
                 <div className="import-warning">
                   <strong>配送先国と輸入条件の確認</strong>
                   <span>
-                    この商品は国際配送商品です。購入者は配送先国における輸入制限、関税、税金、通関手続き、受取可否を確認する責任を負います。ただし、商品に欠陥がある場合、または適用法により購入者に認められる権利は、この確認により制限されません。
+                    関税、輸入VAT、通関手数料、配送会社の立替手数料が発生する場合があります。
+                    税関判断により、配送遅延、返送、通関拒否が発生する場合があります。
+                    返品・撤回・保証など、法令により認められる権利はこの確認により影響を受けません。
                   </span>
                   <label className="warning-check">
                     <input
@@ -413,7 +462,7 @@ export default function VendorStorefrontPage() {
                       checked={importResponsibilityAccepted}
                       onChange={(event) => setImportResponsibilityAccepted(event.target.checked)}
                     />
-                    配送先国と輸入条件を確認しました
+                    上記を確認しました
                   </label>
                   {actionData?.fieldErrors?.importResponsibility ? (
                     <span className="field-error">
@@ -423,7 +472,11 @@ export default function VendorStorefrontPage() {
                 </div>
               ) : null}
 
-              <button className="checkout-submit" type="submit" disabled={isSubmitting}>
+              <button
+                className="checkout-submit"
+                type="submit"
+                disabled={isSubmitting || selectedUnavailableProducts.length > 0}
+              >
                 {isSubmitting ? '決済画面を準備中...' : '送料つきで決済へ進む'}
               </button>
             </Form>

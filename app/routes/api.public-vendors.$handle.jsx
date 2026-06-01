@@ -23,8 +23,13 @@ function normalizeHandle(value) {
   return normalized || null;
 }
 
-export const loader = async ({ params }) => {
+export const loader = async ({ params, request }) => {
   const handle = normalizeHandle(params.handle);
+  const url = new URL(request.url);
+  const deliveryCountry = String(url.searchParams.get("deliveryCountry") || "").trim();
+  const filterByDeliveryEligibility =
+    url.searchParams.get("filterEligible") === "1" ||
+    url.searchParams.get("filterByDeliveryEligibility") === "1";
 
   if (!handle) {
     return jsonResponse({ ok: false, error: "Vendor handle is required." }, { status: 400 });
@@ -45,6 +50,11 @@ export const loader = async ({ params }) => {
           category: true,
           address: true,
           note: true,
+        },
+      },
+      seller: {
+        select: {
+          euSellerStatus: true,
         },
       },
     },
@@ -69,6 +79,9 @@ export const loader = async ({ params }) => {
       price: true,
       calculatedPrice: true,
       shopDomain: true,
+      approvalStatus: true,
+      productEuStatus: true,
+      countryPolicy: true,
     },
   });
 
@@ -76,6 +89,8 @@ export const loader = async ({ params }) => {
     vendor,
     store: vendor.vendorStore,
     products,
+    deliveryCountry,
+    filterByDeliveryEligibility,
   });
 
   if (!storefront) {

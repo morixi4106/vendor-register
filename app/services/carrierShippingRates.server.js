@@ -10,46 +10,16 @@ import {
 } from './shippingDiagnostics.server.js';
 import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
 import prisma from '../db.server.js';
+import {
+  EU_COUNTRY_CODES,
+  evaluateCartDeliveryEligibility,
+} from '../utils/deliveryEligibility.js';
 
 const CARRIER_SERVICE_NAME = 'Shipping V2';
 const CARRIER_SERVICE_DISPLAY_NAME = '地域別配送';
 const CARRIER_SERVICE_CODE = 'shipping_v2';
 const CARRIER_SERVICE_DESCRIPTION = '配送先に基づく送料';
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
-const EU_COUNTRY_CODES = new Set([
-  'AT',
-  'BE',
-  'BG',
-  'HR',
-  'CY',
-  'CZ',
-  'DK',
-  'EE',
-  'FI',
-  'FR',
-  'DE',
-  'GR',
-  'HU',
-  'IE',
-  'IT',
-  'LV',
-  'LT',
-  'LU',
-  'MT',
-  'NL',
-  'PL',
-  'PT',
-  'RO',
-  'SK',
-  'SI',
-  'ES',
-  'SE',
-]);
-const EU_SELLER_ALLOWED_STATUSES = new Set([
-  'ALLOWED_UNDER_SMALL_PLATFORM_POLICY',
-  'FULL_KYBC_APPROVED',
-]);
-const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
 const CARRIER_SERVICES_QUERY = `#graphql
   query ShippingV2CarrierServices {
@@ -167,14 +137,6 @@ function normalizeShopifyProductGid(value) {
   return normalized;
 }
 
-function normalizeCountryList(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.map(normalizeCountryCode).filter(Boolean);
-}
-
 function getCarrierProductIdCandidates(lines) {
   const candidates = new Set();
 
@@ -192,6 +154,34 @@ function getCarrierProductIdCandidates(lines) {
   }
 
   return Array.from(candidates);
+}
+
+function getCarrierProductReferences(lines) {
+  return (Array.isArray(lines) ? lines : [])
+    .map((line) => {
+      const productId = normalizeText(line?.productId);
+      const productGid = normalizeShopifyProductGid(productId);
+
+      if (!productId && !productGid) {
+        return null;
+      }
+
+      return {
+        productId,
+        productGid,
+      };
+    })
+    .filter(Boolean);
+}
+
+function productMatchesCarrierReference(product, reference) {
+  const shopifyProductId = normalizeText(product?.shopifyProductId);
+
+  return Boolean(
+    shopifyProductId &&
+      (shopifyProductId === reference.productId ||
+        shopifyProductId === reference.productGid),
+  );
 }
 
 export async function validateCarrierEuDeliveryPolicy({
@@ -215,11 +205,12 @@ export async function validateCarrierEuDeliveryPolicy({
     ? quoteRequest.orderLike.lines
     : [];
   const productIdCandidates = getCarrierProductIdCandidates(lines);
+  const productReferences = getCarrierProductReferences(lines);
 
-  if (productIdCandidates.length === 0) {
+  if (productReferences.length === 0) {
     return {
-      ok: true,
-      reason: null,
+      ok: false,
+      reason: 'missing_product_reference',
       checked: true,
       countryCode,
       productCount: 0,
@@ -257,63 +248,52 @@ export async function validateCarrierEuDeliveryPolicy({
     },
   });
 
-  for (const product of products) {
-    const sellerEuStatus = normalizeText(
-      product.vendorStore?.vendorAuth?.seller?.euSellerStatus,
-    )?.toUpperCase();
+  const missingReference = productReferences.find(
+    (reference) =>
+      !products.some((product) => productMatchesCarrierReference(product, reference)),
+  );
 
-    if (!EU_SELLER_ALLOWED_STATUSES.has(sellerEuStatus)) {
+  if (missingReference) {
+    return {
+      ok: false,
+      reason: 'unmanaged_product',
+      countryCode,
+      checked: true,
+      productId: missingReference.productId,
+      shopifyProductId: missingReference.productGid,
+      productCount: products.length,
+    };
+  }
+
+  const cartPolicy = evaluateCartDeliveryEligibility({
+    products,
+    deliveryCountry: countryCode,
+    importResponsibilityAccepted: true,
+  });
+
+  if (!cartPolicy.ok) {
+    const blocker = cartPolicy.blocker;
+
+    if (blocker) {
       return {
         ok: false,
-        reason: 'eu_seller_not_allowed',
+        reason: blocker.reason,
         countryCode,
-        productId: product.id,
-        shopifyProductId: product.shopifyProductId,
-        sellerEuStatus: sellerEuStatus || 'DISABLED',
+        productId: blocker.productId,
+        shopifyProductId: blocker.shopifyProductId,
+        sellerEuStatus: blocker.sellerEuStatus || null,
+        productEuStatus: blocker.productEuStatus || null,
+        productCount: products.length,
       };
     }
 
-    if (
-      product.approvalStatus !== 'approved' ||
-      !EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus || 'DISABLED')
-    ) {
-      return {
-        ok: false,
-        reason: 'eu_product_not_allowed',
-        countryCode,
-        productId: product.id,
-        shopifyProductId: product.shopifyProductId,
-        productEuStatus: product.productEuStatus || 'DISABLED',
-        approvalStatus: product.approvalStatus || null,
-      };
-    }
-
-    const blockedCountries = normalizeCountryList(
-      product.countryPolicy?.blockedCountries,
-    );
-    const allowedCountries = normalizeCountryList(
-      product.countryPolicy?.allowedCountries,
-    );
-
-    if (blockedCountries.includes(countryCode)) {
-      return {
-        ok: false,
-        reason: 'country_blocked',
-        countryCode,
-        productId: product.id,
-        shopifyProductId: product.shopifyProductId,
-      };
-    }
-
-    if (allowedCountries.length > 0 && !allowedCountries.includes(countryCode)) {
-      return {
-        ok: false,
-        reason: 'country_not_allowed',
-        countryCode,
-        productId: product.id,
-        shopifyProductId: product.shopifyProductId,
-      };
-    }
+    return {
+      ok: false,
+      reason: cartPolicy.reason,
+      countryCode,
+      checked: true,
+      productCount: products.length,
+    };
   }
 
   return {

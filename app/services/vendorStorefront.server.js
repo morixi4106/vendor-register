@@ -3,6 +3,10 @@ import { json, redirect } from '@remix-run/node';
 import prisma from '../db.server.js';
 import { draftOrderCheckout } from './draftOrderCheckout.server.js';
 import { shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
+import {
+  BUYER_IMPORT_WARNING_VERSION,
+  evaluateCartDeliveryEligibility,
+} from '../utils/deliveryEligibility.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -21,41 +25,6 @@ const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
-const BUYER_IMPORT_WARNING_VERSION = 'import-responsibility-v1';
-const EU_COUNTRY_CODES = new Set([
-  'AT',
-  'BE',
-  'BG',
-  'HR',
-  'CY',
-  'CZ',
-  'DK',
-  'EE',
-  'FI',
-  'FR',
-  'DE',
-  'GR',
-  'HU',
-  'IE',
-  'IT',
-  'LV',
-  'LT',
-  'LU',
-  'MT',
-  'NL',
-  'PL',
-  'PT',
-  'RO',
-  'SK',
-  'SI',
-  'ES',
-  'SE',
-]);
-const EU_SELLER_ALLOWED_STATUSES = new Set([
-  'ALLOWED_UNDER_SMALL_PLATFORM_POLICY',
-  'FULL_KYBC_APPROVED',
-]);
-const EU_PRODUCT_ALLOWED_STATUSES = new Set(['APPROVED_LOW_RISK']);
 
 const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
   query ProductForDraftOrderCheckout($id: ID!) {
@@ -236,104 +205,28 @@ function buildCheckoutMetadata(vendorContext, checkoutSource = PUBLIC_CHECKOUT_S
   };
 }
 
-function normalizeCountryList(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.map(normalizeCountryCode).filter(Boolean);
-}
-
 function evaluateCheckoutCountryPolicy({
   vendorContext,
   products,
   shippingCountry,
   importResponsibilityAccepted,
 }) {
-  const countryCode = normalizeCountryCode(shippingCountry);
+  const result = evaluateCartDeliveryEligibility({
+    vendorContext,
+    products,
+    deliveryCountry: shippingCountry,
+    importResponsibilityAccepted,
+  });
 
-  if (!countryCode || !EU_COUNTRY_CODES.has(countryCode)) {
-    return {
-      ok: true,
-      requiresWarning: false,
+  if (result.acceptance) {
+    result.acceptance.metadataJson = {
+      sellerId: vendorContext?.vendor?.sellerId || null,
+      vendorId: vendorContext?.vendor?.id || null,
+      vendorHandle: vendorContext?.vendor?.handle || null,
     };
   }
 
-  const sellerEuStatus =
-    normalizeText(vendorContext?.vendor?.euSellerStatus).toUpperCase() ||
-    'DISABLED';
-
-  if (!EU_SELLER_ALLOWED_STATUSES.has(sellerEuStatus)) {
-    return {
-      ok: false,
-      error:
-        'この出店者はEU向け販売の確認が完了していないため、指定国には販売できません。',
-      reason: 'eu_seller_not_allowed',
-    };
-  }
-
-  const blockedProduct = products.find(
-    (product) => !EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus || 'DISABLED'),
-  );
-
-  if (blockedProduct) {
-    return {
-      ok: false,
-      error:
-        '選択した商品はEU向け販売の審査が完了していないため、指定国には販売できません。',
-      reason: 'eu_product_not_allowed',
-      productId: blockedProduct.id,
-    };
-  }
-
-  for (const product of products) {
-    const policy = product.countryPolicy;
-    const blockedCountries = normalizeCountryList(policy?.blockedCountries);
-    const allowedCountries = normalizeCountryList(policy?.allowedCountries);
-
-    if (blockedCountries.includes(countryCode)) {
-      return {
-        ok: false,
-        error: '選択した商品は指定国には販売できません。',
-        reason: 'country_blocked',
-        productId: product.id,
-      };
-    }
-
-    if (allowedCountries.length > 0 && !allowedCountries.includes(countryCode)) {
-      return {
-        ok: false,
-        error: '選択した商品は指定国には販売できません。',
-        reason: 'country_not_allowed',
-        productId: product.id,
-      };
-    }
-  }
-
-  if (!importResponsibilityAccepted) {
-    return {
-      ok: false,
-      error: '配送先国と輸入条件の確認に同意してください。',
-      reason: 'buyer_warning_required',
-    };
-  }
-
-  return {
-    ok: true,
-    requiresWarning: true,
-    acceptance: {
-      selectedCountry: countryCode,
-      shippingCountry: countryCode,
-      productIds: products.map((product) => product.id).filter(Boolean),
-      warningVersion: BUYER_IMPORT_WARNING_VERSION,
-      importResponsibilityAccepted: true,
-      metadataJson: {
-        sellerId: vendorContext?.vendor?.sellerId || null,
-        vendorId: vendorContext?.vendor?.id || null,
-        vendorHandle: vendorContext?.vendor?.handle || null,
-      },
-    },
-  };
+  return result;
 }
 
 function buildCheckoutCustomAttributes(vendorContext, countryPolicy) {
@@ -567,7 +460,9 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
         price,
         shopDomain,
         shopifyProductId: normalizeText(product.shopifyProductId),
+        approvalStatus: product.approvalStatus || 'approved',
         productEuStatus: product.productEuStatus || 'DISABLED',
+        countryPolicy: product.countryPolicy || null,
         euSaleRequested: Boolean(product.euSaleRequested),
         isPurchasable: Boolean(shopDomain && price > 0),
       };

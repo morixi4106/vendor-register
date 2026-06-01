@@ -340,7 +340,65 @@ test('api.draft-order.checkout rejects EU checkout before product EU approval', 
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
   assert.deepEqual(payload.errors, [
-    '選択した商品はEU向け販売の審査が完了していないため、指定国には販売できません。',
+    'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
+  ]);
+});
+
+test('api.draft-order.checkout rejects mixed EU carts when any item is not eligible', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: {
+        id: 'seller_1',
+        euSellerStatus: 'FULL_KYBC_APPROVED',
+      },
+      products: [
+        {
+          ...createProducts()[0],
+          productEuStatus: 'APPROVED_LOW_RISK',
+        },
+        {
+          ...createProducts()[0],
+          id: 'prod_eu_blocked',
+          name: 'Blocked EU Bottle',
+          shopifyProductId: 'gid://shopify/Product/4',
+          productEuStatus: 'DISABLED',
+        },
+      ],
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        items: [
+          { productId: 'prod_1', quantity: 1 },
+          { productId: 'prod_eu_blocked', quantity: 1 },
+        ],
+        shippingAddress: {
+          ...createValidBody().shippingAddress,
+          country: 'FR',
+        },
+        importResponsibilityAccepted: true,
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.deepEqual(payload.errors, [
+    'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
   ]);
 });
 
