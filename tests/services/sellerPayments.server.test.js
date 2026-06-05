@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   approvePayoutRun,
   calculateSellerPayoutableLedgerBalance,
+  calculateSellerSalesCreditAvailability,
+  authorizeSalesCreditOffset,
+  captureSalesCreditOffset,
   createCheckoutOrder,
   createCheckoutOrderPaymentIntent,
   createConnectedAccountPayout,
@@ -19,6 +22,8 @@ import {
   processShopifyOrderCancelledSettlement,
   processShopifyOrderPaidSettlement,
   processShopifyRefundSettlement,
+  releaseSalesCreditOffset,
+  reverseSalesCreditOffsetForRefund,
   resetSellerStripeAccountForRecreate,
   syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
@@ -2118,6 +2123,318 @@ const VERIFIED_PAYOUT_SELLER_FIELDS = {
     accountSummary: "Bank transfer destination",
   },
 };
+
+test("calculateSellerSalesCreditAvailability keeps immature sales reserved with a buffer", () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const summary = calculateSellerSalesCreditAvailability(
+    [
+      {
+        entryType: "shopify_order_paid",
+        amount: 30000,
+        occurredAt: "2026-04-01T00:00:00.000Z",
+      },
+      {
+        entryType: "shopify_order_paid",
+        amount: 10000,
+        occurredAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+    {
+      now,
+      holdDays: 45,
+      riskBufferBps: 1000,
+    },
+  );
+
+  assert.equal(summary.maturedSalesAmount, 30000);
+  assert.equal(summary.pendingSalesAmount, 10000);
+  assert.equal(summary.riskBufferAmount, 1000);
+  assert.equal(summary.pendingRiskReserveAmount, 11000);
+  assert.equal(summary.availableAmount, 19000);
+});
+
+test("calculateSellerSalesCreditAvailability subtracts offset locks and payout locks", () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const summary = calculateSellerSalesCreditAvailability(
+    [
+      {
+        entryType: "shopify_order_paid",
+        amount: 30000,
+        occurredAt: "2026-04-01T00:00:00.000Z",
+      },
+      {
+        entryType: "refund",
+        amount: 2000,
+        occurredAt: "2026-05-01T00:00:00.000Z",
+      },
+    ],
+    {
+      now,
+      offsetLocks: [
+        {
+          status: "authorized",
+          amount: 5000,
+          expiresAt: "2026-06-06T00:15:00.000Z",
+        },
+        {
+          status: "authorized",
+          amount: 9000,
+          expiresAt: "2026-06-05T23:59:00.000Z",
+        },
+      ],
+      payoutRuns: [
+        {
+          status: "draft",
+          amount: 7000,
+        },
+        {
+          status: "failed",
+          amount: 8000,
+        },
+      ],
+    },
+  );
+
+  assert.equal(summary.offsetLockedAmount, 5000);
+  assert.equal(summary.payoutLockedAmount, 7000);
+  assert.equal(summary.deductionAmount, 2000);
+  assert.equal(summary.availableAmount, 16000);
+});
+
+test("authorizeSalesCreditOffset refuses sellers before first payout verification", async () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const fakePrisma = {
+    seller: {
+      async findUnique({ where }) {
+        assert.equal(where.id, "seller_unverified");
+        return {
+          id: "seller_unverified",
+          status: "active",
+          phoneVerifiedAt: null,
+          documentVerificationStatus: "NONE",
+          verificationNameMatched: false,
+          payoutNameMatched: false,
+          payoutRecipient: null,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [
+          {
+            entryType: "shopify_order_paid",
+            amount: 20000,
+            occurredAt: "2026-04-01T00:00:00.000Z",
+          },
+        ];
+      },
+    },
+    salesCreditOffset: {
+      async findMany() {
+        return [];
+      },
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        throw new Error("unverified seller should not create an offset");
+      },
+    },
+    payoutRun: {
+      async findMany() {
+        return [];
+      },
+    },
+  };
+
+  const result = await authorizeSalesCreditOffset(
+    {
+      sellerId: "seller_unverified",
+      amount: 1000,
+      currencyCode: "jpy",
+      idempotencyKey: "unverified-sales-credit",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "seller_verification_required");
+  assert.equal(result.summary.availableAmount, 20000);
+});
+
+test("sales credit offset authorization, capture, release, and refund reversal use offset ledger entries", async () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const state = {
+    offsets: [],
+    ledgerEntries: [
+      {
+        entryType: "shopify_order_paid",
+        amount: 20000,
+        occurredAt: "2026-04-01T00:00:00.000Z",
+      },
+    ],
+  };
+  const fakePrisma = {
+    seller: {
+      async findUnique({ where }) {
+        assert.equal(where.id, "seller_1");
+        return {
+          id: "seller_1",
+          status: "active",
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return state.ledgerEntries.map((entry) => ({ ...entry }));
+      },
+      async findFirst({ where }) {
+        return (
+          state.ledgerEntries.find(
+            (entry) =>
+              entry.entryType === where.entryType &&
+              entry.stripeObjectId === where.stripeObjectId,
+          ) || null
+        );
+      },
+      async create({ data }) {
+        const entry = {
+          id: `ledger_${state.ledgerEntries.length + 1}`,
+          ...data,
+        };
+        state.ledgerEntries.push(entry);
+        return entry;
+      },
+    },
+    salesCreditOffset: {
+      async findMany() {
+        return state.offsets.map((offset) => ({ ...offset }));
+      },
+      async findUnique({ where }) {
+        if (where.idempotencyKey) {
+          return (
+            state.offsets.find(
+              (offset) => offset.idempotencyKey === where.idempotencyKey,
+            ) || null
+          );
+        }
+
+        return state.offsets.find((offset) => offset.id === where.id) || null;
+      },
+      async create({ data }) {
+        const offset = {
+          id: `offset_${state.offsets.length + 1}`,
+          createdAt: now,
+          updatedAt: now,
+          ...data,
+        };
+        state.offsets.push(offset);
+        return offset;
+      },
+      async update({ where, data }) {
+        const offset = state.offsets.find((item) => item.id === where.id);
+        Object.assign(offset, data, {
+          updatedAt: now,
+        });
+        return { ...offset };
+      },
+    },
+    payoutRun: {
+      async findMany() {
+        return [];
+      },
+    },
+  };
+
+  const authorized = await authorizeSalesCreditOffset(
+    {
+      sellerId: "seller_1",
+      amount: 5000,
+      currencyCode: "jpy",
+      checkoutReference: "checkout_1",
+      idempotencyKey: "sales-credit-checkout-1",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(authorized.ok, true);
+  assert.equal(authorized.offset.status, "authorized");
+  assert.equal(authorized.offset.amount, 5000);
+
+  const released = await releaseSalesCreditOffset(
+    {
+      offsetId: authorized.offset.id,
+      reason: "checkout_cancelled",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(released.ok, true);
+  assert.equal(released.offset.status, "released");
+
+  const secondAuthorized = await authorizeSalesCreditOffset(
+    {
+      sellerId: "seller_1",
+      amount: 4000,
+      currencyCode: "jpy",
+      checkoutReference: "checkout_2",
+      idempotencyKey: "sales-credit-checkout-2",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(secondAuthorized.ok, true);
+
+  const captured = await captureSalesCreditOffset(
+    {
+      offsetId: secondAuthorized.offset.id,
+      orderId: "order_1",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(captured.ok, true);
+  assert.equal(captured.offset.status, "captured");
+  assert.equal(captured.ledgerEntry.entryType, "sales_credit_offset_captured");
+  assert.equal(captured.ledgerEntry.direction, "debit");
+  assert.equal(captured.ledgerEntry.amount, 4000);
+
+  const reversed = await reverseSalesCreditOffsetForRefund(
+    {
+      offsetId: secondAuthorized.offset.id,
+      orderId: "order_1",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(reversed.ok, true);
+  assert.equal(reversed.offset.status, "refunded");
+  assert.equal(
+    reversed.ledgerEntry.entryType,
+    "sales_credit_offset_refund_reversal",
+  );
+  assert.equal(reversed.ledgerEntry.direction, "credit");
+  assert.equal(reversed.ledgerEntry.amount, 4000);
+});
 
 test("createPayoutRun requires first payout verification before settlement", async () => {
   let ledgerReadCalled = false;

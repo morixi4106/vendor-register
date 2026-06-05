@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import isoCountries from "i18n-iso-countries";
 
 import prisma from "../db.server.js";
+import { formatMoney } from "../utils/money.js";
 
 const require = createRequire(import.meta.url);
 const jaLocale = require("i18n-iso-countries/langs/ja.json");
@@ -61,6 +62,14 @@ export const PAYOUT_TRANSFER_METHODS = [
   "stripe_connect_payout",
 ];
 
+export const SALES_CREDIT_OFFSET_STATUSES = [
+  "authorized",
+  "captured",
+  "released",
+  "refunded",
+  "expired",
+];
+
 export const ORDER_STATUSES = [
   "draft",
   "payment_intent_created",
@@ -85,10 +94,15 @@ export const LEDGER_ENTRY_TYPES = [
   "payout_created",
   "payout_paid",
   "payout_failed",
+  "sales_credit_offset_captured",
+  "sales_credit_offset_refund_reversal",
 ];
 
 const DEFAULT_PLATFORM_FEE_BPS = 1000;
 const DEFAULT_ORDER_CURRENCY = "jpy";
+export const DEFAULT_SALES_CREDIT_HOLD_DAYS = 45;
+export const DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS = 1000;
+const DEFAULT_SALES_CREDIT_LOCK_MINUTES = 30;
 const SELLER_REVIEW_REASON_PAYOUT_FAILED =
   "payout_external_account_update_required";
 const SELLER_REVIEW_REASON_EXTERNAL_ACCOUNT_UPDATED =
@@ -167,6 +181,22 @@ function clampInteger(value, fallback = 0) {
     return fallback;
   }
   return Math.max(0, Math.round(numeric));
+}
+
+function addMinutes(date, minutes) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function subtractDays(date, days) {
+  return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+async function runInTransaction(prismaClient, callback) {
+  if (typeof prismaClient?.$transaction === "function") {
+    return prismaClient.$transaction(callback);
+  }
+
+  return callback(prismaClient);
 }
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -1832,6 +1862,22 @@ export async function getSellerPaymentsPageData(
     throw new Error("VENDOR_NOT_FOUND");
   }
 
+  const salesCreditSummary = vendor.seller
+    ? await getSellerSalesCreditSummary(
+        {
+          sellerId: vendor.seller.id,
+          currencyCode: DEFAULT_ORDER_CURRENCY,
+        },
+        { prismaClient },
+      )
+    : await getSellerSalesCreditSummary(
+        {
+          sellerId: null,
+          currencyCode: DEFAULT_ORDER_CURRENCY,
+        },
+        { prismaClient },
+      );
+
   return {
     vendor: {
       id: vendor.id,
@@ -1868,6 +1914,7 @@ export async function getSellerPaymentsPageData(
       vendor.seller?.payoutRecipient,
     ),
     payoutProvider: getConfiguredSellerPayoutProvider(),
+    salesCreditSummary,
   };
 }
 
@@ -4045,7 +4092,25 @@ const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
   dispute_created: -1,
   dispute_funds_reinstated: 1,
   payout_paid: -1,
+  sales_credit_offset_captured: -1,
+  sales_credit_offset_refund_reversal: 1,
 };
+
+const SELLER_SALES_CREDIT_ENTRY_SIGNS = {
+  ...SELLER_PAYOUT_LEDGER_ENTRY_SIGNS,
+};
+
+const IMMEDIATE_MATURE_SALES_CREDIT_ENTRY_TYPES = new Set([
+  "sales_credit_offset_refund_reversal",
+  "dispute_funds_reinstated",
+]);
+
+const SALES_CREDIT_OFFSET_LOCK_STATUSES = new Set(["authorized"]);
+const SALES_CREDIT_PAYOUT_LOCK_STATUSES = new Set([
+  "draft",
+  "approved",
+  "processing",
+]);
 
 export function calculateSellerPayoutableLedgerBalance(entries = []) {
   if (!Array.isArray(entries)) {
@@ -4061,6 +4126,582 @@ export function calculateSellerPayoutableLedgerBalance(entries = []) {
 
     return total + sign * clampInteger(entry?.amount);
   }, 0);
+}
+
+function isActiveSalesCreditOffsetLock(offset, now) {
+  if (!SALES_CREDIT_OFFSET_LOCK_STATUSES.has(offset?.status)) {
+    return false;
+  }
+
+  if (!offset?.expiresAt) {
+    return true;
+  }
+
+  return new Date(offset.expiresAt).getTime() > now.getTime();
+}
+
+function sumActiveSalesCreditOffsetLocks(offsets = [], now = new Date()) {
+  if (!Array.isArray(offsets)) {
+    return 0;
+  }
+
+  return offsets.reduce((total, offset) => {
+    if (!isActiveSalesCreditOffsetLock(offset, now)) {
+      return total;
+    }
+
+    return total + clampInteger(offset?.amount);
+  }, 0);
+}
+
+function sumPayoutRunLocks(payoutRuns = []) {
+  if (!Array.isArray(payoutRuns)) {
+    return 0;
+  }
+
+  return payoutRuns.reduce((total, payoutRun) => {
+    if (!SALES_CREDIT_PAYOUT_LOCK_STATUSES.has(payoutRun?.status)) {
+      return total;
+    }
+
+    return total + clampInteger(payoutRun?.amount);
+  }, 0);
+}
+
+export function calculateSellerSalesCreditAvailability(
+  entries = [],
+  {
+    offsetLocks = [],
+    payoutRuns = [],
+    now = new Date(),
+    holdDays = DEFAULT_SALES_CREDIT_HOLD_DAYS,
+    riskBufferBps = DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS,
+  } = {},
+) {
+  const normalizedNow = now instanceof Date ? now : new Date(now);
+  const effectiveNow = Number.isNaN(normalizedNow.getTime())
+    ? new Date()
+    : normalizedNow;
+  const maturityCutoff = subtractDays(effectiveNow, clampInteger(holdDays));
+  const normalizedRiskBufferBps = clampInteger(riskBufferBps);
+
+  let maturedSalesAmount = 0;
+  let pendingSalesAmount = 0;
+  let deductionAmount = 0;
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const sign = SELLER_SALES_CREDIT_ENTRY_SIGNS[entry?.entryType] || 0;
+    const amount = clampInteger(entry?.amount);
+
+    if (sign > 0) {
+      const occurredAt = entry?.occurredAt
+        ? new Date(entry.occurredAt)
+        : effectiveNow;
+      const forceMature = IMMEDIATE_MATURE_SALES_CREDIT_ENTRY_TYPES.has(
+        entry?.entryType,
+      );
+
+      if (
+        forceMature ||
+        (!Number.isNaN(occurredAt.getTime()) && occurredAt <= maturityCutoff)
+      ) {
+        maturedSalesAmount += amount;
+      } else {
+        pendingSalesAmount += amount;
+      }
+    } else if (sign < 0) {
+      deductionAmount += amount;
+    }
+  }
+
+  const riskBufferAmount = Math.ceil(
+    (pendingSalesAmount * normalizedRiskBufferBps) / 10000,
+  );
+  const pendingRiskReserveAmount = pendingSalesAmount + riskBufferAmount;
+  const offsetLockedAmount = sumActiveSalesCreditOffsetLocks(
+    offsetLocks,
+    effectiveNow,
+  );
+  const payoutLockedAmount = sumPayoutRunLocks(payoutRuns);
+  const totalLedgerBalance = calculateSellerPayoutableLedgerBalance(entries);
+  const grossAvailableAmount =
+    maturedSalesAmount -
+    deductionAmount -
+    pendingRiskReserveAmount -
+    offsetLockedAmount -
+    payoutLockedAmount;
+  const cappedByLedgerAmount =
+    totalLedgerBalance - offsetLockedAmount - payoutLockedAmount;
+  const availableAmount = Math.max(
+    0,
+    Math.min(grossAvailableAmount, cappedByLedgerAmount),
+  );
+
+  return {
+    availableAmount,
+    totalLedgerBalance,
+    maturedSalesAmount,
+    pendingSalesAmount,
+    riskBufferAmount,
+    pendingRiskReserveAmount,
+    deductionAmount,
+    offsetLockedAmount,
+    payoutLockedAmount,
+    holdDays: clampInteger(holdDays),
+    riskBufferBps: normalizedRiskBufferBps,
+    maturityCutoff,
+  };
+}
+
+function createSalesCreditSummaryLabels(summary, currencyCode) {
+  const displayCurrency = normalizeUppercase(currencyCode) || "JPY";
+
+  return {
+    availableAmountLabel: formatMoney(summary.availableAmount, displayCurrency),
+    totalLedgerBalanceLabel: formatMoney(
+      summary.totalLedgerBalance,
+      displayCurrency,
+    ),
+    maturedSalesAmountLabel: formatMoney(
+      summary.maturedSalesAmount,
+      displayCurrency,
+    ),
+    pendingSalesAmountLabel: formatMoney(
+      summary.pendingSalesAmount,
+      displayCurrency,
+    ),
+    pendingRiskReserveAmountLabel: formatMoney(
+      summary.pendingRiskReserveAmount,
+      displayCurrency,
+    ),
+    offsetLockedAmountLabel: formatMoney(
+      summary.offsetLockedAmount,
+      displayCurrency,
+    ),
+    payoutLockedAmountLabel: formatMoney(
+      summary.payoutLockedAmount,
+      displayCurrency,
+    ),
+  };
+}
+
+export async function getSellerSalesCreditSummary(
+  { sellerId, vendorId, currencyCode },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  let seller = null;
+
+  if (normalizeText(sellerId)) {
+    seller = await prismaClient.seller.findUnique({
+      where: { id: normalizeText(sellerId) },
+      include: {
+        payoutRecipient: true,
+      },
+    });
+  } else if (normalizeText(vendorId)) {
+    seller = await prismaClient.seller.findUnique({
+      where: { vendorId: normalizeText(vendorId) },
+      include: {
+        payoutRecipient: true,
+      },
+    });
+  }
+
+  if (!seller) {
+    const empty = calculateSellerSalesCreditAvailability([], { now });
+    return {
+      sellerId: null,
+      currencyCode: normalizedCurrency,
+      ...empty,
+      ...createSalesCreditSummaryLabels(empty, normalizedCurrency),
+      canUseSalesCredit: false,
+      unavailableReason: "seller_not_found",
+    };
+  }
+
+  const [entries, offsetLocks, payoutRuns] = await Promise.all([
+    prismaClient.ledgerEntry.findMany({
+      where: {
+        sellerId: seller.id,
+        currencyCode: normalizedCurrency,
+        entryType: {
+          in: Object.keys(SELLER_SALES_CREDIT_ENTRY_SIGNS),
+        },
+      },
+      select: {
+        entryType: true,
+        amount: true,
+        occurredAt: true,
+      },
+    }),
+    prismaClient.salesCreditOffset.findMany({
+      where: {
+        sellerId: seller.id,
+        currencyCode: normalizedCurrency,
+        status: {
+          in: Array.from(SALES_CREDIT_OFFSET_LOCK_STATUSES),
+        },
+      },
+      select: {
+        amount: true,
+        status: true,
+        expiresAt: true,
+      },
+    }),
+    prismaClient.payoutRun.findMany({
+      where: {
+        sellerId: seller.id,
+        currencyCode: normalizedCurrency,
+        status: {
+          in: Array.from(SALES_CREDIT_PAYOUT_LOCK_STATUSES),
+        },
+      },
+      select: {
+        amount: true,
+        status: true,
+      },
+    }),
+  ]);
+
+  const summary = calculateSellerSalesCreditAvailability(entries, {
+    offsetLocks,
+    payoutRuns,
+    now,
+  });
+  const payoutVerification = getSellerPayoutVerificationState(seller);
+  const sellerRestricted = ["restricted", "banned"].includes(seller.status);
+  const canUseSalesCredit =
+    seller.status === "active" &&
+    !sellerRestricted &&
+    payoutVerification.complete &&
+    summary.availableAmount > 0;
+  let unavailableReason = null;
+
+  if (sellerRestricted) {
+    unavailableReason = "seller_restricted";
+  } else if (seller.status !== "active") {
+    unavailableReason = "seller_not_active";
+  } else if (!payoutVerification.complete) {
+    unavailableReason = "seller_verification_required";
+  } else if (summary.availableAmount <= 0) {
+    unavailableReason = "no_available_sales_credit";
+  }
+
+  return {
+    sellerId: seller.id,
+    currencyCode: normalizedCurrency,
+    ...summary,
+    ...createSalesCreditSummaryLabels(summary, normalizedCurrency),
+    canUseSalesCredit,
+    unavailableReason,
+    payoutVerification,
+  };
+}
+
+export async function authorizeSalesCreditOffset(
+  {
+    sellerId,
+    amount,
+    currencyCode,
+    checkoutReference = null,
+    idempotencyKey = null,
+    metadataJson = null,
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedSellerId = normalizeText(sellerId);
+  const normalizedAmount = toPositiveInteger(amount);
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const normalizedIdempotencyKey = normalizeText(idempotencyKey);
+
+  if (!normalizedSellerId) {
+    return { ok: false, reason: "seller_required" };
+  }
+
+  if (normalizedAmount == null) {
+    return { ok: false, reason: "invalid_amount" };
+  }
+
+  return runInTransaction(prismaClient, async (tx) => {
+    if (normalizedIdempotencyKey) {
+      const existing = await tx.salesCreditOffset.findUnique({
+        where: { idempotencyKey: normalizedIdempotencyKey },
+      });
+
+      if (existing) {
+        return {
+          ok: true,
+          duplicate: true,
+          offset: existing,
+        };
+      }
+    }
+
+    const summary = await getSellerSalesCreditSummary(
+      {
+        sellerId: normalizedSellerId,
+        currencyCode: normalizedCurrency,
+      },
+      { prismaClient: tx, now },
+    );
+
+    if (!summary.canUseSalesCredit) {
+      return {
+        ok: false,
+        reason: summary.unavailableReason || "sales_credit_unavailable",
+        summary,
+      };
+    }
+
+    if (summary.availableAmount < normalizedAmount) {
+      return {
+        ok: false,
+        reason: "insufficient_sales_credit",
+        availableAmount: summary.availableAmount,
+        requestedAmount: normalizedAmount,
+        summary,
+      };
+    }
+
+    const offset = await tx.salesCreditOffset.create({
+      data: {
+        sellerId: normalizedSellerId,
+        amount: normalizedAmount,
+        currencyCode: normalizedCurrency,
+        status: "authorized",
+        checkoutReference: normalizeText(checkoutReference),
+        idempotencyKey: normalizedIdempotencyKey,
+        expiresAt: addMinutes(now, DEFAULT_SALES_CREDIT_LOCK_MINUTES),
+        metadataJson,
+      },
+    });
+
+    return {
+      ok: true,
+      duplicate: false,
+      offset,
+      summary,
+    };
+  });
+}
+
+export async function captureSalesCreditOffset(
+  { offsetId, orderId = null, metadataJson = null },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedOffsetId = normalizeText(offsetId);
+
+  if (!normalizedOffsetId) {
+    return { ok: false, reason: "offset_required" };
+  }
+
+  return runInTransaction(prismaClient, async (tx) => {
+    const offset = await tx.salesCreditOffset.findUnique({
+      where: { id: normalizedOffsetId },
+    });
+
+    if (!offset) {
+      return { ok: false, reason: "offset_not_found" };
+    }
+
+    if (offset.status === "captured") {
+      return { ok: true, duplicate: true, offset };
+    }
+
+    if (offset.status !== "authorized") {
+      return { ok: false, reason: "offset_not_capturable", offset };
+    }
+
+    if (offset.expiresAt && new Date(offset.expiresAt) <= now) {
+      const expired = await tx.salesCreditOffset.update({
+        where: { id: offset.id },
+        data: {
+          status: "expired",
+          releasedAt: now,
+          releaseReason: "expired",
+        },
+      });
+
+      return { ok: false, reason: "offset_expired", offset: expired };
+    }
+
+    const updated = await tx.salesCreditOffset.update({
+      where: { id: offset.id },
+      data: {
+        status: "captured",
+        capturedAt: now,
+      },
+    });
+
+    const existingLedgerEntry = await tx.ledgerEntry.findFirst({
+      where: {
+        entryType: "sales_credit_offset_captured",
+        stripeObjectId: offset.id,
+      },
+    });
+
+    const ledgerEntry =
+      existingLedgerEntry ||
+      (await createLedgerEntry(
+        {
+          sellerId: offset.sellerId,
+          orderId: normalizeText(orderId),
+          entryType: "sales_credit_offset_captured",
+          stripeObjectId: offset.id,
+          amount: offset.amount,
+          currencyCode: offset.currencyCode,
+          direction: "debit",
+          description: "Sales credit applied to purchase",
+          metadataJson: {
+            salesCreditOffsetId: offset.id,
+            checkoutReference: offset.checkoutReference,
+            ...(isPlainObject(offset.metadataJson) ? offset.metadataJson : {}),
+            ...(isPlainObject(metadataJson) ? metadataJson : {}),
+          },
+          occurredAt: now,
+        },
+        { prismaClient: tx },
+      ));
+
+    return {
+      ok: true,
+      duplicate: Boolean(existingLedgerEntry),
+      offset: updated,
+      ledgerEntry,
+    };
+  });
+}
+
+export async function releaseSalesCreditOffset(
+  { offsetId, reason = "released" },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedOffsetId = normalizeText(offsetId);
+
+  if (!normalizedOffsetId) {
+    return { ok: false, reason: "offset_required" };
+  }
+
+  const offset = await prismaClient.salesCreditOffset.findUnique({
+    where: { id: normalizedOffsetId },
+  });
+
+  if (!offset) {
+    return { ok: false, reason: "offset_not_found" };
+  }
+
+  if (offset.status !== "authorized") {
+    return {
+      ok: true,
+      duplicate: true,
+      offset,
+    };
+  }
+
+  const updated = await prismaClient.salesCreditOffset.update({
+    where: { id: offset.id },
+    data: {
+      status: "released",
+      releasedAt: now,
+      releaseReason: normalizeText(reason) || "released",
+    },
+  });
+
+  return {
+    ok: true,
+    duplicate: false,
+    offset: updated,
+  };
+}
+
+export async function reverseSalesCreditOffsetForRefund(
+  { offsetId, orderId = null, metadataJson = null },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedOffsetId = normalizeText(offsetId);
+
+  if (!normalizedOffsetId) {
+    return { ok: false, reason: "offset_required" };
+  }
+
+  return runInTransaction(prismaClient, async (tx) => {
+    const offset = await tx.salesCreditOffset.findUnique({
+      where: { id: normalizedOffsetId },
+    });
+
+    if (!offset) {
+      return { ok: false, reason: "offset_not_found" };
+    }
+
+    if (offset.status === "refunded") {
+      const existingLedgerEntry = await tx.ledgerEntry.findFirst({
+        where: {
+          entryType: "sales_credit_offset_refund_reversal",
+          stripeObjectId: offset.id,
+        },
+      });
+
+      return {
+        ok: true,
+        duplicate: true,
+        offset,
+        ledgerEntry: existingLedgerEntry || null,
+      };
+    }
+
+    if (offset.status !== "captured") {
+      return { ok: false, reason: "offset_not_refundable", offset };
+    }
+
+    const updated = await tx.salesCreditOffset.update({
+      where: { id: offset.id },
+      data: {
+        status: "refunded",
+        releasedAt: now,
+        releaseReason: "refund_reversal",
+      },
+    });
+
+    const existingLedgerEntry = await tx.ledgerEntry.findFirst({
+      where: {
+        entryType: "sales_credit_offset_refund_reversal",
+        stripeObjectId: offset.id,
+      },
+    });
+
+    const ledgerEntry =
+      existingLedgerEntry ||
+      (await createLedgerEntry(
+        {
+          sellerId: offset.sellerId,
+          orderId: normalizeText(orderId),
+          entryType: "sales_credit_offset_refund_reversal",
+          stripeObjectId: offset.id,
+          amount: offset.amount,
+          currencyCode: offset.currencyCode,
+          direction: "credit",
+          description: "Sales credit returned after refund",
+          metadataJson: {
+            salesCreditOffsetId: offset.id,
+            checkoutReference: offset.checkoutReference,
+            ...(isPlainObject(offset.metadataJson) ? offset.metadataJson : {}),
+            ...(isPlainObject(metadataJson) ? metadataJson : {}),
+          },
+          occurredAt: now,
+        },
+        { prismaClient: tx },
+      ));
+
+    return {
+      ok: true,
+      duplicate: Boolean(existingLedgerEntry),
+      offset: updated,
+      ledgerEntry,
+    };
+  });
 }
 
 export async function getSellerPayoutableLedgerBalance(

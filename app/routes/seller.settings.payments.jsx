@@ -82,6 +82,38 @@ export default function SellerPaymentsSettingsPage() {
 
       <div className="seller-payments__grid">
         <section className="seller-payments__card">
+          <h2 className="seller-payments__title">売上金</h2>
+          <p className="seller-payments__subtitle">
+            使える売上金は、返金・手数料・保留分を差し引いた後に、購入代金へ充当できる金額です。
+          </p>
+
+          <div className="seller-payments__description">
+            <Row
+              label="使える売上金"
+              value={data.salesCreditSummary?.availableAmountLabel || "¥0"}
+            />
+            <Row
+              label="確認中の売上金"
+              value={data.salesCreditSummary?.pendingSalesAmountLabel || "¥0"}
+            />
+            <Row
+              label="返金などに備えて保留"
+              value={
+                data.salesCreditSummary?.pendingRiskReserveAmountLabel || "¥0"
+              }
+            />
+            <Row
+              label="購入手続き中の売上金"
+              value={data.salesCreditSummary?.offsetLockedAmountLabel || "¥0"}
+            />
+            <Row
+              label="精算手続き中の売上金"
+              value={data.salesCreditSummary?.payoutLockedAmountLabel || "¥0"}
+            />
+          </div>
+        </section>
+
+        <section className="seller-payments__card">
           <h2 className="seller-payments__title">支払明細・精算方式</h2>
           <p className="seller-payments__subtitle">
             購入者の決済はストアのチェックアウトで処理されます。出店者への支払いは、管理者が月次精算額を確認してから実行します。

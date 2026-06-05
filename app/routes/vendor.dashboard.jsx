@@ -18,13 +18,19 @@ function badgeClass(label) {
 
 export const loader = async ({ request }) => {
   const {
-    formatMoney,
     getVendorPublicContext,
     requireVendorContext,
     serializeVendorProduct,
   } = await import("../services/vendorManagement.server");
+  const { getSellerSalesCreditSummary } = await import(
+    "../services/sellerPayments.server"
+  );
   const { vendor, store } = await requireVendorContext(request, {
     includeProducts: true,
+  });
+  const salesCreditSummary = await getSellerSalesCreditSummary({
+    vendorId: vendor.id,
+    currencyCode: "jpy",
   });
 
   const rawProducts = Array.isArray(store.products) ? store.products : [];
@@ -41,19 +47,19 @@ export const loader = async ({ request }) => {
 
   const summaryCards = [
     {
-      title: "本日の売上",
-      value: formatMoney(0, "JPY"),
-      sub: "注文連携後に反映されます",
+      title: "使える売上金",
+      value: salesCreditSummary.availableAmountLabel,
+      sub: "購入代金に使える金額",
     },
     {
-      title: "今月の売上",
-      value: formatMoney(0, "JPY"),
-      sub: "注文連携後に反映されます",
+      title: "保留中の売上金",
+      value: salesCreditSummary.pendingSalesAmountLabel,
+      sub: "返金・確認期間中の売上金",
     },
     {
-      title: "未対応注文",
-      value: "0件",
-      sub: "注文連携後に反映されます",
+      title: "支払予定の売上金",
+      value: salesCreditSummary.totalLedgerBalanceLabel,
+      sub: "精算台帳上の合計",
     },
     {
       title: "登録商品数",
@@ -108,6 +114,7 @@ export const loader = async ({ request }) => {
     chartData,
     monthlyPreview,
     products,
+    salesCreditSummary,
   });
 };
 

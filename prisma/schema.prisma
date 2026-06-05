@@ -153,11 +153,35 @@ model Seller {
   orders              Order[]
   ledgerEntries       LedgerEntry[]
   payoutRuns          PayoutRun[]
+  salesCreditOffsets  SalesCreditOffset[]
 
   @@index([status, createdAt])
   @@index([sellerVerificationStatus, updatedAt])
   @@index([euSellerStatus, updatedAt])
   @@map("sellers")
+}
+
+model SalesCreditOffset {
+  id                String    @id @default(cuid())
+  sellerId          String
+  amount            Int
+  currencyCode      String    @default("jpy")
+  status            String    @default("authorized")
+  checkoutReference String?
+  idempotencyKey    String?   @unique
+  expiresAt         DateTime?
+  capturedAt        DateTime?
+  releasedAt        DateTime?
+  releaseReason     String?
+  metadataJson      Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([sellerId, status, expiresAt])
+  @@index([checkoutReference])
+  @@map("sales_credit_offsets")
 }
 
 model SellerVerificationRecord {
