@@ -114,6 +114,39 @@ function serializePresetDeliveryTemplate(template) {
   };
 }
 
+function isMissingDeliveryTemplateTableError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+
+  return (
+    error?.code === "P2021" ||
+    message.includes("delivery_country_policy_templates") ||
+    message.includes("DeliveryCountryPolicyTemplate") ||
+    message.includes("relation") && message.includes("does not exist")
+  );
+}
+
+async function findActiveCustomDeliveryTemplates() {
+  try {
+    return await prisma.deliveryCountryPolicyTemplate.findMany({
+      where: {
+        isActive: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+  } catch (error) {
+    if (isMissingDeliveryTemplateTableError(error)) {
+      console.warn(
+        "delivery country policy template table is not ready; using preset templates only",
+      );
+      return [];
+    }
+
+    throw error;
+  }
+}
+
 async function resolveDeliveryPolicyTemplate(templateValue) {
   const rawValue = String(templateValue || "");
 
@@ -124,12 +157,20 @@ async function resolveDeliveryPolicyTemplate(templateValue) {
   if (rawValue.startsWith("custom:")) {
     const templateId = rawValue.slice("custom:".length);
 
-    return prisma.deliveryCountryPolicyTemplate.findFirst({
-      where: {
-        id: templateId,
-        isActive: true,
-      },
-    });
+    try {
+      return await prisma.deliveryCountryPolicyTemplate.findFirst({
+        where: {
+          id: templateId,
+          isActive: true,
+        },
+      });
+    } catch (error) {
+      if (isMissingDeliveryTemplateTableError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   return getDeliveryPolicyTemplateByKey(rawValue);
@@ -702,15 +743,7 @@ export const loader = async ({ params }) => {
     throw new Response("商品が見つかりません", { status: 404 });
   }
 
-  const customDeliveryTemplates =
-    await prisma.deliveryCountryPolicyTemplate.findMany({
-      where: {
-        isActive: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+  const customDeliveryTemplates = await findActiveCustomDeliveryTemplates();
 
   let shopifyPrice = null;
   let needsReconnect = false;
@@ -1013,29 +1046,44 @@ export const action = async ({ request }) => {
 
       const policyInput = parseCountryPolicyFormData(formData);
 
-      await prisma.deliveryCountryPolicyTemplate.upsert({
-        where: {
-          name: templateName,
-        },
-        create: {
-          name: templateName,
-          categoryName: templateName,
-          description: templateDescription || null,
-          productEuStatus,
-          allowedCountries: policyInput.allowedCountries,
-          blockedCountries: policyInput.blockedCountries,
-          requiresWarningCountries: policyInput.requiresWarningCountries,
-        },
-        update: {
-          categoryName: templateName,
-          description: templateDescription || null,
-          productEuStatus,
-          allowedCountries: policyInput.allowedCountries,
-          blockedCountries: policyInput.blockedCountries,
-          requiresWarningCountries: policyInput.requiresWarningCountries,
-          isActive: true,
-        },
-      });
+      try {
+        await prisma.deliveryCountryPolicyTemplate.upsert({
+          where: {
+            name: templateName,
+          },
+          create: {
+            name: templateName,
+            categoryName: templateName,
+            description: templateDescription || null,
+            productEuStatus,
+            allowedCountries: policyInput.allowedCountries,
+            blockedCountries: policyInput.blockedCountries,
+            requiresWarningCountries: policyInput.requiresWarningCountries,
+          },
+          update: {
+            categoryName: templateName,
+            description: templateDescription || null,
+            productEuStatus,
+            allowedCountries: policyInput.allowedCountries,
+            blockedCountries: policyInput.blockedCountries,
+            requiresWarningCountries: policyInput.requiresWarningCountries,
+            isActive: true,
+          },
+        });
+      } catch (error) {
+        if (isMissingDeliveryTemplateTableError(error)) {
+          return json(
+            {
+              ok: false,
+              error:
+                "配送先テンプレート用のDBマイグレーションがまだ反映されていません。Renderのpre-deployでマイグレーションを通してから再度保存してください。",
+            },
+            { status: 500 },
+          );
+        }
+
+        throw error;
+      }
 
       return redirect(`/admin/products/${productId}`);
     }
