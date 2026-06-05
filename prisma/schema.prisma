@@ -73,6 +73,7 @@ model Product {
   lastPriceApplyAttemptAt         DateTime?
   priceFormulaVersion             String?
   priceSnapshotJson               Json?
+  inventoryQuantity               Int?
   productEuStatus                 String    @default("DISABLED")
   euSaleRequested                 Boolean   @default(false)
   regulatorySelfCertificationJson Json?

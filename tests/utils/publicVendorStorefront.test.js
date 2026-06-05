@@ -39,6 +39,7 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
         category: "Cosmetics",
         price: 100,
         calculatedPrice: 27965,
+        inventoryQuantity: 3,
         shopDomain: "SHOP-A.myshopify.com",
         shopifyProductId: "gid://shopify/Product/1",
         approvalStatus: "approved",
@@ -56,6 +57,8 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
   assert.equal(storefront.hiddenProductCount, 0);
   assert.equal(storefront.products[0].price, 27965);
   assert.equal(storefront.products[0].currency, "JPY");
+  assert.equal(storefront.products[0].inventoryQuantity, 3);
+  assert.equal(storefront.products[0].isInStock, true);
   assert.equal(storefront.products[0].isPurchasable, true);
   assert.equal(storefront.products[0].basePurchasable, true);
   assert.equal(storefront.products[0].deliveryEligibility.status, "UNKNOWN_COUNTRY");
@@ -89,6 +92,7 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
         name: "Poster",
         price: 1000,
         calculatedPrice: 1000,
+        inventoryQuantity: 4,
         shopDomain: "shop-a.myshopify.com",
         approvalStatus: "approved",
         productEuStatus: "APPROVED_LOW_RISK",
@@ -99,6 +103,7 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
         name: "Battery",
         price: 2000,
         calculatedPrice: 2000,
+        inventoryQuantity: 5,
         shopDomain: "shop-a.myshopify.com",
         approvalStatus: "approved",
         productEuStatus: "REJECTED_HIGH_RISK",

@@ -135,6 +135,8 @@ test("serializeVendorProduct formats product price with the original currency", 
 
   assert.equal(product.priceLabel, "€100");
   assert.equal(product.currencyCode, "EUR");
+  assert.equal(product.stockLabel, "未設定");
+  assert.equal(product.stockStatusLabel, "在庫入力待ち");
 });
 
 test("serializeVendorProduct exposes delivery policy labels", () => {

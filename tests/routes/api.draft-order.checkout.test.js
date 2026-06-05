@@ -9,6 +9,8 @@ const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
 const INVALID_SELECTION_MESSAGE =
   '選択した商品を確認できませんでした。もう一度商品を選び直してください。';
+const OUT_OF_STOCK_MESSAGE =
+  '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
 
 function createProducts() {
   return [
@@ -19,6 +21,7 @@ function createProducts() {
       imageUrl: null,
       price: 4200,
       calculatedPrice: 4200,
+      inventoryQuantity: 10,
       url: 'https://example.com/products/amber-wine',
       shopDomain: 'shop-a.myshopify.com',
       shopifyProductId: 'gid://shopify/Product/1',
@@ -34,6 +37,7 @@ function createProducts() {
       imageUrl: null,
       price: 3800,
       calculatedPrice: 3800,
+      inventoryQuantity: 10,
       url: 'https://example.com/products/pending-bottle',
       shopDomain: 'shop-a.myshopify.com',
       shopifyProductId: 'gid://shopify/Product/2',
@@ -49,6 +53,7 @@ function createProducts() {
       imageUrl: null,
       price: 5000,
       calculatedPrice: 5000,
+      inventoryQuantity: 10,
       url: 'https://example.com/products/other-store-bottle',
       shopDomain: 'shop-b.myshopify.com',
       shopifyProductId: 'gid://shopify/Product/3',
@@ -567,6 +572,41 @@ test('api.draft-order.checkout rejects unapproved products', async () => {
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
   assert.deepEqual(payload.errors, [INVALID_SELECTION_MESSAGE]);
+});
+
+test('api.draft-order.checkout rejects quantities above local inventory', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      products: createProducts().map((product) =>
+        product.id === 'prod_1'
+          ? { ...product, inventoryQuantity: 1 }
+          : product,
+      ),
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        items: [{ productId: 'prod_1', quantity: 2 }],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.errors, [OUT_OF_STOCK_MESSAGE]);
 });
 
 test('api.draft-order.checkout falls back to Shopify product when local product id is absent', async () => {

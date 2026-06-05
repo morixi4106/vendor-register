@@ -19,6 +19,16 @@ function normalizeShopDomain(value) {
   return normalized ? normalized.toLowerCase() : null;
 }
 
+function normalizeInventoryQuantity(value) {
+  const numericValue = Number(value);
+
+  if (!Number.isInteger(numericValue) || numericValue < 0) {
+    return null;
+  }
+
+  return numericValue;
+}
+
 export function getPublicProductDisplayPrice(product) {
   const calculatedPrice = Number(product?.calculatedPrice);
 
@@ -64,7 +74,9 @@ export function serializePublicVendorStorefront({
     .map((product) => {
       const price = getPublicProductDisplayPrice(product);
       const shopDomain = normalizeShopDomain(product.shopDomain);
-      const basePurchasable = Boolean(shopDomain && price > 0);
+      const inventoryQuantity = normalizeInventoryQuantity(product.inventoryQuantity);
+      const hasInventory = Number.isInteger(inventoryQuantity) && inventoryQuantity > 0;
+      const basePurchasable = Boolean(shopDomain && price > 0 && hasInventory);
       const deliveryEligibility = evaluateProductDeliveryEligibility({
         product,
         seller,
@@ -89,6 +101,8 @@ export function serializePublicVendorStorefront({
         price,
         currency: "JPY",
         formattedPrice: formatPublicJpyPrice(price),
+        inventoryQuantity,
+        isInStock: hasInventory,
         isPurchasable,
         basePurchasable,
         deliveryEligibility: publicDeliveryEligibility,

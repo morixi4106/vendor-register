@@ -147,6 +147,7 @@ export const loader = async ({ params, request }) => {
       category: true,
       price: true,
       calculatedPrice: true,
+      inventoryQuantity: true,
       shopDomain: true,
       approvalStatus: true,
       productEuStatus: true,

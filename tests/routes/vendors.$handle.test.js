@@ -37,6 +37,7 @@ function createProducts() {
       imageUrl: null,
       price: 4200,
       calculatedPrice: 4200,
+      inventoryQuantity: 10,
       url: 'https://example.com/products/amber-wine',
       shopDomain: 'shop-a.myshopify.com',
       shopifyProductId: 'gid://shopify/Product/1',

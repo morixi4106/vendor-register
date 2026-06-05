@@ -20,6 +20,8 @@ const INVALID_CART_MESSAGE = '商品を1点以上選択してください。';
 const INVALID_QUANTITY_MESSAGE = '商品の数量を確認してください。';
 const UNAVAILABLE_PRODUCT_MESSAGE =
   '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
+const OUT_OF_STOCK_MESSAGE =
+  '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
 const INVALID_EMAIL_MESSAGE = 'メールアドレスの形式を確認してください。';
 const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
@@ -91,6 +93,16 @@ function normalizeCountryCode(value) {
 function normalizeShopDomain(value) {
   const normalized = normalizeText(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeInventoryQuantity(value) {
+  const numericValue = Number(value);
+
+  if (!Number.isInteger(numericValue) || numericValue < 0) {
+    return null;
+  }
+
+  return numericValue;
 }
 
 function normalizeShopifyGid(value, resourceType) {
@@ -458,6 +470,7 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
         description: product.description || '',
         imageUrl: product.imageUrl || null,
         price,
+        inventoryQuantity: normalizeInventoryQuantity(product.inventoryQuantity),
         shopDomain,
         shopifyProductId: normalizeText(product.shopifyProductId),
         approvalStatus: product.approvalStatus || 'approved',
@@ -991,6 +1004,7 @@ async function buildServerTrustedCheckoutPayload({
       name: true,
       price: true,
       calculatedPrice: true,
+      inventoryQuantity: true,
       url: true,
       shopifyProductId: true,
       shopDomain: true,
@@ -1035,9 +1049,19 @@ async function buildServerTrustedCheckoutPayload({
       };
     }
 
+    const inventoryQuantity = normalizeInventoryQuantity(product.inventoryQuantity);
+
+    if (inventoryQuantity === null || inventoryQuantity < item.quantity) {
+      return {
+        ok: false,
+        error: OUT_OF_STOCK_MESSAGE,
+      };
+    }
+
     selectedProducts.push({
       product: {
         ...product,
+        inventoryQuantity,
         shopDomain,
       },
       quantity: item.quantity,

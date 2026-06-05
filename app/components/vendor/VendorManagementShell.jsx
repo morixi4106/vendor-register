@@ -284,6 +284,41 @@ export default function VendorManagementShell({
           align-items:center;
           flex-wrap:wrap;
         }
+        .vendor-inventory-control{
+          display:grid;
+          grid-template-columns:36px 90px 36px auto;
+          gap:6px;
+          align-items:center;
+          margin:0;
+          min-width:210px;
+        }
+        .vendor-inventory-control__step{
+          width:36px;
+          height:36px;
+          border:1px solid #d1d5db;
+          border-radius:8px;
+          background:#ffffff;
+          color:#111827;
+          font-size:18px;
+          font-weight:800;
+          line-height:1;
+          cursor:pointer;
+        }
+        .vendor-inventory-control__step:hover{
+          border-color:#111827;
+        }
+        .vendor-inventory-control__input{
+          width:90px;
+          height:36px;
+          box-sizing:border-box;
+          border:1px solid #d1d5db;
+          border-radius:8px;
+          padding:0 10px;
+          color:#111827;
+          font-size:14px;
+          font-weight:700;
+          text-align:right;
+        }
         .vendor-inline-form{
           margin:0;
         }

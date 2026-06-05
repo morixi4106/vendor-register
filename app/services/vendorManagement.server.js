@@ -120,6 +120,80 @@ export function mapProductStatus(product) {
   return "未公開";
 }
 
+function normalizeInventoryQuantity(value) {
+  const numericValue = Number(value);
+
+  if (!Number.isInteger(numericValue) || numericValue < 0) {
+    return null;
+  }
+
+  return numericValue;
+}
+
+export function parseInventoryQuantityInput(value) {
+  const normalizedValue = String(value ?? "").trim();
+
+  if (normalizedValue === "") {
+    return {
+      ok: true,
+      quantity: null,
+    };
+  }
+
+  const numericValue = Number(normalizedValue);
+
+  if (!Number.isInteger(numericValue) || numericValue < 0) {
+    return {
+      ok: false,
+      error: "在庫数は0以上の整数で入力してください。",
+    };
+  }
+
+  if (numericValue > 999999) {
+    return {
+      ok: false,
+      error: "在庫数は999999以下で入力してください。",
+    };
+  }
+
+  return {
+    ok: true,
+    quantity: numericValue,
+  };
+}
+
+export function buildInventoryDisplay(value) {
+  const quantity = normalizeInventoryQuantity(value);
+
+  if (quantity === null) {
+    return {
+      quantity: null,
+      inputValue: "",
+      stockLabel: "未設定",
+      stockStatusLabel: "在庫入力待ち",
+      stockStatusTone: "warning",
+    };
+  }
+
+  if (quantity === 0) {
+    return {
+      quantity,
+      inputValue: "0",
+      stockLabel: "0点",
+      stockStatusLabel: "在庫切れ",
+      stockStatusTone: "danger",
+    };
+  }
+
+  return {
+    quantity,
+    inputValue: String(quantity),
+    stockLabel: `${quantity.toLocaleString("ja-JP")}点`,
+    stockStatusLabel: "販売可能",
+    stockStatusTone: "success",
+  };
+}
+
 function formatPublicResourceId(value) {
   const normalizedValue = String(value || "").trim();
 
@@ -161,13 +235,18 @@ export function serializeVendorProduct(product) {
   const deliveryPolicy = summarizeVendorDeliveryPolicy(product);
   const statusLabel = mapProductStatus(product);
   const approvalLabel = mapApprovalLabel(product.approvalStatus);
+  const inventoryDisplay = buildInventoryDisplay(product.inventoryQuantity);
 
   return {
     id: product.id,
     name: product.name || "名称未設定",
     category: product.category || "未設定",
     sku: formatPublicResourceId(product.shopifyProductId),
-    stockLabel: "在庫数未設定",
+    inventoryQuantity: inventoryDisplay.quantity,
+    inventoryInputValue: inventoryDisplay.inputValue,
+    stockLabel: inventoryDisplay.stockLabel,
+    stockStatusLabel: inventoryDisplay.stockStatusLabel,
+    stockStatusTone: inventoryDisplay.stockStatusTone,
     trackingLabel: product.url || "-",
     salesLabel: "0",
     priceLabel: formatMoney(product.price || 0, currencyCode),
@@ -867,6 +946,55 @@ export async function listVendorProducts(storeId, filters = {}) {
   });
 
   return products.map(serializeVendorProduct);
+}
+
+export async function updateVendorProductInventory({
+  storeId,
+  productId,
+  inventoryQuantity,
+  prismaClient = prisma,
+}) {
+  const parsedQuantity = parseInventoryQuantityInput(inventoryQuantity);
+
+  if (!parsedQuantity.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: parsedQuantity.error,
+    };
+  }
+
+  const product = await prismaClient.product.findFirst({
+    where: {
+      id: String(productId || ""),
+      vendorStoreId: storeId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!product) {
+    return {
+      ok: false,
+      status: 404,
+      error: "商品が見つかりません。",
+    };
+  }
+
+  const updatedProduct = await prismaClient.product.update({
+    where: {
+      id: product.id,
+    },
+    data: {
+      inventoryQuantity: parsedQuantity.quantity,
+    },
+  });
+
+  return {
+    ok: true,
+    product: serializeVendorProduct(updatedProduct),
+  };
 }
 
 function isReconnectableShopifyError(message = "") {
