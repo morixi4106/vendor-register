@@ -5,6 +5,7 @@ import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { resolveDutyCategory } from "../utils/dutyCategory";
+import { normalizeProductCategory } from "../utils/productCategories";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
@@ -17,6 +18,7 @@ const COPY = {
   productNotFound: "商品が見つかりません。",
   unsupportedCurrency: "対応していない通貨です。",
   productNameRequired: "商品名を入力してください。",
+  categoryRequired: "カテゴリを選択してください。",
   priceRequired: "価格を入力してください。",
   invalidPrice: "価格は0以上の数値で入力してください。",
   reconnectRequired:
@@ -195,7 +197,7 @@ export const action = async ({ request, params }) => {
     const formData = await request.formData();
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
-    const category = String(formData.get("category") || "").trim();
+    const category = normalizeProductCategory(formData.get("category"));
     const priceRaw = String(formData.get("price") || "").trim();
     const url = String(formData.get("url") || "").trim();
     const costCurrency = String(formData.get("costCurrency") || "JPY")
@@ -221,6 +223,13 @@ export const action = async ({ request, params }) => {
       return json(
         { ok: false, error: COPY.productNameRequired },
         { status: 400 }
+      );
+    }
+
+    if (!category) {
+      return json(
+        { ok: false, error: COPY.categoryRequired },
+        { status: 400 },
       );
     }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CATEGORY_DELIVERY_POLICY_TEMPLATES,
   buildProductCountryPolicyData,
   formatCountryCodeSummary,
   getDeliveryPolicyTemplateByKey,
@@ -10,6 +11,7 @@ import {
   shouldPersistProductCountryPolicy,
   summarizeVendorDeliveryPolicy,
 } from "../../app/utils/productCountryPolicy.js";
+import { PRODUCT_CATEGORY_OPTIONS } from "../../app/utils/productCategories.js";
 
 test("parseCountryCodeSelection normalizes duplicate country codes", () => {
   assert.deepEqual(
@@ -78,11 +80,11 @@ test("formatCountryCodeSummary limits long country lists", () => {
 test("getRecommendedDeliveryPolicyTemplate recommends category-named cosmetics template", () => {
   const template = getRecommendedDeliveryPolicyTemplate({
     name: "NEOBEAUTE ローション",
-    category: "化粧品",
+    category: "コスメ・美容",
   });
 
-  assert.equal(template.key, "cosmetics");
-  assert.equal(template.name, "化粧品");
+  assert.equal(template.key, "cosmetics-beauty");
+  assert.equal(template.name, "コスメ・美容");
   assert.equal(template.productEuStatus, "REQUIRES_ADDITIONAL_DOCS");
   assert.deepEqual(template.allowedCountries, ["JP"]);
 });
@@ -108,10 +110,24 @@ test("getRecommendedDeliveryPolicyTemplate prioritizes permission-required keywo
     category: "アクセサリー",
   });
 
-  assert.equal(template.key, "electronics");
-  assert.equal(template.name, "電子機器");
+  assert.equal(template.key, "electronics-office");
+  assert.equal(template.name, "電子機器・オフィス用品");
   assert.equal(template.productEuStatus, "REQUIRES_ADDITIONAL_DOCS");
   assert.deepEqual(template.allowedCountries, ["JP"]);
+});
+
+test("delivery policy templates cover the storefront product category list", () => {
+  const templateNames = new Set(
+    CATEGORY_DELIVERY_POLICY_TEMPLATES.map((template) => template.name),
+  );
+
+  for (const category of PRODUCT_CATEGORY_OPTIONS) {
+    assert.equal(
+      templateNames.has(category),
+      true,
+      `missing delivery template for category: ${category}`,
+    );
+  }
 });
 
 test("getDeliveryPolicyTemplateByKey returns country limits", () => {

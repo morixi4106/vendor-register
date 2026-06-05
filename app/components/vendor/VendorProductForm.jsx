@@ -1,4 +1,8 @@
 import { Form, Link } from "@remix-run/react";
+import {
+  PRODUCT_CATEGORY_OPTIONS,
+  normalizeProductCategory,
+} from "../../utils/productCategories";
 
 const CURRENCY_OPTIONS = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
@@ -18,10 +22,17 @@ export default function VendorProductForm({
   backTo = "/vendor/dashboard",
   backLabel = "ダッシュボードへ戻る",
 }) {
+  const selectedCategory =
+    normalizeProductCategory(initialValues.category) || initialValues.category || "";
   const regulatorySelfCertified = Boolean(
     initialValues.regulatorySelfCertified ||
       initialValues.regulatorySelfCertificationJson?.regulatorySelfCertified,
   );
+  const categoryOptions = PRODUCT_CATEGORY_OPTIONS.includes(selectedCategory)
+    ? PRODUCT_CATEGORY_OPTIONS
+    : selectedCategory
+      ? [selectedCategory, ...PRODUCT_CATEGORY_OPTIONS]
+      : PRODUCT_CATEGORY_OPTIONS;
 
   return (
     <section className="vendor-card">
@@ -96,14 +107,20 @@ export default function VendorProductForm({
               <label className="vendor-form__label" htmlFor="category">
                 カテゴリー
               </label>
-              <input
-                className="vendor-form__input"
-                defaultValue={initialValues.category || ""}
+              <select
+                className="vendor-form__select"
+                defaultValue={selectedCategory}
                 id="category"
                 name="category"
-                placeholder="例: スキンケア"
-                type="text"
-              />
+                required
+              >
+                <option value="">カテゴリを選択してください</option>
+                {categoryOptions.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="vendor-form__field">
