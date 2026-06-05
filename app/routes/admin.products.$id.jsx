@@ -605,6 +605,7 @@ async function createShopifyProductFromDbProduct(product) {
     variants: [
       {
         id: createdVariant.id,
+        inventoryPolicy: "DENY",
         price: String(product.costAmount ?? product.price ?? 0),
       },
     ],
