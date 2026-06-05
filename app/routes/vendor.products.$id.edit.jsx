@@ -22,13 +22,13 @@ const COPY = {
   priceRequired: "価格を入力してください。",
   invalidPrice: "価格は0以上の数値で入力してください。",
   reconnectRequired:
-    "Shopify との接続を確認してから、もう一度お試しください。",
+    "公開ストアとの接続を確認してから、もう一度お試しください。",
   updateFailed:
     "商品の更新に失敗しました。時間を置いて再度お試しください。",
   shellTitle: "商品管理",
   pageTitle: "商品編集",
   intro:
-    "商品情報を更新します。保存後は申請中となり、内容確認後に Shopify へ反映されます。",
+    "商品情報を更新します。保存後は申請中となり、内容確認後に公開ストアへ反映されます。",
   submit: "商品を更新する",
   submitting: "更新中...",
   backToDashboard: "ダッシュボードへ戻る",

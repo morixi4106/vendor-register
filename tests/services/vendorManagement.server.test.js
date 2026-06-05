@@ -231,6 +231,7 @@ test("getVendorOrdersPageData returns mapped orders when read_draft_orders is gr
     {
       id: "gid://shopify/Order/1001",
       orderId: "gid://shopify/Order/1001",
+      publicOrderIdLabel: "1001",
       orderName: "#1001",
       shopifyOrderNumber: "#1001",
       createdAt: "2026-04-29T08:35:00Z",

@@ -6,7 +6,7 @@ import VendorManagementShell from "../components/vendor/VendorManagementShell";
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
   const warningLabels = ["審査中", "申請中", "公開準備中"];
-  const successLabels = ["承認済み", "稼働中", "Shopify連携済み"];
+  const successLabels = ["承認済み", "稼働中", "公開済み"];
   let tone = "neutral";
 
   if (dangerLabels.includes(label)) tone = "danger";
@@ -33,7 +33,7 @@ export const loader = async ({ request }) => {
     (product) => product.approvalLabel === "申請中"
   ).length;
   const linkedCount = products.filter(
-    (product) => product.statusLabel === "Shopify連携済み"
+    (product) => product.statusLabel === "公開済み"
   ).length;
   const deliveryRestrictedCount = products.filter(
     (product) => product.deliveryPolicyLabel !== "国別制限なし"
@@ -74,7 +74,7 @@ export const loader = async ({ request }) => {
       percent: products.length > 0 ? Math.round((pendingCount / products.length) * 100) : 0,
     },
     {
-      label: "Shopify連携済み",
+      label: "公開済み",
       value: `${linkedCount}件`,
       percent: products.length > 0 ? Math.round((linkedCount / products.length) * 100) : 0,
     },
@@ -296,7 +296,7 @@ export default function VendorDashboard() {
           </div>
 
           <div className="vendor-note" style={{ marginTop: "18px" }}>
-            この画面は vendor メール認証で表示しています。注文・売上・在庫の Shopify 連携は次段階で追加します。
+            この画面は店舗用メール認証で表示しています。注文・売上・在庫の連携は次段階で追加します。
           </div>
         </div>
       </section>

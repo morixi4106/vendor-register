@@ -226,7 +226,7 @@ export default function VendorStorefrontPage() {
           <section className="storefront-card">
             <h2 className="storefront-section-title">配送先・お客様情報</h2>
             <p className="storefront-section-sub">
-              入力内容をもとにチェックアウトを作成し、Shopify の決済画面へ移動します。
+              入力内容をもとにチェックアウトを作成し、決済画面へ移動します。
             </p>
 
             {actionData?.error ? (

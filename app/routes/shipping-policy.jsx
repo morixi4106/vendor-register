@@ -158,7 +158,7 @@ export default function ShippingPolicyPage() {
           <h1 style={pageStyles.h1}>送料について</h1>
           <p style={pageStyles.lead}>
             当ストアの送料は、配送先の国・地域、商品、数量などに応じて
-            Shopify チェックアウト画面で自動計算されます。お客様が注文を確定する前に、
+            チェックアウト画面で自動計算されます。お客様が注文を確定する前に、
             実際にご負担いただく送料がチェックアウト画面に表示されます。
           </p>
 

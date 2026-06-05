@@ -84,8 +84,7 @@ export default function SellerPaymentsSettingsPage() {
         <section className="seller-payments__card">
           <h2 className="seller-payments__title">支払明細・精算方式</h2>
           <p className="seller-payments__subtitle">
-            購入者の決済はストアのShopify
-            Checkoutで処理されます。出店者への支払いは、管理者が月次精算額を確認してから実行します。
+            購入者の決済はストアのチェックアウトで処理されます。出店者への支払いは、管理者が月次精算額を確認してから実行します。
           </p>
 
           <div className="seller-payments__description">

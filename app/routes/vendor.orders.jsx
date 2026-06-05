@@ -10,7 +10,7 @@ function createOrdersPageContent(accessState, orderCount) {
           tone: "success",
           title: "注文一覧を表示しています",
           message:
-            "read_draft_orders 権限があるため、completed の Draft Order から Shopify Order を参照して表示しています。",
+            "注文参照権限があるため、完了済みの注文データを参照して表示しています。",
         };
       }
 
@@ -25,28 +25,28 @@ function createOrdersPageContent(accessState, orderCount) {
         tone: "warning",
         title: "注文管理を有効化するには追加権限が必要です",
         message:
-          "この店舗では read_draft_orders がまだ付与されていないため、注文一覧は表示していません。Shopify 管理者による追加権限の承認後に、Draft Order ベースの注文一覧を有効化します。",
+          "この店舗では注文参照権限がまだ付与されていないため、注文一覧は表示していません。ストア管理者による追加権限の承認後に、注文一覧を有効化します。",
       };
     case "missing_shop":
       return {
         tone: "warning",
-        title: "Shopify 連携済みの店舗情報がまだ見つかりません",
+        title: "公開ストアの店舗情報がまだ見つかりません",
         message:
-          "注文一覧の準備状況を確認するには、現在の店舗に紐づく Shopify shopDomain を一意に特定する必要があります。まずは商品連携を確認してください。",
+          "注文一覧の準備状況を確認するには、現在の店舗に紐づく公開ストア識別子を一意に特定する必要があります。まずは商品連携を確認してください。",
       };
     case "ambiguous_shop":
       return {
         tone: "danger",
-        title: "複数の Shopify 店舗候補が見つかっています",
+        title: "複数の公開ストア候補が見つかっています",
         message:
-          "この vendorStore には複数の shopDomain が関連付いているため、安全に注文一覧を表示できません。サポート側で連携状態を確認してください。",
+          "この店舗には複数の接続情報が関連付いているため、安全に注文一覧を表示できません。サポート側で連携状態を確認してください。",
       };
     case "missing_connection":
       return {
         tone: "danger",
-        title: "Shopify との接続確認が必要です",
+        title: "公開ストアとの接続確認が必要です",
         message:
-          "Shopify の offline session もしくは認証状態を確認できませんでした。Shopify 管理画面でアプリの連携状態を確認してください。",
+          "公開ストアの認証状態を確認できませんでした。管理画面でアプリの連携状態を確認してください。",
       };
     default:
       return {
@@ -147,7 +147,7 @@ export default function VendorOrdersPage() {
         <h2 className="vendor-section-title">注文管理</h2>
         <p className="vendor-section-subtitle">
           vendor portal では、自分の vendor handle に紐づく completed Draft Order から
-          Shopify Order を read-only で参照します。表示対象は直近 {ordersAccess.pageSize} 件までで、条件に使うのは
+          注文データを read-only で参照します。表示対象は直近 {ordersAccess.pageSize} 件までで、条件に使うのは
           `tag:vendor-storefront`、`tag:vendor:&lt;handle&gt;`、`status:completed`
           です。
         </p>
@@ -169,9 +169,9 @@ export default function VendorOrdersPage() {
             <div className="vendor-description-value">{ordersAccess.status}</div>
           </div>
           <div className="vendor-description-row">
-            <div className="vendor-description-term">Shopify shopDomain</div>
+            <div className="vendor-description-term">公開ストア識別子</div>
             <div className="vendor-description-value">
-              {ordersAccess.shopDomain || "-"}
+              {ordersAccess.shopDomain ? "設定済み" : "-"}
             </div>
           </div>
           <div className="vendor-description-row">
@@ -188,7 +188,7 @@ export default function VendorOrdersPage() {
 
         <div className="vendor-actions-row" style={{ marginTop: "16px" }}>
           <Link className="vendor-shell__button" to="/vendor/settings">
-            Shopify 連携設定を確認する
+            注文管理の設定を確認する
           </Link>
         </div>
       </section>
@@ -203,7 +203,7 @@ export default function VendorOrdersPage() {
 
         {!isReady ? (
           <div className="vendor-placeholder vendor-orders__empty">
-            追加権限と Shopify 連携がそろった店舗だけ、ここに注文一覧を表示します。
+            追加権限と公開ストア連携がそろった店舗だけ、ここに注文一覧を表示します。
           </div>
         ) : orders.length === 0 ? (
           <div className="vendor-placeholder vendor-orders__empty">
@@ -215,13 +215,13 @@ export default function VendorOrdersPage() {
               <thead>
                 <tr>
                   <th>注文日</th>
-                  <th>Shopify注文番号</th>
+                  <th>注文番号</th>
                   <th>顧客名</th>
                   <th>メール</th>
                   <th>合計金額</th>
                   <th>支払い状態</th>
                   <th>配送状態</th>
-                  <th>Shopify order id / name</th>
+                  <th>注文ID / 注文名</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,7 +245,9 @@ export default function VendorOrdersPage() {
                     <td>
                       <div className="vendor-orders__order-id">
                         <span className="vendor-table__name">{order.orderName}</span>
-                        <span className="vendor-table__meta">{order.orderId}</span>
+                        <span className="vendor-table__meta">
+                          {order.publicOrderIdLabel || "-"}
+                        </span>
                       </div>
                     </td>
                   </tr>

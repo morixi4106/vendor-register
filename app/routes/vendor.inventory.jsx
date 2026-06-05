@@ -32,7 +32,7 @@ export default function VendorInventoryPage() {
         </p>
 
         <div className="vendor-placeholder">
-          Shopify在庫連携後に表示されます。現在は登録商品数 {productCount} 件を在庫対象の候補として管理しています。
+          在庫連携後に表示されます。現在は登録商品数 {productCount} 件を在庫対象の候補として管理しています。
         </div>
       </section>
 

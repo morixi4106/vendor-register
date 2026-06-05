@@ -113,11 +113,22 @@ export function mapVendorStatusLabel(value) {
 }
 
 export function mapProductStatus(product) {
-  if (product?.shopifyProductId) return "Shopify連携済み";
+  if (product?.shopifyProductId) return "公開済み";
   if (product?.approvalStatus === "approved") return "公開準備中";
   if (product?.approvalStatus === "pending") return "審査中";
   if (product?.approvalStatus === "rejected") return "要確認";
-  return "未連携";
+  return "未公開";
+}
+
+function formatPublicResourceId(value) {
+  const normalizedValue = String(value || "").trim();
+
+  if (!normalizedValue) {
+    return "-";
+  }
+
+  const parts = normalizedValue.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalizedValue;
 }
 
 export function getBadgeTone(label) {
@@ -129,7 +140,7 @@ export function getBadgeTone(label) {
     return "warning";
   }
 
-  if (["承認済み", "稼働中", "Shopify連携済み"].includes(label)) {
+  if (["承認済み", "稼働中", "公開済み"].includes(label)) {
     return "success";
   }
 
@@ -141,7 +152,7 @@ export const PRODUCT_STATUS_FILTER_OPTIONS = [
   { value: "pending", label: "申請中" },
   { value: "review", label: "確認中" },
   { value: "approved", label: "承認済み（未連携）" },
-  { value: "linked", label: "Shopify連携済み" },
+  { value: "linked", label: "公開済み" },
   { value: "rejected", label: "差し戻し" },
 ];
 
@@ -153,7 +164,7 @@ export function serializeVendorProduct(product) {
     id: product.id,
     name: product.name || "名称未設定",
     category: product.category || "未設定",
-    sku: product.shopifyProductId || "-",
+    sku: formatPublicResourceId(product.shopifyProductId),
     stockLabel: "未連携",
     trackingLabel: product.url || "-",
     salesLabel: "0",
@@ -447,6 +458,7 @@ function serializeVendorOrderRow(draftOrder) {
   return {
     id: order.id,
     orderId: order.id,
+    publicOrderIdLabel: formatPublicResourceId(order.id),
     orderName: order.name,
     shopifyOrderNumber: order.name,
     createdAt: createdAt || null,
@@ -598,9 +610,10 @@ function serializeVendorMonthlyReportProduct(product) {
     priceLabel: formatMoney(product.price || 0, currencyCode),
     currencyCode,
     approvalLabel: mapApprovalLabel(product.approvalStatus),
-    shopifyStatusLabel: product.shopifyProductId ? "Shopify連携済み" : "未連携",
+    shopifyStatusLabel: product.shopifyProductId ? "公開済み" : "未公開",
     url: product.url || null,
     shopifyProductId: product.shopifyProductId || null,
+    publicProductIdLabel: formatPublicResourceId(product.shopifyProductId),
   };
 }
 
@@ -892,7 +905,8 @@ async function deleteShopifyProduct(shopDomain, shopifyProductId) {
     const userErrors = Array.isArray(payload?.userErrors) ? payload.userErrors : [];
 
     if (userErrors.length > 0) {
-      const message = userErrors[0]?.message || "Shopifyで商品の削除に失敗しました。";
+      const message =
+        userErrors[0]?.message || "公開ストアで商品の削除に失敗しました。";
 
       if (
         message.includes("does not exist") ||
@@ -914,7 +928,9 @@ async function deleteShopifyProduct(shopDomain, shopifyProductId) {
     };
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Shopifyで商品の削除に失敗しました。";
+      error instanceof Error
+        ? error.message
+        : "公開ストアで商品の削除に失敗しました。";
 
     return {
       ok: false,
@@ -955,7 +971,7 @@ export async function deleteVendorProductForStore({ storeId, productId }) {
         ok: false,
         status: 500,
         publicError:
-          "Shopifyとの接続設定を確認してから、もう一度お試しください。",
+          "公開ストアとの接続設定を確認してから、もう一度お試しください。",
         needsReconnect: true,
       };
     }
@@ -971,7 +987,7 @@ export async function deleteVendorProductForStore({ storeId, productId }) {
         ok: false,
         status: 500,
         publicError: shopifyDelete.needsReconnect
-          ? "Shopifyとの接続を確認してから、もう一度お試しください。"
+          ? "公開ストアとの接続を確認してから、もう一度お試しください。"
           : "商品の削除に失敗しました。時間を置いて再度お試しください。",
         needsReconnect: shopifyDelete.needsReconnect || false,
       };

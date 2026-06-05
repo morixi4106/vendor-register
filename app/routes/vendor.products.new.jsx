@@ -23,7 +23,7 @@ const COPY = {
   shellTitle: "商品管理",
   pageTitle: "新規商品登録",
   intro:
-    "新しい商品を登録します。保存後は申請中となり、内容確認後に Shopify へ反映されます。",
+    "新しい商品を登録します。保存後は申請中となり、内容確認後に公開ストアへ反映されます。",
   submit: "商品を登録する",
   submitting: "登録中...",
   backToDashboard: "ダッシュボードへ戻る",

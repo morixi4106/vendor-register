@@ -13,7 +13,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
   const warningLabels = ["審査中", "申請中", "公開準備中", "確認中"];
-  const successLabels = ["承認済み", "稼働中", "Shopify連携済み"];
+  const successLabels = ["承認済み", "稼働中", "公開済み"];
   let tone = "neutral";
 
   if (dangerLabels.includes(label)) tone = "danger";
@@ -281,9 +281,9 @@ export default function VendorSettingsPage() {
 
       <div className="vendor-grid">
         <section className="vendor-card">
-          <h2 className="vendor-section-title">Shopify連携</h2>
+          <h2 className="vendor-section-title">公開ストア連携</h2>
           <p className="vendor-section-subtitle">
-            現在の schema には store-level の shopDomain が無いため、店舗単位の接続状態は
+            現在の schema には店舗単位の接続情報が無いため、店舗単位の接続状態は
             正確に判定できません。
           </p>
           <div className="vendor-description-list">

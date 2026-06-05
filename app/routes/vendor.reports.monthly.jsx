@@ -7,7 +7,7 @@ const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
   const warningLabels = ["申請中", "審査中", "公開準備中", "確認中"];
-  const successLabels = ["承認済み", "稼働中", "Shopify連携済み"];
+  const successLabels = ["承認済み", "稼働中", "公開済み"];
   let tone = "neutral";
 
   if (dangerLabels.includes(label)) tone = "danger";
@@ -288,16 +288,16 @@ export default function VendorMonthlyReportPage() {
           <p className="vendor-stat-sub">approvalStatus が rejected の商品</p>
         </div>
         <div className="vendor-card">
-          <p className="vendor-stat-title">対象月のShopify連携済み商品数</p>
+          <p className="vendor-stat-title">対象月の公開済み商品数</p>
           <p className="vendor-stat-value">{report.summary.linked}</p>
-          <p className="vendor-stat-sub">shopifyProductId を持つ商品</p>
+          <p className="vendor-stat-sub">公開ストアへ反映済みの商品</p>
         </div>
       </section>
 
       <section className="vendor-card">
         <h2 className="vendor-section-title">注文・売上</h2>
         <div className="vendor-placeholder">
-          注文・売上情報は注文連携後に追加予定です。現在の月次レポートでは、商品登録・審査・Shopify連携状況のみ表示しています。
+          注文・売上情報は注文連携後に追加予定です。現在の月次レポートでは、商品登録・審査・公開状況のみ表示しています。
         </div>
       </section>
 
@@ -320,9 +320,9 @@ export default function VendorMonthlyReportPage() {
                 <th>価格</th>
                 <th>通貨</th>
                 <th>承認状態</th>
-                <th>Shopify連携状態</th>
+                <th>公開状態</th>
                 <th>商品URL</th>
-                <th>Shopify商品ID</th>
+                <th>公開商品ID</th>
               </tr>
             </thead>
             <tbody>
@@ -362,7 +362,7 @@ export default function VendorMonthlyReportPage() {
                         "-"
                       )}
                     </td>
-                    <td>{product.shopifyProductId || "-"}</td>
+                    <td>{product.publicProductIdLabel || "-"}</td>
                   </tr>
                 ))
               )}

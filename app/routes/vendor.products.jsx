@@ -12,7 +12,7 @@ import VendorManagementShell from "../components/vendor/VendorManagementShell";
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
   const warningLabels = ["審査中", "申請中", "公開準備中", "確認中"];
-  const successLabels = ["承認済み", "稼働中", "Shopify連携済み"];
+  const successLabels = ["承認済み", "稼働中", "公開済み"];
   let tone = "neutral";
 
   if (dangerLabels.includes(label)) tone = "danger";
@@ -40,7 +40,7 @@ export const loader = async ({ request }) => {
 
   const products = await listVendorProducts(store.id, filters);
   const linkedCount = products.filter(
-    (product) => product.statusLabel === "Shopify連携済み"
+    (product) => product.statusLabel === "公開済み"
   ).length;
   const pendingCount = products.filter(
     (product) => product.approvalLabel === "申請中"
@@ -121,10 +121,10 @@ export default function VendorProductsPage() {
           type="text"
         />
         <input
-          aria-label="Shopify商品ID"
+          aria-label="公開商品ID"
           defaultValue={filters.sku}
           name="sku"
-          placeholder="Shopify商品IDで検索"
+          placeholder="公開商品IDで検索"
           type="text"
         />
         <input
@@ -157,7 +157,7 @@ export default function VendorProductsPage() {
           color: "rgba(55, 65, 81, 0.82)",
         }}
       >
-        現在は Shopify商品ID と商品URL を検索できます。SKU / 追跡番号の専用検索は、
+        現在は公開商品IDと商品URLを検索できます。SKU / 追跡番号の専用検索は、
         在庫・配送連携後に追加予定です。
       </p>
     </div>
@@ -188,9 +188,9 @@ export default function VendorProductsPage() {
           <p className="vendor-stat-sub">審査中の商品の件数</p>
         </div>
         <div className="vendor-card">
-          <p className="vendor-stat-title">Shopify連携済み</p>
+          <p className="vendor-stat-title">公開済み</p>
           <p className="vendor-stat-value">{stats.linked}</p>
-          <p className="vendor-stat-sub">shopifyProductId を持つ商品</p>
+          <p className="vendor-stat-sub">公開ストアへ反映済みの商品</p>
         </div>
         <div className="vendor-card">
           <p className="vendor-stat-title">配送先制限あり</p>
@@ -203,7 +203,7 @@ export default function VendorProductsPage() {
         <h2 className="vendor-section-title">商品一覧</h2>
         <p className="vendor-section-subtitle">
           商品名に加えて、現在の Product schema で保持している
-          Shopify商品ID と商品URLでも検索できます。専用の SKU /
+          公開商品IDと商品URLでも検索できます。専用の SKU /
           追跡番号 field は未実装のため、Phase 3 では実在 field を代替検索軸として使っています。
         </p>
 
@@ -212,7 +212,7 @@ export default function VendorProductsPage() {
             <thead>
               <tr>
                 <th>商品</th>
-                <th>Shopify商品ID</th>
+                <th>公開商品ID</th>
                 <th>商品URL</th>
                 <th>価格</th>
                 <th>配送先</th>
