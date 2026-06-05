@@ -96,6 +96,10 @@ test("getRecommendedDeliveryPolicyTemplate recommends category-named low risk te
   assert.equal(template.key, "accessories");
   assert.equal(template.name, "アクセサリー");
   assert.equal(template.productEuStatus, "APPROVED_LOW_RISK");
+  assert.ok(template.allowedCountries.includes("JP"));
+  assert.ok(template.allowedCountries.includes("US"));
+  assert.ok(template.allowedCountries.includes("FR"));
+  assert.ok(template.requiresWarningCountries.includes("FR"));
 });
 
 test("getRecommendedDeliveryPolicyTemplate prioritizes permission-required keywords", () => {
@@ -115,4 +119,12 @@ test("getDeliveryPolicyTemplateByKey returns country limits", () => {
 
   assert.deepEqual(template.allowedCountries, ["JP"]);
   assert.equal(template.productEuStatus, "DISABLED");
+});
+
+test("standard delivery policy template has explicit major country limits", () => {
+  const template = getDeliveryPolicyTemplateByKey("standard");
+
+  assert.deepEqual(template.allowedCountries, ["JP", "US", "GB", "AU", "KR", "SG"]);
+  assert.equal(template.productEuStatus, "DISABLED");
+  assert.equal(template.requiresWarningCountries.length, 0);
 });

@@ -1,6 +1,7 @@
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import { useMemo, useState } from "react";
 import prisma from "../db.server";
 import { calculateProductPriceResult } from "../utils/buildCalculatedPrice";
 import { buildPriceSnapshot } from "../utils/priceSnapshot";
@@ -223,6 +224,158 @@ function CountryCheckboxSelector({
         ))}
       </div>
     </details>
+  );
+}
+
+function getAdminCountryLabel(code) {
+  return (
+    DELIVERY_COUNTRY_OPTIONS.find((country) => country.code === code)?.label || code
+  );
+}
+
+function CountryChipList({
+  countries = [],
+  emptyLabel = "なし",
+  limit = 24,
+  tone = "neutral",
+}) {
+  const normalizedCountries = normalizeProductCountryPolicy({
+    allowedCountries: countries,
+  }).allowedCountries;
+  const visibleCountries = normalizedCountries.slice(0, limit);
+  const remainingCount = normalizedCountries.length - visibleCountries.length;
+  const colors =
+    tone === "danger"
+      ? { border: "#fecaca", background: "#fff1f2", color: "#991b1b" }
+      : tone === "warning"
+        ? { border: "#fed7aa", background: "#fff7ed", color: "#9a3412" }
+        : tone === "success"
+          ? { border: "#bbf7d0", background: "#f0fdf4", color: "#166534" }
+          : { border: "#d1d5db", background: "#f9fafb", color: "#374151" };
+
+  if (normalizedCountries.length === 0) {
+    return <p style={{ margin: 0, color: "#6b7280" }}>{emptyLabel}</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+      {visibleCountries.map((countryCode) => (
+        <span
+          key={countryCode}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            minHeight: "30px",
+            padding: "4px 9px",
+            borderRadius: "999px",
+            border: `1px solid ${colors.border}`,
+            background: colors.background,
+            color: colors.color,
+            fontSize: "13px",
+            fontWeight: 800,
+          }}
+        >
+          {getAdminCountryLabel(countryCode)}
+          <small style={{ color: "#6b7280", fontWeight: 800 }}>
+            {countryCode}
+          </small>
+        </span>
+      ))}
+      {remainingCount > 0 ? (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            minHeight: "30px",
+            padding: "4px 9px",
+            borderRadius: "999px",
+            border: "1px solid #d1d5db",
+            background: "#ffffff",
+            color: "#374151",
+            fontSize: "13px",
+            fontWeight: 800,
+          }}
+        >
+          ほか{remainingCount}件
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function DeliveryTemplateSummary({ template, title = "選択中テンプレート" }) {
+  if (!template) {
+    return null;
+  }
+
+  const policy = normalizeProductCountryPolicy(template);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: "12px",
+        padding: "12px",
+        borderRadius: "8px",
+        border: "1px solid #d1d5db",
+        background: "#f8fafc",
+      }}
+    >
+      <div>
+        <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 800 }}>
+          {title}
+        </div>
+        <div style={{ marginTop: "3px", fontSize: "16px", fontWeight: 900 }}>
+          {template.label || template.name}
+        </div>
+        {template.description ? (
+          <p style={{ margin: "6px 0 0", color: "#64748b", lineHeight: 1.6 }}>
+            {template.description}
+          </p>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "12px",
+        }}
+      >
+        <div>
+          <div style={{ marginBottom: "7px", fontWeight: 900 }}>
+            販売できる国
+          </div>
+          <CountryChipList
+            countries={policy.allowedCountries}
+            emptyLabel="国を限定しない設定です"
+            tone="success"
+          />
+        </div>
+
+        <div>
+          <div style={{ marginBottom: "7px", fontWeight: 900 }}>
+            購入できない国
+          </div>
+          <CountryChipList countries={policy.blockedCountries} tone="danger" />
+        </div>
+
+        <div>
+          <div style={{ marginBottom: "7px", fontWeight: 900 }}>
+            注意確認が必要な国
+          </div>
+          <CountryChipList
+            countries={policy.requiresWarningCountries}
+            tone="warning"
+          />
+        </div>
+      </div>
+
+      <div style={{ color: "#475569", fontSize: "13px", fontWeight: 800 }}>
+        EU販売ステータス: {getProductEuStatusLabel(template.productEuStatus)}
+      </div>
+    </div>
   );
 }
 
@@ -1142,16 +1295,43 @@ export default function AdminProductDetail() {
     : publicReconnectMessage;
   const actionErrorMessage = actionData?.error;
   const recommendedDeliveryTemplate = getRecommendedDeliveryPolicyTemplate(product);
-  const presetDeliveryTemplates = CATEGORY_DELIVERY_POLICY_TEMPLATES.map(
-    serializePresetDeliveryTemplate,
+  const presetDeliveryTemplates = useMemo(
+    () => CATEGORY_DELIVERY_POLICY_TEMPLATES.map(serializePresetDeliveryTemplate),
+    [],
   );
-  const deliveryTemplateOptions = [
-    ...presetDeliveryTemplates,
-    ...customDeliveryTemplates,
-  ];
+  const deliveryTemplateOptions = useMemo(
+    () => [...presetDeliveryTemplates, ...customDeliveryTemplates],
+    [presetDeliveryTemplates, customDeliveryTemplates],
+  );
+  const recommendedDeliveryTemplateValue = getPresetTemplateValue(
+    recommendedDeliveryTemplate,
+  );
+  const [selectedDeliveryTemplateValue, setSelectedDeliveryTemplateValue] =
+    useState(recommendedDeliveryTemplateValue);
+  const selectedDeliveryTemplate = useMemo(
+    () =>
+      deliveryTemplateOptions.find(
+        (template) => template.value === selectedDeliveryTemplateValue,
+      ) ||
+      deliveryTemplateOptions.find(
+        (template) => template.value === recommendedDeliveryTemplateValue,
+      ) ||
+      deliveryTemplateOptions[0],
+    [
+      deliveryTemplateOptions,
+      recommendedDeliveryTemplateValue,
+      selectedDeliveryTemplateValue,
+    ],
+  );
   const currentCountryPolicy = normalizeProductCountryPolicy(
     product.countryPolicy,
   );
+  const currentDeliveryPolicySummary = {
+    label: "現在の商品設定",
+    description: "保存済みの商品別配送設定です。",
+    productEuStatus: product.productEuStatus || "DISABLED",
+    ...currentCountryPolicy,
+  };
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -1428,7 +1608,10 @@ export default function AdminProductDetail() {
                 カテゴリ別配送先テンプレート
                 <select
                   name="countryPolicyTemplate"
-                  defaultValue={getPresetTemplateValue(recommendedDeliveryTemplate)}
+                  value={selectedDeliveryTemplateValue}
+                  onChange={(event) =>
+                    setSelectedDeliveryTemplateValue(event.currentTarget.value)
+                  }
                   style={{
                     height: "40px",
                     borderRadius: "8px",
@@ -1444,6 +1627,8 @@ export default function AdminProductDetail() {
                   ))}
                 </select>
               </label>
+
+              <DeliveryTemplateSummary template={selectedDeliveryTemplate} />
 
               <div style={{ color: "#6b7280", fontSize: "13px", lineHeight: 1.7 }}>
                 推奨: {recommendedDeliveryTemplate.label}
@@ -1471,6 +1656,11 @@ export default function AdminProductDetail() {
 
             <Form method="post" style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
               <input type="hidden" name="productId" value={product.id} />
+
+              <DeliveryTemplateSummary
+                template={currentDeliveryPolicySummary}
+                title="保存済みの商品設定"
+              />
 
               <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
                 EU販売ステータス

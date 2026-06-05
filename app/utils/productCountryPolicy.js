@@ -7,6 +7,16 @@ import {
 } from "./deliveryEligibility.js";
 
 const PRIORITY_COUNTRY_CODES = ["JP", "US", "GB", "AU", "KR", "SG"];
+const EU_DELIVERY_COUNTRY_CODES = sortCountryOptions(Array.from(EU_COUNTRY_CODES)).map(
+  (country) => country.code,
+);
+const STANDARD_DELIVERY_COUNTRY_CODES = [...PRIORITY_COUNTRY_CODES];
+const LOW_RISK_DELIVERY_COUNTRY_CODES = [
+  ...STANDARD_DELIVERY_COUNTRY_CODES,
+  ...EU_DELIVERY_COUNTRY_CODES.filter(
+    (code) => !STANDARD_DELIVERY_COUNTRY_CODES.includes(code),
+  ),
+];
 const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
 
 function createCountryOption(code) {
@@ -80,6 +90,8 @@ function createLowRiskCategoryTemplate(key, name, keywords = [name]) {
     description:
       "低リスクカテゴリとして、管理者確認後にEUを含む配送先へ販売できます。EU向けは購入前の注意確認が入ります。",
     productEuStatus: "APPROVED_LOW_RISK",
+    allowedCountries: LOW_RISK_DELIVERY_COUNTRY_CODES,
+    requiresWarningCountries: EU_DELIVERY_COUNTRY_CODES,
     keywords,
   });
 }
@@ -107,8 +119,9 @@ export const CATEGORY_DELIVERY_POLICY_TEMPLATES = [
   createDeliveryPolicyTemplate({
     key: "standard",
     name: "標準",
-    description: "EU向け販売は行わず、国別の配送制限も設定しない標準テンプレートです。",
+    description: "EU向け販売は行わず、主要な非EU配送先だけに限定する標準テンプレートです。",
     productEuStatus: "DISABLED",
+    allowedCountries: STANDARD_DELIVERY_COUNTRY_CODES,
   }),
   createLowRiskCategoryTemplate("apparel", "アパレル", [
     "アパレル",
@@ -223,7 +236,7 @@ export const CATEGORY_DELIVERY_POLICY_TEMPLATES = [
     name: "主要な非EUのみ",
     description: "日本、米国、英国、豪州、韓国、シンガポールに限定します。",
     productEuStatus: "DISABLED",
-    allowedCountries: ["JP", "US", "GB", "AU", "KR", "SG"],
+    allowedCountries: STANDARD_DELIVERY_COUNTRY_CODES,
   }),
 ];
 
