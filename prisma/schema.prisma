@@ -74,6 +74,8 @@ model Product {
   priceFormulaVersion             String?
   priceSnapshotJson               Json?
   inventoryQuantity               Int?
+  inventorySyncedAt               DateTime?
+  inventorySyncError              String?
   productEuStatus                 String    @default("DISABLED")
   euSaleRequested                 Boolean   @default(false)
   regulatorySelfCertificationJson Json?

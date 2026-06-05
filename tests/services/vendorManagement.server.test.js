@@ -11,6 +11,8 @@ import {
   getVendorOrdersPageData,
   sanitizeVendorReturnTo,
   serializeVendorProduct,
+  syncShopifyInventoryQuantity,
+  updateVendorProductInventory,
 } from "../../app/services/vendorManagement.server.js";
 
 test("sanitizeVendorReturnTo accepts only local non-verify paths", () => {
@@ -159,6 +161,258 @@ test("serializeVendorProduct exposes delivery policy labels", () => {
   assert.equal(product.deliveryPolicyLabel, "配送先限定");
   assert.equal(product.deliveryPolicyTone, "warning");
   assert.match(product.deliveryPolicyDetail, /配送できる国/);
+});
+
+test("updateVendorProductInventory stores quantity and syncs linked products", async () => {
+  const syncedAt = new Date("2026-06-06T00:00:00Z");
+  const productRow = {
+    id: "product_1",
+    name: "Test product",
+    category: "Cosmetics",
+    price: 100,
+    costCurrency: "JPY",
+    approvalStatus: "approved",
+    shopDomain: "shop-a.myshopify.com",
+    shopifyProductId: "gid://shopify/Product/1001",
+    inventoryQuantity: null,
+    inventorySyncedAt: null,
+    inventorySyncError: null,
+    updatedAt: syncedAt,
+  };
+  const updateCalls = [];
+  let receivedSyncInput = null;
+  const prismaClient = {
+    product: {
+      findFirst: async () => ({
+        id: productRow.id,
+        shopDomain: productRow.shopDomain,
+        shopifyProductId: productRow.shopifyProductId,
+      }),
+      update: async ({ data }) => {
+        updateCalls.push(data);
+        Object.assign(productRow, data);
+        return { ...productRow };
+      },
+    },
+  };
+
+  const result = await updateVendorProductInventory({
+    storeId: "store_1",
+    productId: productRow.id,
+    inventoryQuantity: "7",
+    prismaClient,
+    syncShopifyInventoryQuantityImpl: async (input) => {
+      receivedSyncInput = input;
+      return { ok: true };
+    },
+    now: () => syncedAt,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.warning, null);
+  assert.equal(result.product.inventoryQuantity, 7);
+  assert.equal(result.product.inventorySyncLabel, "同期済み");
+  assert.deepEqual(receivedSyncInput, {
+    shopDomain: "shop-a.myshopify.com",
+    shopifyProductId: "gid://shopify/Product/1001",
+    quantity: 7,
+  });
+  assert.deepEqual(updateCalls, [
+    {
+      inventoryQuantity: 7,
+      inventorySyncedAt: null,
+      inventorySyncError: null,
+    },
+    {
+      inventorySyncedAt: syncedAt,
+      inventorySyncError: null,
+    },
+  ]);
+});
+
+test("updateVendorProductInventory keeps local quantity when public-store sync fails", async () => {
+  const productRow = {
+    id: "product_1",
+    name: "Test product",
+    category: "Cosmetics",
+    price: 100,
+    costCurrency: "JPY",
+    approvalStatus: "approved",
+    shopDomain: "shop-a.myshopify.com",
+    shopifyProductId: "gid://shopify/Product/1001",
+    inventoryQuantity: null,
+    inventorySyncedAt: null,
+    inventorySyncError: null,
+    updatedAt: new Date("2026-06-06T00:00:00Z"),
+  };
+  const prismaClient = {
+    product: {
+      findFirst: async () => ({
+        id: productRow.id,
+        shopDomain: productRow.shopDomain,
+        shopifyProductId: productRow.shopifyProductId,
+      }),
+      update: async ({ data }) => {
+        Object.assign(productRow, data);
+        return { ...productRow };
+      },
+    },
+  };
+
+  const result = await updateVendorProductInventory({
+    storeId: "store_1",
+    productId: productRow.id,
+    inventoryQuantity: "3",
+    prismaClient,
+    syncShopifyInventoryQuantityImpl: async () => {
+      throw new Error("ACCESS_DENIED: write_inventory");
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.product.inventoryQuantity, 3);
+  assert.equal(result.product.inventorySyncLabel, "同期要確認");
+  assert.match(result.warning, /権限/);
+  assert.match(productRow.inventorySyncError, /権限/);
+});
+
+test("updateVendorProductInventory skips sync before the product is public-linked", async () => {
+  const productRow = {
+    id: "product_1",
+    name: "Test product",
+    category: "Cosmetics",
+    price: 100,
+    costCurrency: "JPY",
+    approvalStatus: "pending",
+    shopDomain: null,
+    shopifyProductId: null,
+    inventoryQuantity: null,
+    inventorySyncedAt: null,
+    inventorySyncError: null,
+    updatedAt: new Date("2026-06-06T00:00:00Z"),
+  };
+  let syncCallCount = 0;
+  const prismaClient = {
+    product: {
+      findFirst: async () => ({
+        id: productRow.id,
+        shopDomain: productRow.shopDomain,
+        shopifyProductId: productRow.shopifyProductId,
+      }),
+      update: async ({ data }) => {
+        Object.assign(productRow, data);
+        return { ...productRow };
+      },
+    },
+  };
+
+  const result = await updateVendorProductInventory({
+    storeId: "store_1",
+    productId: productRow.id,
+    inventoryQuantity: "4",
+    prismaClient,
+    syncShopifyInventoryQuantityImpl: async () => {
+      syncCallCount += 1;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(syncCallCount, 0);
+  assert.equal(result.product.inventoryQuantity, 4);
+  assert.equal(result.product.inventorySyncLabel, "公開後に同期");
+});
+
+test("syncShopifyInventoryQuantity enables tracking and sets available inventory", async () => {
+  const calls = [];
+  const result = await syncShopifyInventoryQuantity({
+    shopDomain: "shop-a.myshopify.com",
+    shopifyProductId: "gid://shopify/Product/1001",
+    quantity: 5,
+    shopifyGraphQLWithOfflineSessionImpl: async (call) => {
+      calls.push(call);
+
+      if (call.query.includes("ProductInventorySyncTarget")) {
+        return {
+          data: {
+            product: {
+              id: "gid://shopify/Product/1001",
+              variants: {
+                nodes: [
+                  {
+                    id: "gid://shopify/ProductVariant/2001",
+                    inventoryItem: {
+                      id: "gid://shopify/InventoryItem/3001",
+                      tracked: false,
+                    },
+                  },
+                ],
+              },
+            },
+            locations: {
+              nodes: [
+                {
+                  id: "gid://shopify/Location/4001",
+                  name: "Main",
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      if (call.query.includes("InventoryItemTrackingUpdate")) {
+        return {
+          data: {
+            inventoryItemUpdate: {
+              inventoryItem: {
+                id: "gid://shopify/InventoryItem/3001",
+                tracked: true,
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+
+      if (call.query.includes("InventorySetQuantities")) {
+        return {
+          data: {
+            inventorySetQuantities: {
+              inventoryAdjustmentGroup: {
+                createdAt: "2026-06-06T00:00:00Z",
+                reason: "correction",
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+
+      throw new Error("Unexpected GraphQL query");
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.inventoryItemId, "gid://shopify/InventoryItem/3001");
+  assert.equal(result.locationId, "gid://shopify/Location/4001");
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[1].variables, {
+    id: "gid://shopify/InventoryItem/3001",
+    input: {
+      tracked: true,
+    },
+  });
+  assert.equal(calls[2].variables.input.name, "available");
+  assert.equal(calls[2].variables.input.reason, "correction");
+  assert.equal(calls[2].variables.input.ignoreCompareQuantity, true);
+  assert.deepEqual(calls[2].variables.input.quantities, [
+    {
+      inventoryItemId: "gid://shopify/InventoryItem/3001",
+      locationId: "gid://shopify/Location/4001",
+      quantity: 5,
+      compareQuantity: null,
+    },
+  ]);
 });
 
 test("getVendorOrdersPageData returns mapped orders when read_draft_orders is granted", async () => {

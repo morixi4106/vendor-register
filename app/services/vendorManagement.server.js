@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createCookie, redirect } from "@remix-run/node";
 import prisma from "../db.server.js";
 import {
@@ -16,6 +17,59 @@ const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `
     currentAppInstallation {
       accessScopes {
         handle
+      }
+    }
+  }
+`;
+
+const PRODUCT_INVENTORY_SYNC_TARGET_QUERY = `
+  query ProductInventorySyncTarget($productId: ID!) {
+    product(id: $productId) {
+      id
+      variants(first: 1) {
+        nodes {
+          id
+          inventoryItem {
+            id
+            tracked
+          }
+        }
+      }
+    }
+    locations(first: 1) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const INVENTORY_ITEM_TRACKING_UPDATE_MUTATION = `
+  mutation InventoryItemTrackingUpdate($id: ID!, $input: InventoryItemInput!) {
+    inventoryItemUpdate(id: $id, input: $input) {
+      inventoryItem {
+        id
+        tracked
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const INVENTORY_SET_QUANTITIES_MUTATION = `
+  mutation InventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+      inventoryAdjustmentGroup {
+        createdAt
+        reason
+      }
+      userErrors {
+        field
+        message
       }
     }
   }
@@ -194,6 +248,38 @@ export function buildInventoryDisplay(value) {
   };
 }
 
+function buildInventorySyncDisplay(product) {
+  if (!product?.shopifyProductId) {
+    return {
+      syncLabel: "公開後に同期",
+      syncTone: "neutral",
+      syncDetail: "商品公開後に在庫数が公開ストアへ反映されます。",
+    };
+  }
+
+  if (product.inventorySyncError) {
+    return {
+      syncLabel: "同期要確認",
+      syncTone: "warning",
+      syncDetail: product.inventorySyncError,
+    };
+  }
+
+  if (product.inventorySyncedAt) {
+    return {
+      syncLabel: "同期済み",
+      syncTone: "success",
+      syncDetail: `最終同期: ${formatDateTime(product.inventorySyncedAt)}`,
+    };
+  }
+
+  return {
+    syncLabel: "未同期",
+    syncTone: "warning",
+    syncDetail: "在庫数を保存すると公開ストアへ反映されます。",
+  };
+}
+
 function formatPublicResourceId(value) {
   const normalizedValue = String(value || "").trim();
 
@@ -236,6 +322,7 @@ export function serializeVendorProduct(product) {
   const statusLabel = mapProductStatus(product);
   const approvalLabel = mapApprovalLabel(product.approvalStatus);
   const inventoryDisplay = buildInventoryDisplay(product.inventoryQuantity);
+  const inventorySyncDisplay = buildInventorySyncDisplay(product);
 
   return {
     id: product.id,
@@ -247,6 +334,9 @@ export function serializeVendorProduct(product) {
     stockLabel: inventoryDisplay.stockLabel,
     stockStatusLabel: inventoryDisplay.stockStatusLabel,
     stockStatusTone: inventoryDisplay.stockStatusTone,
+    inventorySyncLabel: inventorySyncDisplay.syncLabel,
+    inventorySyncTone: inventorySyncDisplay.syncTone,
+    inventorySyncDetail: inventorySyncDisplay.syncDetail,
     trackingLabel: product.url || "-",
     salesLabel: "0",
     priceLabel: formatMoney(product.price || 0, currencyCode),
@@ -948,11 +1038,151 @@ export async function listVendorProducts(storeId, filters = {}) {
   return products.map(serializeVendorProduct);
 }
 
+function getFirstUserErrorMessage(userErrors, fallback) {
+  if (Array.isArray(userErrors) && userErrors.length > 0) {
+    return userErrors
+      .map((error) => String(error?.message || "").trim())
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  return fallback;
+}
+
+function toPublicInventorySyncError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+
+  if (isReconnectableShopifyError(message)) {
+    return "公開ストアとの接続確認が必要です。管理者に連絡してください。";
+  }
+
+  if (
+    message.includes("ACCESS_DENIED") ||
+    message.includes("access denied") ||
+    message.includes("read_inventory") ||
+    message.includes("write_inventory") ||
+    message.includes("read_locations")
+  ) {
+    return "在庫同期に必要な権限が不足しています。管理者に連絡してください。";
+  }
+
+  return "公開ストアへの在庫反映に失敗しました。管理者に連絡してください。";
+}
+
+export async function syncShopifyInventoryQuantity({
+  shopDomain,
+  shopifyProductId,
+  quantity,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+}) {
+  const normalizedQuantity = Number(quantity);
+
+  if (!shopDomain || !shopifyProductId) {
+    throw new Error("SHOPIFY_INVENTORY_TARGET_MISSING");
+  }
+
+  if (!Number.isInteger(normalizedQuantity) || normalizedQuantity < 0) {
+    throw new Error("SHOPIFY_INVENTORY_QUANTITY_INVALID");
+  }
+
+  const { data: targetData } = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: PRODUCT_INVENTORY_SYNC_TARGET_QUERY,
+    variables: {
+      productId: shopifyProductId,
+    },
+  });
+
+  const product = targetData?.product;
+  const variant = product?.variants?.nodes?.[0];
+  const inventoryItem = variant?.inventoryItem;
+  const location = targetData?.locations?.nodes?.[0];
+
+  if (!product?.id || !variant?.id) {
+    throw new Error("SHOPIFY_PRODUCT_VARIANT_NOT_FOUND");
+  }
+
+  if (!inventoryItem?.id) {
+    throw new Error("SHOPIFY_INVENTORY_ITEM_NOT_FOUND");
+  }
+
+  if (!location?.id) {
+    throw new Error("SHOPIFY_LOCATION_NOT_FOUND");
+  }
+
+  if (inventoryItem.tracked === false) {
+    const { data: trackingData } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: INVENTORY_ITEM_TRACKING_UPDATE_MUTATION,
+      variables: {
+        id: inventoryItem.id,
+        input: {
+          tracked: true,
+        },
+      },
+    });
+
+    const trackingPayload = trackingData?.inventoryItemUpdate;
+    const trackingError = getFirstUserErrorMessage(
+      trackingPayload?.userErrors,
+      null,
+    );
+
+    if (!trackingPayload || trackingError) {
+      throw new Error(trackingError || "SHOPIFY_INVENTORY_TRACKING_UPDATE_FAILED");
+    }
+  }
+
+  const { data: setData } = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: INVENTORY_SET_QUANTITIES_MUTATION,
+    variables: {
+      idempotencyKey: `vendor-register-inventory-${randomUUID()}`,
+      input: {
+        ignoreCompareQuantity: true,
+        name: "available",
+        reason: "correction",
+        referenceDocumentUri: `vendor-register://inventory/${encodeURIComponent(
+          shopifyProductId,
+        )}`,
+        quantities: [
+          {
+            inventoryItemId: inventoryItem.id,
+            locationId: location.id,
+            quantity: normalizedQuantity,
+            compareQuantity: null,
+          },
+        ],
+      },
+    },
+  });
+
+  const setPayload = setData?.inventorySetQuantities;
+  const setError = getFirstUserErrorMessage(setPayload?.userErrors, null);
+
+  if (!setPayload || setError) {
+    throw new Error(setError || "SHOPIFY_INVENTORY_SET_QUANTITIES_FAILED");
+  }
+
+  return {
+    ok: true,
+    inventoryItemId: inventoryItem.id,
+    locationId: location.id,
+    locationName: location.name || null,
+    quantity: normalizedQuantity,
+  };
+}
+
 export async function updateVendorProductInventory({
   storeId,
   productId,
   inventoryQuantity,
   prismaClient = prisma,
+  syncShopifyInventoryQuantityImpl = syncShopifyInventoryQuantity,
+  now = () => new Date(),
 }) {
   const parsedQuantity = parseInventoryQuantityInput(inventoryQuantity);
 
@@ -971,6 +1201,8 @@ export async function updateVendorProductInventory({
     },
     select: {
       id: true,
+      shopDomain: true,
+      shopifyProductId: true,
     },
   });
 
@@ -982,18 +1214,58 @@ export async function updateVendorProductInventory({
     };
   }
 
-  const updatedProduct = await prismaClient.product.update({
+  let updatedProduct = await prismaClient.product.update({
     where: {
       id: product.id,
     },
     data: {
       inventoryQuantity: parsedQuantity.quantity,
+      inventorySyncedAt: null,
+      inventorySyncError: null,
     },
   });
+
+  let warning = null;
+
+  if (updatedProduct.shopifyProductId && updatedProduct.shopDomain) {
+    try {
+      await syncShopifyInventoryQuantityImpl({
+        shopDomain: updatedProduct.shopDomain,
+        shopifyProductId: updatedProduct.shopifyProductId,
+        quantity: parsedQuantity.quantity ?? 0,
+      });
+
+      updatedProduct = await prismaClient.product.update({
+        where: {
+          id: updatedProduct.id,
+        },
+        data: {
+          inventorySyncedAt: now(),
+          inventorySyncError: null,
+        },
+      });
+    } catch (error) {
+      const publicError = toPublicInventorySyncError(error);
+      console.error("vendor inventory sync error:", error);
+
+      updatedProduct = await prismaClient.product.update({
+        where: {
+          id: updatedProduct.id,
+        },
+        data: {
+          inventorySyncedAt: null,
+          inventorySyncError: publicError,
+        },
+      });
+
+      warning = publicError;
+    }
+  }
 
   return {
     ok: true,
     product: serializeVendorProduct(updatedProduct),
+    warning,
   };
 }
 

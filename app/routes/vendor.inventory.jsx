@@ -118,6 +118,7 @@ export const action = async ({ request }) => {
   return json({
     ok: true,
     message: `${result.product.name} の在庫数を保存しました。`,
+    warning: result.warning,
   });
 };
 
@@ -135,6 +136,11 @@ export default function VendorInventoryPage() {
       {actionData?.message ? (
         <section className="vendor-card">
           <div className="vendor-note">{actionData.message}</div>
+        </section>
+      ) : null}
+      {actionData?.warning ? (
+        <section className="vendor-card">
+          <div className="vendor-note vendor-note--warning">{actionData.warning}</div>
         </section>
       ) : null}
 
@@ -181,6 +187,7 @@ export default function VendorInventoryPage() {
                 <th>価格</th>
                 <th>現在の在庫数</th>
                 <th>在庫状態</th>
+                <th>公開ストア反映</th>
                 <th>公開状態</th>
                 <th>確認状況</th>
                 <th>最終更新</th>
@@ -189,7 +196,7 @@ export default function VendorInventoryPage() {
             <tbody>
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ color: "#6b7280" }}>
+                  <td colSpan="9" style={{ color: "#6b7280" }}>
                     まだ商品が登録されていません。商品を登録すると、ここに在庫確認対象として表示されます。
                   </td>
                 </tr>
@@ -210,6 +217,12 @@ export default function VendorInventoryPage() {
                         {product.stockStatusLabel}
                       </span>
                       <span className="vendor-table__meta">{product.stockLabel}</span>
+                    </td>
+                    <td>
+                      <span className={`vendor-shell__badge vendor-shell__badge--${product.inventorySyncTone}`}>
+                        {product.inventorySyncLabel}
+                      </span>
+                      <span className="vendor-table__meta">{product.inventorySyncDetail}</span>
                     </td>
                     <td>
                       <span className={`vendor-shell__badge vendor-shell__badge--${product.statusTone}`}>

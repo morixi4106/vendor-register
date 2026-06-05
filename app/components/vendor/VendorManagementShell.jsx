@@ -232,6 +232,11 @@ export default function VendorManagementShell({
           background:#fef2f2;
           color:#b91c1c;
         }
+        .vendor-note--warning{
+          border-color:#fde68a;
+          background:#fffbeb;
+          color:#92400e;
+        }
         .vendor-placeholder{
           border:1px dashed #d1d5db;
           background:#f9fafb;
