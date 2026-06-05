@@ -137,6 +137,28 @@ test("serializeVendorProduct formats product price with the original currency", 
   assert.equal(product.currencyCode, "EUR");
 });
 
+test("serializeVendorProduct exposes delivery policy labels", () => {
+  const product = serializeVendorProduct({
+    id: "product_1",
+    name: "Test product",
+    category: "Cosmetics",
+    price: 100,
+    costCurrency: "JPY",
+    approvalStatus: "pending",
+    productEuStatus: "PENDING_REVIEW",
+    countryPolicy: {
+      allowedCountries: ["JP", "US"],
+      blockedCountries: [],
+      requiresWarningCountries: [],
+    },
+    updatedAt: "2026-05-11T00:00:00Z",
+  });
+
+  assert.equal(product.deliveryPolicyLabel, "配送先限定");
+  assert.equal(product.deliveryPolicyTone, "warning");
+  assert.match(product.deliveryPolicyDetail, /配送できる国/);
+});
+
 test("getVendorOrdersPageData returns mapped orders when read_draft_orders is granted", async () => {
   let receivedGraphQLCall = null;
   const result = await getVendorOrdersPageData(

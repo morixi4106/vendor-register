@@ -252,7 +252,7 @@ export default function VendorManagementShell({
         }
         .vendor-table{
           width:100%;
-          min-width:980px;
+          min-width:1120px;
           border-collapse:collapse;
         }
         .vendor-table th{
@@ -379,6 +379,12 @@ export default function VendorManagementShell({
           font-weight:700;
           color:#111827;
         }
+        .vendor-form__subheading{
+          margin:0;
+          color:#111827;
+          font-size:16px;
+          line-height:1.4;
+        }
         .vendor-form__input,
         .vendor-form__select,
         .vendor-form__textarea{
@@ -437,6 +443,85 @@ export default function VendorManagementShell({
         }
         .vendor-form__file{
           width:100%;
+        }
+        .vendor-country-policy{
+          gap:14px;
+          padding:18px;
+          border:1px solid #e5e7eb;
+          border-radius:12px;
+          background:#f9fafb;
+        }
+        .vendor-country-fieldset{
+          display:grid;
+          gap:12px;
+          margin:0;
+          padding:14px;
+          border:1px solid #e5e7eb;
+          border-radius:10px;
+          background:#ffffff;
+        }
+        .vendor-country-fieldset legend{
+          padding:0 6px;
+          color:#111827;
+          font-size:14px;
+          font-weight:800;
+        }
+        .vendor-country-fieldset p{
+          margin:0;
+          color:#6b7280;
+          font-size:12px;
+          line-height:1.7;
+        }
+        .vendor-country-fieldset--success{
+          border-color:#bbf7d0;
+        }
+        .vendor-country-fieldset--danger{
+          border-color:#fecaca;
+        }
+        .vendor-country-fieldset--warning{
+          border-color:#fde68a;
+        }
+        .vendor-country-groups{
+          display:grid;
+          gap:12px;
+        }
+        .vendor-country-group{
+          display:grid;
+          gap:8px;
+        }
+        .vendor-country-group__title{
+          color:#374151;
+          font-size:12px;
+          font-weight:800;
+        }
+        .vendor-country-grid{
+          display:grid;
+          grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+          gap:8px;
+        }
+        .vendor-country-option{
+          display:grid;
+          grid-template-columns:auto 1fr auto;
+          gap:8px;
+          align-items:center;
+          min-height:34px;
+          padding:7px 9px;
+          border:1px solid #e5e7eb;
+          border-radius:8px;
+          background:#ffffff;
+          color:#111827;
+          font-size:13px;
+          font-weight:700;
+        }
+        .vendor-country-option input{
+          width:16px;
+          height:16px;
+          margin:0;
+        }
+        .vendor-country-option small{
+          color:#6b7280;
+          font-size:11px;
+          font-weight:800;
         }
         .vendor-form__actions{
           display:flex;

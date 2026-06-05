@@ -45,6 +45,9 @@ export const loader = async ({ request }) => {
   const pendingCount = products.filter(
     (product) => product.approvalLabel === "申請中"
   ).length;
+  const deliveryRestrictedCount = products.filter(
+    (product) => product.deliveryPolicyLabel !== "国別制限なし"
+  ).length;
 
   return json({
     ...getVendorPublicContext(vendor, store),
@@ -55,6 +58,7 @@ export const loader = async ({ request }) => {
       total: products.length,
       pending: pendingCount,
       linked: linkedCount,
+      deliveryRestricted: deliveryRestrictedCount,
     },
   });
 };
@@ -189,11 +193,9 @@ export default function VendorProductsPage() {
           <p className="vendor-stat-sub">shopifyProductId を持つ商品</p>
         </div>
         <div className="vendor-card">
-          <p className="vendor-stat-title">新規登録</p>
-          <p className="vendor-stat-value">/vendor/products/new</p>
-          <p className="vendor-stat-sub">
-            右上ボタンから新規商品登録へ進めます
-          </p>
+          <p className="vendor-stat-title">配送先制限あり</p>
+          <p className="vendor-stat-value">{stats.deliveryRestricted}</p>
+          <p className="vendor-stat-sub">国別制限・EU審査・注意確認がある商品</p>
         </div>
       </section>
 
@@ -213,6 +215,7 @@ export default function VendorProductsPage() {
                 <th>Shopify商品ID</th>
                 <th>商品URL</th>
                 <th>価格</th>
+                <th>配送先</th>
                 <th>売上見込</th>
                 <th>状態</th>
                 <th>申請</th>
@@ -223,7 +226,7 @@ export default function VendorProductsPage() {
             <tbody>
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ color: "#6b7280" }}>
+                  <td colSpan="10" style={{ color: "#6b7280" }}>
                     条件に一致する商品はありません。
                   </td>
                 </tr>
@@ -247,6 +250,16 @@ export default function VendorProductsPage() {
                       )}
                     </td>
                     <td>{product.priceLabel}</td>
+                    <td>
+                      <span
+                        className={`vendor-shell__badge vendor-shell__badge--${product.deliveryPolicyTone}`}
+                      >
+                        {product.deliveryPolicyLabel}
+                      </span>
+                      <span className="vendor-table__meta">
+                        {product.deliveryPolicyDetail}
+                      </span>
+                    </td>
                     <td>{product.salesLabel}</td>
                     <td>
                       <span className={badgeClass(product.statusLabel)}>

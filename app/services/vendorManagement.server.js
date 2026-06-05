@@ -5,6 +5,7 @@ import {
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server.js";
 import { formatMoney as formatCurrencyMoney } from "../utils/money.js";
+import { summarizeVendorDeliveryPolicy } from "../utils/productCountryPolicy.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
@@ -146,6 +147,7 @@ export const PRODUCT_STATUS_FILTER_OPTIONS = [
 
 export function serializeVendorProduct(product) {
   const currencyCode = product.costCurrency || "JPY";
+  const deliveryPolicy = summarizeVendorDeliveryPolicy(product);
 
   return {
     id: product.id,
@@ -159,6 +161,9 @@ export function serializeVendorProduct(product) {
     currencyCode,
     statusLabel: mapProductStatus(product),
     approvalLabel: mapApprovalLabel(product.approvalStatus),
+    deliveryPolicyLabel: deliveryPolicy.label,
+    deliveryPolicyTone: deliveryPolicy.tone,
+    deliveryPolicyDetail: deliveryPolicy.detail,
     shopifyProductId: product.shopifyProductId || null,
     url: product.url || null,
     updatedAtLabel: formatDateTime(product.updatedAt),
@@ -733,6 +738,9 @@ export async function requireVendorSession(request, { includeProducts = false } 
             ? {
                 include: {
                   products: {
+                    include: {
+                      countryPolicy: true,
+                    },
                     orderBy: {
                       updatedAt: "desc",
                     },
@@ -835,6 +843,9 @@ export async function listVendorProducts(storeId, filters = {}) {
 
   const products = await prisma.product.findMany({
     where,
+    include: {
+      countryPolicy: true,
+    },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
 

@@ -35,6 +35,9 @@ export const loader = async ({ request }) => {
   const linkedCount = products.filter(
     (product) => product.statusLabel === "Shopify連携済み"
   ).length;
+  const deliveryRestrictedCount = products.filter(
+    (product) => product.deliveryPolicyLabel !== "国別制限なし"
+  ).length;
 
   const summaryCards = [
     {
@@ -74,6 +77,11 @@ export const loader = async ({ request }) => {
       label: "Shopify連携済み",
       value: `${linkedCount}件`,
       percent: products.length > 0 ? Math.round((linkedCount / products.length) * 100) : 0,
+    },
+    {
+      label: "配送先制限あり",
+      value: `${deliveryRestrictedCount}件`,
+      percent: products.length > 0 ? Math.round((deliveryRestrictedCount / products.length) * 100) : 0,
     },
   ];
 
@@ -152,7 +160,9 @@ export default function VendorDashboard() {
       return (
         String(product.name || "").toLowerCase().includes(normalizedQuery) ||
         String(product.sku || "").toLowerCase().includes(normalizedQuery) ||
-        String(product.trackingLabel || "").toLowerCase().includes(normalizedQuery)
+        String(product.trackingLabel || "").toLowerCase().includes(normalizedQuery) ||
+        String(product.deliveryPolicyLabel || "").toLowerCase().includes(normalizedQuery) ||
+        String(product.deliveryPolicyDetail || "").toLowerCase().includes(normalizedQuery)
       );
     });
   }, [products, query]);
@@ -384,6 +394,7 @@ export default function VendorDashboard() {
                 <th>SKU</th>
                 <th>在庫</th>
                 <th>価格</th>
+                <th>配送先</th>
                 <th>月販売数</th>
                 <th>状態</th>
                 <th>申請</th>
@@ -394,7 +405,7 @@ export default function VendorDashboard() {
             <tbody>
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ color: "#6b7280" }}>
+                  <td colSpan="10" style={{ color: "#6b7280" }}>
                     まだ商品がありません。
                   </td>
                 </tr>
@@ -410,6 +421,16 @@ export default function VendorDashboard() {
                     <td>{product.sku}</td>
                     <td>{product.stockLabel}</td>
                     <td>{product.priceLabel}</td>
+                    <td>
+                      <span
+                        className={`vendor-shell__badge vendor-shell__badge--${product.deliveryPolicyTone}`}
+                      >
+                        {product.deliveryPolicyLabel}
+                      </span>
+                      <span className="vendor-table__meta">
+                        {product.deliveryPolicyDetail}
+                      </span>
+                    </td>
                     <td>{product.salesLabel}</td>
                     <td>
                       <span className={badgeClass(product.statusLabel)}>

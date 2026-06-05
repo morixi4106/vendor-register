@@ -4,6 +4,8 @@ import { Resend } from "resend";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
+import { parseProductCountryPolicyFormData } from "../utils/productCountryPolicy";
+import { buildNestedProductCountryPolicyCreate } from "../utils/productCountryPolicy.server";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
 
@@ -158,6 +160,12 @@ export const action = async ({ request }) => {
     const regulatorySelfCertified = isCheckedInput(
       formData.get("regulatorySelfCertified")
     );
+    const productEuStatus = euSaleRequested ? "PENDING_REVIEW" : "DISABLED";
+    const countryPolicyInput = parseProductCountryPolicyFormData(formData);
+    const countryPolicyCreate = buildNestedProductCountryPolicyCreate(
+      productEuStatus,
+      countryPolicyInput,
+    );
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -205,7 +213,7 @@ export const action = async ({ request }) => {
         shopDomain,
         approvalStatus: "pending",
         euSaleRequested,
-        productEuStatus: euSaleRequested ? "PENDING_REVIEW" : "DISABLED",
+        productEuStatus,
         regulatorySelfCertificationJson: {
           version: "seller-product-self-cert-v1",
           regulatorySelfCertified,
@@ -213,6 +221,7 @@ export const action = async ({ request }) => {
         },
         priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
         priceSyncError: null,
+        ...(countryPolicyCreate ? { countryPolicy: countryPolicyCreate } : {}),
       },
     });
 
