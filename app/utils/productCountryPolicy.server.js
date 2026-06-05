@@ -33,13 +33,3 @@ export async function saveProductCountryPolicy({
     update: data,
   });
 }
-
-export function buildNestedProductCountryPolicyCreate(productEuStatus, policyInput) {
-  if (!shouldPersistProductCountryPolicy(productEuStatus, policyInput)) {
-    return undefined;
-  }
-
-  return {
-    create: buildProductCountryPolicyData(productEuStatus, policyInput),
-  };
-}

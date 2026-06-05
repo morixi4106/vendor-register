@@ -10,6 +10,12 @@ import {
 } from "../utils/priceSyncStatus";
 import { getShopPricingSettings } from "../utils/shopPricingSettings";
 import {
+  CATEGORY_DELIVERY_POLICY_TEMPLATES,
+  getDeliveryPolicyTemplateByKey,
+  getRecommendedDeliveryPolicyTemplate,
+} from "../utils/productCountryPolicy";
+import { saveProductCountryPolicy } from "../utils/productCountryPolicy.server";
+import {
   resolveShopDomain,
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server";
@@ -620,6 +626,37 @@ export const action = async ({ request }) => {
       return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
     }
 
+    if (intent === "apply-country-template") {
+      const templateKey = String(formData.get("countryPolicyTemplate") || "");
+      const template = getDeliveryPolicyTemplateByKey(templateKey);
+
+      if (!template) {
+        return json(
+          { ok: false, error: "配送先テンプレートが不正です" },
+          { status: 400 },
+        );
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.product.update({
+          where: { id: productId },
+          data: {
+            productEuStatus: template.productEuStatus,
+            euSaleRequested: template.productEuStatus !== "DISABLED",
+          },
+        });
+
+        await saveProductCountryPolicy({
+          productId,
+          productEuStatus: template.productEuStatus,
+          policyInput: template,
+          prismaClient: tx,
+        });
+      });
+
+      return redirect(`/admin/products/${productId}`);
+    }
+
     if (intent === "update-eu-policy") {
       const productEuStatus = String(
         formData.get("productEuStatus") || "DISABLED",
@@ -644,31 +681,26 @@ export const action = async ({ request }) => {
         formData.get("requiresWarningCountries"),
       );
 
-      await prisma.$transaction([
-        prisma.product.update({
+      await prisma.$transaction(async (tx) => {
+        await tx.product.update({
           where: { id: productId },
           data: {
             productEuStatus,
             euSaleRequested: productEuStatus !== "DISABLED",
           },
-        }),
-        prisma.productCountryPolicy.upsert({
-          where: { productId },
-          create: {
-            productId,
-            euSaleStatus: productEuStatus,
+        });
+
+        await saveProductCountryPolicy({
+          productId,
+          productEuStatus,
+          policyInput: {
             allowedCountries,
             blockedCountries,
             requiresWarningCountries,
           },
-          update: {
-            euSaleStatus: productEuStatus,
-            allowedCountries,
-            blockedCountries,
-            requiresWarningCountries,
-          },
-        }),
-      ]);
+          prismaClient: tx,
+        });
+      });
 
       return redirect(`/admin/products/${productId}`);
     }
@@ -890,6 +922,7 @@ export default function AdminProductDetail() {
     ? priceDebug?.shopifyError || publicReconnectMessage
     : publicReconnectMessage;
   const actionErrorMessage = actionData?.error;
+  const recommendedDeliveryTemplate = getRecommendedDeliveryPolicyTemplate(product);
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -1146,6 +1179,65 @@ export default function AdminProductDetail() {
             <p style={{ color: "#6b7280", fontSize: "14px" }}>
               高リスク商品は承認せず、低リスク商品だけEU向けcheckoutを許可します。
             </p>
+
+            <Form
+              method="post"
+              style={{
+                display: "grid",
+                gap: "10px",
+                marginTop: "14px",
+                padding: "12px",
+                borderRadius: "8px",
+                background: "#ffffff",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <input type="hidden" name="intent" value="apply-country-template" />
+              <input type="hidden" name="productId" value={product.id} />
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                カテゴリ別配送先テンプレート
+                <select
+                  name="countryPolicyTemplate"
+                  defaultValue={recommendedDeliveryTemplate.key}
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                >
+                  {CATEGORY_DELIVERY_POLICY_TEMPLATES.map((template) => (
+                    <option key={template.key} value={template.key}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div style={{ color: "#6b7280", fontSize: "13px", lineHeight: 1.7 }}>
+                推奨: {recommendedDeliveryTemplate.label}
+                <br />
+                {recommendedDeliveryTemplate.description}
+              </div>
+
+              <button
+                type="submit"
+                style={{
+                  minHeight: "40px",
+                  padding: "0 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  justifySelf: "start",
+                }}
+              >
+                テンプレを適用して保存
+              </button>
+            </Form>
 
             <Form method="post" style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
               <input type="hidden" name="intent" value="update-eu-policy" />

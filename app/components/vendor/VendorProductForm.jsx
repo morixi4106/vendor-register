@@ -1,47 +1,6 @@
 import { Form, Link } from "@remix-run/react";
-import {
-  DELIVERY_COUNTRY_GROUPS,
-  normalizeProductCountryPolicy,
-} from "../../utils/productCountryPolicy.js";
 
 const CURRENCY_OPTIONS = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
-
-function CountryCheckboxGroup({
-  name,
-  title,
-  description,
-  selectedCountries,
-  tone = "neutral",
-}) {
-  return (
-    <fieldset className={`vendor-country-fieldset vendor-country-fieldset--${tone}`}>
-      <legend>{title}</legend>
-      <p>{description}</p>
-
-      <div className="vendor-country-groups">
-        {DELIVERY_COUNTRY_GROUPS.map((group) => (
-          <div className="vendor-country-group" key={`${name}-${group.key}`}>
-            <div className="vendor-country-group__title">{group.label}</div>
-            <div className="vendor-country-grid">
-              {group.options.map((country) => (
-                <label className="vendor-country-option" key={`${name}-${country.code}`}>
-                  <input
-                    defaultChecked={selectedCountries.has(country.code)}
-                    name={name}
-                    type="checkbox"
-                    value={country.code}
-                  />
-                  <span>{country.label}</span>
-                  <small>{country.code}</small>
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
 
 export default function VendorProductForm({
   title,
@@ -63,10 +22,6 @@ export default function VendorProductForm({
     initialValues.regulatorySelfCertified ||
       initialValues.regulatorySelfCertificationJson?.regulatorySelfCertified,
   );
-  const countryPolicy = normalizeProductCountryPolicy(initialValues.countryPolicy);
-  const allowedCountrySet = new Set(countryPolicy.allowedCountries);
-  const blockedCountrySet = new Set(countryPolicy.blockedCountries);
-  const warningCountrySet = new Set(countryPolicy.requiresWarningCountries);
 
   return (
     <section className="vendor-card">
@@ -154,59 +109,16 @@ export default function VendorProductForm({
             <div className="vendor-form__field">
               <label className="vendor-form__label">
                 <input
-                  defaultChecked={Boolean(initialValues.euSaleRequested)}
-                  name="euSaleRequested"
-                  type="checkbox"
-                  value="1"
-                />
-                EU向け販売を希望する
-              </label>
-              <label className="vendor-form__label">
-                <input
                   defaultChecked={regulatorySelfCertified}
                   name="regulatorySelfCertified"
                   type="checkbox"
                   value="1"
                 />
-                禁止商品・規制対象・知財侵害品ではなく、販売先国の法令確認が必要なことを理解しています
+                禁止商品・規制対象・知財侵害品ではないことを確認しました
               </label>
               <div className="vendor-helper-text">
-                EU向け販売を希望した商品は、管理者の追加審査が完了するまでEU宛には販売できません。
+                配送先国の可否や追加審査は、商品確認時に管理者が設定します。
               </div>
-            </div>
-
-            <div className="vendor-form__field vendor-country-policy">
-              <div>
-                <h3 className="vendor-form__subheading">配送先国の設定</h3>
-                <p className="vendor-helper-text">
-                  購入者の配送先国に応じて、商品を表示・購入できるかを制御します。
-                  未設定の場合は、店舗と管理者審査の設定に従います。
-                </p>
-              </div>
-
-              <CountryCheckboxGroup
-                description="選択した場合、この商品は選択した国だけで購入できます。未選択なら配送できる国を限定しません。"
-                name="allowedCountries"
-                selectedCountries={allowedCountrySet}
-                title="配送できる国を限定する"
-                tone="success"
-              />
-
-              <CountryCheckboxGroup
-                description="ここで選択した国では、この商品を購入できません。配送できる国と重なった場合は、購入できない国が優先されます。"
-                name="blockedCountries"
-                selectedCountries={blockedCountrySet}
-                title="購入できない国"
-                tone="danger"
-              />
-
-              <CountryCheckboxGroup
-                description="購入前に関税・輸入VAT・通関手数料などの注意確認を表示したい国です。EU宛は承認後も自動で注意確認が必要になります。"
-                name="requiresWarningCountries"
-                selectedCountries={warningCountrySet}
-                title="注意確認が必要な国"
-                tone="warning"
-              />
             </div>
 
             <div className="vendor-form__field">

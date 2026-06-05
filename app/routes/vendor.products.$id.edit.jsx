@@ -5,8 +5,6 @@ import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { resolveDutyCategory } from "../utils/dutyCategory";
-import { parseProductCountryPolicyFormData } from "../utils/productCountryPolicy";
-import { saveProductCountryPolicy } from "../utils/productCountryPolicy.server";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
@@ -153,9 +151,6 @@ export const loader = async ({ request, params }) => {
 
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    include: {
-      countryPolicy: true,
-    },
   });
 
   if (!product || product.vendorStoreId !== store.id) {
@@ -191,9 +186,6 @@ export const action = async ({ request, params }) => {
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      include: {
-        countryPolicy: true,
-      },
     });
 
     if (!product || product.vendorStoreId !== store.id) {
@@ -209,12 +201,14 @@ export const action = async ({ request, params }) => {
     const costCurrency = String(formData.get("costCurrency") || "JPY")
       .trim()
       .toUpperCase();
-    const euSaleRequested = isCheckedInput(formData.get("euSaleRequested"));
     const regulatorySelfCertified = isCheckedInput(
       formData.get("regulatorySelfCertified")
     );
-    const productEuStatus = euSaleRequested ? "PENDING_REVIEW" : "DISABLED";
-    const countryPolicyInput = parseProductCountryPolicyFormData(formData);
+    const hadEuReview =
+      Boolean(product.euSaleRequested) ||
+      String(product.productEuStatus || "DISABLED").toUpperCase() !== "DISABLED";
+    const euSaleRequested = hadEuReview;
+    const productEuStatus = hadEuReview ? "PENDING_REVIEW" : "DISABLED";
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -378,12 +372,6 @@ export const action = async ({ request, params }) => {
         data: nextProductData,
       });
     }
-
-    await saveProductCountryPolicy({
-      productId,
-      productEuStatus,
-      policyInput: countryPolicyInput,
-    });
 
     return redirect("/vendor/products");
   } catch (error) {
