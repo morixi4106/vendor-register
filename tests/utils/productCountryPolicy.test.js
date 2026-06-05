@@ -75,34 +75,39 @@ test("formatCountryCodeSummary limits long country lists", () => {
   );
 });
 
-test("getRecommendedDeliveryPolicyTemplate recommends cosmetics docs template", () => {
+test("getRecommendedDeliveryPolicyTemplate recommends category-named cosmetics template", () => {
   const template = getRecommendedDeliveryPolicyTemplate({
     name: "NEOBEAUTE ローション",
     category: "化粧品",
   });
 
-  assert.equal(template.key, "cosmetics-docs");
+  assert.equal(template.key, "cosmetics");
+  assert.equal(template.name, "化粧品");
   assert.equal(template.productEuStatus, "REQUIRES_ADDITIONAL_DOCS");
+  assert.deepEqual(template.allowedCountries, ["JP"]);
 });
 
-test("getRecommendedDeliveryPolicyTemplate recommends low risk EU template", () => {
+test("getRecommendedDeliveryPolicyTemplate recommends category-named low risk template", () => {
   const template = getRecommendedDeliveryPolicyTemplate({
     name: "手作りアクセサリー",
     category: "アクセサリー",
   });
 
-  assert.equal(template.key, "low-risk-eu");
+  assert.equal(template.key, "accessories");
+  assert.equal(template.name, "アクセサリー");
   assert.equal(template.productEuStatus, "APPROVED_LOW_RISK");
 });
 
-test("getRecommendedDeliveryPolicyTemplate prioritizes high risk keywords", () => {
+test("getRecommendedDeliveryPolicyTemplate prioritizes permission-required keywords", () => {
   const template = getRecommendedDeliveryPolicyTemplate({
     name: "電子アクセサリー",
     category: "アクセサリー",
   });
 
-  assert.equal(template.key, "high-risk-eu-blocked");
-  assert.equal(template.productEuStatus, "REJECTED_HIGH_RISK");
+  assert.equal(template.key, "electronics");
+  assert.equal(template.name, "電子機器");
+  assert.equal(template.productEuStatus, "REQUIRES_ADDITIONAL_DOCS");
+  assert.deepEqual(template.allowedCountries, ["JP"]);
 });
 
 test("getDeliveryPolicyTemplateByKey returns country limits", () => {

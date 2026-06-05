@@ -11,8 +11,11 @@ import {
 import { getShopPricingSettings } from "../utils/shopPricingSettings";
 import {
   CATEGORY_DELIVERY_POLICY_TEMPLATES,
+  DELIVERY_COUNTRY_GROUPS,
   getDeliveryPolicyTemplateByKey,
   getRecommendedDeliveryPolicyTemplate,
+  normalizeProductCountryPolicy,
+  parseCountryCodeSelection,
 } from "../utils/productCountryPolicy";
 import { saveProductCountryPolicy } from "../utils/productCountryPolicy.server";
 import {
@@ -56,11 +59,170 @@ function formatCountryCodeList(value) {
   return value.join(", ");
 }
 
+function parseCountryPolicyFormData(formData) {
+  return {
+    allowedCountries: parseCountryCodeSelection(formData.getAll("allowedCountries")),
+    blockedCountries: parseCountryCodeSelection(formData.getAll("blockedCountries")),
+    requiresWarningCountries: parseCountryCodeSelection(
+      formData.getAll("requiresWarningCountries"),
+    ),
+  };
+}
+
+function getPresetTemplateValue(template) {
+  return `preset:${template.key}`;
+}
+
+function getCustomTemplateValue(template) {
+  return `custom:${template.id}`;
+}
+
+function serializeCustomDeliveryTemplate(template) {
+  const policy = normalizeProductCountryPolicy(template);
+
+  return {
+    id: template.id,
+    value: getCustomTemplateValue(template),
+    source: "custom",
+    label: template.name,
+    name: template.name,
+    categoryName: template.categoryName || null,
+    description: template.description || "",
+    productEuStatus: template.productEuStatus || "DISABLED",
+    allowedCountries: policy.allowedCountries,
+    blockedCountries: policy.blockedCountries,
+    requiresWarningCountries: policy.requiresWarningCountries,
+  };
+}
+
+function serializePresetDeliveryTemplate(template) {
+  const policy = normalizeProductCountryPolicy(template);
+
+  return {
+    key: template.key,
+    value: getPresetTemplateValue(template),
+    source: "preset",
+    label: template.label || template.name,
+    name: template.name || template.label,
+    categoryName: template.name || template.label,
+    description: template.description || "",
+    productEuStatus: template.productEuStatus || "DISABLED",
+    allowedCountries: policy.allowedCountries,
+    blockedCountries: policy.blockedCountries,
+    requiresWarningCountries: policy.requiresWarningCountries,
+  };
+}
+
+async function resolveDeliveryPolicyTemplate(templateValue) {
+  const rawValue = String(templateValue || "");
+
+  if (rawValue.startsWith("preset:")) {
+    return getDeliveryPolicyTemplateByKey(rawValue.slice("preset:".length));
+  }
+
+  if (rawValue.startsWith("custom:")) {
+    const templateId = rawValue.slice("custom:".length);
+
+    return prisma.deliveryCountryPolicyTemplate.findFirst({
+      where: {
+        id: templateId,
+        isActive: true,
+      },
+    });
+  }
+
+  return getDeliveryPolicyTemplateByKey(rawValue);
+}
+
 function getProductEuStatusLabel(status) {
   return (
     PRODUCT_EU_STATUS_OPTIONS.find((option) => option.value === status)?.label ||
     status ||
     "-"
+  );
+}
+
+function CountryCheckboxSelector({
+  name,
+  title,
+  description,
+  selectedCountries = [],
+  defaultOpen = false,
+  tone = "neutral",
+}) {
+  const selectedCountrySet = new Set(selectedCountries);
+  const toneColor =
+    tone === "danger" ? "#b91c1c" : tone === "success" ? "#047857" : "#92400e";
+
+  return (
+    <details
+      open={defaultOpen}
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: "8px",
+        background: "#fff",
+        padding: "10px 12px",
+      }}
+    >
+      <summary
+        style={{
+          cursor: "pointer",
+          fontWeight: 800,
+          color: toneColor,
+        }}
+      >
+        {title}
+      </summary>
+      <p style={{ margin: "8px 0 12px", color: "#6b7280", fontSize: "13px" }}>
+        {description}
+      </p>
+      <div style={{ display: "grid", gap: "12px" }}>
+        {DELIVERY_COUNTRY_GROUPS.map((group) => (
+          <div key={`${name}-${group.key}`}>
+            <div style={{ fontWeight: 800, fontSize: "13px", marginBottom: "8px" }}>
+              {group.label}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: "8px",
+              }}
+            >
+              {group.options.map((country) => (
+                <label
+                  key={`${name}-${country.code}`}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr auto",
+                    gap: "8px",
+                    alignItems: "center",
+                    minHeight: "34px",
+                    padding: "7px 9px",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: "8px",
+                    background: "#f9fafb",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                  }}
+                >
+                  <input
+                    defaultChecked={selectedCountrySet.has(country.code)}
+                    name={name}
+                    type="checkbox"
+                    value={country.code}
+                  />
+                  <span>{country.label}</span>
+                  <small style={{ color: "#6b7280", fontWeight: 800 }}>
+                    {country.code}
+                  </small>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -387,6 +549,16 @@ export const loader = async ({ params }) => {
     throw new Response("商品が見つかりません", { status: 404 });
   }
 
+  const customDeliveryTemplates =
+    await prisma.deliveryCountryPolicyTemplate.findMany({
+      where: {
+        isActive: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
   let shopifyPrice = null;
   let needsReconnect = false;
   let rawShopifyError = null;
@@ -590,6 +762,9 @@ export const loader = async ({ params }) => {
     needsReconnect,
     shopifyNotice: needsReconnect ? getPublicShopifyReconnectNotice() : null,
     priceBreakdown,
+    customDeliveryTemplates: customDeliveryTemplates.map(
+      serializeCustomDeliveryTemplate,
+    ),
     reconnectShopDomain,
     showInternalPriceDebug,
     priceDebug: showInternalPriceDebug
@@ -627,8 +802,9 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "apply-country-template") {
-      const templateKey = String(formData.get("countryPolicyTemplate") || "");
-      const template = getDeliveryPolicyTemplateByKey(templateKey);
+      const template = await resolveDeliveryPolicyTemplate(
+        formData.get("countryPolicyTemplate"),
+      );
 
       if (!template) {
         return json(
@@ -657,6 +833,60 @@ export const action = async ({ request }) => {
       return redirect(`/admin/products/${productId}`);
     }
 
+    if (intent === "save-country-template") {
+      const templateName = String(formData.get("templateName") || "").trim();
+      const templateDescription = String(
+        formData.get("templateDescription") || "",
+      ).trim();
+      const productEuStatus = String(
+        formData.get("productEuStatus") || "DISABLED",
+      )
+        .trim()
+        .toUpperCase();
+
+      if (!templateName) {
+        return json(
+          { ok: false, error: "テンプレート名を入力してください" },
+          { status: 400 },
+        );
+      }
+
+      if (!PRODUCT_EU_STATUS_VALUES.has(productEuStatus)) {
+        return json(
+          { ok: false, error: "EU販売ステータスが不正です" },
+          { status: 400 },
+        );
+      }
+
+      const policyInput = parseCountryPolicyFormData(formData);
+
+      await prisma.deliveryCountryPolicyTemplate.upsert({
+        where: {
+          name: templateName,
+        },
+        create: {
+          name: templateName,
+          categoryName: templateName,
+          description: templateDescription || null,
+          productEuStatus,
+          allowedCountries: policyInput.allowedCountries,
+          blockedCountries: policyInput.blockedCountries,
+          requiresWarningCountries: policyInput.requiresWarningCountries,
+        },
+        update: {
+          categoryName: templateName,
+          description: templateDescription || null,
+          productEuStatus,
+          allowedCountries: policyInput.allowedCountries,
+          blockedCountries: policyInput.blockedCountries,
+          requiresWarningCountries: policyInput.requiresWarningCountries,
+          isActive: true,
+        },
+      });
+
+      return redirect(`/admin/products/${productId}`);
+    }
+
     if (intent === "update-eu-policy") {
       const productEuStatus = String(
         formData.get("productEuStatus") || "DISABLED",
@@ -671,15 +901,7 @@ export const action = async ({ request }) => {
         );
       }
 
-      const allowedCountries = parseCountryCodeList(
-        formData.get("allowedCountries"),
-      );
-      const blockedCountries = parseCountryCodeList(
-        formData.get("blockedCountries"),
-      );
-      const requiresWarningCountries = parseCountryCodeList(
-        formData.get("requiresWarningCountries"),
-      );
+      const policyInput = parseCountryPolicyFormData(formData);
 
       await prisma.$transaction(async (tx) => {
         await tx.product.update({
@@ -693,11 +915,7 @@ export const action = async ({ request }) => {
         await saveProductCountryPolicy({
           productId,
           productEuStatus,
-          policyInput: {
-            allowedCountries,
-            blockedCountries,
-            requiresWarningCountries,
-          },
+          policyInput,
           prismaClient: tx,
         });
       });
@@ -909,6 +1127,7 @@ export default function AdminProductDetail() {
     needsReconnect,
     shopifyNotice,
     priceBreakdown,
+    customDeliveryTemplates = [],
     reconnectShopDomain,
     showInternalPriceDebug,
     priceDebug,
@@ -923,6 +1142,16 @@ export default function AdminProductDetail() {
     : publicReconnectMessage;
   const actionErrorMessage = actionData?.error;
   const recommendedDeliveryTemplate = getRecommendedDeliveryPolicyTemplate(product);
+  const presetDeliveryTemplates = CATEGORY_DELIVERY_POLICY_TEMPLATES.map(
+    serializePresetDeliveryTemplate,
+  );
+  const deliveryTemplateOptions = [
+    ...presetDeliveryTemplates,
+    ...customDeliveryTemplates,
+  ];
+  const currentCountryPolicy = normalizeProductCountryPolicy(
+    product.countryPolicy,
+  );
 
   return (
     <div style={{ padding: "40px", maxWidth: "1000px", margin: "0 auto" }}>
@@ -1199,7 +1428,7 @@ export default function AdminProductDetail() {
                 カテゴリ別配送先テンプレート
                 <select
                   name="countryPolicyTemplate"
-                  defaultValue={recommendedDeliveryTemplate.key}
+                  defaultValue={getPresetTemplateValue(recommendedDeliveryTemplate)}
                   style={{
                     height: "40px",
                     borderRadius: "8px",
@@ -1207,8 +1436,9 @@ export default function AdminProductDetail() {
                     padding: "0 10px",
                   }}
                 >
-                  {CATEGORY_DELIVERY_POLICY_TEMPLATES.map((template) => (
-                    <option key={template.key} value={template.key}>
+                  {deliveryTemplateOptions.map((template) => (
+                    <option key={template.value} value={template.value}>
+                      {template.source === "custom" ? "追加: " : ""}
                       {template.label}
                     </option>
                   ))}
@@ -1240,7 +1470,6 @@ export default function AdminProductDetail() {
             </Form>
 
             <Form method="post" style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
-              <input type="hidden" name="intent" value="update-eu-policy" />
               <input type="hidden" name="productId" value={product.id} />
 
               <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
@@ -1263,72 +1492,107 @@ export default function AdminProductDetail() {
                 </select>
               </label>
 
-              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
-                許可国コード
-                <input
-                  name="allowedCountries"
-                  defaultValue={formatCountryCodeList(
-                    product.countryPolicy?.allowedCountries,
-                  )}
-                  placeholder="DE, FR, NL"
-                  style={{
-                    height: "40px",
-                    borderRadius: "8px",
-                    border: "1px solid #d1d5db",
-                    padding: "0 10px",
-                  }}
-                />
-              </label>
+              <CountryCheckboxSelector
+                defaultOpen={currentCountryPolicy.allowedCountries.length > 0}
+                description="選択した場合、この商品は選択した国だけで購入できます。未選択なら国を限定しません。"
+                name="allowedCountries"
+                selectedCountries={currentCountryPolicy.allowedCountries}
+                title="配送できる国を限定する"
+                tone="success"
+              />
 
-              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
-                ブロック国コード
-                <input
-                  name="blockedCountries"
-                  defaultValue={formatCountryCodeList(
-                    product.countryPolicy?.blockedCountries,
-                  )}
-                  placeholder="例: FR, IT"
-                  style={{
-                    height: "40px",
-                    borderRadius: "8px",
-                    border: "1px solid #d1d5db",
-                    padding: "0 10px",
-                  }}
-                />
-              </label>
+              <CountryCheckboxSelector
+                defaultOpen={currentCountryPolicy.blockedCountries.length > 0}
+                description="選択した国では購入できません。配送できる国と重なった場合は、購入できない国が優先されます。"
+                name="blockedCountries"
+                selectedCountries={currentCountryPolicy.blockedCountries}
+                title="購入できない国"
+                tone="danger"
+              />
 
-              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
-                警告必須国コード
-                <input
-                  name="requiresWarningCountries"
-                  defaultValue={formatCountryCodeList(
-                    product.countryPolicy?.requiresWarningCountries,
-                  )}
-                  placeholder="空欄ならEU向けは警告承諾必須"
-                  style={{
-                    height: "40px",
-                    borderRadius: "8px",
-                    border: "1px solid #d1d5db",
-                    padding: "0 10px",
-                  }}
-                />
-              </label>
+              <CountryCheckboxSelector
+                defaultOpen={currentCountryPolicy.requiresWarningCountries.length > 0}
+                description="購入前に関税・輸入VAT・通関手数料などの注意確認を表示したい国です。EU宛は承認後も自動で注意確認が必要になります。"
+                name="requiresWarningCountries"
+                selectedCountries={currentCountryPolicy.requiresWarningCountries}
+                title="注意確認が必要な国"
+                tone="warning"
+              />
 
-              <button
-                type="submit"
+              <div
                 style={{
-                  height: "40px",
-                  padding: "0 14px",
+                  display: "grid",
+                  gap: "10px",
+                  padding: "12px",
                   borderRadius: "8px",
-                  border: "1px solid #111827",
-                  background: "#111827",
-                  color: "#fff",
-                  cursor: "pointer",
-                  fontWeight: 700,
+                  border: "1px solid #e5e7eb",
+                  background: "#ffffff",
                 }}
               >
-                EU審査を保存
-              </button>
+                <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                  新しいテンプレート名
+                  <input
+                    name="templateName"
+                    placeholder="例: 化粧品 EU書類確認済み"
+                    style={{
+                      height: "40px",
+                      borderRadius: "8px",
+                      border: "1px solid #d1d5db",
+                      padding: "0 10px",
+                    }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                  テンプレート説明
+                  <input
+                    name="templateDescription"
+                    placeholder="任意。あとで選ぶ管理者向けのメモです。"
+                    style={{
+                      height: "40px",
+                      borderRadius: "8px",
+                      border: "1px solid #d1d5db",
+                      padding: "0 10px",
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  name="intent"
+                  type="submit"
+                  value="update-eu-policy"
+                  style={{
+                    minHeight: "40px",
+                    padding: "0 14px",
+                    borderRadius: "8px",
+                    border: "1px solid #111827",
+                    background: "#111827",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  商品の配送設定を保存
+                </button>
+                <button
+                  name="intent"
+                  type="submit"
+                  value="save-country-template"
+                  style={{
+                    minHeight: "40px",
+                    padding: "0 14px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                    color: "#111827",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  この設定をテンプレートとして保存
+                </button>
+              </div>
             </Form>
           </div>
         </div>

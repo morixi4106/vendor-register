@@ -394,6 +394,23 @@ model ProductCountryPolicy {
   @@map("product_country_policies")
 }
 
+model DeliveryCountryPolicyTemplate {
+  id                       String   @id @default(cuid())
+  name                     String   @unique
+  categoryName             String?
+  description              String?
+  productEuStatus          String   @default("DISABLED")
+  allowedCountries         Json?
+  blockedCountries         Json?
+  requiresWarningCountries Json?
+  isActive                 Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([isActive, name])
+  @@map("delivery_country_policy_templates")
+}
+
 model BuyerWarningAcceptance {
   id                           String   @id @default(cuid())
   orderId                      String?

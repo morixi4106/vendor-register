@@ -50,102 +50,181 @@ export const DELIVERY_COUNTRY_OPTIONS = DELIVERY_COUNTRY_GROUPS.flatMap(
   (group) => group.options,
 );
 
+function createDeliveryPolicyTemplate({
+  key,
+  name,
+  description,
+  productEuStatus,
+  allowedCountries = [],
+  blockedCountries = [],
+  requiresWarningCountries = [],
+  keywords = [],
+}) {
+  return {
+    key,
+    name,
+    label: name,
+    description,
+    productEuStatus,
+    allowedCountries,
+    blockedCountries,
+    requiresWarningCountries,
+    keywords,
+  };
+}
+
+function createLowRiskCategoryTemplate(key, name, keywords = [name]) {
+  return createDeliveryPolicyTemplate({
+    key,
+    name,
+    description:
+      "低リスクカテゴリとして、管理者確認後にEUを含む配送先へ販売できます。EU向けは購入前の注意確認が入ります。",
+    productEuStatus: "APPROVED_LOW_RISK",
+    keywords,
+  });
+}
+
+function createDomesticUntilApprovedTemplate({
+  key,
+  name,
+  description,
+  productEuStatus = "REQUIRES_ADDITIONAL_DOCS",
+  keywords = [name],
+}) {
+  return createDeliveryPolicyTemplate({
+    key,
+    name,
+    description:
+      description ||
+      "追加資料や販売先国の確認が必要なカテゴリです。初期テンプレートでは日本国内のみ配送可にします。",
+    productEuStatus,
+    allowedCountries: ["JP"],
+    keywords,
+  });
+}
+
 export const CATEGORY_DELIVERY_POLICY_TEMPLATES = [
-  {
-    key: "default-non-eu",
-    label: "標準: EUなし / 個別制限なし",
-    description: "まずは国別の配送制限を設定せず、EU向け販売は行わない標準テンプレートです。",
+  createDeliveryPolicyTemplate({
+    key: "standard",
+    name: "標準",
+    description: "EU向け販売は行わず、国別の配送制限も設定しない標準テンプレートです。",
     productEuStatus: "DISABLED",
-    allowedCountries: [],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [],
-  },
-  {
-    key: "low-risk-eu",
-    label: "低リスク一般商品: EU販売可",
-    description: "アパレル、紙製品、雑貨、アートなど、低リスク商品向けです。EU向けは注意確認つきで販売します。",
-    productEuStatus: "APPROVED_LOW_RISK",
-    allowedCountries: [],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [
-      "アパレル",
-      "衣類",
-      "服",
-      "雑貨",
-      "紙",
-      "アート",
-      "アクセサリー",
-      "インテリア",
-      "クラフト",
-    ],
-  },
-  {
-    key: "cosmetics-docs",
-    label: "化粧品: EU追加資料待ち",
-    description: "化粧品は EU Responsible Person / CPNP / CPSR 等の確認が終わるまでEU販売を止めます。",
-    productEuStatus: "REQUIRES_ADDITIONAL_DOCS",
-    allowedCountries: [],
-    blockedCountries: [],
-    requiresWarningCountries: [],
+  }),
+  createLowRiskCategoryTemplate("apparel", "アパレル", [
+    "アパレル",
+    "衣類",
+    "服",
+  ]),
+  createLowRiskCategoryTemplate("art", "アート", ["アート", "絵", "版画"]),
+  createLowRiskCategoryTemplate("paper-goods", "紙製品", [
+    "紙製品",
+    "紙",
+    "ポスター",
+    "カード",
+  ]),
+  createLowRiskCategoryTemplate("general-goods", "雑貨", ["雑貨"]),
+  createLowRiskCategoryTemplate("accessories", "アクセサリー", [
+    "アクセサリー",
+    "ジュエリー",
+  ]),
+  createLowRiskCategoryTemplate("interior-small-goods", "インテリア小物", [
+    "インテリア",
+    "小物",
+  ]),
+  createLowRiskCategoryTemplate("craft-goods", "クラフト品", [
+    "クラフト",
+    "ハンドメイド",
+  ]),
+  createDomesticUntilApprovedTemplate({
+    key: "cosmetics",
+    name: "化粧品",
+    description:
+      "化粧品は販売先国ごとの追加確認が必要です。初期テンプレートでは日本国内のみ配送可にします。",
     keywords: ["化粧", "コスメ", "美容", "スキンケア", "ローション", "クリーム"],
-  },
-  {
-    key: "cosmetics-eu-approved",
-    label: "化粧品: EU書類確認済み",
-    description: "EU向け化粧品の必要資料を管理者が確認済みの商品に使います。",
-    productEuStatus: "APPROVED_LOW_RISK",
-    allowedCountries: [],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [],
-  },
-  {
-    key: "high-risk-eu-blocked",
-    label: "高リスクカテゴリ: EU販売不可",
-    description: "食品、サプリ、医療、玩具、電気/バッテリー等は初期設定ではEU販売不可にします。",
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "food",
+    name: "食品",
+    keywords: ["食品", "食べ物", "飲料"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "supplements",
+    name: "サプリ",
+    keywords: ["サプリ", "健康食品"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "children-goods",
+    name: "子供用品",
+    keywords: ["子供", "こども", "ベビー", "赤ちゃん"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "toys",
+    name: "玩具",
+    keywords: ["玩具", "おもちゃ"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "electronics",
+    name: "電子機器",
+    keywords: ["電子", "電気", "ガジェット"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "battery-goods",
+    name: "バッテリー入り商品",
+    keywords: ["バッテリー", "電池", "リチウム"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "used-goods",
+    name: "中古品",
+    keywords: ["中古", "古物"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "brand-goods",
+    name: "ブランド品",
+    keywords: ["ブランド"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "animal-plant-derived",
+    name: "動植物由来商品",
+    keywords: ["動植物", "植物", "動物", "革", "毛皮"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "medicine",
+    name: "医薬品",
     productEuStatus: "REJECTED_HIGH_RISK",
-    allowedCountries: [],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [
-      "食品",
-      "サプリ",
-      "医薬",
-      "医療",
-      "健康",
-      "子供",
-      "玩具",
-      "電子",
-      "電気",
-      "バッテリー",
-      "PPE",
-      "安全用品",
-      "中古",
-      "ブランド",
-    ],
-  },
-  {
+    keywords: ["医薬", "薬"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "medical-goods",
+    name: "医療系商品",
+    productEuStatus: "REJECTED_HIGH_RISK",
+    keywords: ["医療", "医療機器"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "health-claims",
+    name: "健康効果商品",
+    productEuStatus: "REJECTED_HIGH_RISK",
+    keywords: ["健康効果", "効能", "治療", "改善"],
+  }),
+  createDomesticUntilApprovedTemplate({
+    key: "ppe-safety-goods",
+    name: "PPE / 安全用品",
+    productEuStatus: "REJECTED_HIGH_RISK",
+    keywords: ["PPE", "安全用品", "保護具"],
+  }),
+  createDeliveryPolicyTemplate({
     key: "domestic-only",
-    label: "日本国内のみ",
+    name: "日本国内のみ",
     description: "配送先を日本だけに限定します。",
     productEuStatus: "DISABLED",
     allowedCountries: ["JP"],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [],
-  },
-  {
+  }),
+  createDeliveryPolicyTemplate({
     key: "major-non-eu",
-    label: "主要な非EUのみ",
+    name: "主要な非EUのみ",
     description: "日本、米国、英国、豪州、韓国、シンガポールに限定します。",
     productEuStatus: "DISABLED",
     allowedCountries: ["JP", "US", "GB", "AU", "KR", "SG"],
-    blockedCountries: [],
-    requiresWarningCountries: [],
-    keywords: [],
-  },
+  }),
 ];
 
 export function getDeliveryPolicyTemplateByKey(templateKey) {
@@ -160,9 +239,27 @@ export function getRecommendedDeliveryPolicyTemplate(product = {}) {
     .join(" ")
     .toLowerCase();
   const recommendationOrder = [
-    "high-risk-eu-blocked",
-    "cosmetics-docs",
-    "low-risk-eu",
+    "medicine",
+    "medical-goods",
+    "health-claims",
+    "ppe-safety-goods",
+    "electronics",
+    "battery-goods",
+    "cosmetics",
+    "food",
+    "supplements",
+    "children-goods",
+    "toys",
+    "used-goods",
+    "brand-goods",
+    "animal-plant-derived",
+    "apparel",
+    "art",
+    "paper-goods",
+    "general-goods",
+    "accessories",
+    "interior-small-goods",
+    "craft-goods",
   ];
 
   const matchedTemplate = recommendationOrder
@@ -173,7 +270,7 @@ export function getRecommendedDeliveryPolicyTemplate(product = {}) {
       ),
     );
 
-  return matchedTemplate || getDeliveryPolicyTemplateByKey("default-non-eu");
+  return matchedTemplate || getDeliveryPolicyTemplateByKey("standard");
 }
 
 function splitCountryCodeInput(value) {
