@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS "delivery_country_policy_templates" (
+CREATE TABLE IF NOT EXISTS "delivery_country_policy_templates" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "categoryName" TEXT,
