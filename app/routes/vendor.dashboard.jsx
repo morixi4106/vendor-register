@@ -307,7 +307,7 @@ export default function VendorDashboard() {
           <p className="vendor-section-subtitle">注文連携前のため、まだ表示はありません</p>
 
           <div className="vendor-placeholder">
-            まだ注文データは連携されていません。Phase 1 では /vendor/orders ページから将来の注文管理導線を確認できます。
+            まだ注文データはありません。注文が入ると、注文管理ページで確認できます。
           </div>
 
           <div className="vendor-actions-row" style={{ marginTop: "16px" }}>
@@ -375,7 +375,7 @@ export default function VendorDashboard() {
           <div>
             <h2 className="vendor-section-title">商品管理</h2>
             <p className="vendor-section-subtitle" style={{ marginBottom: 0 }}>
-              今は DB に保存されている vendor 商品を表示しています。
+              登録済みの商品を表示しています。
             </p>
           </div>
 

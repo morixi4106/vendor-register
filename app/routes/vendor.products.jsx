@@ -157,8 +157,7 @@ export default function VendorProductsPage() {
           color: "rgba(55, 65, 81, 0.82)",
         }}
       >
-        現在は公開商品IDと商品URLを検索できます。SKU / 追跡番号の専用検索は、
-        在庫・配送連携後に追加予定です。
+        商品名、公開商品ID、商品URLで検索できます。
       </p>
     </div>
   );
@@ -202,9 +201,7 @@ export default function VendorProductsPage() {
       <section className="vendor-card">
         <h2 className="vendor-section-title">商品一覧</h2>
         <p className="vendor-section-subtitle">
-          商品名に加えて、現在の Product schema で保持している
-          公開商品IDと商品URLでも検索できます。専用の SKU /
-          追跡番号 field は未実装のため、Phase 3 では実在 field を代替検索軸として使っています。
+          登録済みの商品を確認できます。内容を変更したい場合は、各商品の編集ボタンから更新してください。
         </p>
 
         <div className="vendor-table-wrap">

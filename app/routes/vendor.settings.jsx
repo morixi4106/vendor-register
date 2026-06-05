@@ -158,8 +158,7 @@ export default function VendorSettingsPage() {
       <section className="vendor-card">
         <h2 className="vendor-section-title">店舗情報の更新</h2>
         <p className="vendor-section-subtitle">
-          Phase 4 では、店舗名と管理メールだけを保存できます。handle は route
-          衝突と予約語の確認が必要なため、今回は表示のみです。
+          店舗名と管理メールを変更できます。店舗URLは運営側で確認するため、ここでは表示のみです。
         </p>
 
         <Form key={formKey} method="post" className="vendor-form">
@@ -223,7 +222,7 @@ export default function VendorSettingsPage() {
               <div className="vendor-description-value">
                 <div>{vendor.handle}</div>
                 <p className="vendor-helper-text" style={{ margin: "6px 0 0" }}>
-                  route 衝突と予約語の確認が必要なため、handle の編集は今回は未対応です。
+                  店舗ページのURLに使う識別名です。変更が必要な場合は運営に連絡してください。
                 </p>
               </div>
             </div>
@@ -283,8 +282,7 @@ export default function VendorSettingsPage() {
         <section className="vendor-card">
           <h2 className="vendor-section-title">公開ストア連携</h2>
           <p className="vendor-section-subtitle">
-            現在の schema には店舗単位の接続情報が無いため、店舗単位の接続状態は
-            正確に判定できません。
+            商品公開や注文表示に使う接続状態です。通常は運営側で確認します。
           </p>
           <div className="vendor-description-list">
             <div className="vendor-description-row">
@@ -293,7 +291,7 @@ export default function VendorSettingsPage() {
             </div>
             <div className="vendor-description-row">
               <div className="vendor-description-term">再接続</div>
-              <div className="vendor-description-value">Phase 4 では未対応です。</div>
+              <div className="vendor-description-value">必要な場合は運営側で対応します。</div>
             </div>
           </div>
         </section>
@@ -317,10 +315,10 @@ export default function VendorSettingsPage() {
       <section className="vendor-card">
         <h2 className="vendor-section-title">通知設定</h2>
         <p className="vendor-section-subtitle">
-          通知設定の保存先 schema はまだありません。Phase 4 では表示のみとし、保存機能は追加していません。
+          通知の細かな設定は現在準備中です。重要な連絡は管理メール宛に送信されます。
         </p>
         <div className="vendor-placeholder">
-          メール通知や連携通知の細かな設定は、通知設定用の schema と送信フローが整ってから追加予定です。
+          通知設定を変更できるようになったら、この画面から更新できます。
         </div>
       </section>
     </VendorManagementShell>

@@ -151,7 +151,7 @@ export const PRODUCT_STATUS_FILTER_OPTIONS = [
   { value: "all", label: "全て" },
   { value: "pending", label: "申請中" },
   { value: "review", label: "確認中" },
-  { value: "approved", label: "承認済み（未連携）" },
+  { value: "approved", label: "承認済み（公開準備中）" },
   { value: "linked", label: "公開済み" },
   { value: "rejected", label: "差し戻し" },
 ];
@@ -159,19 +159,23 @@ export const PRODUCT_STATUS_FILTER_OPTIONS = [
 export function serializeVendorProduct(product) {
   const currencyCode = product.costCurrency || "JPY";
   const deliveryPolicy = summarizeVendorDeliveryPolicy(product);
+  const statusLabel = mapProductStatus(product);
+  const approvalLabel = mapApprovalLabel(product.approvalStatus);
 
   return {
     id: product.id,
     name: product.name || "名称未設定",
     category: product.category || "未設定",
     sku: formatPublicResourceId(product.shopifyProductId),
-    stockLabel: "未連携",
+    stockLabel: "在庫数未設定",
     trackingLabel: product.url || "-",
     salesLabel: "0",
     priceLabel: formatMoney(product.price || 0, currencyCode),
     currencyCode,
-    statusLabel: mapProductStatus(product),
-    approvalLabel: mapApprovalLabel(product.approvalStatus),
+    statusLabel,
+    statusTone: getBadgeTone(statusLabel),
+    approvalLabel,
+    approvalTone: getBadgeTone(approvalLabel),
     deliveryPolicyLabel: deliveryPolicy.label,
     deliveryPolicyTone: deliveryPolicy.tone,
     deliveryPolicyDetail: deliveryPolicy.detail,
