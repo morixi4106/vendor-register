@@ -1,52 +1,19 @@
 import { json } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 
-function SaveIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="vendor-inventory-control__save-icon"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <path
-        d="M5 4h11l3 3v13H5V4Z"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-      <path
-        d="M8 4v6h8V4"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-      <path
-        d="M8 20v-6h8v6"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function InventoryQuantityForm({ product }) {
-  const [value, setValue] = useState(product.inventoryInputValue || "");
-
+function InventoryQuantityInput({ onChange, product, value }) {
   const adjustValue = (delta) => {
     const currentValue = value === "" ? 0 : Number(value);
     const normalizedValue =
       Number.isInteger(currentValue) && currentValue >= 0 ? currentValue : 0;
     const nextValue = Math.max(0, normalizedValue + delta);
-    setValue(String(nextValue));
+    onChange(product.id, String(nextValue));
   };
 
   return (
-    <Form method="post" className="vendor-inventory-control">
-      <input type="hidden" name="intent" value="updateInventory" />
+    <div className="vendor-inventory-control">
       <input type="hidden" name="productId" value={product.id} />
       <button
         aria-label={`${product.name}の在庫を1減らす`}
@@ -61,8 +28,8 @@ function InventoryQuantityForm({ product }) {
         className="vendor-inventory-control__input"
         inputMode="numeric"
         min="0"
-        name="inventoryQuantity"
-        onChange={(event) => setValue(event.target.value)}
+        name={`inventoryQuantity:${product.id}`}
+        onChange={(event) => onChange(product.id, event.target.value)}
         step="1"
         type="number"
         value={value}
@@ -75,15 +42,7 @@ function InventoryQuantityForm({ product }) {
       >
         +
       </button>
-      <button
-        aria-label={`${product.name}の在庫数を保存`}
-        className="vendor-inventory-control__save"
-        title="保存"
-        type="submit"
-      >
-        <SaveIcon />
-      </button>
-    </Form>
+    </div>
   );
 }
 
@@ -134,32 +93,87 @@ export const action = async ({ request }) => {
     );
   }
 
-  const result = await updateVendorProductInventory({
-    storeId: store.id,
-    productId: formData.get("productId"),
-    inventoryQuantity: formData.get("inventoryQuantity"),
-  });
+  const productIds = formData
+    .getAll("productId")
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
 
-  if (!result.ok) {
+  if (productIds.length === 0) {
     return json(
       {
         ok: false,
-        error: result.error,
+        error: "保存する商品がありません。",
       },
-      { status: result.status || 400 },
+      { status: 400 },
     );
+  }
+
+  const warnings = [];
+
+  for (const productId of productIds) {
+    const result = await updateVendorProductInventory({
+      storeId: store.id,
+      productId,
+      inventoryQuantity: formData.get(`inventoryQuantity:${productId}`),
+    });
+
+    if (!result.ok) {
+      return json(
+        {
+          ok: false,
+          error: result.error,
+        },
+        { status: result.status || 400 },
+      );
+    }
+
+    if (result.warning) {
+      warnings.push(`${result.product.name}: ${result.warning}`);
+    }
   }
 
   return json({
     ok: true,
-    message: `${result.product.name} の在庫数を保存しました。`,
-    warning: result.warning,
+    message: `${productIds.length}件の在庫数を保存しました。`,
+    warning: warnings.length > 0 ? warnings.join(" / ") : null,
   });
 };
 
 export default function VendorInventoryPage() {
   const actionData = useActionData();
   const { store, products, stats } = useLoaderData();
+  const initialInventoryValues = useMemo(
+    () =>
+      Object.fromEntries(
+        products.map((product) => [
+          product.id,
+          String(product.inventoryInputValue ?? ""),
+        ]),
+      ),
+    [products],
+  );
+  const [inventoryValues, setInventoryValues] = useState(initialInventoryValues);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    setInventoryValues(initialInventoryValues);
+  }, [initialInventoryValues]);
+
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return products;
+
+    return products.filter((product) =>
+      String(product.name || "").toLowerCase().includes(normalizedQuery),
+    );
+  }, [products, query]);
+
+  const updateInventoryValue = (productId, nextValue) => {
+    setInventoryValues((currentValues) => ({
+      ...currentValues,
+      [productId]: nextValue,
+    }));
+  };
 
   return (
     <VendorManagementShell activeItem="inventory" storeName={store.storeName} title="在庫">
@@ -208,12 +222,41 @@ export default function VendorInventoryPage() {
       </section>
 
       <section className="vendor-card">
-        <h2 className="vendor-section-title">商品別の在庫確認</h2>
-        <p className="vendor-section-subtitle">
-          在庫が未設定または0の商品は、購入できない状態として扱います。
-        </p>
+        <div className="vendor-inventory-card-header">
+          <div>
+            <h2 className="vendor-section-title">商品別の在庫確認</h2>
+            <p className="vendor-section-subtitle">
+              在庫が未設定または0の商品は、購入できない状態として扱います。
+            </p>
+          </div>
+          <button
+            className="vendor-shell__button vendor-shell__button--primary"
+            disabled={filteredProducts.length === 0}
+            form="vendor-inventory-bulk-form"
+            type="submit"
+          >
+            保存
+          </button>
+        </div>
 
-        <div className="vendor-table-wrap">
+        <div className="vendor-inventory-toolbar">
+          <input
+            aria-label="商品名で絞り込み"
+            className="vendor-shell__search-input"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="商品名で絞り込み"
+            type="search"
+            value={query}
+          />
+        </div>
+
+        <Form
+          className="vendor-inventory-form"
+          id="vendor-inventory-bulk-form"
+          method="post"
+        >
+          <input type="hidden" name="intent" value="updateInventory" />
+          <div className="vendor-table-wrap">
           <table className="vendor-table">
             <thead>
               <tr>
@@ -235,16 +278,23 @@ export default function VendorInventoryPage() {
                     まだ商品が登録されていません。商品を登録すると、ここに在庫確認対象として表示されます。
                   </td>
                 </tr>
+              ) : filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan="9" style={{ color: "#6b7280" }}>
+                    条件に一致する商品はありません。
+                  </td>
+                </tr>
               ) : (
-                products.map((product) => (
+                filteredProducts.map((product) => (
                   <tr key={product.id}>
                     <td className="vendor-table__name">{product.name}</td>
                     <td>{product.category}</td>
                     <td>{product.priceLabel}</td>
                     <td>
-                      <InventoryQuantityForm
-                        key={`${product.id}:${product.inventoryInputValue}`}
+                      <InventoryQuantityInput
+                        onChange={updateInventoryValue}
                         product={product}
+                        value={inventoryValues[product.id] ?? ""}
                       />
                     </td>
                     <td>
@@ -273,9 +323,10 @@ export default function VendorInventoryPage() {
                   </tr>
                 ))
               )}
-            </tbody>
+          </tbody>
           </table>
         </div>
+        </Form>
       </section>
     </VendorManagementShell>
   );
