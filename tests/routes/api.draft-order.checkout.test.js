@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { createDraftOrderCheckout } from '../../app/services/draftOrderCheckout.server.js';
 import { createDraftOrderCheckoutLoader } from '../../app/services/draftOrderCheckout.server.js';
+import { SALES_CREDIT_PAYMENT_RISK_CLASSES } from '../../app/services/sellerPayments.server.js';
 import { vendorAdminSessionCookie } from '../../app/services/vendorManagement.server.js';
 import { createPublicVendorDraftOrderCheckoutAction } from '../../app/services/vendorStorefront.server.js';
 
@@ -12,6 +13,12 @@ const INVALID_SELECTION_MESSAGE =
   '選択した商品を確認できませんでした。もう一度商品を選び直してください。';
 const OUT_OF_STOCK_MESSAGE =
   '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
+
+const TRUSTED_SALES_CREDIT_METADATA = {
+  salesCreditPaymentRiskClass:
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  salesCreditPaymentRiskRateBps: 10000,
+};
 
 function createProducts() {
   return [
@@ -477,6 +484,7 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
           amount: 10000,
           currencyCode: 'jpy',
           occurredAt: new Date('2025-01-01T00:00:00Z'),
+          metadataJson: TRUSTED_SALES_CREDIT_METADATA,
         },
       ],
       salesCreditOffsets,
@@ -583,6 +591,7 @@ test('api.draft-order.checkout rejects sales credit idempotency reuse with a dif
           amount: 10000,
           currencyCode: 'jpy',
           occurredAt: new Date('2025-01-01T00:00:00Z'),
+          metadataJson: TRUSTED_SALES_CREDIT_METADATA,
         },
       ],
       salesCreditOffsets,
@@ -644,6 +653,7 @@ test('api.draft-order.checkout rejects sales credit on the seller own products',
           amount: 10000,
           currencyCode: 'jpy',
           occurredAt: new Date('2025-01-01T00:00:00Z'),
+          metadataJson: TRUSTED_SALES_CREDIT_METADATA,
         },
       ],
     }),

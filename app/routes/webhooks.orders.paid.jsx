@@ -2,10 +2,14 @@ import { json } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
 import { processShopifyOrderPaidSettlement } from "../services/sellerPayments.server.js";
+import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
-  const result = await processShopifyOrderPaidSettlement({ payload, shop });
+  const result = await processShopifyOrderPaidSettlement(
+    { payload, shop },
+    { shopifyGraphQLWithOfflineSessionImpl: shopifyGraphQLWithOfflineSession },
+  );
 
   if (!result.ok) {
     console.warn("orders/paid settlement skipped:", {

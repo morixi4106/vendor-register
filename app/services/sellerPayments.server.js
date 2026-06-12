@@ -103,6 +103,20 @@ const DEFAULT_ORDER_CURRENCY = "jpy";
 export const DEFAULT_SALES_CREDIT_HOLD_DAYS = 45;
 export const DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS = 1000;
 const DEFAULT_SALES_CREDIT_LOCK_MINUTES = 30;
+export const SALES_CREDIT_PAYMENT_RISK_CLASSES = {
+  CARD_3DS_AUTHENTICATED: "card_3ds_authenticated",
+  NON_CARD_CONFIRMED: "non_card_confirmed",
+  SALES_CREDIT_RESTORED: "sales_credit_restored",
+  CARD_UNVERIFIED: "card_unverified",
+  UNKNOWN: "unknown",
+};
+export const SALES_CREDIT_PAYMENT_RISK_RATE_BPS = {
+  [SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED]: 10000,
+  [SALES_CREDIT_PAYMENT_RISK_CLASSES.NON_CARD_CONFIRMED]: 10000,
+  [SALES_CREDIT_PAYMENT_RISK_CLASSES.SALES_CREDIT_RESTORED]: 10000,
+  [SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_UNVERIFIED]: 0,
+  [SALES_CREDIT_PAYMENT_RISK_CLASSES.UNKNOWN]: 0,
+};
 const SELLER_REVIEW_REASON_PAYOUT_FAILED =
   "payout_external_account_update_required";
 const SELLER_REVIEW_REASON_EXTERNAL_ACCOUNT_UPDATED =
@@ -131,6 +145,33 @@ const SHOPIFY_ORDER_RISK_ENTRY_TYPES = [
   ...SHOPIFY_ORDER_DISPUTE_ENTRY_TYPES,
 ];
 const SHOPIFY_DISPUTE_RELEASE_STATUSES = new Set(["charge_refunded", "won"]);
+const SHOPIFY_ORDER_PAYMENT_RISK_QUERY = `#graphql
+  query SalesCreditOrderPaymentRisk($id: ID!) {
+    order(id: $id) {
+      id
+      paymentGatewayNames
+      sourceName
+      transactions {
+        id
+        kind
+        status
+        gateway
+        formattedGateway
+        receiptJson
+        paymentDetails {
+          __typename
+          ... on CardPaymentDetails {
+            company
+            paymentMethodName
+            wallet
+            avsResultCode
+            cvvResultCode
+          }
+        }
+      }
+    }
+  }
+`;
 
 let stripeClientSingleton = null;
 
@@ -238,6 +279,11 @@ function addMinutes(date, minutes) {
 
 function subtractDays(date, days) {
   return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function clampBasisPoints(value, fallback = 0) {
+  const numeric = clampInteger(value, fallback);
+  return Math.min(10000, Math.max(0, numeric));
 }
 
 async function runInTransaction(prismaClient, callback) {
@@ -2524,6 +2570,342 @@ function getShopifyLineNetAmount(lineItem, currencyCode) {
   return Math.max(0, grossAmount - discountAmount);
 }
 
+function normalizeStringList(values = []) {
+  return uniqueValues(
+    (Array.isArray(values) ? values : [values])
+      .map((value) => normalizeText(value))
+      .filter(Boolean),
+  );
+}
+
+function collectShopifyPaymentGatewayNames(payload) {
+  return normalizeStringList([
+    ...(Array.isArray(payload?.payment_gateway_names)
+      ? payload.payment_gateway_names
+      : []),
+    payload?.gateway,
+    payload?.payment_gateway_name,
+    payload?.processing_method,
+    payload?.source_name,
+    ...(Array.isArray(payload?.transactions)
+      ? payload.transactions.flatMap((transaction) => [
+          transaction?.gateway,
+          transaction?.payment_gateway_name,
+          transaction?.source_name,
+        ])
+      : []),
+  ]);
+}
+
+function isTruthyPaymentRiskValue(value) {
+  if (value === true) {
+    return true;
+  }
+
+  const normalized = normalizeLowercase(value);
+  return [
+    "1",
+    "true",
+    "yes",
+    "y",
+    "authenticated",
+    "successful",
+    "success",
+    "passed",
+  ].includes(normalized);
+}
+
+function isThreeDSecureAuthenticatedValue(value) {
+  if (isTruthyPaymentRiskValue(value)) {
+    return true;
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  if (
+    isTruthyPaymentRiskValue(value.liability_shifted) ||
+    isTruthyPaymentRiskValue(value.liabilityShifted) ||
+    isTruthyPaymentRiskValue(value.authenticated)
+  ) {
+    return true;
+  }
+
+  const statusCandidates = [
+    value.status,
+    value.result,
+    value.authentication_status,
+    value.authenticationStatus,
+    value.trans_status,
+    value.transStatus,
+  ];
+
+  if (statusCandidates.some(isTruthyPaymentRiskValue)) {
+    return true;
+  }
+
+  const eci = normalizeText(value.eci);
+  return eci === "05" || eci === "02";
+}
+
+function collectThreeDSecureCandidates(value, depth = 0) {
+  if (depth > 4 || value == null) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      return [];
+    }
+
+    try {
+      return collectThreeDSecureCandidates(JSON.parse(trimmed), depth + 1);
+    } catch {
+      return [];
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) =>
+      collectThreeDSecureCandidates(item, depth + 1),
+    );
+  }
+
+  if (!isPlainObject(value)) {
+    return [];
+  }
+
+  const candidates = [];
+
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const normalizedKey = normalizeLowercase(key) || "";
+
+    if (
+      normalizedKey.includes("3d") ||
+      normalizedKey.includes("three_d") ||
+      normalizedKey.includes("threed") ||
+      normalizedKey.includes("liability_shift") ||
+      normalizedKey === "eci"
+    ) {
+      candidates.push(nestedValue);
+
+      if (isPlainObject(nestedValue)) {
+        candidates.push(nestedValue);
+      }
+    }
+
+    candidates.push(...collectThreeDSecureCandidates(nestedValue, depth + 1));
+  }
+
+  return candidates;
+}
+
+function hasThreeDSecureAuthentication(payload) {
+  const transactions = Array.isArray(payload?.transactions)
+    ? payload.transactions
+    : [];
+  const candidates = [
+    payload?.three_d_secure,
+    payload?.threeDSecure,
+    payload?.payment_details?.three_d_secure,
+    payload?.payment_details?.threeDSecure,
+    payload?.paymentDetails?.three_d_secure,
+    payload?.paymentDetails?.threeDSecure,
+    ...transactions.flatMap((transaction) => [
+      transaction?.three_d_secure,
+      transaction?.threeDSecure,
+      transaction?.payment_details?.three_d_secure,
+      transaction?.payment_details?.threeDSecure,
+      transaction?.paymentDetails?.three_d_secure,
+      transaction?.paymentDetails?.threeDSecure,
+      transaction?.receipt?.three_d_secure,
+      transaction?.receipt?.threeDSecure,
+      transaction?.receiptJson?.three_d_secure,
+      transaction?.receiptJson?.threeDSecure,
+    ]),
+    ...collectThreeDSecureCandidates(payload?.receiptJson),
+    ...transactions.flatMap((transaction) =>
+      collectThreeDSecureCandidates(transaction?.receiptJson),
+    ),
+  ];
+
+  return candidates.some(isThreeDSecureAuthenticatedValue);
+}
+
+function gatewayNamesContainAny(gatewayNames, needles) {
+  const normalizedNames = gatewayNames.map((name) => normalizeLowercase(name));
+  return normalizedNames.some((name) =>
+    needles.some((needle) => name?.includes(needle)),
+  );
+}
+
+export function inferShopifyOrderSalesCreditPaymentRisk(payload = {}) {
+  const gatewayNames = collectShopifyPaymentGatewayNames(payload);
+  const threeDSecureAuthenticated = hasThreeDSecureAuthentication(payload);
+
+  if (threeDSecureAuthenticated) {
+    return {
+      riskClass: SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+      rateBps:
+        SALES_CREDIT_PAYMENT_RISK_RATE_BPS[
+          SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED
+        ],
+      reason: "three_d_secure_authenticated",
+      gatewayNames,
+      threeDSecureAuthenticated,
+    };
+  }
+
+  if (
+    gatewayNamesContainAny(gatewayNames, [
+      "bank transfer",
+      "bank_transfer",
+      "furikomi",
+      "convenience",
+      "konbini",
+      "cash on delivery",
+      "cod",
+      "manual",
+      "銀行振込",
+      "コンビニ",
+    ])
+  ) {
+    return {
+      riskClass: SALES_CREDIT_PAYMENT_RISK_CLASSES.NON_CARD_CONFIRMED,
+      rateBps:
+        SALES_CREDIT_PAYMENT_RISK_RATE_BPS[
+          SALES_CREDIT_PAYMENT_RISK_CLASSES.NON_CARD_CONFIRMED
+        ],
+      reason: "non_card_confirmed_gateway",
+      gatewayNames,
+      threeDSecureAuthenticated,
+    };
+  }
+
+  if (
+    gatewayNamesContainAny(gatewayNames, [
+      "card",
+      "visa",
+      "mastercard",
+      "master card",
+      "jcb",
+      "american express",
+      "amex",
+      "shopify payments",
+      "shopify_payments",
+    ])
+  ) {
+    return {
+      riskClass: SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_UNVERIFIED,
+      rateBps:
+        SALES_CREDIT_PAYMENT_RISK_RATE_BPS[
+          SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_UNVERIFIED
+        ],
+      reason: "card_without_3ds_signal",
+      gatewayNames,
+      threeDSecureAuthenticated,
+    };
+  }
+
+  return {
+    riskClass: SALES_CREDIT_PAYMENT_RISK_CLASSES.UNKNOWN,
+    rateBps:
+      SALES_CREDIT_PAYMENT_RISK_RATE_BPS[
+        SALES_CREDIT_PAYMENT_RISK_CLASSES.UNKNOWN
+      ],
+    reason: "payment_risk_unknown",
+    gatewayNames,
+    threeDSecureAuthenticated,
+  };
+}
+
+function buildShopifyOrderPaymentRiskPayload(payload, orderData) {
+  const transactions = Array.isArray(orderData?.transactions)
+    ? orderData.transactions.map((transaction) => ({
+        gateway: transaction?.gateway,
+        payment_gateway_name: transaction?.formattedGateway,
+        source_name: transaction?.paymentDetails?.paymentMethodName,
+        manualPaymentGateway: transaction?.manualPaymentGateway,
+        kind: transaction?.kind,
+        status: transaction?.status,
+        payment_details: transaction?.paymentDetails,
+        receiptJson: transaction?.receiptJson,
+      }))
+    : [];
+
+  return {
+    ...payload,
+    payment_gateway_names: normalizeStringList([
+      ...(Array.isArray(payload?.payment_gateway_names)
+        ? payload.payment_gateway_names
+        : []),
+      ...(Array.isArray(orderData?.paymentGatewayNames)
+        ? orderData.paymentGatewayNames
+        : []),
+    ]),
+    source_name: payload?.source_name || orderData?.sourceName,
+    transactions: [
+      ...(Array.isArray(payload?.transactions) ? payload.transactions : []),
+      ...transactions,
+    ],
+  };
+}
+
+async function resolveShopifyOrderSalesCreditPaymentRisk(
+  { payload, shopDomain, shopifyOrderId },
+  { shopifyGraphQLWithOfflineSessionImpl = null } = {},
+) {
+  const payloadRisk = inferShopifyOrderSalesCreditPaymentRisk(payload);
+
+  if (
+    payloadRisk.rateBps > 0 ||
+    typeof shopifyGraphQLWithOfflineSessionImpl !== "function" ||
+    !shopDomain ||
+    !shopifyOrderId
+  ) {
+    return payloadRisk;
+  }
+
+  try {
+    const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain,
+      apiVersion: "2026-04",
+      query: SHOPIFY_ORDER_PAYMENT_RISK_QUERY,
+      variables: {
+        id: shopifyOrderId,
+      },
+    });
+    const orderPayload = buildShopifyOrderPaymentRiskPayload(
+      payload,
+      data?.order,
+    );
+    const adminRisk = inferShopifyOrderSalesCreditPaymentRisk(orderPayload);
+
+    return {
+      ...adminRisk,
+      reason:
+        adminRisk.rateBps > payloadRisk.rateBps
+          ? `${adminRisk.reason}_from_admin_transaction`
+          : adminRisk.reason,
+      adminLookupAttempted: true,
+      adminLookupSucceeded: Boolean(data?.order),
+      payloadRiskClass: payloadRisk.riskClass,
+      payloadRiskRateBps: payloadRisk.rateBps,
+    };
+  } catch (error) {
+    return {
+      ...payloadRisk,
+      adminLookupAttempted: true,
+      adminLookupSucceeded: false,
+      adminLookupError:
+        error instanceof Error ? error.message : String(error || ""),
+    };
+  }
+}
+
 function getShopifyRefundLineProductIdCandidates(refundLineItem) {
   const lineItem = refundLineItem?.line_item || refundLineItem;
 
@@ -2729,7 +3111,7 @@ function buildProductCandidateMap(products, shopDomain) {
 
 export async function processShopifyOrderPaidSettlement(
   { payload, shop },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, shopifyGraphQLWithOfflineSessionImpl = null } = {},
 ) {
   const shopDomain = normalizeLowercase(
     shop || payload?.shop_domain || payload?.shop,
@@ -2752,6 +3134,17 @@ export async function processShopifyOrderPaidSettlement(
       reason: "invalid_shopify_order_payload",
     };
   }
+
+  const paymentRisk = await resolveShopifyOrderSalesCreditPaymentRisk(
+    {
+      payload,
+      shopDomain,
+      shopifyOrderId,
+    },
+    {
+      shopifyGraphQLWithOfflineSessionImpl,
+    },
+  );
 
   const existingLedgerEntry = await prismaClient.ledgerEntry.findFirst({
     where: {
@@ -3012,6 +3405,17 @@ export async function processShopifyOrderPaidSettlement(
           vendorHandle: normalizeText(vendor?.handle),
           settlementMode: "shopify_order_to_monthly_settlement",
           cashSettlementAmount,
+          salesCreditPaymentRiskClass: paymentRisk.riskClass,
+          salesCreditPaymentRiskRateBps: paymentRisk.rateBps,
+          salesCreditPaymentRiskReason: paymentRisk.reason,
+          shopifyPaymentGatewayNames: paymentRisk.gatewayNames,
+          threeDSecureAuthenticated: paymentRisk.threeDSecureAuthenticated,
+          salesCreditPaymentRiskAdminLookupAttempted: Boolean(
+            paymentRisk.adminLookupAttempted,
+          ),
+          salesCreditPaymentRiskAdminLookupSucceeded: Boolean(
+            paymentRisk.adminLookupSucceeded,
+          ),
           salesCreditOffsetId: salesCreditOffset?.offsetId || null,
           salesCreditOffsetAmount: salesCreditSettlementAmount,
           salesCreditBuyerSellerId: salesCreditOffset?.buyerSellerId || null,
@@ -3038,6 +3442,7 @@ export async function processShopifyOrderPaidSettlement(
       sellerId: seller.id,
       amount: settlementAmount,
       currencyCode,
+      paymentRisk,
       matchedLineCount: matchedLines.length,
       unmatchedProductIds: unmatchedProductIds.filter(Boolean),
       salesCreditCapture,
@@ -4369,6 +4774,38 @@ const SALES_CREDIT_PAYOUT_LOCK_STATUSES = new Set([
   "processing",
 ]);
 
+function getLedgerEntryMetadata(entry) {
+  return isPlainObject(entry?.metadataJson) ? entry.metadataJson : {};
+}
+
+function getSalesCreditEntryRiskProfile(entry) {
+  if (IMMEDIATE_MATURE_SALES_CREDIT_ENTRY_TYPES.has(entry?.entryType)) {
+    return {
+      riskClass: SALES_CREDIT_PAYMENT_RISK_CLASSES.SALES_CREDIT_RESTORED,
+      rateBps:
+        SALES_CREDIT_PAYMENT_RISK_RATE_BPS[
+          SALES_CREDIT_PAYMENT_RISK_CLASSES.SALES_CREDIT_RESTORED
+        ],
+    };
+  }
+
+  const metadata = getLedgerEntryMetadata(entry);
+  const riskClass =
+    normalizeText(metadata.salesCreditPaymentRiskClass) ||
+    normalizeText(metadata.paymentRiskClass) ||
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.UNKNOWN;
+  const configuredRate = SALES_CREDIT_PAYMENT_RISK_RATE_BPS[riskClass];
+  const rateBps =
+    configuredRate == null
+      ? clampBasisPoints(metadata.salesCreditPaymentRiskRateBps, 0)
+      : configuredRate;
+
+  return {
+    riskClass,
+    rateBps: clampBasisPoints(rateBps, 0),
+  };
+}
+
 export function calculateSellerPayoutableLedgerBalance(entries = []) {
   if (!Array.isArray(entries)) {
     return 0;
@@ -4443,6 +4880,8 @@ export function calculateSellerSalesCreditAvailability(
   const normalizedRiskBufferBps = clampInteger(riskBufferBps);
 
   let maturedSalesAmount = 0;
+  let grossMaturedSalesAmount = 0;
+  let ineligibleMaturedSalesAmount = 0;
   let pendingSalesAmount = 0;
   let deductionAmount = 0;
 
@@ -4462,7 +4901,13 @@ export function calculateSellerSalesCreditAvailability(
         forceMature ||
         (!Number.isNaN(occurredAt.getTime()) && occurredAt <= maturityCutoff)
       ) {
-        maturedSalesAmount += amount;
+        const riskProfile = getSalesCreditEntryRiskProfile(entry);
+        const eligibleAmount = Math.floor(
+          (amount * riskProfile.rateBps) / 10000,
+        );
+        grossMaturedSalesAmount += amount;
+        maturedSalesAmount += eligibleAmount;
+        ineligibleMaturedSalesAmount += Math.max(0, amount - eligibleAmount);
       } else {
         pendingSalesAmount += amount;
       }
@@ -4498,6 +4943,8 @@ export function calculateSellerSalesCreditAvailability(
     availableAmount,
     totalLedgerBalance,
     maturedSalesAmount,
+    grossMaturedSalesAmount,
+    ineligibleMaturedSalesAmount,
     pendingSalesAmount,
     riskBufferAmount,
     pendingRiskReserveAmount,
@@ -4521,6 +4968,14 @@ function createSalesCreditSummaryLabels(summary, currencyCode) {
     ),
     maturedSalesAmountLabel: formatMoney(
       summary.maturedSalesAmount,
+      displayCurrency,
+    ),
+    grossMaturedSalesAmountLabel: formatMoney(
+      summary.grossMaturedSalesAmount,
+      displayCurrency,
+    ),
+    ineligibleMaturedSalesAmountLabel: formatMoney(
+      summary.ineligibleMaturedSalesAmount,
       displayCurrency,
     ),
     pendingSalesAmountLabel: formatMoney(
@@ -4591,6 +5046,7 @@ export async function getSellerSalesCreditSummary(
         entryType: true,
         amount: true,
         occurredAt: true,
+        metadataJson: true,
       },
     }),
     prismaClient.salesCreditOffset.findMany({

@@ -17,6 +17,7 @@ import {
   executePayoutRun,
   executeWisePayoutRun,
   handleStripeWebhook,
+  inferShopifyOrderSalesCreditPaymentRisk,
   markPayoutRunManuallyPaid,
   processShopifyDisputeSettlement,
   processShopifyOrderCancelledSettlement,
@@ -25,8 +26,15 @@ import {
   releaseSalesCreditOffset,
   reverseSalesCreditOffsetForRefund,
   resetSellerStripeAccountForRecreate,
+  SALES_CREDIT_PAYMENT_RISK_CLASSES,
   syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
+
+const TRUSTED_SALES_CREDIT_METADATA = {
+  salesCreditPaymentRiskClass:
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  salesCreditPaymentRiskRateBps: 10000,
+};
 
 test("createSellerStripeAccount creates a connected account with manual payouts and no hosted dashboard", async () => {
   const stripeCalls = {
@@ -1175,6 +1183,152 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
 });
 
+test("processShopifyOrderPaidSettlement reads Shopify transaction risk when the webhook payload is incomplete", async () => {
+  const state = {
+    ledgerEntries: [],
+    adminRiskLookups: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "shopify_order_paid",
+          stripeObjectId: "gid://shopify/Order/1002",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany({ where }) {
+        assert.deepEqual(where.shopifyProductId.in, [
+          "gid://shopify/Product/912",
+          "912",
+        ]);
+        assert.deepEqual(where.OR, [
+          { shopDomain: "b30ize-1a.myshopify.com" },
+          { shopDomain: null },
+        ]);
+        return [
+          {
+            id: "product_1",
+            name: "Test Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/912",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Test Store",
+              seller: {
+                id: "seller_1",
+                status: "active",
+                stripeAccount: null,
+              },
+              vendorAuth: null,
+            },
+          },
+        ];
+      },
+    },
+  };
+  const fakeShopifyGraphQL = async ({ shopDomain, query, variables }) => {
+    state.adminRiskLookups.push({ shopDomain, query, variables });
+    assert.equal(shopDomain, "b30ize-1a.myshopify.com");
+    assert.equal(variables.id, "gid://shopify/Order/1002");
+
+    return {
+      data: {
+        order: {
+          paymentGatewayNames: ["Shopify Payments"],
+          sourceName: "web",
+          transactions: [
+            {
+              id: "gid://shopify/OrderTransaction/1",
+              kind: "SALE",
+              status: "SUCCESS",
+              gateway: "shopify_payments",
+              formattedGateway: "Shopify Payments",
+              manualPaymentGateway: false,
+              receiptJson: JSON.stringify({
+                three_d_secure: {
+                  authenticated: true,
+                  liability_shifted: true,
+                },
+              }),
+              paymentDetails: {
+                __typename: "CardPaymentDetails",
+                paymentMethodName: "Visa",
+              },
+            },
+          ],
+        },
+      },
+    };
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1002,
+        admin_graphql_api_id: "gid://shopify/Order/1002",
+        name: "#1002",
+        currency: "JPY",
+        payment_gateway_names: ["Shopify Payments"],
+        processed_at: "2026-05-15T12:00:00Z",
+        line_items: [
+          {
+            id: 502,
+            product_id: 912,
+            price: "12000.00",
+            quantity: 1,
+          },
+        ],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      shopifyGraphQLWithOfflineSessionImpl: fakeShopifyGraphQL,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.paymentRisk.adminLookupAttempted, true);
+  assert.equal(result.paymentRisk.adminLookupSucceeded, true);
+  assert.equal(
+    result.paymentRisk.riskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  );
+  assert.equal(result.paymentRisk.rateBps, 10000);
+  assert.equal(state.adminRiskLookups.length, 1);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.salesCreditPaymentRiskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.salesCreditPaymentRiskRateBps,
+    10000,
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson
+      .salesCreditPaymentRiskAdminLookupAttempted,
+    true,
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson
+      .salesCreditPaymentRiskAdminLookupSucceeded,
+    true,
+  );
+});
+
 test("processShopifyOrderPaidSettlement captures sales credit and credits the target seller gross item amount", async () => {
   const state = {
     ledgerEntries: [],
@@ -1263,6 +1417,17 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
         name: "#1002",
         currency: "JPY",
         processed_at: "2026-06-01T12:00:00Z",
+        payment_gateway_names: ["Shopify Payments"],
+        transactions: [
+          {
+            payment_details: {
+              three_d_secure: {
+                authenticated: true,
+                liability_shifted: true,
+              },
+            },
+          },
+        ],
         note_attributes: [
           { name: "sales_credit_offset_id", value: "sco_1" },
           { name: "sales_credit_offset_amount", value: "1000" },
@@ -1296,6 +1461,14 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
   assert.equal(state.ledgerEntries[1].direction, "credit");
   assert.equal(state.ledgerEntries[1].amount, 4000);
   assert.equal(state.ledgerEntries[1].metadataJson.cashSettlementAmount, 3000);
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.salesCreditPaymentRiskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  );
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.salesCreditPaymentRiskRateBps,
+    10000,
+  );
   assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetAmount, 1000);
   assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetId, "sco_1");
 });
@@ -2502,6 +2675,7 @@ test("calculateSellerSalesCreditAvailability keeps immature sales reserved with 
         entryType: "shopify_order_paid",
         amount: 30000,
         occurredAt: "2026-04-01T00:00:00.000Z",
+        metadataJson: TRUSTED_SALES_CREDIT_METADATA,
       },
       {
         entryType: "shopify_order_paid",
@@ -2523,6 +2697,75 @@ test("calculateSellerSalesCreditAvailability keeps immature sales reserved with 
   assert.equal(summary.availableAmount, 19000);
 });
 
+test("calculateSellerSalesCreditAvailability excludes matured sales without trusted payment evidence", () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const summary = calculateSellerSalesCreditAvailability(
+    [
+      {
+        entryType: "shopify_order_paid",
+        amount: 30000,
+        occurredAt: "2026-04-01T00:00:00.000Z",
+      },
+    ],
+    {
+      now,
+      holdDays: 45,
+    },
+  );
+
+  assert.equal(summary.grossMaturedSalesAmount, 30000);
+  assert.equal(summary.maturedSalesAmount, 0);
+  assert.equal(summary.ineligibleMaturedSalesAmount, 30000);
+  assert.equal(summary.availableAmount, 0);
+});
+
+test("inferShopifyOrderSalesCreditPaymentRisk treats 3DS authenticated payments as fully eligible", () => {
+  const risk = inferShopifyOrderSalesCreditPaymentRisk({
+    payment_gateway_names: ["Shopify Payments"],
+    transactions: [
+      {
+        payment_details: {
+          three_d_secure: {
+            authenticated: true,
+            liability_shifted: true,
+          },
+        },
+      },
+    ],
+  });
+
+  assert.equal(
+    risk.riskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_3DS_AUTHENTICATED,
+  );
+  assert.equal(risk.rateBps, 10000);
+  assert.equal(risk.threeDSecureAuthenticated, true);
+});
+
+test("inferShopifyOrderSalesCreditPaymentRisk treats non-card confirmed gateways as fully eligible", () => {
+  const risk = inferShopifyOrderSalesCreditPaymentRisk({
+    payment_gateway_names: ["KOMOJU konbini"],
+  });
+
+  assert.equal(
+    risk.riskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.NON_CARD_CONFIRMED,
+  );
+  assert.equal(risk.rateBps, 10000);
+});
+
+test("inferShopifyOrderSalesCreditPaymentRisk does not trust card payments without a 3DS signal", () => {
+  const risk = inferShopifyOrderSalesCreditPaymentRisk({
+    payment_gateway_names: ["Shopify Payments"],
+  });
+
+  assert.equal(
+    risk.riskClass,
+    SALES_CREDIT_PAYMENT_RISK_CLASSES.CARD_UNVERIFIED,
+  );
+  assert.equal(risk.rateBps, 0);
+});
+
 test("calculateSellerSalesCreditAvailability subtracts offset locks and payout locks", () => {
   const now = new Date("2026-06-06T00:00:00.000Z");
   const summary = calculateSellerSalesCreditAvailability(
@@ -2531,6 +2774,7 @@ test("calculateSellerSalesCreditAvailability subtracts offset locks and payout l
         entryType: "shopify_order_paid",
         amount: 30000,
         occurredAt: "2026-04-01T00:00:00.000Z",
+        metadataJson: TRUSTED_SALES_CREDIT_METADATA,
       },
       {
         entryType: "refund",
@@ -2595,6 +2839,7 @@ test("authorizeSalesCreditOffset refuses sellers before first payout verificatio
             entryType: "shopify_order_paid",
             amount: 20000,
             occurredAt: "2026-04-01T00:00:00.000Z",
+            metadataJson: TRUSTED_SALES_CREDIT_METADATA,
           },
         ];
       },
@@ -2740,6 +2985,7 @@ test("sales credit offset authorization, capture, release, and refund reversal u
         entryType: "shopify_order_paid",
         amount: 20000,
         occurredAt: "2026-04-01T00:00:00.000Z",
+        metadataJson: TRUSTED_SALES_CREDIT_METADATA,
       },
     ],
   };
