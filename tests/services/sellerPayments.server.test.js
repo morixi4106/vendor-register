@@ -2667,7 +2667,7 @@ const VERIFIED_PAYOUT_SELLER_FIELDS = {
   },
 };
 
-test("calculateSellerSalesCreditAvailability keeps immature sales reserved with a buffer", () => {
+test("calculateSellerSalesCreditAvailability allows 100% of trusted matured sales", () => {
   const now = new Date("2026-06-06T00:00:00.000Z");
   const summary = calculateSellerSalesCreditAvailability(
     [
@@ -2694,7 +2694,7 @@ test("calculateSellerSalesCreditAvailability keeps immature sales reserved with 
   assert.equal(summary.pendingSalesAmount, 10000);
   assert.equal(summary.riskBufferAmount, 1000);
   assert.equal(summary.pendingRiskReserveAmount, 11000);
-  assert.equal(summary.availableAmount, 19000);
+  assert.equal(summary.availableAmount, 30000);
 });
 
 test("calculateSellerSalesCreditAvailability excludes matured sales without trusted payment evidence", () => {

@@ -102,7 +102,7 @@ const DEFAULT_PLATFORM_FEE_BPS = 1000;
 const DEFAULT_ORDER_CURRENCY = "jpy";
 const SALES_CREDIT_SUPPORTED_CURRENCY = DEFAULT_ORDER_CURRENCY;
 export const DEFAULT_SALES_CREDIT_HOLD_DAYS = 45;
-export const DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS = 1000;
+export const DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS = 0;
 const DEFAULT_SALES_CREDIT_LOCK_MINUTES = 30;
 export const SALES_CREDIT_PAYMENT_RISK_CLASSES = {
   CARD_3DS_AUTHENTICATED: "card_3ds_authenticated",
@@ -4927,10 +4927,11 @@ export function calculateSellerSalesCreditAvailability(
   );
   const payoutLockedAmount = sumPayoutRunLocks(payoutRuns);
   const totalLedgerBalance = calculateSellerPayoutableLedgerBalance(entries);
+  // Only matured, trusted sales become spendable. Pending sales stay outside
+  // the source amount instead of reducing already-matured sales.
   const grossAvailableAmount =
     maturedSalesAmount -
     deductionAmount -
-    pendingRiskReserveAmount -
     offsetLockedAmount -
     payoutLockedAmount;
   const cappedByLedgerAmount =
