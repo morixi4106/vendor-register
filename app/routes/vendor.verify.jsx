@@ -5,6 +5,7 @@ import { Resend } from "resend";
 import prisma from "../db.server";
 import {
   getVendorReturnTo,
+  isConfiguredAdminEmail,
   sanitizeVendorReturnTo,
   vendorAdminSessionCookie,
 } from "../services/vendorManagement.server";
@@ -13,7 +14,9 @@ const DEFAULT_RETURN_TO = "/vendor/dashboard";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const loader = async ({ request }) => {
+  const url = new URL(request.url);
   const returnTo = getVendorReturnTo(request, DEFAULT_RETURN_TO);
+  const targetVendorId = String(url.searchParams.get("vendorId") || "").trim();
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
@@ -23,12 +26,16 @@ export const loader = async ({ request }) => {
       include: { vendor: true },
     });
 
-    if (session && session.expiresAt > new Date()) {
+    if (
+      session &&
+      session.expiresAt > new Date() &&
+      (!targetVendorId || session.vendorId === targetVendorId)
+    ) {
       return redirect(returnTo);
     }
   }
 
-  return json({ returnTo });
+  return json({ returnTo, targetVendorId });
 };
 
 export const action = async ({ request }) => {
@@ -41,6 +48,8 @@ export const action = async ({ request }) => {
 
   if (intent === "send-code") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
+    const targetVendorId = String(formData.get("vendorId") || "").trim();
+    const isAdminEmail = isConfiguredAdminEmail(email);
 
     if (!email) {
       return json(
@@ -49,11 +58,29 @@ export const action = async ({ request }) => {
       );
     }
 
+    if (isAdminEmail && !targetVendorId) {
+      return json(
+        {
+          ok: false,
+          step: "email",
+          error: "管理者メールで入る場合は、管理画面から対象店舗を選択してください。",
+          returnTo,
+        },
+        { status: 400 }
+      );
+    }
+
     const vendor = await prisma.vendor.findFirst({
-      where: {
-        managementEmail: email,
-        status: "active",
-      },
+      where: isAdminEmail
+        ? {
+            id: targetVendorId,
+            status: "active",
+          }
+        : {
+            ...(targetVendorId ? { id: targetVendorId } : {}),
+            managementEmail: email,
+            status: "active",
+          },
     });
 
     if (!vendor) {
@@ -61,7 +88,9 @@ export const action = async ({ request }) => {
         {
           ok: false,
           step: "email",
-          error: "このメールアドレスは管理用メールとして登録されていません。",
+          error: isAdminEmail
+            ? "対象店舗が見つからないか、利用できない状態です。"
+            : "このメールアドレスは管理用メールとして登録されていません。",
           returnTo,
         },
         { status: 404 }
@@ -133,6 +162,7 @@ export const action = async ({ request }) => {
     const email = String(formData.get("email") || "").trim().toLowerCase();
     const vendorId = String(formData.get("vendorId") || "").trim();
     const code = String(formData.get("code") || "").trim();
+    const isAdminEmail = isConfiguredAdminEmail(email);
 
     if (!email || !vendorId || !code) {
       return json(
@@ -152,7 +182,11 @@ export const action = async ({ request }) => {
       where: { id: vendorId },
     });
 
-    if (!vendor || vendor.managementEmail.toLowerCase() !== email || vendor.status !== "active") {
+    if (
+      !vendor ||
+      vendor.status !== "active" ||
+      (!isAdminEmail && vendor.managementEmail.toLowerCase() !== email)
+    ) {
       return json(
         {
           ok: false,
@@ -229,7 +263,7 @@ export default function VendorVerifyPage() {
 
   const step = actionData?.step === "code" ? "code" : "email";
   const email = actionData?.email || "";
-  const vendorId = actionData?.vendorId || "";
+  const vendorId = actionData?.vendorId || loaderData?.targetVendorId || "";
   const returnTo = actionData?.returnTo || loaderData?.returnTo || DEFAULT_RETURN_TO;
 
   return (
@@ -249,6 +283,7 @@ export default function VendorVerifyPage() {
           <form method="post" action="" style={styles.form}>
             <input type="hidden" name="intent" value="send-code" />
             <input type="hidden" name="returnTo" value={returnTo} />
+            <input type="hidden" name="vendorId" value={vendorId} />
 
             <label style={styles.label}>
               管理用メールアドレス

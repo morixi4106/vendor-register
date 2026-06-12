@@ -9,6 +9,8 @@ import {
   getVendorVerifyRedirectPath,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
+  getConfiguredAdminEmails,
+  isConfiguredAdminEmail,
   sanitizeVendorReturnTo,
   serializeVendorProduct,
   syncShopifyInventoryQuantity,
@@ -39,6 +41,23 @@ test("getVendorVerifyRedirectPath preserves the protected route as returnTo", ()
     getVendorVerifyRedirectPath(request),
     "/vendor/verify?returnTo=%2Fseller%2Fsettings%2Fpayments%3Ftab%3Dwise",
   );
+});
+
+test("configured admin emails support comma-separated admin access lists", () => {
+  const env = {
+    ADMIN_EMAIL: "Owner@Example.com",
+    ADMIN_EMAILS: "admin-a@example.com, admin-b@example.com",
+    VENDOR_ADMIN_EMAILS: "admin-b@example.com, vendor-admin@example.com",
+  };
+
+  assert.deepEqual(getConfiguredAdminEmails(env), [
+    "owner@example.com",
+    "admin-a@example.com",
+    "admin-b@example.com",
+    "vendor-admin@example.com",
+  ]);
+  assert.equal(isConfiguredAdminEmail("ADMIN-A@example.com", env), true);
+  assert.equal(isConfiguredAdminEmail("seller@example.com", env), false);
 });
 
 test("getVendorOrdersAccessState returns ready when read_draft_orders is granted", async () => {

@@ -48,6 +48,9 @@ export const loader = async ({ request }) => {
   }
 
   const stores = await prisma.vendorStore.findMany({
+    include: {
+      vendorAuth: true,
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -426,6 +429,11 @@ export default function VendorStoresPage() {
                 <tbody>
                   {stores.map((store) => {
                     const isDeleting = deletingId === store.id;
+                    const vendorDashboardVerifyUrl = store.vendorAuth?.id
+                      ? `/vendor/verify?vendorId=${encodeURIComponent(
+                          store.vendorAuth.id,
+                        )}&returnTo=${encodeURIComponent("/vendor/dashboard")}`
+                      : null;
 
                     return (
                       <tr key={store.id}>
@@ -452,6 +460,29 @@ export default function VendorStoresPage() {
                           {new Date(store.createdAt).toLocaleString("ja-JP")}
                         </td>
                         <td style={tdStyle}>
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            {vendorDashboardVerifyUrl ? (
+                              <Link
+                                to={vendorDashboardVerifyUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  minHeight: "36px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  padding: "0 12px",
+                                  borderRadius: "999px",
+                                  border: "1px solid #d1d5db",
+                                  color: "#111827",
+                                  textDecoration: "none",
+                                  fontWeight: "700",
+                                  fontSize: "13px",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                店舗ダッシュボード
+                              </Link>
+                            ) : null}
                           <Form
                             method="post"
                             onSubmit={(event) => {
@@ -481,6 +512,7 @@ export default function VendorStoresPage() {
                               {isDeleting ? "削除中..." : "削除"}
                             </button>
                           </Form>
+                          </div>
                         </td>
                       </tr>
                     );

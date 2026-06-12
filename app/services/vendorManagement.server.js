@@ -115,6 +115,31 @@ export function getVendorVerifyRedirectPath(request) {
   return `/vendor/verify?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
+export function getConfiguredAdminEmails(env = process.env) {
+  return Array.from(
+    new Set(
+      [
+        env.ADMIN_EMAIL,
+        env.ADMIN_EMAILS,
+        env.VENDOR_ADMIN_EMAILS,
+      ]
+        .flatMap((value) => String(value || "").split(","))
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+export function isConfiguredAdminEmail(email, env = process.env) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  return getConfiguredAdminEmails(env).includes(normalizedEmail);
+}
+
 export function formatMoney(amount, currencyCode = "JPY") {
   return formatCurrencyMoney(amount, currencyCode);
 }
