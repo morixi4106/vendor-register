@@ -37,9 +37,9 @@ const SALES_CREDIT_UNAVAILABLE_MESSAGE =
 const SALES_CREDIT_SELF_PURCHASE_MESSAGE =
   '自分の商品には売上金を利用できません。';
 const SALES_CREDIT_LIMIT_MESSAGE =
-  '売上金は商品代金の範囲内で指定してください。';
+  '売上金は商品代金まで利用できます。';
 const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
-  'この商品では売上金を利用できません。通常の決済方法で購入してください。';
+  'この商品では売上金を利用できません。ほかの支払い方法で購入してください。';
 const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

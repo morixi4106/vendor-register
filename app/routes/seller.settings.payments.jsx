@@ -84,7 +84,7 @@ export default function SellerPaymentsSettingsPage() {
         <section className="seller-payments__card">
           <h2 className="seller-payments__title">売上金</h2>
           <p className="seller-payments__subtitle">
-            使える売上金は、返金・手数料・保留分を差し引いた後に、購入代金へ充当できる金額です。
+            返金期間が過ぎた売上金を、購入代金に使えます。
           </p>
 
           <div className="seller-payments__description">
@@ -97,18 +97,16 @@ export default function SellerPaymentsSettingsPage() {
               value={data.salesCreditSummary?.pendingSalesAmountLabel || "¥0"}
             />
             <Row
-              label="返金などに備えて保留"
-              value={
-                data.salesCreditSummary?.pendingRiskReserveAmountLabel || "¥0"
-              }
-            />
-            <Row
               label="購入手続き中の売上金"
               value={data.salesCreditSummary?.offsetLockedAmountLabel || "¥0"}
             />
             <Row
               label="精算手続き中の売上金"
               value={data.salesCreditSummary?.payoutLockedAmountLabel || "¥0"}
+            />
+            <Row
+              label="精算台帳の合計"
+              value={data.salesCreditSummary?.totalLedgerBalanceLabel || "¥0"}
             />
           </div>
         </section>

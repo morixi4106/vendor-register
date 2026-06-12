@@ -49,17 +49,17 @@ export const loader = async ({ request }) => {
     {
       title: "使える売上金",
       value: salesCreditSummary.availableAmountLabel,
-      sub: "購入代金に使える金額",
+      sub: "購入に使える金額",
     },
     {
-      title: "保留中の売上金",
+      title: "確認中の売上金",
       value: salesCreditSummary.pendingSalesAmountLabel,
-      sub: "返金・確認期間中の売上金",
+      sub: "返金期間中の売上金",
     },
     {
-      title: "支払予定の売上金",
+      title: "精算台帳の合計",
       value: salesCreditSummary.totalLedgerBalanceLabel,
-      sub: "精算台帳上の合計",
+      sub: "売上・返金・精算の合計",
     },
     {
       title: "登録商品数",
