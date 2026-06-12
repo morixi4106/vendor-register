@@ -3,6 +3,7 @@ import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 
 import prisma from "../db.server";
+import { createVendorStorefrontAction } from "../services/vendorStorefront.server";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 
 const PREVIEW_HEADERS = {
@@ -57,6 +58,15 @@ function normalizeCountry(value) {
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString("ja-JP");
+}
+
+function formatYen(value) {
+  return `¥${Number(value || 0).toLocaleString("ja-JP")}`;
+}
+
+function parsePositiveAmount(value) {
+  const amount = Number(String(value || "").replace(/,/g, ""));
+  return Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 0;
 }
 
 function buildApiUrl({ origin, handle, deliveryCountry, filterEligible }) {
@@ -198,6 +208,8 @@ export const loader = async ({ params, request }) => {
     { headers: PREVIEW_HEADERS },
   );
 };
+
+export const action = createVendorStorefrontAction();
 
 function Metric({ label, value }) {
   return (
@@ -358,8 +370,25 @@ export default function PublicVendorPreviewPage() {
   const data = useLoaderData();
   const hasDeliveryCountry = Boolean(data.deliveryCountry);
   const [restrictionProductId, setRestrictionProductId] = useState(null);
+  const [checkoutProductId, setCheckoutProductId] = useState(
+    data.products[0]?.id || "",
+  );
+  const [salesCreditAmount, setSalesCreditAmount] = useState("100");
   const activeRestrictionProduct =
     data.products.find((product) => product.id === restrictionProductId) || null;
+  const checkoutProduct =
+    data.products.find((product) => product.id === checkoutProductId) ||
+    data.products[0] ||
+    null;
+  const checkoutProductPrice = Number(checkoutProduct?.price || 0);
+  const checkoutSalesCreditAmount = Math.min(
+    checkoutProductPrice,
+    parsePositiveAmount(salesCreditAmount),
+  );
+  const checkoutPayAmount = Math.max(
+    0,
+    checkoutProductPrice - checkoutSalesCreditAmount,
+  );
 
   return (
     <main className="preview-page">
@@ -432,6 +461,59 @@ export default function PublicVendorPreviewPage() {
           background:#fff;
           border:1px solid #dfe4ea;
           border-radius:8px;
+        }
+        .preview-checkout{
+          display:grid;
+          gap:16px;
+        }
+        .preview-checkout-grid{
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          gap:12px;
+        }
+        .preview-checkout-grid--address{
+          grid-template-columns:repeat(3, minmax(0, 1fr));
+        }
+        .preview-checkout-full{
+          grid-column:1 / -1;
+        }
+        .preview-input{
+          min-height:44px;
+          border:1px solid #cbd3dc;
+          border-radius:8px;
+          background:#fff;
+          color:#17202a;
+          padding:0 12px;
+          font-size:15px;
+        }
+        .preview-checkout-summary{
+          display:grid;
+          grid-template-columns:repeat(3, minmax(0, 1fr));
+          gap:10px;
+          padding:12px;
+          border:1px solid #dfe4ea;
+          border-radius:8px;
+          background:#f8fafc;
+        }
+        .preview-checkout-summary div{
+          display:grid;
+          gap:4px;
+        }
+        .preview-checkout-summary span{
+          color:#5b6674;
+          font-size:12px;
+          font-weight:800;
+        }
+        .preview-checkout-summary strong{
+          color:#17202a;
+          font-size:18px;
+          line-height:1.2;
+        }
+        .preview-checkout-note{
+          margin:0;
+          color:#5b6674;
+          font-size:12px;
+          line-height:1.7;
         }
         .preview-controls{
           display:grid;
@@ -817,7 +899,10 @@ export default function PublicVendorPreviewPage() {
         }
         @media (max-width: 820px){
           .preview-header,
-          .preview-controls{
+          .preview-controls,
+          .preview-checkout-grid,
+          .preview-checkout-grid--address,
+          .preview-checkout-summary{
             grid-template-columns:1fr;
           }
           .preview-metrics{
@@ -897,6 +982,212 @@ export default function PublicVendorPreviewPage() {
             </button>
           </Form>
         </section>
+
+        {checkoutProduct ? (
+          <section className="preview-panel">
+            <Form className="preview-checkout" method="post">
+              <input
+                type="hidden"
+                name={`quantity:${checkoutProduct.id}`}
+                value="1"
+              />
+              <input type="hidden" name="importResponsibilityAccepted" value="on" />
+
+              <div>
+                <h2 style={{ margin: 0, fontSize: "22px", lineHeight: 1.3 }}>
+                  売上金充当つき checkout テスト
+                </h2>
+                <p className="preview-checkout-note">
+                  送信すると Shopify の請求画面を作成します。売上金充当は割引として反映され、商品代金の支払額が減ります。送料は請求画面で加算されます。
+                </p>
+              </div>
+
+              <div className="preview-checkout-grid">
+                <label className="preview-field">
+                  商品
+                  <select
+                    className="preview-select"
+                    value={checkoutProduct.id}
+                    onChange={(event) => {
+                      const nextProductId = event.target.value;
+                      const nextProduct = data.products.find(
+                        (product) => product.id === nextProductId,
+                      );
+                      const nextPrice = Number(nextProduct?.price || 0);
+
+                      setCheckoutProductId(nextProductId);
+                      setSalesCreditAmount((currentAmount) => {
+                        const parsedAmount = parsePositiveAmount(currentAmount);
+                        if (!parsedAmount || !nextPrice) {
+                          return currentAmount;
+                        }
+
+                        return String(Math.min(parsedAmount, nextPrice));
+                      });
+                    }}
+                  >
+                    {data.products.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name} / {product.formattedPrice}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="preview-field">
+                  購入者メール
+                  <input
+                    className="preview-input"
+                    name="email"
+                    type="email"
+                    placeholder="seller@example.com"
+                    required
+                  />
+                </label>
+
+                <label className="preview-field">
+                  売上金充当
+                  <input
+                    className="preview-input"
+                    name="salesCreditAmount"
+                    type="number"
+                    min="1"
+                    max={checkoutProductPrice || undefined}
+                    value={salesCreditAmount}
+                    onChange={(event) => {
+                      const nextAmount = event.target.value;
+
+                      if (!nextAmount) {
+                        setSalesCreditAmount("");
+                        return;
+                      }
+
+                      const parsedAmount = parsePositiveAmount(nextAmount);
+                      setSalesCreditAmount(
+                        String(
+                          checkoutProductPrice
+                            ? Math.min(parsedAmount, checkoutProductPrice)
+                            : parsedAmount,
+                        ),
+                      );
+                    }}
+                  />
+                </label>
+
+                <label className="preview-check">
+                  <input
+                    type="checkbox"
+                    name="useSalesCredit"
+                    value="on"
+                    defaultChecked
+                  />
+                  売上金を使う
+                </label>
+              </div>
+
+              <div className="preview-checkout-summary">
+                <div>
+                  <span>商品代金</span>
+                  <strong>{formatYen(checkoutProductPrice)}</strong>
+                </div>
+                <div>
+                  <span>売上金充当</span>
+                  <strong>-{formatYen(checkoutSalesCreditAmount)}</strong>
+                </div>
+                <div>
+                  <span>Shopifyで支払う商品代金</span>
+                  <strong>{formatYen(checkoutPayAmount)}</strong>
+                </div>
+              </div>
+
+              <div className="preview-checkout-grid preview-checkout-grid--address">
+                <label className="preview-field">
+                  名
+                  <input
+                    className="preview-input"
+                    name="firstName"
+                    defaultValue="Taro"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  姓
+                  <input
+                    className="preview-input"
+                    name="lastName"
+                    defaultValue="Yamada"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  電話番号
+                  <input
+                    className="preview-input"
+                    name="phone"
+                    defaultValue="09012345678"
+                    required
+                  />
+                </label>
+                <label className="preview-field preview-checkout-full">
+                  住所
+                  <input
+                    className="preview-input"
+                    name="address1"
+                    defaultValue="1-2-3 Jingumae"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  市区町村
+                  <input
+                    className="preview-input"
+                    name="city"
+                    defaultValue="Shibuya"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  都道府県
+                  <input
+                    className="preview-input"
+                    name="province"
+                    defaultValue="Tokyo"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  郵便番号
+                  <input
+                    className="preview-input"
+                    name="postalCode"
+                    defaultValue="150-0001"
+                    required
+                  />
+                </label>
+                <label className="preview-field">
+                  国
+                  <select
+                    className="preview-select"
+                    name="country"
+                    defaultValue={data.deliveryCountry || "JP"}
+                  >
+                    {COUNTRY_OPTIONS.filter((country) => country.value).map(
+                      (country) => (
+                        <option key={country.value} value={country.value}>
+                          {country.label} ({country.value})
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+              </div>
+
+              <button className="preview-button" type="submit">
+                Shopify請求画面を作成
+              </button>
+            </Form>
+          </section>
+        ) : null}
 
         <section className="preview-metrics" aria-label="storefront metrics">
           <Metric label="商品数" value={formatCount(data.productCount)} />

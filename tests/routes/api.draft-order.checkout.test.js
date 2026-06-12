@@ -543,7 +543,8 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
   assert.equal(salesCreditOffsets[0].sellerId, 'seller_buyer');
   assert.equal(salesCreditOffsets[0].amount, 1000);
   assert.equal(salesCreditOffsets[0].status, 'authorized');
-  assert.equal(salesCreditOffsets[0].expiresAt, null);
+  assert.ok(salesCreditOffsets[0].expiresAt instanceof Date);
+  assert.ok(salesCreditOffsets[0].expiresAt.getTime() > Date.now());
   assert.equal(
     salesCreditOffsets[0].metadataJson.draftOrderId,
     'gid://shopify/DraftOrder/1',
@@ -556,6 +557,7 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
     salesCreditOffsets[0].metadataJson.salesCreditMode,
     'monthly_settlement_offset',
   );
+  assert.equal(salesCreditOffsets[0].metadataJson.checkoutLockMinutes, 30);
   assert.equal(salesCreditOffsets[0].metadataJson.currencyCode, 'jpy');
   assert.equal(salesCreditOffsets[0].metadataJson.itemSubtotalAmount, 8400);
   assert.deepEqual(salesCreditOffsets[0].metadataJson.lineItems, [

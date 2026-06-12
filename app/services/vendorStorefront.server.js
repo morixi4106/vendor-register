@@ -580,9 +580,9 @@ async function prepareCheckoutSalesCredit({
       currencyCode,
       checkoutReference,
       idempotencyKey,
-      expiresAt: null,
       metadataJson: {
         salesCreditMode: 'monthly_settlement_offset',
+        checkoutLockMinutes: 30,
         currencyCode,
         itemSubtotalAmount: subtotal,
         buyerEmail: submission.customer.email,
