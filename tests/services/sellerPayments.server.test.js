@@ -1300,6 +1300,110 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
   assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetId, "sco_1");
 });
 
+test("processShopifyOrderPaidSettlement refuses sales credit custom attribute mismatches", async () => {
+  const state = {
+    ledgerEntries: [],
+    salesCreditOffset: {
+      id: "sco_1",
+      sellerId: "seller_buyer",
+      amount: 500,
+      currencyCode: "jpy",
+      status: "authorized",
+      checkoutReference: "draft-order:test",
+      idempotencyKey: "checkout_sales_credit_1",
+      expiresAt: null,
+      metadataJson: {
+        targetSellerId: "seller_target",
+      },
+    },
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        return where.id === state.salesCreditOffset.id
+          ? state.salesCreditOffset
+          : null;
+      },
+      async update() {
+        throw new Error("mismatched sales credit should not be captured");
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Target Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_target",
+                handle: "target",
+                seller: {
+                  id: "seller_target",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1003,
+        admin_graphql_api_id: "gid://shopify/Order/1003",
+        name: "#1003",
+        currency: "JPY",
+        processed_at: "2026-06-01T12:00:00Z",
+        note_attributes: [
+          { name: "sales_credit_offset_id", value: "sco_1" },
+          { name: "sales_credit_offset_amount", value: "1000" },
+          { name: "sales_credit_buyer_seller_id", value: "seller_buyer" },
+        ],
+        line_items: [
+          {
+            id: 501,
+            product_id: 911,
+            price: "4000.00",
+            quantity: 1,
+            discount_allocations: [{ amount: "1000.00" }],
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "sales_credit_capture_failed");
+  assert.equal(
+    result.salesCreditCapture.reason,
+    "sales_credit_offset_amount_mismatch",
+  );
+  assert.equal(state.salesCreditOffset.status, "authorized");
+  assert.equal(state.ledgerEntries.length, 0);
+});
+
 test("processShopifyOrderPaidSettlement does not require a Stripe account in Shopify settlement mode", async () => {
   const state = {
     ledgerEntries: [],
@@ -2529,6 +2633,102 @@ test("authorizeSalesCreditOffset refuses sellers before first payout verificatio
   assert.equal(result.ok, false);
   assert.equal(result.reason, "seller_verification_required");
   assert.equal(result.summary.availableAmount, 20000);
+});
+
+test("authorizeSalesCreditOffset rejects idempotency reuse with a different request", async () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  const existingOffset = {
+    id: "offset_existing",
+    sellerId: "seller_1",
+    amount: 500,
+    currencyCode: "jpy",
+    status: "authorized",
+    idempotencyKey: "sales-credit-checkout-1",
+    metadataJson: {},
+  };
+  const fakePrisma = {
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        assert.equal(where.idempotencyKey, "sales-credit-checkout-1");
+        return existingOffset;
+      },
+      async create() {
+        throw new Error("mismatched idempotency reuse should not create");
+      },
+    },
+  };
+
+  const result = await authorizeSalesCreditOffset(
+    {
+      sellerId: "seller_1",
+      amount: 1000,
+      currencyCode: "jpy",
+      idempotencyKey: "sales-credit-checkout-1",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "sales_credit_idempotency_mismatch");
+  assert.equal(result.mismatchReason, "sales_credit_offset_amount_mismatch");
+  assert.equal(result.offset, existingOffset);
+});
+
+test("captureSalesCreditOffset rejects a mismatched expected amount before ledger mutation", async () => {
+  const now = new Date("2026-06-06T00:00:00.000Z");
+  let updateCalled = false;
+  let ledgerCreateCalled = false;
+  const fakePrisma = {
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        assert.equal(where.id, "offset_1");
+        return {
+          id: "offset_1",
+          sellerId: "seller_1",
+          amount: 500,
+          currencyCode: "jpy",
+          status: "authorized",
+          checkoutReference: "checkout_1",
+          metadataJson: {},
+        };
+      },
+      async update() {
+        updateCalled = true;
+        throw new Error("mismatched capture should not update");
+      },
+    },
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create() {
+        ledgerCreateCalled = true;
+        throw new Error("mismatched capture should not create ledger");
+      },
+    },
+  };
+
+  const result = await captureSalesCreditOffset(
+    {
+      offsetId: "offset_1",
+      orderId: "order_1",
+      expectedSellerId: "seller_1",
+      expectedAmount: 1000,
+      expectedCurrencyCode: "jpy",
+    },
+    {
+      prismaClient: fakePrisma,
+      now,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "sales_credit_offset_amount_mismatch");
+  assert.equal(updateCalled, false);
+  assert.equal(ledgerCreateCalled, false);
 });
 
 test("sales credit offset authorization, capture, release, and refund reversal use offset ledger entries", async () => {

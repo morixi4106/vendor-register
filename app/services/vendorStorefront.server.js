@@ -6,6 +6,7 @@ import prisma from '../db.server.js';
 import { draftOrderCheckout } from './draftOrderCheckout.server.js';
 import {
   authorizeSalesCreditOffset,
+  markSalesCreditOffsetCheckoutCreated,
   releaseSalesCreditOffset,
 } from './sellerPayments.server.js';
 import { vendorAdminSessionCookie } from './vendorManagement.server.js';
@@ -476,10 +477,12 @@ async function prepareCheckoutSalesCredit({
 
   return {
     ok: true,
-    appliedDiscount: buildSalesCreditAppliedDiscount(amount),
+    appliedDiscount: buildSalesCreditAppliedDiscount(
+      authorization.offset.amount,
+    ),
     customAttributes: buildSalesCreditCustomAttributes({
       offset: authorization.offset,
-      amount,
+      amount: authorization.offset.amount,
       buyerSellerId,
     }),
     offset: authorization.offset,
@@ -505,6 +508,31 @@ async function releaseCheckoutSalesCreditOffset({
     );
   } catch (error) {
     console.error('sales credit offset release failed:', error);
+    return null;
+  }
+}
+
+async function markCheckoutSalesCreditOffsetCreated({
+  salesCreditOffset,
+  checkoutResult,
+  prismaClient = prisma,
+}) {
+  if (!salesCreditOffset?.id) {
+    return null;
+  }
+
+  try {
+    return await markSalesCreditOffsetCheckoutCreated(
+      {
+        offsetId: salesCreditOffset.id,
+        draftOrderId: checkoutResult?.draftOrder?.id,
+        invoiceUrl:
+          checkoutResult?.invoiceUrl || checkoutResult?.draftOrder?.invoiceUrl,
+      },
+      { prismaClient },
+    );
+  } catch (error) {
+    console.error('sales credit offset checkout mark failed:', error);
     return null;
   }
 }
@@ -1580,6 +1608,12 @@ export function createVendorStorefrontAction({
         throw new Error('draftOrderCheckout did not return invoiceUrl');
       }
 
+      await markCheckoutSalesCreditOffsetCreated({
+        salesCreditOffset: checkoutInput.salesCreditOffset,
+        checkoutResult: result,
+        prismaClient,
+      });
+
       await recordBuyerWarningAcceptance({
         prismaClient,
         acceptance: checkoutInput.payload.buyerWarningAcceptance,
@@ -1630,6 +1664,12 @@ export function createPublicVendorDraftOrderCheckoutAction({
 
     try {
       const result = await draftOrderCheckoutImpl(checkoutInput.payload);
+
+      await markCheckoutSalesCreditOffsetCreated({
+        salesCreditOffset: checkoutInput.salesCreditOffset,
+        checkoutResult: result,
+        prismaClient,
+      });
 
       await recordBuyerWarningAcceptance({
         prismaClient,

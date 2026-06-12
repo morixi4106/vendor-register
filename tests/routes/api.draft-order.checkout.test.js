@@ -219,6 +219,22 @@ function createFakePrisma({
         salesCreditOffsets.push(offset);
         return offset;
       },
+      async update({ where, data }) {
+        const index = salesCreditOffsets.findIndex(
+          (offset) => offset.id === where.id,
+        );
+
+        if (index === -1) {
+          return null;
+        }
+
+        salesCreditOffsets[index] = {
+          ...salesCreditOffsets[index],
+          ...data,
+          updatedAt: new Date('2026-06-01T00:00:00Z'),
+        };
+        return salesCreditOffsets[index];
+      },
     },
     payoutRun: {
       async findMany({ where }) {
@@ -515,10 +531,95 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
   assert.equal(salesCreditOffsets[0].amount, 1000);
   assert.equal(salesCreditOffsets[0].status, 'authorized');
   assert.equal(salesCreditOffsets[0].expiresAt, null);
+  assert.equal(
+    salesCreditOffsets[0].metadataJson.draftOrderId,
+    'gid://shopify/DraftOrder/1',
+  );
+  assert.equal(
+    salesCreditOffsets[0].metadataJson.invoiceUrl,
+    'https://shop-a.myshopify.com/invoices/1',
+  );
   assert.deepEqual(payload.salesCredit, {
     offsetId: 'sco_1',
     amount: 1000,
   });
+});
+
+test('api.draft-order.checkout rejects sales credit idempotency reuse with a different amount', async () => {
+  const salesCreditOffsets = [
+    {
+      id: 'sco_existing',
+      sellerId: 'seller_buyer',
+      amount: 500,
+      currencyCode: 'jpy',
+      status: 'authorized',
+      checkoutReference: 'draft-order:existing',
+      idempotencyKey: 'checkout_sales_credit_1',
+      expiresAt: null,
+      metadataJson: {
+        targetSellerId: 'seller_target',
+      },
+    },
+  ];
+  const buyerSeller = createVerifiedSeller();
+  const targetSeller = {
+    id: 'seller_target',
+    euSellerStatus: 'DISABLED',
+  };
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: targetSeller,
+      sessionVendor: {
+        id: 'vendor_buyer',
+        managementEmail: 'buyer@example.com',
+        seller: buyerSeller,
+      },
+      sellers: [buyerSeller],
+      ledgerEntries: [
+        {
+          sellerId: buyerSeller.id,
+          entryType: 'shopify_order_paid',
+          amount: 10000,
+          currencyCode: 'jpy',
+          occurredAt: new Date('2025-01-01T00:00:00Z'),
+        },
+      ],
+      salesCreditOffsets,
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        customer: {
+          ...createValidBody().customer,
+          email: 'buyer@example.com',
+        },
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+        salesCreditIdempotencyKey: 'checkout_sales_credit_1',
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.equal(salesCreditOffsets.length, 1);
+  assert.equal(salesCreditOffsets[0].amount, 500);
 });
 
 test('api.draft-order.checkout rejects sales credit on the seller own products', async () => {

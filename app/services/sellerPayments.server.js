@@ -183,6 +183,55 @@ function clampInteger(value, fallback = 0) {
   return Math.max(0, Math.round(numeric));
 }
 
+function getSalesCreditOffsetMetadata(offset) {
+  return isPlainObject(offset?.metadataJson) ? offset.metadataJson : {};
+}
+
+function validateSalesCreditOffsetExpectation(
+  offset,
+  {
+    expectedSellerId = null,
+    expectedAmount = null,
+    expectedCurrencyCode = null,
+    expectedTargetSellerId = null,
+  } = {},
+) {
+  const normalizedSellerId = normalizeText(expectedSellerId);
+  const normalizedAmount = toPositiveInteger(expectedAmount);
+  const normalizedCurrencyCode = normalizeLowercase(expectedCurrencyCode);
+  const normalizedTargetSellerId = normalizeText(expectedTargetSellerId);
+
+  if (normalizedSellerId && offset.sellerId !== normalizedSellerId) {
+    return { ok: false, reason: "sales_credit_offset_seller_mismatch" };
+  }
+
+  if (normalizedAmount != null && offset.amount !== normalizedAmount) {
+    return { ok: false, reason: "sales_credit_offset_amount_mismatch" };
+  }
+
+  if (
+    normalizedCurrencyCode &&
+    normalizeLowercase(offset.currencyCode) !== normalizedCurrencyCode
+  ) {
+    return { ok: false, reason: "sales_credit_offset_currency_mismatch" };
+  }
+
+  if (normalizedTargetSellerId) {
+    const metadataTargetSellerId = normalizeText(
+      getSalesCreditOffsetMetadata(offset).targetSellerId,
+    );
+
+    if (
+      metadataTargetSellerId &&
+      metadataTargetSellerId !== normalizedTargetSellerId
+    ) {
+      return { ok: false, reason: "sales_credit_offset_target_mismatch" };
+    }
+  }
+
+  return { ok: true };
+}
+
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60 * 1000);
 }
@@ -2718,6 +2767,9 @@ export async function processShopifyOrderPaidSettlement(
       salesCreditCapture = await captureSalesCreditOffset(
         {
           offsetId: salesCreditOffset.offsetId,
+          expectedSellerId: salesCreditOffset.buyerSellerId,
+          expectedAmount: salesCreditOffset.amount,
+          expectedCurrencyCode: currencyCode,
           metadataJson: {
             shopDomain,
             shopifyOrderId,
@@ -2880,6 +2932,16 @@ export async function processShopifyOrderPaidSettlement(
     };
   }
 
+  if (salesCreditOffset?.offsetId && !salesCreditOffset.buyerSellerId) {
+    return {
+      ok: false,
+      reason: "sales_credit_buyer_seller_missing",
+      sellerId: seller.id,
+      amount: settlementAmount,
+      currencyCode,
+    };
+  }
+
   const occurredAt = payload?.processed_at
     ? new Date(payload.processed_at)
     : payload?.created_at
@@ -2903,6 +2965,10 @@ export async function processShopifyOrderPaidSettlement(
       salesCreditCapture = await captureSalesCreditOffset(
         {
           offsetId: salesCreditOffset.offsetId,
+          expectedSellerId: salesCreditOffset.buyerSellerId,
+          expectedAmount: salesCreditSettlementAmount,
+          expectedCurrencyCode: currencyCode,
+          expectedTargetSellerId: seller.id,
           metadataJson: {
             shopDomain,
             shopifyOrderId,
@@ -4633,6 +4699,21 @@ export async function authorizeSalesCreditOffset(
           };
         }
 
+        const expectation = validateSalesCreditOffsetExpectation(existing, {
+          expectedSellerId: normalizedSellerId,
+          expectedAmount: normalizedAmount,
+          expectedCurrencyCode: normalizedCurrency,
+        });
+
+        if (!expectation.ok) {
+          return {
+            ok: false,
+            reason: "sales_credit_idempotency_mismatch",
+            mismatchReason: expectation.reason,
+            offset: existing,
+          };
+        }
+
         return {
           ok: true,
           duplicate: true,
@@ -4695,7 +4776,15 @@ export async function authorizeSalesCreditOffset(
 }
 
 export async function captureSalesCreditOffset(
-  { offsetId, orderId = null, metadataJson = null },
+  {
+    offsetId,
+    orderId = null,
+    metadataJson = null,
+    expectedSellerId = null,
+    expectedAmount = null,
+    expectedCurrencyCode = null,
+    expectedTargetSellerId = null,
+  },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
   const normalizedOffsetId = normalizeText(offsetId);
@@ -4711,6 +4800,21 @@ export async function captureSalesCreditOffset(
 
     if (!offset) {
       return { ok: false, reason: "offset_not_found" };
+    }
+
+    const expectation = validateSalesCreditOffsetExpectation(offset, {
+      expectedSellerId,
+      expectedAmount,
+      expectedCurrencyCode,
+      expectedTargetSellerId,
+    });
+
+    if (!expectation.ok) {
+      return {
+        ok: false,
+        reason: expectation.reason,
+        offset,
+      };
     }
 
     if (offset.status === "captured") {
@@ -4764,7 +4868,7 @@ export async function captureSalesCreditOffset(
           metadataJson: {
             salesCreditOffsetId: offset.id,
             checkoutReference: offset.checkoutReference,
-            ...(isPlainObject(offset.metadataJson) ? offset.metadataJson : {}),
+            ...getSalesCreditOffsetMetadata(offset),
             ...(isPlainObject(metadataJson) ? metadataJson : {}),
           },
           occurredAt: now,
@@ -4779,6 +4883,60 @@ export async function captureSalesCreditOffset(
       ledgerEntry,
     };
   });
+}
+
+export async function markSalesCreditOffsetCheckoutCreated(
+  {
+    offsetId,
+    draftOrderId = null,
+    invoiceUrl = null,
+    metadataJson = null,
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedOffsetId = normalizeText(offsetId);
+
+  if (!normalizedOffsetId) {
+    return { ok: false, reason: "offset_required" };
+  }
+
+  const offset = await prismaClient.salesCreditOffset.findUnique({
+    where: { id: normalizedOffsetId },
+  });
+
+  if (!offset) {
+    return { ok: false, reason: "offset_not_found" };
+  }
+
+  if (offset.status !== "authorized") {
+    return {
+      ok: true,
+      duplicate: true,
+      offset,
+    };
+  }
+
+  const existingMetadata = getSalesCreditOffsetMetadata(offset);
+  const updated = await prismaClient.salesCreditOffset.update({
+    where: { id: offset.id },
+    data: {
+      metadataJson: {
+        ...existingMetadata,
+        ...(isPlainObject(metadataJson) ? metadataJson : {}),
+        draftOrderId:
+          normalizeText(draftOrderId) || existingMetadata.draftOrderId || null,
+        invoiceUrl:
+          normalizeText(invoiceUrl) || existingMetadata.invoiceUrl || null,
+        checkoutCreatedAt: now.toISOString(),
+      },
+    },
+  });
+
+  return {
+    ok: true,
+    duplicate: false,
+    offset: updated,
+  };
 }
 
 export async function releaseSalesCreditOffset(
@@ -4893,7 +5051,7 @@ export async function reverseSalesCreditOffsetForRefund(
           metadataJson: {
             salesCreditOffsetId: offset.id,
             checkoutReference: offset.checkoutReference,
-            ...(isPlainObject(offset.metadataJson) ? offset.metadataJson : {}),
+            ...getSalesCreditOffsetMetadata(offset),
             ...(isPlainObject(metadataJson) ? metadataJson : {}),
           },
           occurredAt: now,
