@@ -2360,6 +2360,72 @@ function normalizeShopifyOrderId(payload) {
   );
 }
 
+function getShopifyOrderAttribute(payload, key) {
+  const targetKey = normalizeText(key);
+
+  if (!targetKey) {
+    return null;
+  }
+
+  const candidates = [
+    ...(Array.isArray(payload?.note_attributes) ? payload.note_attributes : []),
+    ...(Array.isArray(payload?.custom_attributes)
+      ? payload.custom_attributes
+      : []),
+    ...(Array.isArray(payload?.customAttributes) ? payload.customAttributes : []),
+  ];
+
+  for (const attribute of candidates) {
+    const attributeKey = normalizeText(attribute?.name || attribute?.key);
+
+    if (attributeKey === targetKey) {
+      return normalizeText(attribute?.value);
+    }
+  }
+
+  return null;
+}
+
+function getShopifyOrderSalesCreditOffset(payload) {
+  const offsetId = getShopifyOrderAttribute(payload, "sales_credit_offset_id");
+  const amount = toPositiveInteger(
+    getShopifyOrderAttribute(payload, "sales_credit_offset_amount"),
+  );
+
+  if (!offsetId || amount == null) {
+    return null;
+  }
+
+  return {
+    offsetId,
+    amount,
+    buyerSellerId: getShopifyOrderAttribute(
+      payload,
+      "sales_credit_buyer_seller_id",
+    ),
+  };
+}
+
+function getSalesCreditOffsetFromPaidEntries(entries = []) {
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const metadata = isPlainObject(entry?.metadataJson)
+      ? entry.metadataJson
+      : null;
+    const offsetId = normalizeText(metadata?.salesCreditOffsetId);
+    const amount = toPositiveInteger(metadata?.salesCreditOffsetAmount);
+
+    if (offsetId && amount != null) {
+      return {
+        offsetId,
+        amount,
+        buyerSellerId: normalizeText(metadata?.salesCreditBuyerSellerId),
+      };
+    }
+  }
+
+  return null;
+}
+
 function normalizeShopifyRefundId(payload) {
   return (
     normalizeShopifyGid("Refund", payload?.admin_graphql_api_id) ||
@@ -2629,6 +2695,7 @@ export async function processShopifyOrderPaidSettlement(
   const lineItems = Array.isArray(payload?.line_items)
     ? payload.line_items
     : [];
+  const salesCreditOffset = getShopifyOrderSalesCreditOffset(payload);
 
   if (!shopDomain || !shopifyOrderId || lineItems.length === 0) {
     return {
@@ -2645,11 +2712,34 @@ export async function processShopifyOrderPaidSettlement(
   });
 
   if (existingLedgerEntry) {
-    return {
+    let salesCreditCapture = null;
+
+    if (salesCreditOffset?.offsetId) {
+      salesCreditCapture = await captureSalesCreditOffset(
+        {
+          offsetId: salesCreditOffset.offsetId,
+          metadataJson: {
+            shopDomain,
+            shopifyOrderId,
+            shopifyOrderName,
+            shopifyOrderNumericId: normalizeText(payload?.id),
+          },
+        },
+        { prismaClient, now: new Date() },
+      );
+    }
+
+    const response = {
       ok: true,
       duplicate: true,
       ledgerEntry: existingLedgerEntry,
     };
+
+    if (salesCreditCapture) {
+      response.salesCreditCapture = salesCreditCapture;
+    }
+
+    return response;
   }
 
   const productIdCandidates = uniqueValues(
@@ -2775,10 +2865,12 @@ export async function processShopifyOrderPaidSettlement(
     };
   }
 
-  const settlementAmount = matchedLines.reduce(
+  const cashSettlementAmount = matchedLines.reduce(
     (total, matchedLine) => total + matchedLine.amount,
     0,
   );
+  const salesCreditSettlementAmount = clampInteger(salesCreditOffset?.amount);
+  const settlementAmount = cashSettlementAmount + salesCreditSettlementAmount;
 
   if (settlementAmount <= 0) {
     return {
@@ -2794,51 +2886,97 @@ export async function processShopifyOrderPaidSettlement(
       ? new Date(payload.created_at)
       : new Date();
   const vendor = getProductVendor(matchedLines[0].product);
-  const ledgerEntry = await createLedgerEntry(
-    {
+  return runInTransaction(prismaClient, async (tx) => {
+    let salesCreditCapture = null;
+
+    if (salesCreditOffset?.offsetId) {
+      if (salesCreditOffset.buyerSellerId === seller.id) {
+        return {
+          ok: false,
+          reason: "sales_credit_self_purchase_detected",
+          sellerId: seller.id,
+          amount: settlementAmount,
+          currencyCode,
+        };
+      }
+
+      salesCreditCapture = await captureSalesCreditOffset(
+        {
+          offsetId: salesCreditOffset.offsetId,
+          metadataJson: {
+            shopDomain,
+            shopifyOrderId,
+            shopifyOrderName,
+            shopifyOrderNumericId: normalizeText(payload?.id),
+            settlementSellerId: seller.id,
+          },
+        },
+        { prismaClient: tx, now: occurredAt },
+      );
+
+      if (!salesCreditCapture.ok) {
+        return {
+          ok: false,
+          reason: "sales_credit_capture_failed",
+          sellerId: seller.id,
+          amount: settlementAmount,
+          currencyCode,
+          salesCreditCapture,
+        };
+      }
+    }
+
+    const ledgerEntry = await createLedgerEntry(
+      {
+        sellerId: seller.id,
+        sellerStripeAccountId: seller.stripeAccount?.id || null,
+        stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
+        entryType: "shopify_order_paid",
+        stripeObjectId: shopifyOrderId,
+        amount: settlementAmount,
+        currencyCode,
+        direction: "credit",
+        description: "Shopify order paid",
+        metadataJson: {
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          shopifyOrderNumericId: normalizeText(payload?.id),
+          vendorId: normalizeText(vendor?.id),
+          vendorHandle: normalizeText(vendor?.handle),
+          settlementMode: "shopify_order_to_monthly_settlement",
+          cashSettlementAmount,
+          salesCreditOffsetId: salesCreditOffset?.offsetId || null,
+          salesCreditOffsetAmount: salesCreditSettlementAmount,
+          salesCreditBuyerSellerId: salesCreditOffset?.buyerSellerId || null,
+          matchedLineCount: matchedLines.length,
+          unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+          lineItems: matchedLines.map(({ lineItem, product, amount }) => ({
+            shopifyLineItemId: normalizeText(lineItem?.id),
+            shopifyProductId: normalizeText(product.shopifyProductId),
+            localProductId: product.id,
+            localProductName: product.name,
+            quantity: toPositiveInteger(lineItem?.quantity) || 0,
+            amount,
+          })),
+        },
+        occurredAt,
+      },
+      { prismaClient: tx },
+    );
+
+    return {
+      ok: true,
+      duplicate: false,
+      ledgerEntry,
       sellerId: seller.id,
-      sellerStripeAccountId: seller.stripeAccount?.id || null,
-      stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
-      entryType: "shopify_order_paid",
-      stripeObjectId: shopifyOrderId,
       amount: settlementAmount,
       currencyCode,
-      direction: "credit",
-      description: "Shopify order paid",
-      metadataJson: {
-        shopDomain,
-        shopifyOrderId,
-        shopifyOrderName,
-        shopifyOrderNumericId: normalizeText(payload?.id),
-        vendorId: normalizeText(vendor?.id),
-        vendorHandle: normalizeText(vendor?.handle),
-        settlementMode: "shopify_order_to_monthly_settlement",
-        matchedLineCount: matchedLines.length,
-        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
-        lineItems: matchedLines.map(({ lineItem, product, amount }) => ({
-          shopifyLineItemId: normalizeText(lineItem?.id),
-          shopifyProductId: normalizeText(product.shopifyProductId),
-          localProductId: product.id,
-          localProductName: product.name,
-          quantity: toPositiveInteger(lineItem?.quantity) || 0,
-          amount,
-        })),
-      },
-      occurredAt,
-    },
-    { prismaClient },
-  );
-
-  return {
-    ok: true,
-    duplicate: false,
-    ledgerEntry,
-    sellerId: seller.id,
-    amount: settlementAmount,
-    currencyCode,
-    matchedLineCount: matchedLines.length,
-    unmatchedProductIds: unmatchedProductIds.filter(Boolean),
-  };
+      matchedLineCount: matchedLines.length,
+      unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+      salesCreditCapture,
+    };
+  });
 }
 
 export async function processShopifyRefundSettlement(
@@ -3007,8 +3145,20 @@ export async function processShopifyRefundSettlement(
     orderLedgerEntries,
     seller.id,
   );
+  const salesCreditOffset = getSalesCreditOffsetFromPaidEntries(
+    orderLedgerEntries.filter((entry) => entry?.entryType === "shopify_order_paid"),
+  );
+  const salesCreditRefundAmount = clampInteger(salesCreditOffset?.amount);
+  const cashRemainingAmount = Math.max(
+    0,
+    orderLedgerSummary.remainingAmount - salesCreditRefundAmount,
+  );
+  const shouldReverseSalesCredit =
+    Boolean(salesCreditOffset?.offsetId) &&
+    requestedSettlementAmount >= cashRemainingAmount;
   const settlementAmount = capShopifyOrderReversalAmount(
-    requestedSettlementAmount,
+    requestedSettlementAmount +
+      (shouldReverseSalesCredit ? salesCreditRefundAmount : 0),
     orderLedgerSummary,
   );
 
@@ -3028,53 +3178,74 @@ export async function processShopifyRefundSettlement(
       ? new Date(payload.created_at)
       : new Date();
   const vendor = getProductVendor(matchedLines[0].product);
-  const ledgerEntry = await createLedgerEntry(
-    {
+
+  return runInTransaction(prismaClient, async (tx) => {
+    const ledgerEntry = await createLedgerEntry(
+      {
+        sellerId: seller.id,
+        sellerStripeAccountId: seller.stripeAccount?.id || null,
+        stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
+        entryType: "refund",
+        stripeObjectId: shopifyRefundId,
+        amount: settlementAmount,
+        currencyCode,
+        direction: "debit",
+        description: "Shopify refund",
+        metadataJson: {
+          shopDomain,
+          shopifyRefundId,
+          shopifyRefundNumericId: normalizeText(payload?.id),
+          shopifyOrderId,
+          shopifyOrderNumericId: normalizeText(payload?.order_id),
+          vendorId: normalizeText(vendor?.id),
+          vendorHandle: normalizeText(vendor?.handle),
+          settlementMode: "shopify_refund_to_monthly_settlement",
+          salesCreditOffsetId: salesCreditOffset?.offsetId || null,
+          salesCreditOffsetReversed: shouldReverseSalesCredit,
+          matchedLineCount: matchedLines.length,
+          unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+          lineItems: matchedLines.map(({ refundLineItem, product, amount }) => ({
+            shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
+            shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
+            shopifyProductId: normalizeText(product.shopifyProductId),
+            localProductId: product.id,
+            localProductName: product.name,
+            quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
+            amount,
+          })),
+        },
+        occurredAt,
+      },
+      { prismaClient: tx },
+    );
+
+    const salesCreditReversal = shouldReverseSalesCredit
+      ? await reverseSalesCreditOffsetForRefund(
+          {
+            offsetId: salesCreditOffset.offsetId,
+            metadataJson: {
+              shopDomain,
+              shopifyRefundId,
+              shopifyOrderId,
+              reversalReason: "shopify_refund",
+            },
+          },
+          { prismaClient: tx, now: occurredAt },
+        )
+      : null;
+
+    return {
+      ok: true,
+      duplicate: false,
+      ledgerEntry,
       sellerId: seller.id,
-      sellerStripeAccountId: seller.stripeAccount?.id || null,
-      stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
-      entryType: "refund",
-      stripeObjectId: shopifyRefundId,
       amount: settlementAmount,
       currencyCode,
-      direction: "debit",
-      description: "Shopify refund",
-      metadataJson: {
-        shopDomain,
-        shopifyRefundId,
-        shopifyRefundNumericId: normalizeText(payload?.id),
-        shopifyOrderId,
-        shopifyOrderNumericId: normalizeText(payload?.order_id),
-        vendorId: normalizeText(vendor?.id),
-        vendorHandle: normalizeText(vendor?.handle),
-        settlementMode: "shopify_refund_to_monthly_settlement",
-        matchedLineCount: matchedLines.length,
-        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
-        lineItems: matchedLines.map(({ refundLineItem, product, amount }) => ({
-          shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
-          shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
-          shopifyProductId: normalizeText(product.shopifyProductId),
-          localProductId: product.id,
-          localProductName: product.name,
-          quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
-          amount,
-        })),
-      },
-      occurredAt,
-    },
-    { prismaClient },
-  );
-
-  return {
-    ok: true,
-    duplicate: false,
-    ledgerEntry,
-    sellerId: seller.id,
-    amount: settlementAmount,
-    currencyCode,
-    matchedLineCount: matchedLines.length,
-    unmatchedProductIds: unmatchedProductIds.filter(Boolean),
-  };
+      matchedLineCount: matchedLines.length,
+      unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+      salesCreditReversal,
+    };
+  });
 }
 
 export async function processShopifyOrderCancelledSettlement(
@@ -3158,46 +3329,66 @@ export async function processShopifyOrderCancelledSettlement(
   }
 
   const paidEntry = paidEntries.find((entry) => entry?.sellerId === sellerId);
+  const salesCreditOffset = getSalesCreditOffsetFromPaidEntries(paidEntries);
   const occurredAt = payload?.cancelled_at
     ? new Date(payload.cancelled_at)
     : payload?.updated_at
       ? new Date(payload.updated_at)
       : new Date();
-  const ledgerEntry = await createLedgerEntry(
-    {
+  return runInTransaction(prismaClient, async (tx) => {
+    const ledgerEntry = await createLedgerEntry(
+      {
+        sellerId,
+        sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
+        stripeAccountId: paidEntry?.stripeAccountId || null,
+        entryType: "shopify_order_cancelled",
+        stripeObjectId: shopifyOrderId,
+        amount: settlementAmount,
+        currencyCode,
+        direction: "debit",
+        description: "Shopify order cancelled",
+        metadataJson: {
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          shopifyOrderNumericId: normalizeText(payload?.id),
+          cancelReason: normalizeText(payload?.cancel_reason),
+          cancelledAt: normalizeText(payload?.cancelled_at),
+          settlementMode: "shopify_cancelled_order_to_monthly_settlement",
+          paidAmount: orderLedgerSummary.paidAmount,
+          reversedAmountBeforeCancellation: orderLedgerSummary.reversedAmount,
+          salesCreditOffsetId: salesCreditOffset?.offsetId || null,
+          salesCreditOffsetReversed: Boolean(salesCreditOffset?.offsetId),
+        },
+        occurredAt,
+      },
+      { prismaClient: tx },
+    );
+
+    const salesCreditReversal = salesCreditOffset?.offsetId
+      ? await reverseSalesCreditOffsetForRefund(
+          {
+            offsetId: salesCreditOffset.offsetId,
+            metadataJson: {
+              shopDomain,
+              shopifyOrderId,
+              reversalReason: "shopify_order_cancelled",
+            },
+          },
+          { prismaClient: tx, now: occurredAt },
+        )
+      : null;
+
+    return {
+      ok: true,
+      duplicate: false,
+      ledgerEntry,
       sellerId,
-      sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
-      stripeAccountId: paidEntry?.stripeAccountId || null,
-      entryType: "shopify_order_cancelled",
-      stripeObjectId: shopifyOrderId,
       amount: settlementAmount,
       currencyCode,
-      direction: "debit",
-      description: "Shopify order cancelled",
-      metadataJson: {
-        shopDomain,
-        shopifyOrderId,
-        shopifyOrderName,
-        shopifyOrderNumericId: normalizeText(payload?.id),
-        cancelReason: normalizeText(payload?.cancel_reason),
-        cancelledAt: normalizeText(payload?.cancelled_at),
-        settlementMode: "shopify_cancelled_order_to_monthly_settlement",
-        paidAmount: orderLedgerSummary.paidAmount,
-        reversedAmountBeforeCancellation: orderLedgerSummary.reversedAmount,
-      },
-      occurredAt,
-    },
-    { prismaClient },
-  );
-
-  return {
-    ok: true,
-    duplicate: false,
-    ledgerEntry,
-    sellerId,
-    amount: settlementAmount,
-    currencyCode,
-  };
+      salesCreditReversal,
+    };
+  });
 }
 
 export async function processShopifyDisputeSettlement(
@@ -4407,6 +4598,8 @@ export async function authorizeSalesCreditOffset(
     currencyCode,
     checkoutReference = null,
     idempotencyKey = null,
+    expiresAt = undefined,
+    lockMinutes = DEFAULT_SALES_CREDIT_LOCK_MINUTES,
     metadataJson = null,
   },
   { prismaClient = prisma, now = new Date() } = {},
@@ -4432,6 +4625,14 @@ export async function authorizeSalesCreditOffset(
       });
 
       if (existing) {
+        if (existing.status !== "authorized") {
+          return {
+            ok: false,
+            reason: "sales_credit_idempotency_key_used",
+            offset: existing,
+          };
+        }
+
         return {
           ok: true,
           duplicate: true,
@@ -4474,7 +4675,12 @@ export async function authorizeSalesCreditOffset(
         status: "authorized",
         checkoutReference: normalizeText(checkoutReference),
         idempotencyKey: normalizedIdempotencyKey,
-        expiresAt: addMinutes(now, DEFAULT_SALES_CREDIT_LOCK_MINUTES),
+        expiresAt:
+          expiresAt === null
+            ? null
+            : expiresAt
+              ? new Date(expiresAt)
+              : addMinutes(now, clampInteger(lockMinutes)),
         metadataJson,
       },
     });

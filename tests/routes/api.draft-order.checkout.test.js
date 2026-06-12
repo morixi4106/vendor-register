@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { createDraftOrderCheckout } from '../../app/services/draftOrderCheckout.server.js';
 import { createDraftOrderCheckoutLoader } from '../../app/services/draftOrderCheckout.server.js';
+import { vendorAdminSessionCookie } from '../../app/services/vendorManagement.server.js';
 import { createPublicVendorDraftOrderCheckoutAction } from '../../app/services/vendorStorefront.server.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
@@ -81,11 +82,41 @@ function projectProduct(product, select) {
   return projected;
 }
 
+function createVerifiedSeller(overrides = {}) {
+  return {
+    id: 'seller_buyer',
+    status: 'active',
+    phoneVerifiedAt: new Date('2026-01-01T00:00:00Z'),
+    documentVerificationStatus: 'VERIFIED',
+    verificationNameMatched: true,
+    payoutNameMatched: true,
+    payoutRecipient: {
+      status: 'active',
+      provider: 'manual',
+      accountHolderName: 'Buyer Seller',
+      accountSummary: 'Manual settlement',
+    },
+    ...overrides,
+  };
+}
+
 function createFakePrisma({
   products = createProducts(),
   seller = null,
+  sessionToken = 'seller-session',
+  sessionVendor = null,
+  sellers = [],
+  ledgerEntries = [],
+  salesCreditOffsets = [],
+  payoutRuns = [],
   buyerWarningRecords = [],
 } = {}) {
+  const sellerRecords = new Map();
+
+  for (const sellerRecord of [seller, sessionVendor?.seller, ...sellers].filter(Boolean)) {
+    sellerRecords.set(sellerRecord.id, sellerRecord);
+  }
+
   return {
     vendor: {
       async findUnique({ where }) {
@@ -109,6 +140,103 @@ function createFakePrisma({
             note: 'Natural wine selection',
           },
         };
+      },
+    },
+    vendorAdminSession: {
+      async findUnique({ where }) {
+        if (!sessionVendor || where.sessionToken !== sessionToken) {
+          return null;
+        }
+
+        return {
+          id: 'session_1',
+          sessionToken,
+          expiresAt: new Date('2099-01-01T00:00:00Z'),
+          vendor: sessionVendor,
+        };
+      },
+    },
+    seller: {
+      async findUnique({ where }) {
+        return sellerRecords.get(where.id) || null;
+      },
+    },
+    ledgerEntry: {
+      async findMany({ where }) {
+        return ledgerEntries.filter((entry) => {
+          if (where?.sellerId && entry.sellerId !== where.sellerId) {
+            return false;
+          }
+
+          if (where?.currencyCode && entry.currencyCode !== where.currencyCode) {
+            return false;
+          }
+
+          if (where?.entryType?.in && !where.entryType.in.includes(entry.entryType)) {
+            return false;
+          }
+
+          return true;
+        });
+      },
+    },
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        if (where.idempotencyKey) {
+          return (
+            salesCreditOffsets.find(
+              (offset) => offset.idempotencyKey === where.idempotencyKey,
+            ) || null
+          );
+        }
+
+        return salesCreditOffsets.find((offset) => offset.id === where.id) || null;
+      },
+      async findMany({ where }) {
+        return salesCreditOffsets.filter((offset) => {
+          if (where?.sellerId && offset.sellerId !== where.sellerId) {
+            return false;
+          }
+
+          if (where?.currencyCode && offset.currencyCode !== where.currencyCode) {
+            return false;
+          }
+
+          if (where?.status?.in && !where.status.in.includes(offset.status)) {
+            return false;
+          }
+
+          return true;
+        });
+      },
+      async create({ data }) {
+        const offset = {
+          id: `sco_${salesCreditOffsets.length + 1}`,
+          createdAt: new Date('2026-06-01T00:00:00Z'),
+          updatedAt: new Date('2026-06-01T00:00:00Z'),
+          ...data,
+        };
+        salesCreditOffsets.push(offset);
+        return offset;
+      },
+    },
+    payoutRun: {
+      async findMany({ where }) {
+        return payoutRuns.filter((payoutRun) => {
+          if (where?.sellerId && payoutRun.sellerId !== where.sellerId) {
+            return false;
+          }
+
+          if (where?.currencyCode && payoutRun.currencyCode !== where.currencyCode) {
+            return false;
+          }
+
+          if (where?.status?.in && !where.status.in.includes(payoutRun.status)) {
+            return false;
+          }
+
+          return true;
+        });
       },
     },
     product: {
@@ -307,6 +435,149 @@ test('api.draft-order.checkout creates a server-trusted payload and ignores shop
     reason: null,
     shippingAmount: 420,
   });
+});
+
+test('api.draft-order.checkout applies authenticated seller sales credit as a settlement offset', async () => {
+  const salesCreditOffsets = [];
+  const buyerSeller = createVerifiedSeller();
+  const targetSeller = {
+    id: 'seller_target',
+    euSellerStatus: 'DISABLED',
+  };
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: targetSeller,
+      sessionVendor: {
+        id: 'vendor_buyer',
+        managementEmail: 'buyer@example.com',
+        seller: buyerSeller,
+      },
+      sellers: [buyerSeller],
+      ledgerEntries: [
+        {
+          sellerId: buyerSeller.id,
+          entryType: 'shopify_order_paid',
+          amount: 10000,
+          currencyCode: 'jpy',
+          occurredAt: new Date('2025-01-01T00:00:00Z'),
+        },
+      ],
+      salesCreditOffsets,
+    }),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+
+      return {
+        ok: true,
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+      };
+    },
+  });
+  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        customer: {
+          ...createValidBody().customer,
+          email: 'buyer@example.com',
+        },
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+        salesCreditIdempotencyKey: 'checkout_sales_credit_1',
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedPayload.appliedDiscount.value, 1000);
+  assert.equal(receivedPayload.appliedDiscount.valueType, 'FIXED_AMOUNT');
+  assert.deepEqual(receivedPayload.customAttributes.slice(-4), [
+    { key: 'sales_credit_offset_id', value: 'sco_1' },
+    { key: 'sales_credit_offset_amount', value: '1000' },
+    { key: 'sales_credit_buyer_seller_id', value: 'seller_buyer' },
+    { key: 'sales_credit_mode', value: 'monthly_settlement_offset' },
+  ]);
+  assert.equal(salesCreditOffsets.length, 1);
+  assert.equal(salesCreditOffsets[0].sellerId, 'seller_buyer');
+  assert.equal(salesCreditOffsets[0].amount, 1000);
+  assert.equal(salesCreditOffsets[0].status, 'authorized');
+  assert.equal(salesCreditOffsets[0].expiresAt, null);
+  assert.deepEqual(payload.salesCredit, {
+    offsetId: 'sco_1',
+    amount: 1000,
+  });
+});
+
+test('api.draft-order.checkout rejects sales credit on the seller own products', async () => {
+  let callCount = 0;
+  const sameSeller = createVerifiedSeller({
+    id: 'seller_target',
+    euSellerStatus: 'DISABLED',
+  });
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: sameSeller,
+      sessionVendor: {
+        id: 'vendor_buyer',
+        managementEmail: 'buyer@example.com',
+        seller: sameSeller,
+      },
+      sellers: [sameSeller],
+      ledgerEntries: [
+        {
+          sellerId: sameSeller.id,
+          entryType: 'shopify_order_paid',
+          amount: 10000,
+          currencyCode: 'jpy',
+          occurredAt: new Date('2025-01-01T00:00:00Z'),
+        },
+      ],
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        customer: {
+          ...createValidBody().customer,
+          email: 'buyer@example.com',
+        },
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.equal(payload.errors.length, 1);
+  assert.match(payload.errors[0], /螢ｲ荳企≡|自分|閾ｪ蛻/);
 });
 
 test('api.draft-order.checkout rejects EU checkout before product EU approval', async () => {

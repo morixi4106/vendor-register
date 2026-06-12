@@ -1175,6 +1175,131 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
 });
 
+test("processShopifyOrderPaidSettlement captures sales credit and credits the target seller gross item amount", async () => {
+  const state = {
+    ledgerEntries: [],
+    salesCreditOffset: {
+      id: "sco_1",
+      sellerId: "seller_buyer",
+      amount: 1000,
+      currencyCode: "jpy",
+      status: "authorized",
+      checkoutReference: "draft-order:test",
+      idempotencyKey: "checkout_sales_credit_1",
+      expiresAt: null,
+      metadataJson: {
+        targetSellerId: "seller_target",
+      },
+    },
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        if (where.entryType === "shopify_order_paid") {
+          return null;
+        }
+
+        if (where.entryType === "sales_credit_offset_captured") {
+          return null;
+        }
+
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        return where.id === state.salesCreditOffset.id
+          ? state.salesCreditOffset
+          : null;
+      },
+      async update({ where, data }) {
+        assert.equal(where.id, state.salesCreditOffset.id);
+        state.salesCreditOffset = {
+          ...state.salesCreditOffset,
+          ...data,
+        };
+        return state.salesCreditOffset;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Target Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_target",
+                handle: "target",
+                seller: {
+                  id: "seller_target",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1002,
+        admin_graphql_api_id: "gid://shopify/Order/1002",
+        name: "#1002",
+        currency: "JPY",
+        processed_at: "2026-06-01T12:00:00Z",
+        note_attributes: [
+          { name: "sales_credit_offset_id", value: "sco_1" },
+          { name: "sales_credit_offset_amount", value: "1000" },
+          { name: "sales_credit_buyer_seller_id", value: "seller_buyer" },
+        ],
+        line_items: [
+          {
+            id: 501,
+            product_id: 911,
+            price: "4000.00",
+            quantity: 1,
+            discount_allocations: [{ amount: "1000.00" }],
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.amount, 4000);
+  assert.equal(result.salesCreditCapture.ok, true);
+  assert.equal(state.salesCreditOffset.status, "captured");
+  assert.equal(state.ledgerEntries.length, 2);
+  assert.equal(state.ledgerEntries[0].entryType, "sales_credit_offset_captured");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_buyer");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].amount, 1000);
+  assert.equal(state.ledgerEntries[1].entryType, "shopify_order_paid");
+  assert.equal(state.ledgerEntries[1].sellerId, "seller_target");
+  assert.equal(state.ledgerEntries[1].direction, "credit");
+  assert.equal(state.ledgerEntries[1].amount, 4000);
+  assert.equal(state.ledgerEntries[1].metadataJson.cashSettlementAmount, 3000);
+  assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetAmount, 1000);
+  assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetId, "sco_1");
+});
+
 test("processShopifyOrderPaidSettlement does not require a Stripe account in Shopify settlement mode", async () => {
   const state = {
     ledgerEntries: [],
@@ -1505,6 +1630,147 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
   );
   assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 99);
+});
+
+test("processShopifyRefundSettlement reverses sales credit on full discounted refunds", async () => {
+  const state = {
+    ledgerEntries: [],
+    salesCreditOffset: {
+      id: "sco_1",
+      sellerId: "seller_buyer",
+      amount: 1000,
+      currencyCode: "jpy",
+      status: "captured",
+      checkoutReference: "draft-order:test",
+      metadataJson: {
+        targetSellerId: "seller_target",
+      },
+    },
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst({ where }) {
+        if (where.entryType === "refund") {
+          return null;
+        }
+
+        if (where.entryType === "sales_credit_offset_refund_reversal") {
+          return null;
+        }
+
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid",
+            sellerId: "seller_target",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1002",
+            amount: 4000,
+            metadataJson: {
+              salesCreditOffsetId: "sco_1",
+              salesCreditOffsetAmount: 1000,
+              salesCreditBuyerSellerId: "seller_buyer",
+              cashSettlementAmount: 3000,
+            },
+          },
+        ];
+      },
+    },
+    salesCreditOffset: {
+      async findUnique({ where }) {
+        return where.id === state.salesCreditOffset.id
+          ? state.salesCreditOffset
+          : null;
+      },
+      async update({ where, data }) {
+        assert.equal(where.id, state.salesCreditOffset.id);
+        state.salesCreditOffset = {
+          ...state.salesCreditOffset,
+          ...data,
+        };
+        return state.salesCreditOffset;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Target Product",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_target",
+                handle: "target",
+                seller: {
+                  id: "seller_target",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2002,
+        admin_graphql_api_id: "gid://shopify/Refund/2002",
+        order_id: 1002,
+        currency: "JPY",
+        refund_line_items: [
+          {
+            id: 601,
+            line_item_id: 501,
+            product_id: 911,
+            quantity: 1,
+            subtotal: "3000.00",
+            line_item: {
+              product_id: 911,
+              price: "4000.00",
+            },
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.amount, 4000);
+  assert.equal(result.salesCreditReversal.ok, true);
+  assert.equal(state.salesCreditOffset.status, "refunded");
+  assert.equal(state.ledgerEntries.length, 2);
+  assert.equal(state.ledgerEntries[0].entryType, "refund");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_target");
+  assert.equal(state.ledgerEntries[0].direction, "debit");
+  assert.equal(state.ledgerEntries[0].amount, 4000);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.salesCreditOffsetReversed,
+    true,
+  );
+  assert.equal(
+    state.ledgerEntries[1].entryType,
+    "sales_credit_offset_refund_reversal",
+  );
+  assert.equal(state.ledgerEntries[1].sellerId, "seller_buyer");
+  assert.equal(state.ledgerEntries[1].direction, "credit");
+  assert.equal(state.ledgerEntries[1].amount, 1000);
 });
 
 test("processShopifyRefundSettlement is idempotent by Shopify refund id", async () => {

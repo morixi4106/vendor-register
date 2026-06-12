@@ -1,7 +1,14 @@
+import { randomUUID } from 'node:crypto';
+
 import { json, redirect } from '@remix-run/node';
 
 import prisma from '../db.server.js';
 import { draftOrderCheckout } from './draftOrderCheckout.server.js';
+import {
+  authorizeSalesCreditOffset,
+  releaseSalesCreditOffset,
+} from './sellerPayments.server.js';
+import { vendorAdminSessionCookie } from './vendorManagement.server.js';
 import { shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
 import {
   BUYER_IMPORT_WARNING_VERSION,
@@ -23,6 +30,12 @@ const UNAVAILABLE_PRODUCT_MESSAGE =
 const OUT_OF_STOCK_MESSAGE =
   '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
 const INVALID_EMAIL_MESSAGE = 'メールアドレスの形式を確認してください。';
+const SALES_CREDIT_UNAVAILABLE_MESSAGE =
+  '売上金を利用できません。利用額と登録メールアドレスを確認してください。';
+const SALES_CREDIT_SELF_PURCHASE_MESSAGE =
+  '自分の商品には売上金を利用できません。';
+const SALES_CREDIT_LIMIT_MESSAGE =
+  '売上金は商品代金の範囲内で指定してください。';
 const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -155,6 +168,53 @@ function parseQuantityInput(value) {
   };
 }
 
+function parsePositiveIntegerInput(value) {
+  const normalized = String(value ?? '').trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const numeric = Number(normalized);
+
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return numeric;
+}
+
+function normalizeSalesCreditRequest({
+  enabled,
+  amount,
+  idempotencyKey,
+} = {}) {
+  const isEnabled = normalizeBooleanInput(enabled);
+  const normalizedAmount = parsePositiveIntegerInput(amount);
+
+  if (!isEnabled && normalizedAmount == null) {
+    return {
+      ok: true,
+      salesCredit: null,
+    };
+  }
+
+  if (normalizedAmount == null) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  return {
+    ok: true,
+    salesCredit: {
+      amount: normalizedAmount,
+      idempotencyKey: normalizeText(idempotencyKey),
+    },
+  };
+}
+
 function toDisplayPrice(product) {
   const calculatedPrice = Number(product?.calculatedPrice);
 
@@ -258,6 +318,197 @@ function buildCheckoutCustomAttributes(vendorContext, countryPolicy) {
   return attributes;
 }
 
+function calculateSelectedProductSubtotal(selectedProducts = []) {
+  return selectedProducts.reduce(
+    (total, { product, quantity }) =>
+      total + toDisplayPrice(product) * Number(quantity || 0),
+    0,
+  );
+}
+
+async function getAuthenticatedSalesCreditSeller({
+  request,
+  email,
+  prismaClient = prisma,
+}) {
+  const cookieHeader = request?.headers?.get?.('Cookie');
+  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
+
+  if (!sessionToken) {
+    return null;
+  }
+
+  if (typeof prismaClient.vendorAdminSession?.findUnique !== 'function') {
+    return null;
+  }
+
+  const vendorSession = await prismaClient.vendorAdminSession.findUnique({
+    where: { sessionToken },
+    include: {
+      vendor: {
+        include: {
+          seller: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!vendorSession || vendorSession.expiresAt < new Date()) {
+    return null;
+  }
+
+  const sessionEmail = normalizeEmail(vendorSession.vendor?.managementEmail);
+
+  if (!sessionEmail || sessionEmail !== normalizeEmail(email)) {
+    return null;
+  }
+
+  return vendorSession.vendor?.seller || null;
+}
+
+function buildSalesCreditAppliedDiscount(amount) {
+  return {
+    title: 'Sales credit',
+    description: 'Monthly settlement offset',
+    value: amount,
+    valueType: 'FIXED_AMOUNT',
+  };
+}
+
+function buildSalesCreditCustomAttributes({ offset, amount, buyerSellerId }) {
+  return [
+    { key: 'sales_credit_offset_id', value: offset.id },
+    { key: 'sales_credit_offset_amount', value: String(amount) },
+    { key: 'sales_credit_buyer_seller_id', value: buyerSellerId },
+    { key: 'sales_credit_mode', value: 'monthly_settlement_offset' },
+  ];
+}
+
+async function prepareCheckoutSalesCredit({
+  request,
+  submission,
+  vendorContext,
+  selectedProducts,
+  prismaClient = prisma,
+}) {
+  if (!submission.salesCredit) {
+    return {
+      ok: true,
+      appliedDiscount: null,
+      customAttributes: [],
+      offset: null,
+    };
+  }
+
+  const amount = submission.salesCredit.amount;
+  const subtotal = calculateSelectedProductSubtotal(selectedProducts);
+
+  if (amount > subtotal) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_LIMIT_MESSAGE,
+    };
+  }
+
+  const targetSellerId = normalizeText(vendorContext?.vendor?.sellerId);
+
+  if (!targetSellerId) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  const buyerSeller = await getAuthenticatedSalesCreditSeller({
+    request,
+    email: submission.customer.email,
+    prismaClient,
+  });
+  const buyerSellerId = normalizeText(buyerSeller?.id);
+
+  if (!buyerSellerId) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  if (buyerSellerId === targetSellerId) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_SELF_PURCHASE_MESSAGE,
+    };
+  }
+
+  const idempotencyKey =
+    normalizeText(submission.salesCredit.idempotencyKey) ||
+    `sales-credit:${buyerSellerId}:${randomUUID()}`;
+  const checkoutReference = `draft-order:${randomUUID()}`;
+  const authorization = await authorizeSalesCreditOffset(
+    {
+      sellerId: buyerSellerId,
+      amount,
+      currencyCode: 'jpy',
+      checkoutReference,
+      idempotencyKey,
+      expiresAt: null,
+      metadataJson: {
+        buyerEmail: submission.customer.email,
+        targetSellerId,
+        targetVendorHandle: vendorContext.vendor.handle,
+        targetVendorStoreName: vendorContext.vendor.storeName,
+      },
+    },
+    { prismaClient },
+  );
+
+  if (!authorization.ok) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_UNAVAILABLE_MESSAGE,
+      authorization,
+    };
+  }
+
+  return {
+    ok: true,
+    appliedDiscount: buildSalesCreditAppliedDiscount(amount),
+    customAttributes: buildSalesCreditCustomAttributes({
+      offset: authorization.offset,
+      amount,
+      buyerSellerId,
+    }),
+    offset: authorization.offset,
+  };
+}
+
+async function releaseCheckoutSalesCreditOffset({
+  salesCreditOffset,
+  prismaClient = prisma,
+  reason = 'checkout_failed',
+}) {
+  if (!salesCreditOffset?.id) {
+    return null;
+  }
+
+  try {
+    return await releaseSalesCreditOffset(
+      {
+        offsetId: salesCreditOffset.id,
+        reason,
+      },
+      { prismaClient },
+    );
+  } catch (error) {
+    console.error('sales credit offset release failed:', error);
+    return null;
+  }
+}
+
 export async function recordBuyerWarningAcceptance({
   prismaClient = prisma,
   acceptance,
@@ -325,6 +576,7 @@ function buildDefaultFieldErrors() {
     postalCode: null,
     country: null,
     importResponsibility: null,
+    salesCredit: null,
   };
 }
 
@@ -584,6 +836,7 @@ async function fetchShopifyCheckoutProduct({
 }
 
 async function buildShopifyFallbackCheckoutPayload({
+  request = null,
   resolvedVendorContext,
   submission,
   prismaClient = prisma,
@@ -655,10 +908,30 @@ async function buildShopifyFallbackCheckoutPayload({
     };
   }
 
+  const salesCredit = await prepareCheckoutSalesCredit({
+    request,
+    submission,
+    vendorContext: resolvedVendorContext,
+    selectedProducts,
+    prismaClient,
+  });
+
+  if (!salesCredit.ok) {
+    return {
+      ok: false,
+      error: salesCredit.error,
+    };
+  }
+
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
+  const customAttributes = [
+    ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy),
+    ...salesCredit.customAttributes,
+  ];
 
   return {
     ok: true,
+    salesCreditOffset: salesCredit.offset,
     payload: {
       orderLike: {
         lines: selectedProducts.map(({ product, quantity }) =>
@@ -672,10 +945,10 @@ async function buildShopifyFallbackCheckoutPayload({
       ...(submission.note ? { note: submission.note } : {}),
       shopDomain,
       tags: metadata.tags,
-      customAttributes: buildCheckoutCustomAttributes(
-        resolvedVendorContext,
-        countryPolicy,
-      ),
+      customAttributes,
+      ...(salesCredit.appliedDiscount
+        ? { appliedDiscount: salesCredit.appliedDiscount }
+        : {}),
       ...(countryPolicy.acceptance
         ? { buyerWarningAcceptance: countryPolicy.acceptance }
         : {}),
@@ -727,11 +1000,20 @@ function normalizeStorefrontCheckoutSubmission(formData) {
   const importResponsibilityAccepted = normalizeBooleanInput(
     formData.get('importResponsibilityAccepted'),
   );
+  const salesCreditRequest = normalizeSalesCreditRequest({
+    enabled: formData.get('useSalesCredit'),
+    amount: formData.get('salesCreditAmount'),
+    idempotencyKey: formData.get('salesCreditIdempotencyKey'),
+  });
 
   if (hasInvalidQuantity) {
     fieldErrors.cart = INVALID_QUANTITY_MESSAGE;
   } else if (items.length === 0) {
     fieldErrors.cart = INVALID_CART_MESSAGE;
+  }
+
+  if (!salesCreditRequest.ok) {
+    fieldErrors.salesCredit = salesCreditRequest.error;
   }
 
   if (!firstName) {
@@ -805,6 +1087,7 @@ function normalizeStorefrontCheckoutSubmission(formData) {
         phone,
       },
       importResponsibilityAccepted,
+      salesCredit: salesCreditRequest.salesCredit,
     },
   };
 }
@@ -860,6 +1143,23 @@ function normalizePublicCheckoutSubmission(body) {
       body.import_responsibility_accepted ||
       body.buyerWarningAccepted,
   );
+  const requestedSalesCredit = isPlainObject(body.salesCredit)
+    ? body.salesCredit
+    : {};
+  const salesCreditRequest = normalizeSalesCreditRequest({
+    enabled:
+      body.useSalesCredit ??
+      body.use_sales_credit ??
+      requestedSalesCredit.enabled,
+    amount:
+      body.salesCreditAmount ??
+      body.sales_credit_amount ??
+      requestedSalesCredit.amount,
+    idempotencyKey:
+      body.salesCreditIdempotencyKey ??
+      body.sales_credit_idempotency_key ??
+      requestedSalesCredit.idempotencyKey,
+  });
 
   for (const item of requestedItems) {
     const productId = normalizeText(
@@ -894,6 +1194,10 @@ function normalizePublicCheckoutSubmission(body) {
     errors.push('商品と数量を確認してください。');
   } else if (items.length === 0) {
     errors.push(INVALID_CART_MESSAGE);
+  }
+
+  if (!salesCreditRequest.ok) {
+    errors.push(salesCreditRequest.error);
   }
 
   if (!firstName) {
@@ -968,11 +1272,13 @@ function normalizePublicCheckoutSubmission(body) {
         phone,
       },
       importResponsibilityAccepted,
+      salesCredit: salesCreditRequest.salesCredit,
     },
   };
 }
 
 async function buildServerTrustedCheckoutPayload({
+  request = null,
   vendorContext,
   vendorHandle,
   submission,
@@ -1015,6 +1321,7 @@ async function buildServerTrustedCheckoutPayload({
 
   if (products.length !== uniqueProductIds.length) {
     return buildShopifyFallbackCheckoutPayload({
+      request,
       resolvedVendorContext,
       submission,
       prismaClient,
@@ -1031,6 +1338,7 @@ async function buildServerTrustedCheckoutPayload({
 
     if (!product) {
       return buildShopifyFallbackCheckoutPayload({
+        request,
         resolvedVendorContext,
         submission,
         prismaClient,
@@ -1093,10 +1401,30 @@ async function buildServerTrustedCheckoutPayload({
     };
   }
 
+  const salesCredit = await prepareCheckoutSalesCredit({
+    request,
+    submission,
+    vendorContext: resolvedVendorContext,
+    selectedProducts,
+    prismaClient,
+  });
+
+  if (!salesCredit.ok) {
+    return {
+      ok: false,
+      error: salesCredit.error,
+    };
+  }
+
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
+  const customAttributes = [
+    ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy),
+    ...salesCredit.customAttributes,
+  ];
 
   return {
     ok: true,
+    salesCreditOffset: salesCredit.offset,
     payload: {
       orderLike: {
         lines: selectedProducts.map(({ product, quantity }) =>
@@ -1110,10 +1438,10 @@ async function buildServerTrustedCheckoutPayload({
       ...(submission.note ? { note: submission.note } : {}),
       shopDomain: shopDomains[0],
       tags: metadata.tags,
-      customAttributes: buildCheckoutCustomAttributes(
-        resolvedVendorContext,
-        countryPolicy,
-      ),
+      customAttributes,
+      ...(salesCredit.appliedDiscount
+        ? { appliedDiscount: salesCredit.appliedDiscount }
+        : {}),
       ...(countryPolicy.acceptance
         ? { buyerWarningAcceptance: countryPolicy.acceptance }
         : {}),
@@ -1122,6 +1450,7 @@ async function buildServerTrustedCheckoutPayload({
 }
 
 export async function buildDraftOrderCheckoutInputFromStorefrontForm({
+  request = null,
   formData,
   vendorContext,
   prismaClient = prisma,
@@ -1134,6 +1463,7 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
   }
 
   const trustedPayload = await buildServerTrustedCheckoutPayload({
+    request,
     vendorContext,
     submission: submission.submission,
     prismaClient,
@@ -1153,10 +1483,12 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
   return {
     ok: true,
     payload: trustedPayload.payload,
+    salesCreditOffset: trustedPayload.salesCreditOffset || null,
   };
 }
 
 export async function buildDraftOrderCheckoutInputFromPublicRequest({
+  request = null,
   body,
   prismaClient = prisma,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
@@ -1180,6 +1512,7 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
   }
 
   const trustedPayload = await buildServerTrustedCheckoutPayload({
+    request,
     vendorContext,
     submission: submission.submission,
     prismaClient,
@@ -1196,6 +1529,7 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
   return {
     ok: true,
     payload: trustedPayload.payload,
+    salesCreditOffset: trustedPayload.salesCreditOffset || null,
   };
 }
 
@@ -1227,6 +1561,7 @@ export function createVendorStorefrontAction({
 
     const formData = await request.formData();
     const checkoutInput = await buildDraftOrderCheckoutInputFromStorefrontForm({
+      request,
       formData,
       vendorContext,
       prismaClient,
@@ -1254,6 +1589,10 @@ export function createVendorStorefrontAction({
 
       return redirect(invoiceUrl);
     } catch (error) {
+      await releaseCheckoutSalesCreditOffset({
+        salesCreditOffset: checkoutInput.salesCreditOffset,
+        prismaClient,
+      });
       console.error('vendor storefront checkout error:', error);
       return buildPublicCheckoutErrorResponse(error);
     }
@@ -1279,6 +1618,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
     }
 
     const checkoutInput = await buildDraftOrderCheckoutInputFromPublicRequest({
+      request,
       body,
       prismaClient,
       shopifyGraphQLWithOfflineSessionImpl,
@@ -1298,8 +1638,21 @@ export function createPublicVendorDraftOrderCheckoutAction({
         request,
       });
 
-      return json(result);
+      const responsePayload = { ...result };
+
+      if (checkoutInput.salesCreditOffset) {
+        responsePayload.salesCredit = {
+          offsetId: checkoutInput.salesCreditOffset.id,
+          amount: checkoutInput.salesCreditOffset.amount,
+        };
+      }
+
+      return json(responsePayload);
     } catch (error) {
+      await releaseCheckoutSalesCreditOffset({
+        salesCreditOffset: checkoutInput.salesCreditOffset,
+        prismaClient,
+      });
       console.error('public vendor checkout api error:', error);
       return buildPublicApiCheckoutErrorResponse(error);
     }
