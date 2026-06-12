@@ -373,6 +373,7 @@ export default function PublicVendorPreviewPage() {
   const [checkoutProductId, setCheckoutProductId] = useState(
     data.products[0]?.id || "",
   );
+  const [useSalesCredit, setUseSalesCredit] = useState(true);
   const [salesCreditAmount, setSalesCreditAmount] = useState("100");
   const activeRestrictionProduct =
     data.products.find((product) => product.id === restrictionProductId) || null;
@@ -381,10 +382,9 @@ export default function PublicVendorPreviewPage() {
     data.products[0] ||
     null;
   const checkoutProductPrice = Number(checkoutProduct?.price || 0);
-  const checkoutSalesCreditAmount = Math.min(
-    checkoutProductPrice,
-    parsePositiveAmount(salesCreditAmount),
-  );
+  const checkoutSalesCreditAmount = useSalesCredit
+    ? Math.min(checkoutProductPrice, parsePositiveAmount(salesCreditAmount))
+    : 0;
   const checkoutPayAmount = Math.max(
     0,
     checkoutProductPrice - checkoutSalesCreditAmount,
@@ -995,10 +995,10 @@ export default function PublicVendorPreviewPage() {
 
               <div>
                 <h2 style={{ margin: 0, fontSize: "22px", lineHeight: 1.3 }}>
-                  売上金充当つき checkout テスト
+                  購入手続き
                 </h2>
                 <p className="preview-checkout-note">
-                  送信すると Shopify の請求画面を作成します。売上金充当は割引として反映され、商品代金の支払額が減ります。送料は請求画面で加算されます。
+                  返金期間が終わった売上金を、購入代金に使えます。送料は請求画面で加算されます。
                 </p>
               </div>
 
@@ -1054,6 +1054,7 @@ export default function PublicVendorPreviewPage() {
                     min="1"
                     max={checkoutProductPrice || undefined}
                     value={salesCreditAmount}
+                    disabled={!useSalesCredit}
                     onChange={(event) => {
                       const nextAmount = event.target.value;
 
@@ -1079,7 +1080,8 @@ export default function PublicVendorPreviewPage() {
                     type="checkbox"
                     name="useSalesCredit"
                     value="on"
-                    defaultChecked
+                    checked={useSalesCredit}
+                    onChange={(event) => setUseSalesCredit(event.target.checked)}
                   />
                   売上金を使う
                 </label>
@@ -1091,7 +1093,7 @@ export default function PublicVendorPreviewPage() {
                   <strong>{formatYen(checkoutProductPrice)}</strong>
                 </div>
                 <div>
-                  <span>売上金充当</span>
+                  <span>売上金利用</span>
                   <strong>-{formatYen(checkoutSalesCreditAmount)}</strong>
                 </div>
                 <div>
