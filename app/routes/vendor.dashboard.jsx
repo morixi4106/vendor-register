@@ -152,6 +152,211 @@ export const action = async ({ request }) => {
   return redirect("/vendor/dashboard");
 };
 
+function formatChartMoney(amount, currencyCode = "JPY") {
+  const value = Number(amount || 0);
+
+  try {
+    return new Intl.NumberFormat("ja-JP", {
+      style: "currency",
+      currency: currencyCode,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `¥${Math.round(value).toLocaleString("ja-JP")}`;
+  }
+}
+
+function buildSalesTrendChart(data) {
+  const rows = Array.isArray(data) && data.length > 0 ? data : [];
+  const width = 720;
+  const height = 260;
+  const padding = { top: 24, right: 28, bottom: 44, left: 58 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const amounts = rows.map((item) => Math.max(0, Number(item.amount || 0)));
+  const maxAmount = Math.max(...amounts, 0);
+  const chartMax = maxAmount > 0 ? maxAmount : 1;
+  const xStep = rows.length > 1 ? plotWidth / (rows.length - 1) : 0;
+
+  const points = rows.map((item, index) => {
+    const amount = Math.max(0, Number(item.amount || 0));
+    const x = padding.left + xStep * index;
+    const y = padding.top + plotHeight - (amount / chartMax) * plotHeight;
+
+    return {
+      ...item,
+      amount,
+      amountLabel: formatChartMoney(amount),
+      x,
+      y,
+    };
+  });
+
+  const linePath = points
+    .map((point, index) => {
+      const command = index === 0 ? "M" : "L";
+      return `${command} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+    })
+    .join(" ");
+  const lastPoint = points[points.length - 1];
+  const firstPoint = points[0];
+  const baselineY = padding.top + plotHeight;
+  const areaPath =
+    points.length > 0
+      ? `${linePath} L ${lastPoint.x.toFixed(2)} ${baselineY} L ${firstPoint.x.toFixed(2)} ${baselineY} Z`
+      : "";
+  const totalAmount = amounts.reduce((sum, amount) => sum + amount, 0);
+  const peakAmount = Math.max(...amounts, 0);
+  const hasSales = totalAmount > 0;
+  const peakPoint = hasSales
+    ? points.find((point) => point.amount === peakAmount)
+    : null;
+  const grid = [1, 0.66, 0.33, 0].map((ratio) => {
+    const y = padding.top + plotHeight - ratio * plotHeight;
+    const value = hasSales ? Math.round(chartMax * ratio) : 0;
+
+    return {
+      y,
+      label: ratio === 0 || hasSales ? formatChartMoney(value) : "",
+    };
+  });
+
+  return {
+    width,
+    height,
+    padding,
+    plotWidth,
+    baselineY,
+    points,
+    linePath,
+    areaPath,
+    grid,
+    hasSales,
+    totalLabel: formatChartMoney(totalAmount),
+    peakLabel: peakPoint ? `${peakPoint.label} ${peakPoint.amountLabel}` : "なし",
+  };
+}
+
+function SalesTrendChart({ data }) {
+  const chart = buildSalesTrendChart(data);
+
+  return (
+    <div className="vendor-sales-chart">
+      <div className="vendor-sales-chart__summary">
+        <div>
+          <p className="vendor-sales-chart__eyebrow">直近7日</p>
+          <p className="vendor-sales-chart__value">{chart.totalLabel}</p>
+        </div>
+        <span
+          className={`vendor-shell__badge vendor-shell__badge--${
+            chart.hasSales ? "success" : "neutral"
+          }`}
+        >
+          {chart.hasSales ? "反映中" : "注文待ち"}
+        </span>
+      </div>
+
+      <div className="vendor-sales-chart__plot">
+        <svg
+          className="vendor-sales-chart__svg"
+          viewBox={`0 0 ${chart.width} ${chart.height}`}
+          role="img"
+          aria-label="直近7日の売上推移"
+        >
+          <rect
+            x="0"
+            y="0"
+            width={chart.width}
+            height={chart.height}
+            rx="16"
+            fill="#f8fafc"
+          />
+          {chart.grid.map((tick, index) => (
+            <g key={`${tick.y}-${index}`}>
+              <line
+                x1={chart.padding.left}
+                x2={chart.padding.left + chart.plotWidth}
+                y1={tick.y}
+                y2={tick.y}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              {tick.label ? (
+                <text
+                  x={chart.padding.left - 12}
+                  y={tick.y + 4}
+                  textAnchor="end"
+                  fill="#6b7280"
+                  fontSize="12"
+                >
+                  {tick.label}
+                </text>
+              ) : null}
+            </g>
+          ))}
+          <line
+            x1={chart.padding.left}
+            x2={chart.padding.left + chart.plotWidth}
+            y1={chart.baselineY}
+            y2={chart.baselineY}
+            stroke="#9ca3af"
+            strokeWidth="1.2"
+          />
+          {chart.areaPath ? (
+            <path d={chart.areaPath} fill="#111827" opacity="0.06" />
+          ) : null}
+          {chart.linePath ? (
+            <path
+              d={chart.linePath}
+              fill="none"
+              stroke="#111827"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : null}
+          {chart.points.map((point) => (
+            <g key={point.label}>
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="4.5"
+                fill="#ffffff"
+                stroke="#111827"
+                strokeWidth="2"
+              />
+              <title>{`${point.label}: ${point.amountLabel}`}</title>
+            </g>
+          ))}
+          {chart.points.map((point) => (
+            <text
+              key={`${point.label}-label`}
+              x={point.x}
+              y={chart.height - 18}
+              textAnchor="middle"
+              fill="#6b7280"
+              fontSize="12"
+            >
+              {point.label}
+            </text>
+          ))}
+        </svg>
+
+        {!chart.hasSales ? (
+          <div className="vendor-sales-chart__empty">
+            注文が入ると売上推移を表示します
+          </div>
+        ) : null}
+      </div>
+
+      <div className="vendor-sales-chart__footer">
+        <span>7日合計 {chart.totalLabel}</span>
+        <span>最高日 {chart.peakLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function VendorDashboard() {
   const actionData = useActionData();
   const { store, summaryCards, healthRows, chartData, monthlyPreview, products } =
@@ -184,8 +389,6 @@ export default function VendorDashboard() {
     />
   );
 
-  const chartMax = Math.max(...chartData.map((item) => item.amount), 1);
-
   return (
     <VendorManagementShell
       activeItem="dashboard"
@@ -193,6 +396,81 @@ export default function VendorDashboard() {
       title="店舗管理ダッシュボード"
       search={search}
     >
+      <style>{`
+        .vendor-sales-chart{
+          display:grid;
+          gap:14px;
+        }
+        .vendor-sales-chart__summary{
+          display:flex;
+          justify-content:space-between;
+          align-items:flex-start;
+          gap:16px;
+        }
+        .vendor-sales-chart__eyebrow{
+          margin:0 0 4px;
+          color:#6b7280;
+          font-size:12px;
+          font-weight:700;
+        }
+        .vendor-sales-chart__value{
+          margin:0;
+          color:#111827;
+          font-size:30px;
+          font-weight:800;
+          line-height:1.1;
+        }
+        .vendor-sales-chart__plot{
+          position:relative;
+          overflow:hidden;
+          min-height:260px;
+          border:1px solid #e5e7eb;
+          border-radius:16px;
+          background:#f8fafc;
+        }
+        .vendor-sales-chart__svg{
+          display:block;
+          width:100%;
+          height:260px;
+        }
+        .vendor-sales-chart__empty{
+          position:absolute;
+          left:50%;
+          top:50%;
+          transform:translate(-50%, -50%);
+          max-width:calc(100% - 32px);
+          padding:10px 14px;
+          border:1px solid #e5e7eb;
+          border-radius:999px;
+          background:rgba(255,255,255,.92);
+          color:#4b5563;
+          font-size:13px;
+          font-weight:700;
+          text-align:center;
+          box-shadow:0 8px 24px rgba(15,23,42,.08);
+          white-space:normal;
+        }
+        .vendor-sales-chart__footer{
+          display:flex;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+          color:#6b7280;
+          font-size:12px;
+        }
+        @media (max-width: 760px){
+          .vendor-sales-chart__value{
+            font-size:24px;
+          }
+          .vendor-sales-chart__plot{
+            min-height:220px;
+          }
+          .vendor-sales-chart__svg{
+            height:220px;
+          }
+        }
+      `}</style>
+
       {actionData?.error ? (
         <section className="vendor-card">
           <div
@@ -223,44 +501,7 @@ export default function VendorDashboard() {
           <h2 className="vendor-section-title">売上推移</h2>
           <p className="vendor-section-subtitle">注文連携後にここへ反映されます</p>
 
-          <div
-            style={{
-              height: "240px",
-              display: "flex",
-              alignItems: "flex-end",
-              gap: "14px",
-              paddingTop: "10px",
-            }}
-          >
-            {chartData.map((item) => {
-              const height = Math.max(20, Math.round((item.amount / chartMax) * 200));
-
-              return (
-                <div
-                  key={item.label}
-                  style={{ flex: 1, textAlign: "center" }}
-                >
-                  <div
-                    style={{
-                      width: "100%",
-                      height: `${height}px`,
-                      borderRadius: "10px 10px 0 0",
-                      background: "#111827",
-                    }}
-                  />
-                  <div
-                    style={{
-                      marginTop: "8px",
-                      fontSize: "12px",
-                      color: "#6b7280",
-                    }}
-                  >
-                    {item.label}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <SalesTrendChart data={chartData} />
         </div>
 
         <div className="vendor-card">
