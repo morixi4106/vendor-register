@@ -22,6 +22,8 @@ export default function AppIndex() {
   const [note, setNote] = useState("");
   const [ageCheck, setAgeCheck] = useState("私は18歳以上です");
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   async function handleSubmit(e) {
   e.preventDefault();
 

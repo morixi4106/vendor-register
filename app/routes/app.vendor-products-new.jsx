@@ -65,7 +65,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { vendor, store } = await getVendorFromSession(request);
+  await getVendorFromSession(request);
 
   const formData = await request.formData();
 

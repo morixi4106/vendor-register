@@ -235,8 +235,6 @@ export function createRunRefreshFx({
   };
 }
 
-const runRefreshFx = createRunRefreshFx();
-
 export function createRefreshFxAction({
   apiKey = process.env.EXCHANGE_RATE_API_KEY,
   fetchImpl = fetch,

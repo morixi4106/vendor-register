@@ -1,5 +1,5 @@
 import { json, redirect, createCookie } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import prisma from "../db.server";
 
 const vendorAdminCookie = createCookie("vendor_admin_session", {

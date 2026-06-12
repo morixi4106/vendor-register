@@ -46,6 +46,7 @@ const PRODUCT_EU_STATUS_VALUES = new Set(
   PRODUCT_EU_STATUS_OPTIONS.map((option) => option.value),
 );
 
+// eslint-disable-next-line no-unused-vars
 function parseCountryCodeList(value) {
   return String(value || "")
     .split(/[\s,、]+/)
@@ -53,6 +54,7 @@ function parseCountryCodeList(value) {
     .filter(Boolean);
 }
 
+// eslint-disable-next-line no-unused-vars
 function formatCountryCodeList(value) {
   if (!Array.isArray(value)) {
     return "";
