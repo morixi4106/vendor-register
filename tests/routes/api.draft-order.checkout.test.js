@@ -28,6 +28,7 @@ function createProducts() {
       description: 'Skin contact white',
       imageUrl: null,
       price: 4200,
+      category: '雑貨・小物',
       calculatedPrice: 4200,
       inventoryQuantity: 10,
       url: 'https://example.com/products/amber-wine',
@@ -44,6 +45,7 @@ function createProducts() {
       description: 'Pending review',
       imageUrl: null,
       price: 3800,
+      category: '雑貨・小物',
       calculatedPrice: 3800,
       inventoryQuantity: 10,
       url: 'https://example.com/products/pending-bottle',
@@ -60,6 +62,7 @@ function createProducts() {
       description: 'Other vendor item',
       imageUrl: null,
       price: 5000,
+      category: '雑貨・小物',
       calculatedPrice: 5000,
       inventoryQuantity: 10,
       url: 'https://example.com/products/other-store-bottle',
@@ -547,6 +550,21 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
     salesCreditOffsets[0].metadataJson.invoiceUrl,
     'https://shop-a.myshopify.com/invoices/1',
   );
+  assert.equal(
+    salesCreditOffsets[0].metadataJson.salesCreditMode,
+    'monthly_settlement_offset',
+  );
+  assert.equal(salesCreditOffsets[0].metadataJson.currencyCode, 'jpy');
+  assert.equal(salesCreditOffsets[0].metadataJson.itemSubtotalAmount, 8400);
+  assert.deepEqual(salesCreditOffsets[0].metadataJson.lineItems, [
+    {
+      productId: 'prod_1',
+      name: 'Amber Wine',
+      category: '雑貨・小物',
+      quantity: 2,
+      subtotalAmount: 8400,
+    },
+  ]);
   assert.deepEqual(payload.salesCredit, {
     offsetId: 'sco_1',
     amount: 1000,
@@ -629,6 +647,132 @@ test('api.draft-order.checkout rejects sales credit idempotency reuse with a dif
   assert.equal(payload.reason, 'invalid_payload');
   assert.equal(salesCreditOffsets.length, 1);
   assert.equal(salesCreditOffsets[0].amount, 500);
+});
+
+test('api.draft-order.checkout rejects sales credit on restricted product categories', async () => {
+  const buyerSeller = createVerifiedSeller();
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      products: createProducts().map((product) =>
+        product.id === 'prod_1'
+          ? { ...product, category: 'カード・フィギュア' }
+          : product,
+      ),
+      seller: {
+        id: 'seller_target',
+        euSellerStatus: 'DISABLED',
+      },
+      sessionVendor: {
+        id: 'vendor_buyer',
+        managementEmail: 'buyer@example.com',
+        seller: buyerSeller,
+      },
+      sellers: [buyerSeller],
+      ledgerEntries: [
+        {
+          sellerId: buyerSeller.id,
+          entryType: 'shopify_order_paid',
+          amount: 10000,
+          currencyCode: 'jpy',
+          occurredAt: new Date('2025-01-01T00:00:00Z'),
+          metadataJson: TRUSTED_SALES_CREDIT_METADATA,
+        },
+      ],
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        customer: {
+          ...createValidBody().customer,
+          email: 'buyer@example.com',
+        },
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.equal(payload.errors.length, 1);
+  assert.match(payload.errors[0], /売上金/);
+});
+
+test('api.draft-order.checkout rejects sales credit on Shopify-only fallback products', async () => {
+  const buyerSeller = createVerifiedSeller();
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({
+      seller: {
+        id: 'seller_target',
+        euSellerStatus: 'DISABLED',
+      },
+      sessionVendor: {
+        id: 'vendor_buyer',
+        managementEmail: 'buyer@example.com',
+        seller: buyerSeller,
+      },
+      sellers: [buyerSeller],
+      ledgerEntries: [
+        {
+          sellerId: buyerSeller.id,
+          entryType: 'shopify_order_paid',
+          amount: 10000,
+          currencyCode: 'jpy',
+          occurredAt: new Date('2025-01-01T00:00:00Z'),
+          metadataJson: TRUSTED_SALES_CREDIT_METADATA,
+        },
+      ],
+    }),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createShopifyFallbackBody({
+        customer: {
+          ...createValidBody().customer,
+          email: 'buyer@example.com',
+        },
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.equal(payload.errors.length, 1);
+  assert.match(payload.errors[0], /売上金/);
 });
 
 test('api.draft-order.checkout rejects sales credit on the seller own products', async () => {

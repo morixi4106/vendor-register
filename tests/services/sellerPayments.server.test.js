@@ -2880,6 +2880,21 @@ test("authorizeSalesCreditOffset refuses sellers before first payout verificatio
   assert.equal(result.summary.availableAmount, 20000);
 });
 
+test("authorizeSalesCreditOffset rejects non-JPY settlement offsets", async () => {
+  const result = await authorizeSalesCreditOffset({
+    sellerId: "seller_1",
+    amount: 1000,
+    currencyCode: "usd",
+    checkoutReference: "draft-order:usd",
+    idempotencyKey: "checkout-sales-credit-usd",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "unsupported_sales_credit_currency");
+  assert.equal(result.currencyCode, "usd");
+  assert.equal(result.supportedCurrencyCode, "jpy");
+});
+
 test("authorizeSalesCreditOffset rejects idempotency reuse with a different request", async () => {
   const now = new Date("2026-06-06T00:00:00.000Z");
   const existingOffset = {

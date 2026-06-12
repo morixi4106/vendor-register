@@ -15,6 +15,7 @@ import {
   BUYER_IMPORT_WARNING_VERSION,
   evaluateCartDeliveryEligibility,
 } from '../utils/deliveryEligibility.js';
+import { normalizeProductCategory } from '../utils/productCategories.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -37,10 +38,35 @@ const SALES_CREDIT_SELF_PURCHASE_MESSAGE =
   '自分の商品には売上金を利用できません。';
 const SALES_CREDIT_LIMIT_MESSAGE =
   '売上金は商品代金の範囲内で指定してください。';
+const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
+  'この商品では売上金を利用できません。通常の決済方法で購入してください。';
 const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
+const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = 'jpy';
+const SALES_CREDIT_ALLOWED_CATEGORY_NAMES = new Set([
+  'ファッション',
+  'レディース服',
+  'メンズ服',
+  '着物・浴衣',
+  '靴・鞄',
+  '雑貨・小物',
+  'アクセサリー',
+  'ハンドメイド',
+  '日用品',
+]);
+const SALES_CREDIT_RESTRICTED_CATEGORY_KEYWORDS = [
+  'ギフトカード',
+  '金券',
+  'チケット',
+  'プリペイド',
+  '商品券',
+  'カード',
+  'フィギュア',
+  '電子機器',
+  'サプリ',
+];
 
 const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
   query ProductForDraftOrderCheckout($id: ID!) {
@@ -327,6 +353,90 @@ function calculateSelectedProductSubtotal(selectedProducts = []) {
   );
 }
 
+function getSalesCreditProductCategory(product, vendorContext) {
+  const rawCategory =
+    normalizeText(product?.category) ||
+    normalizeText(vendorContext?.store?.category);
+
+  return normalizeProductCategory(rawCategory) || null;
+}
+
+function getSalesCreditRawProductCategory(product, vendorContext) {
+  return (
+    normalizeText(product?.category) ||
+    normalizeText(vendorContext?.store?.category) ||
+    null
+  );
+}
+
+function evaluateSalesCreditProductRisk(product, vendorContext) {
+  const category = getSalesCreditProductCategory(product, vendorContext);
+  const rawCategory = getSalesCreditRawProductCategory(product, vendorContext);
+  const comparable = `${category || ''} ${normalizeText(product?.name) || ''}`;
+
+  if (product?.salesCreditEligible === false) {
+    return {
+      ok: false,
+      reason: 'local_product_required',
+      category,
+      rawCategory,
+    };
+  }
+
+  if (!category) {
+    return {
+      ok: false,
+      reason: rawCategory ? 'category_unsupported' : 'category_required',
+      category: null,
+      rawCategory,
+    };
+  }
+
+  if (
+    !SALES_CREDIT_ALLOWED_CATEGORY_NAMES.has(category) ||
+    SALES_CREDIT_RESTRICTED_CATEGORY_KEYWORDS.some((keyword) =>
+      comparable.includes(keyword),
+    )
+  ) {
+    return {
+      ok: false,
+      reason: 'restricted_category',
+      category,
+      rawCategory,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    category,
+    rawCategory,
+  };
+}
+
+function evaluateSalesCreditProducts(selectedProducts, vendorContext) {
+  const restrictedProducts = [];
+
+  for (const { product } of selectedProducts) {
+    const risk = evaluateSalesCreditProductRisk(product, vendorContext);
+
+    if (!risk.ok) {
+      restrictedProducts.push({
+        productId: normalizeText(product?.id),
+        name: normalizeText(product?.name),
+        category: risk.category,
+        rawCategory: risk.rawCategory,
+        reason: risk.reason,
+      });
+    }
+  }
+
+  return {
+    ok: restrictedProducts.length === 0,
+    restrictedProducts,
+  };
+}
+
 async function getAuthenticatedSalesCreditSeller({
   request,
   email,
@@ -407,11 +517,25 @@ async function prepareCheckoutSalesCredit({
 
   const amount = submission.salesCredit.amount;
   const subtotal = calculateSelectedProductSubtotal(selectedProducts);
+  const currencyCode = SALES_CREDIT_SUPPORTED_CURRENCY_CODE;
 
   if (amount > subtotal) {
     return {
       ok: false,
       error: SALES_CREDIT_LIMIT_MESSAGE,
+    };
+  }
+
+  const productRisk = evaluateSalesCreditProducts(
+    selectedProducts,
+    vendorContext,
+  );
+
+  if (!productRisk.ok) {
+    return {
+      ok: false,
+      error: SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE,
+      productRisk,
     };
   }
 
@@ -453,15 +577,29 @@ async function prepareCheckoutSalesCredit({
     {
       sellerId: buyerSellerId,
       amount,
-      currencyCode: 'jpy',
+      currencyCode,
       checkoutReference,
       idempotencyKey,
       expiresAt: null,
       metadataJson: {
+        salesCreditMode: 'monthly_settlement_offset',
+        currencyCode,
+        itemSubtotalAmount: subtotal,
         buyerEmail: submission.customer.email,
         targetSellerId,
         targetVendorHandle: vendorContext.vendor.handle,
         targetVendorStoreName: vendorContext.vendor.storeName,
+        productRiskPolicy: {
+          allowed: true,
+          allowedCategoryNames: Array.from(SALES_CREDIT_ALLOWED_CATEGORY_NAMES),
+        },
+        lineItems: selectedProducts.map(({ product, quantity }) => ({
+          productId: normalizeText(product?.id),
+          name: normalizeText(product?.name),
+          category: getSalesCreditProductCategory(product, vendorContext),
+          quantity: Number(quantity || 0),
+          subtotalAmount: toDisplayPrice(product) * Number(quantity || 0),
+        })),
       },
     },
     { prismaClient },
@@ -798,10 +936,12 @@ function buildShopifyOnlyProductFromVariant({ variant, product, quantity }) {
   return {
     id: normalizeText(variant.id),
     name: title,
+    category: null,
     price,
     calculatedPrice: price,
     shopifyProductId: normalizeText(product.id),
     shopifyVariantId: normalizeText(variant.id),
+    salesCreditEligible: false,
     // Shopify-only fallback defaults to shipping-required when inventoryItem is missing.
     requiresShipping: variant.inventoryItem?.requiresShipping !== false,
     quantity,
@@ -1337,6 +1477,7 @@ async function buildServerTrustedCheckoutPayload({
       id: true,
       name: true,
       price: true,
+      category: true,
       calculatedPrice: true,
       inventoryQuantity: true,
       url: true,
@@ -1399,6 +1540,7 @@ async function buildServerTrustedCheckoutPayload({
         ...product,
         inventoryQuantity,
         shopDomain,
+        salesCreditEligible: true,
       },
       quantity: item.quantity,
     });

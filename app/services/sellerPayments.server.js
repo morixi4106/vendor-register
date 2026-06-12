@@ -100,6 +100,7 @@ export const LEDGER_ENTRY_TYPES = [
 
 const DEFAULT_PLATFORM_FEE_BPS = 1000;
 const DEFAULT_ORDER_CURRENCY = "jpy";
+const SALES_CREDIT_SUPPORTED_CURRENCY = DEFAULT_ORDER_CURRENCY;
 export const DEFAULT_SALES_CREDIT_HOLD_DAYS = 45;
 export const DEFAULT_SALES_CREDIT_RISK_BUFFER_BPS = 1000;
 const DEFAULT_SALES_CREDIT_LOCK_MINUTES = 30;
@@ -5138,6 +5139,15 @@ export async function authorizeSalesCreditOffset(
 
   if (normalizedAmount == null) {
     return { ok: false, reason: "invalid_amount" };
+  }
+
+  if (normalizedCurrency !== SALES_CREDIT_SUPPORTED_CURRENCY) {
+    return {
+      ok: false,
+      reason: "unsupported_sales_credit_currency",
+      currencyCode: normalizedCurrency,
+      supportedCurrencyCode: SALES_CREDIT_SUPPORTED_CURRENCY,
+    };
   }
 
   return runInTransaction(prismaClient, async (tx) => {
