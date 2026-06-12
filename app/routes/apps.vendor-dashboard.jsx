@@ -1,40 +1,11 @@
-import { redirect, createCookie } from "@remix-run/node";
-import prisma from "../db.server";
+import { redirect } from "@remix-run/node";
 
-const vendorAdminCookie = createCookie("vendor_admin_session", {
-  httpOnly: true,
-  path: "/",
-  sameSite: "lax",
-  secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 60 * 8,
-});
+import { getAppBaseUrl } from "../utils/appUrl.server.js";
 
 export const loader = async ({ request }) => {
-  const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = await vendorAdminCookie.parse(cookieHeader);
-
-  if (!sessionToken) {
-    throw redirect("https://vendor-register-pbjl.onrender.com/vendor/verify");
-  }
-
-  const session = await prisma.vendorAdminSession.findUnique({
-    where: { sessionToken },
-    include: { vendor: true },
-  });
-
-  if (!session || session.expiresAt <= new Date()) {
-    throw redirect("/apps/vendors/verify", {
-      headers: {
-        "Set-Cookie": await vendorAdminCookie.serialize("", {
-          maxAge: 0,
-        }),
-      },
-    });
-  }
-
-  throw redirect(`/apps/vendors/dashboard?vendor=${session.vendorId}`);
+  throw redirect(`${getAppBaseUrl(request)}/vendor/dashboard`, 302);
 };
 
-export default function AppsVendorDashboardEntry() {
+export default function LegacyVendorDashboardEntryRedirect() {
   return null;
 }
