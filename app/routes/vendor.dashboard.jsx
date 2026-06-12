@@ -303,7 +303,7 @@ export default function VendorDashboard() {
           </div>
 
           <div className="vendor-note" style={{ marginTop: "18px" }}>
-            この画面は店舗用メール認証で表示しています。注文・売上・在庫の連携は次段階で追加します。
+            登録商品と公開状況をもとに、現在の状態を表示しています。
           </div>
         </div>
       </section>
@@ -329,10 +329,9 @@ export default function VendorDashboard() {
           <p className="vendor-section-subtitle">現時点では登録商品一覧ベースで出力</p>
 
           <div className="vendor-note">
-            <div><strong>出力内容</strong></div>
+            <div><strong>PDFに含まれる内容</strong></div>
             <div>・登録商品一覧</div>
-            <div>・画面表示中のダッシュボード</div>
-            <div>・注文 / 売上情報は注文連携後に追加</div>
+            <div>・現在のダッシュボード概要</div>
           </div>
 
           <div className="vendor-stack" style={{ gap: "8px", marginTop: "14px" }}>

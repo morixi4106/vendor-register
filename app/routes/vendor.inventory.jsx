@@ -3,6 +3,36 @@ import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 
+function SaveIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="vendor-inventory-control__save-icon"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5 4h11l3 3v13H5V4Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+      <path
+        d="M8 4v6h8V4"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+      <path
+        d="M8 20v-6h8v6"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 function InventoryQuantityForm({ product }) {
   const [value, setValue] = useState(product.inventoryInputValue || "");
 
@@ -45,8 +75,13 @@ function InventoryQuantityForm({ product }) {
       >
         +
       </button>
-      <button className="vendor-shell__button" type="submit">
-        保存
+      <button
+        aria-label={`${product.name}の在庫数を保存`}
+        className="vendor-inventory-control__save"
+        title="保存"
+        type="submit"
+      >
+        <SaveIcon />
       </button>
     </Form>
   );

@@ -219,9 +219,9 @@ export default function VendorManagementShell({
           line-height:1.7;
         }
         .vendor-note{
-          border:1px solid #dbeafe;
-          background:#eff6ff;
-          color:#1d4ed8;
+          border:1px solid #d8dee8;
+          background:#f8fafc;
+          color:#374151;
           border-radius:12px;
           padding:14px 16px;
           font-size:14px;
@@ -290,16 +290,16 @@ export default function VendorManagementShell({
           flex-wrap:wrap;
         }
         .vendor-inventory-control{
-          display:grid;
-          grid-template-columns:36px 90px 36px auto;
-          gap:6px;
+          display:inline-grid;
+          grid-template-columns:34px 74px 34px 38px;
+          gap:4px;
           align-items:center;
           margin:0;
-          min-width:210px;
+          min-width:188px;
         }
         .vendor-inventory-control__step{
-          width:36px;
-          height:36px;
+          width:34px;
+          height:38px;
           border:1px solid #d1d5db;
           border-radius:8px;
           background:#ffffff;
@@ -313,8 +313,8 @@ export default function VendorManagementShell({
           border-color:#111827;
         }
         .vendor-inventory-control__input{
-          width:90px;
-          height:36px;
+          width:74px;
+          height:38px;
           box-sizing:border-box;
           border:1px solid #d1d5db;
           border-radius:8px;
@@ -323,6 +323,31 @@ export default function VendorManagementShell({
           font-size:14px;
           font-weight:700;
           text-align:right;
+        }
+        .vendor-inventory-control__input::-webkit-outer-spin-button,
+        .vendor-inventory-control__input::-webkit-inner-spin-button{
+          margin:0;
+        }
+        .vendor-inventory-control__save{
+          width:38px;
+          height:38px;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          border:1px solid #111827;
+          border-radius:8px;
+          background:#111827;
+          color:#ffffff;
+          cursor:pointer;
+          box-sizing:border-box;
+        }
+        .vendor-inventory-control__save:hover{
+          background:#1f2937;
+        }
+        .vendor-inventory-control__save-icon{
+          width:18px;
+          height:18px;
+          display:block;
         }
         .vendor-inline-form{
           margin:0;
