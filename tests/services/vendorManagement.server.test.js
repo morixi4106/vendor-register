@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  READ_ORDERS_SCOPE,
   READ_DRAFT_ORDERS_SCOPE,
   VENDOR_DRAFT_ORDERS_PAGE_SIZE,
   buildVendorDraftOrdersSearchQuery,
@@ -62,13 +63,13 @@ test("configured admin emails support comma-separated admin access lists", () =>
   assert.equal(isConfiguredAdminEmail("seller@example.com", env), false);
 });
 
-test("getVendorOrdersAccessState returns ready when read_draft_orders is granted", async () => {
+test("getVendorOrdersAccessState returns ready when read_orders is granted", async () => {
   const result = await getVendorOrdersAccessState(
     { storeId: "store_1" },
     {
       listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
       listGrantedAppAccessScopesImpl: async () => [
-        "read_orders",
+        READ_ORDERS_SCOPE,
         READ_DRAFT_ORDERS_SCOPE,
       ],
     },
@@ -76,26 +77,28 @@ test("getVendorOrdersAccessState returns ready when read_draft_orders is granted
 
   assert.deepEqual(result, {
     status: "ready",
+    hasReadOrders: true,
     hasReadDraftOrders: true,
-    grantedScopes: ["read_orders", READ_DRAFT_ORDERS_SCOPE],
+    grantedScopes: [READ_ORDERS_SCOPE, READ_DRAFT_ORDERS_SCOPE],
     shopDomain: "shop-a.myshopify.com",
     shopDomains: ["shop-a.myshopify.com"],
   });
 });
 
-test("getVendorOrdersAccessState returns missing_scope when read_draft_orders is not granted", async () => {
+test("getVendorOrdersAccessState returns missing_scope when read_orders is not granted", async () => {
   const result = await getVendorOrdersAccessState(
     { storeId: "store_1" },
     {
       listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
-      listGrantedAppAccessScopesImpl: async () => ["read_orders"],
+      listGrantedAppAccessScopesImpl: async () => [READ_DRAFT_ORDERS_SCOPE],
     },
   );
 
   assert.deepEqual(result, {
     status: "missing_scope",
-    hasReadDraftOrders: false,
-    grantedScopes: ["read_orders"],
+    hasReadOrders: false,
+    hasReadDraftOrders: true,
+    grantedScopes: [READ_DRAFT_ORDERS_SCOPE],
     shopDomain: "shop-a.myshopify.com",
     shopDomains: ["shop-a.myshopify.com"],
   });
@@ -436,7 +439,7 @@ test("syncShopifyInventoryQuantity enables tracking and sets available inventory
   ]);
 });
 
-test("getVendorOrdersPageData returns mapped orders when read_draft_orders is granted", async () => {
+test.skip("getVendorOrdersPageData returns mapped orders when read_draft_orders is granted", async () => {
   let receivedGraphQLCall = null;
   const result = await getVendorOrdersPageData(
     {
@@ -530,6 +533,92 @@ test("getVendorOrdersPageData returns mapped orders when read_draft_orders is gr
       canRegisterShipment: true,
     },
   ]);
+});
+
+test("getVendorOrdersPageData returns mapped orders from seller ledger order ids", async () => {
+  let receivedGraphQLCall = null;
+  let receivedLedgerQuery = null;
+  const result = await getVendorOrdersPageData(
+    {
+      storeId: "store_1",
+    },
+    {
+      listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async (query) => {
+            receivedLedgerQuery = query;
+            return [
+              {
+                id: "ledger_1",
+                stripeObjectId: "gid://shopify/Order/1001",
+                amount: 8400,
+                currencyCode: "jpy",
+                metadataJson: {
+                  shopifyOrderName: "#1001",
+                },
+                occurredAt: new Date("2026-04-29T08:35:00Z"),
+                createdAt: new Date("2026-04-29T08:36:00Z"),
+              },
+            ];
+          },
+        },
+      },
+      shopifyGraphQLWithOfflineSessionImpl: async (input) => {
+        receivedGraphQLCall = input;
+
+        return {
+          data: {
+            nodes: [
+              {
+                id: "gid://shopify/Order/1001",
+                name: "#1001",
+                createdAt: "2026-04-29T08:35:00Z",
+                email: "taro@example.com",
+                displayFinancialStatus: "PAID",
+                displayFulfillmentStatus: "UNFULFILLED",
+                customer: {
+                  displayName: "Taro Yamada",
+                },
+                currentTotalPriceSet: {
+                  shopMoney: {
+                    amount: "8400",
+                    currencyCode: "JPY",
+                  },
+                },
+                fulfillments: [],
+              },
+            ],
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(receivedLedgerQuery.where.entryType, "shopify_order_paid");
+  assert.deepEqual(receivedLedgerQuery.where.seller, {
+    is: {
+      vendorStoreId: "store_1",
+    },
+  });
+  assert.equal(receivedGraphQLCall.shopDomain, "shop-a.myshopify.com");
+  assert.equal(receivedGraphQLCall.apiVersion, "2026-01");
+  assert.match(receivedGraphQLCall.query, /nodes\(ids: \$ids\)/);
+  assert.deepEqual(receivedGraphQLCall.variables, {
+    ids: ["gid://shopify/Order/1001"],
+  });
+  assert.equal(result.accessState.status, "ready");
+  assert.equal(result.queryString, "ledger:shopify_order_paid");
+  assert.equal(result.pageSize, VENDOR_DRAFT_ORDERS_PAGE_SIZE);
+  assert.equal(result.orders.length, 1);
+  assert.equal(result.orders[0].id, "gid://shopify/Order/1001");
+  assert.equal(result.orders[0].shopifyOrderNumber, "#1001");
+  assert.equal(result.orders[0].customerName, "Taro Yamada");
+  assert.equal(result.orders[0].totalAmount, 8400);
+  assert.equal(result.orders[0].financialStatus, "PAID");
+  assert.equal(result.orders[0].fulfillmentStatus, "UNFULFILLED");
+  assert.equal(result.orders[0].canRegisterShipment, true);
 });
 
 test("parseShipmentRegistrationInput validates tracking fields", () => {
@@ -653,6 +742,89 @@ test("createVendorOrderFulfillment creates a Shopify fulfillment for a vendor or
   });
 });
 
+test("createVendorOrderFulfillment allows ledger-owned Shopify checkout orders without vendor tags", async () => {
+  const calls = [];
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingCompany: "Japan Post",
+      trackingUrl: null,
+      notifyCustomer: false,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    prismaClient: {
+      ledgerEntry: {
+        findFirst: async (query) => {
+          assert.equal(query.where.entryType, "shopify_order_paid");
+          assert.equal(query.where.stripeObjectId, "gid://shopify/Order/1001");
+          assert.deepEqual(query.where.seller, {
+            is: {
+              vendorStoreId: "store_1",
+            },
+          });
+          return { id: "ledger_1" };
+        },
+      },
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async (call) => {
+      calls.push(call);
+
+      if (call.query.includes("VendorOrderFulfillmentTarget")) {
+        return {
+          data: {
+            order: {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              tags: [],
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              fulfillmentOrders: {
+                nodes: [
+                  {
+                    id: "gid://shopify/FulfillmentOrder/9001",
+                    status: "OPEN",
+                    requestStatus: "UNSUBMITTED",
+                    assignedLocation: {
+                      name: "Main",
+                      location: {
+                        id: "gid://shopify/Location/4001",
+                        name: "Main",
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }
+
+      if (call.query.includes("VendorOrderFulfillmentCreate")) {
+        return {
+          data: {
+            fulfillmentCreate: {
+              fulfillment: {
+                id: "gid://shopify/Fulfillment/7001",
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+
+      throw new Error("Unexpected GraphQL query");
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.orderId, "gid://shopify/Order/1001");
+  assert.equal(result.fulfillmentId, "gid://shopify/Fulfillment/7001");
+  assert.equal(calls.length, 2);
+});
+
 test("createVendorOrderFulfillment rejects another vendor order", async () => {
   const result = await createVendorOrderFulfillment({
     storeId: "store_1",
@@ -698,16 +870,20 @@ test("createVendorOrderFulfillment rejects another vendor order", async () => {
   assert.equal(result.error, "この注文は現在の店舗では発送登録できません。");
 });
 
-test("getVendorOrdersPageData does not query draftOrders before read_draft_orders is granted", async () => {
+test("getVendorOrdersPageData does not query Shopify when seller ledger has no order ids", async () => {
   let graphQLCallCount = 0;
   const result = await getVendorOrdersPageData(
     {
       storeId: "store_1",
-      vendorHandle: "amber-cellar",
     },
     {
       listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
-      listGrantedAppAccessScopesImpl: async () => ["read_orders"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async () => [],
+        },
+      },
       shopifyGraphQLWithOfflineSessionImpl: async () => {
         graphQLCallCount += 1;
         return { data: {} };
@@ -716,8 +892,8 @@ test("getVendorOrdersPageData does not query draftOrders before read_draft_order
   );
 
   assert.equal(graphQLCallCount, 0);
-  assert.equal(result.accessState.status, "missing_scope");
-  assert.equal(result.queryString, null);
+  assert.equal(result.accessState.status, "ready");
+  assert.equal(result.queryString, "ledger:shopify_order_paid");
   assert.equal(result.pageSize, VENDOR_DRAFT_ORDERS_PAGE_SIZE);
   assert.deepEqual(result.orders, []);
 });
@@ -726,14 +902,27 @@ test("getVendorOrdersPageData sanitizes reconnect failures from draftOrders look
   const result = await getVendorOrdersPageData(
     {
       storeId: "store_1",
-      vendorHandle: "amber-cellar",
     },
     {
       listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
       listGrantedAppAccessScopesImpl: async () => [
-        "read_orders",
-        READ_DRAFT_ORDERS_SCOPE,
+        READ_ORDERS_SCOPE,
       ],
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async () => [
+            {
+              id: "ledger_1",
+              stripeObjectId: "gid://shopify/Order/1001",
+              amount: 8400,
+              currencyCode: "jpy",
+              metadataJson: {},
+              occurredAt: new Date("2026-04-29T08:35:00Z"),
+              createdAt: new Date("2026-04-29T08:36:00Z"),
+            },
+          ],
+        },
+      },
       shopifyGraphQLWithOfflineSessionImpl: async () => {
         throw new Error("Offline session not found for shop: shop-a.myshopify.com");
       },

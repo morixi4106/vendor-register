@@ -9,6 +9,7 @@ import { formatMoney as formatCurrencyMoney } from "../utils/money.js";
 import { summarizeVendorDeliveryPolicy } from "../utils/productCountryPolicy.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
+export const READ_ORDERS_SCOPE = "read_orders";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
 export const READ_MERCHANT_FULFILLMENT_ORDERS_SCOPE =
   "read_merchant_managed_fulfillment_orders";
@@ -489,10 +490,12 @@ export async function getVendorOrdersAccessState(
 
     const shopDomain = shopDomains[0];
     const grantedScopes = await listGrantedAppAccessScopesImpl(shopDomain);
+    const hasReadOrders = grantedScopes.includes(READ_ORDERS_SCOPE);
     const hasReadDraftOrders = grantedScopes.includes(READ_DRAFT_ORDERS_SCOPE);
 
     return {
-      status: hasReadDraftOrders ? "ready" : "missing_scope",
+      status: hasReadOrders ? "ready" : "missing_scope",
+      hasReadOrders,
       hasReadDraftOrders,
       grantedScopes,
       shopDomain,
@@ -563,6 +566,47 @@ const VENDOR_DRAFT_ORDERS_QUERY = `
               number
               url
             }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const VENDOR_LEDGER_ORDERS_QUERY = `
+  query VendorLedgerOrders($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Order {
+        id
+        name
+        createdAt
+        email
+        displayFinancialStatus
+        displayFulfillmentStatus
+        customer {
+          displayName
+        }
+        shippingAddress {
+          name
+          address1
+          address2
+          city
+          province
+          zip
+          country
+          countryCodeV2
+        }
+        currentTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        fulfillments {
+          trackingInfo {
+            company
+            number
+            url
           }
         }
       }
@@ -752,15 +796,21 @@ function summarizeTrackingInfo(fulfillments = []) {
   };
 }
 
-function serializeVendorOrderRow(draftOrder) {
-  const order = draftOrder?.order;
+function serializeVendorOrderRow(orderRecord) {
+  const order = orderRecord?.order || orderRecord;
+  const ledgerEntry = orderRecord?.ledgerEntry || null;
 
   if (!order?.id || !order?.name) {
     return null;
   }
 
   const shopMoney = order?.currentTotalPriceSet?.shopMoney;
-  const createdAt = order?.createdAt || draftOrder?.completedAt || draftOrder?.createdAt;
+  const createdAt =
+    order?.createdAt ||
+    orderRecord?.completedAt ||
+    orderRecord?.createdAt ||
+    ledgerEntry?.occurredAt ||
+    ledgerEntry?.createdAt;
   const financialStatus = String(order?.displayFinancialStatus || "").trim();
   const fulfillmentStatus = String(order?.displayFulfillmentStatus || "").trim();
   const currencyCode = shopMoney?.currencyCode || "JPY";
@@ -947,6 +997,7 @@ export async function createVendorOrderFulfillment({
   shipment,
   listVendorStoreShopDomainsImpl = listVendorStoreShopDomains,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  prismaClient = prisma,
 }) {
   const shopDomains = await listVendorStoreShopDomainsImpl(storeId);
 
@@ -983,15 +1034,40 @@ export async function createVendorOrderFulfillment({
     }
 
     const tags = Array.isArray(order.tags) ? order.tags : [];
-    if (
-      !tags.includes("vendor-storefront") ||
-      !tags.includes(`vendor:${vendorHandle}`)
-    ) {
+    const hasVendorStorefrontTag = tags.includes("vendor-storefront");
+    const hasMatchingVendorTag = tags.includes(`vendor:${vendorHandle}`);
+
+    if (hasVendorStorefrontTag && !hasMatchingVendorTag) {
       return {
         ok: false,
         status: 403,
         error: "この注文は現在の店舗では発送登録できません。",
       };
+    }
+
+    if (!hasVendorStorefrontTag) {
+      const ledgerEntry = await prismaClient.ledgerEntry.findFirst({
+        where: {
+          entryType: "shopify_order_paid",
+          stripeObjectId: shipment.orderId,
+          seller: {
+            is: {
+              vendorStoreId: storeId,
+            },
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!ledgerEntry) {
+        return {
+          ok: false,
+          status: 403,
+          error: "この注文は現在の店舗では発送登録できません。",
+        };
+      }
     }
 
     if (order.displayFinancialStatus !== "PAID") {
@@ -1120,12 +1196,123 @@ export async function listVendorDraftOrderOrders(
   };
 }
 
+export async function listVendorShopifyOrderLedgerReferences(
+  { storeId, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
+  { prismaClient = prisma } = {},
+) {
+  const entries = await prismaClient.ledgerEntry.findMany({
+    where: {
+      entryType: "shopify_order_paid",
+      stripeObjectId: {
+        not: null,
+      },
+      seller: {
+        is: {
+          vendorStoreId: storeId,
+        },
+      },
+    },
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    take: first,
+    select: {
+      id: true,
+      stripeObjectId: true,
+      amount: true,
+      currencyCode: true,
+      metadataJson: true,
+      occurredAt: true,
+      createdAt: true,
+    },
+  });
+
+  const seenOrderIds = new Set();
+  return entries
+    .map((entry) => ({
+      ...entry,
+      shopifyOrderId: String(entry?.stripeObjectId || "").trim(),
+    }))
+    .filter((entry) => {
+      if (!entry.shopifyOrderId.startsWith("gid://shopify/Order/")) {
+        return false;
+      }
+
+      if (seenOrderIds.has(entry.shopifyOrderId)) {
+        return false;
+      }
+
+      seenOrderIds.add(entry.shopifyOrderId);
+      return true;
+    });
+}
+
+export async function listVendorShopifyOrdersFromLedger(
+  { storeId, shopDomain, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
+  {
+    prismaClient = prisma,
+    shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  } = {},
+) {
+  const queryString = "ledger:shopify_order_paid";
+  const ledgerEntries = await listVendorShopifyOrderLedgerReferences(
+    { storeId, first },
+    { prismaClient },
+  );
+  const orderIds = ledgerEntries.map((entry) => entry.shopifyOrderId);
+
+  if (orderIds.length === 0) {
+    return {
+      queryString,
+      orders: [],
+    };
+  }
+
+  const response = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: VENDOR_LEDGER_ORDERS_QUERY,
+    variables: {
+      ids: orderIds,
+    },
+  });
+  const data = response?.data;
+
+  if (Array.isArray(response?.errors) && response.errors.length > 0) {
+    throw new Error("VENDOR_LEDGER_ORDERS_QUERY_FAILED");
+  }
+
+  const nodes = data?.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error("VENDOR_LEDGER_ORDERS_QUERY_UNAVAILABLE");
+  }
+
+  const orderById = new Map(
+    nodes
+      .filter((node) => node?.id)
+      .map((node) => [String(node.id), node]),
+  );
+
+  const orders = ledgerEntries
+    .map((ledgerEntry) =>
+      serializeVendorOrderRow({
+        order: orderById.get(ledgerEntry.shopifyOrderId),
+        ledgerEntry,
+      }),
+    )
+    .filter(Boolean);
+
+  return {
+    queryString,
+    orders,
+  };
+}
+
 export async function getVendorOrdersPageData(
-  { storeId, vendorHandle },
+  { storeId },
   {
     listVendorStoreShopDomainsImpl = listVendorStoreShopDomains,
     listGrantedAppAccessScopesImpl = listGrantedAppAccessScopes,
     shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+    prismaClient = prisma,
   } = {},
 ) {
   const accessState = await getVendorOrdersAccessState(
@@ -1146,12 +1333,13 @@ export async function getVendorOrdersPageData(
   }
 
   try {
-    const result = await listVendorDraftOrderOrders(
+    const result = await listVendorShopifyOrdersFromLedger(
       {
+        storeId,
         shopDomain: accessState.shopDomain,
-        vendorHandle,
       },
       {
+        prismaClient,
         shopifyGraphQLWithOfflineSessionImpl,
       },
     );
