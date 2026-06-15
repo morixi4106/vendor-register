@@ -35,15 +35,6 @@ export const loader = async ({ request }) => {
 
   const rawProducts = Array.isArray(store.products) ? store.products : [];
   const products = rawProducts.map(serializeVendorProduct);
-  const pendingCount = products.filter(
-    (product) => product.approvalLabel === "申請中"
-  ).length;
-  const linkedCount = products.filter(
-    (product) => product.statusLabel === "公開済み"
-  ).length;
-  const deliveryRestrictedCount = products.filter(
-    (product) => product.deliveryPolicyLabel !== "国別制限なし"
-  ).length;
 
   const summaryCards = [
     {
@@ -68,29 +59,6 @@ export const loader = async ({ request }) => {
     },
   ];
 
-  const healthRows = [
-    {
-      label: "登録商品数",
-      value: `${products.length}件`,
-      percent: products.length > 0 ? 100 : 0,
-    },
-    {
-      label: "申請中商品",
-      value: `${pendingCount}件`,
-      percent: products.length > 0 ? Math.round((pendingCount / products.length) * 100) : 0,
-    },
-    {
-      label: "公開済み",
-      value: `${linkedCount}件`,
-      percent: products.length > 0 ? Math.round((linkedCount / products.length) * 100) : 0,
-    },
-    {
-      label: "配送先制限あり",
-      value: `${deliveryRestrictedCount}件`,
-      percent: products.length > 0 ? Math.round((deliveryRestrictedCount / products.length) * 100) : 0,
-    },
-  ];
-
   const chartData = [
     { label: "7日前", amount: 0 },
     { label: "6日前", amount: 0 },
@@ -110,7 +78,6 @@ export const loader = async ({ request }) => {
   return json({
     ...getVendorPublicContext(vendor, store),
     summaryCards,
-    healthRows,
     chartData,
     monthlyPreview,
     products,
@@ -359,7 +326,7 @@ function SalesTrendChart({ data }) {
 
 export default function VendorDashboard() {
   const actionData = useActionData();
-  const { store, summaryCards, healthRows, chartData, monthlyPreview, products } =
+  const { store, summaryCards, chartData, monthlyPreview, products } =
     useLoaderData();
 
   const [query, setQuery] = useState("");
@@ -496,57 +463,11 @@ export default function VendorDashboard() {
         ))}
       </section>
 
-      <section className="vendor-grid">
-        <div className="vendor-card">
-          <h2 className="vendor-section-title">売上推移</h2>
-          <p className="vendor-section-subtitle">注文連携後にここへ反映されます</p>
+      <section className="vendor-card">
+        <h2 className="vendor-section-title">売上推移</h2>
+        <p className="vendor-section-subtitle">注文連携後にここへ反映されます</p>
 
-          <SalesTrendChart data={chartData} />
-        </div>
-
-        <div className="vendor-card">
-          <h2 className="vendor-section-title">アカウント健全性</h2>
-          <p className="vendor-section-subtitle">商品登録ベースで表示中</p>
-
-          <div className="vendor-stack" style={{ gap: "14px" }}>
-            {healthRows.map((row) => (
-              <div key={row.label}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: "14px",
-                    marginBottom: "6px",
-                  }}
-                >
-                  <span>{row.label}</span>
-                  <span>{row.value}</span>
-                </div>
-                <div
-                  style={{
-                    width: "100%",
-                    height: "10px",
-                    background: "#e5e7eb",
-                    borderRadius: "999px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${row.percent}%`,
-                      background: "#111827",
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="vendor-note" style={{ marginTop: "18px" }}>
-            登録商品と公開状況をもとに、現在の状態を表示しています。
-          </div>
-        </div>
+        <SalesTrendChart data={chartData} />
       </section>
 
       <section className="vendor-grid">
