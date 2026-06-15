@@ -159,6 +159,40 @@ test("getProductionReadiness allows manual payout flow without seller Stripe acc
   );
 });
 
+test("getProductionReadiness treats write grants as satisfying paired Shopify read scopes", async () => {
+  const grantedScopeString = [
+    "write_products",
+    "read_orders",
+    "write_shipping",
+    "write_inventory",
+    "read_locations",
+    "write_merchant_managed_fulfillment_orders",
+    "write_publications",
+    "read_shopify_payments_disputes",
+  ].join(",");
+
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+      sessions: [
+        {
+          id: "offline_session",
+          shop: "example.myshopify.com",
+          scope: grantedScopeString,
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(checksById.get("shopify_configured_scopes").status, "pass");
+  assert.equal(checksById.get("shopify_granted_scopes").status, "pass");
+});
+
 test("getProductionReadiness blocks Wise mode when active sellers have no Wise recipient", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({

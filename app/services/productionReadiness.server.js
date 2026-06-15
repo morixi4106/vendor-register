@@ -46,6 +46,15 @@ const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_shopify_payments_disputes",
 ];
 
+const WRITE_SCOPES_THAT_SATISFY_READ_SCOPES = {
+  read_inventory: "write_inventory",
+  read_merchant_managed_fulfillment_orders:
+    "write_merchant_managed_fulfillment_orders",
+  read_products: "write_products",
+  read_publications: "write_publications",
+  read_shipping: "write_shipping",
+};
+
 function normalizeText(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
@@ -62,6 +71,15 @@ function parseScopes(value) {
     .split(",")
     .map((scope) => scope.trim())
     .filter(Boolean);
+}
+
+function hasGrantedShopifyScope(grantedScopes, requiredScope) {
+  if (grantedScopes.includes(requiredScope)) {
+    return true;
+  }
+
+  const impliedByWriteScope = WRITE_SCOPES_THAT_SATISFY_READ_SCOPES[requiredScope];
+  return Boolean(impliedByWriteScope && grantedScopes.includes(impliedByWriteScope));
 }
 
 function detectStripeKeyMode(value, { livePrefix, testPrefix }) {
@@ -445,7 +463,7 @@ function buildShopifyChecks({ configuredScopes, grantedScopes }) {
     (scope) => !configuredScopes.includes(scope),
   );
   const grantedMissingScopes = REQUIRED_OPERATIONAL_SHOPIFY_SCOPES.filter(
-    (scope) => !grantedScopes.includes(scope),
+    (scope) => !hasGrantedShopifyScope(grantedScopes, scope),
   );
 
   return [
