@@ -135,9 +135,9 @@ function formatChartMoney(amount, currencyCode = "JPY") {
 
 function buildSalesTrendChart(data) {
   const rows = Array.isArray(data) && data.length > 0 ? data : [];
-  const width = 720;
-  const height = 260;
-  const padding = { top: 24, right: 28, bottom: 44, left: 58 };
+  const width = 100;
+  const height = 100;
+  const padding = { top: 9, right: 2, bottom: 18, left: 5 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const amounts = rows.map((item) => Math.max(0, Number(item.amount || 0)));
@@ -229,6 +229,7 @@ function SalesTrendChart({ data }) {
           viewBox={`0 0 ${chart.width} ${chart.height}`}
           role="img"
           aria-label="直近7日の売上推移"
+          preserveAspectRatio="none"
         >
           <rect
             x="0"
@@ -247,18 +248,8 @@ function SalesTrendChart({ data }) {
                 y2={tick.y}
                 stroke="#e5e7eb"
                 strokeWidth="1"
+                vectorEffect="non-scaling-stroke"
               />
-              {tick.label ? (
-                <text
-                  x={chart.padding.left - 12}
-                  y={tick.y + 4}
-                  textAnchor="end"
-                  fill="#6b7280"
-                  fontSize="12"
-                >
-                  {tick.label}
-                </text>
-              ) : null}
             </g>
           ))}
           <line
@@ -268,6 +259,7 @@ function SalesTrendChart({ data }) {
             y2={chart.baselineY}
             stroke="#9ca3af"
             strokeWidth="1.2"
+            vectorEffect="non-scaling-stroke"
           />
           {chart.areaPath ? (
             <path d={chart.areaPath} fill="#111827" opacity="0.06" />
@@ -280,34 +272,27 @@ function SalesTrendChart({ data }) {
               strokeWidth="3"
               strokeLinecap="round"
               strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
             />
           ) : null}
-          {chart.points.map((point) => (
-            <g key={point.label}>
-              <circle
-                cx={point.x}
-                cy={point.y}
-                r="4.5"
-                fill="#ffffff"
-                stroke="#111827"
-                strokeWidth="2"
-              />
-              <title>{`${point.label}: ${point.amountLabel}`}</title>
-            </g>
-          ))}
-          {chart.points.map((point) => (
-            <text
-              key={`${point.label}-label`}
-              x={point.x}
-              y={chart.height - 18}
-              textAnchor="middle"
-              fill="#6b7280"
-              fontSize="12"
-            >
-              {point.label}
-            </text>
-          ))}
         </svg>
+
+        <div className="vendor-sales-chart__zero-label">¥0</div>
+        <div className="vendor-sales-chart__points" aria-hidden="true">
+          {chart.points.map((point) => (
+            <span
+              key={point.label}
+              className="vendor-sales-chart__point"
+              style={{ left: `${point.x}%`, top: `${point.y}%` }}
+              title={`${point.label}: ${point.amountLabel}`}
+            />
+          ))}
+        </div>
+        <div className="vendor-sales-chart__x-labels" aria-hidden="true">
+          {chart.points.map((point) => (
+            <span key={`${point.label}-label`}>{point.label}</span>
+          ))}
+        </div>
 
         {!chart.hasSales ? (
           <div className="vendor-sales-chart__empty">
@@ -390,15 +375,52 @@ export default function VendorDashboard() {
         .vendor-sales-chart__plot{
           position:relative;
           overflow:hidden;
-          min-height:260px;
+          min-height:320px;
           border:1px solid #e5e7eb;
           border-radius:16px;
           background:#f8fafc;
         }
         .vendor-sales-chart__svg{
           display:block;
+          position:absolute;
+          inset:0;
           width:100%;
-          height:260px;
+          height:100%;
+        }
+        .vendor-sales-chart__zero-label{
+          position:absolute;
+          left:18px;
+          bottom:52px;
+          color:#6b7280;
+          font-size:12px;
+        }
+        .vendor-sales-chart__points{
+          position:absolute;
+          inset:0;
+          pointer-events:none;
+        }
+        .vendor-sales-chart__point{
+          position:absolute;
+          width:14px;
+          height:14px;
+          transform:translate(-50%, -50%);
+          border:3px solid #111827;
+          border-radius:999px;
+          background:#ffffff;
+          box-sizing:border-box;
+        }
+        .vendor-sales-chart__x-labels{
+          position:absolute;
+          left:5%;
+          right:2%;
+          bottom:16px;
+          display:flex;
+          justify-content:space-between;
+          gap:10px;
+          color:#6b7280;
+          font-size:13px;
+          text-align:center;
+          pointer-events:none;
         }
         .vendor-sales-chart__empty{
           position:absolute;
@@ -430,10 +452,20 @@ export default function VendorDashboard() {
             font-size:24px;
           }
           .vendor-sales-chart__plot{
-            min-height:220px;
+            min-height:240px;
           }
-          .vendor-sales-chart__svg{
-            height:220px;
+          .vendor-sales-chart__zero-label{
+            left:14px;
+            bottom:46px;
+          }
+          .vendor-sales-chart__x-labels{
+            font-size:12px;
+            gap:6px;
+          }
+          .vendor-sales-chart__point{
+            width:12px;
+            height:12px;
+            border-width:2px;
           }
         }
       `}</style>
