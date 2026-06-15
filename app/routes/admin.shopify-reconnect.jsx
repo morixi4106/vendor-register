@@ -2,11 +2,7 @@ import { redirect } from "@remix-run/node";
 import prisma from "../db.server";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
 
-export const action = async ({ request }) => {
-  const formData = await request.formData();
-  const returnTo = String(formData.get("returnTo") || "/admin/products");
-  const shopDomain = await resolveShopDomain(formData.get("shopDomain"));
-
+async function deleteOfflineSession(shopDomain) {
   try {
     await prisma.session.deleteMany({
       where: {
@@ -17,8 +13,26 @@ export const action = async ({ request }) => {
   } catch (error) {
     console.log("offline session delete skipped:", error);
   }
+}
 
-  throw redirect(`/auth?shop=${shopDomain}&returnTo=${encodeURIComponent(returnTo)}`);
+function buildAuthLoginRedirect(shopDomain, returnTo) {
+  const params = new URLSearchParams({ shop: shopDomain });
+
+  if (returnTo) {
+    params.set("returnTo", returnTo);
+  }
+
+  return `/auth/login?${params.toString()}`;
+}
+
+export const action = async ({ request }) => {
+  const formData = await request.formData();
+  const returnTo = String(formData.get("returnTo") || "/admin/products");
+  const shopDomain = await resolveShopDomain(formData.get("shopDomain"));
+
+  await deleteOfflineSession(shopDomain);
+
+  throw redirect(buildAuthLoginRedirect(shopDomain, returnTo));
 };
 
 export const loader = async ({ request }) => {
@@ -26,6 +40,9 @@ export const loader = async ({ request }) => {
   const shopDomain = await resolveShopDomain(
     url.searchParams.get("shopDomain") || url.searchParams.get("shop")
   );
+  const returnTo = url.searchParams.get("returnTo") || "";
 
-  throw redirect(`/auth?shop=${shopDomain}`);
+  await deleteOfflineSession(shopDomain);
+
+  throw redirect(buildAuthLoginRedirect(shopDomain, returnTo));
 };
