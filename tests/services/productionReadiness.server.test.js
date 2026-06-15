@@ -15,6 +15,8 @@ const REQUIRED_SCOPE_STRING = [
   "read_inventory",
   "write_inventory",
   "read_locations",
+  "read_merchant_managed_fulfillment_orders",
+  "write_merchant_managed_fulfillment_orders",
   "read_publications",
   "write_publications",
   "read_shopify_payments_disputes",

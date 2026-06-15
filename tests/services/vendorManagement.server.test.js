@@ -5,12 +5,14 @@ import {
   READ_DRAFT_ORDERS_SCOPE,
   VENDOR_DRAFT_ORDERS_PAGE_SIZE,
   buildVendorDraftOrdersSearchQuery,
+  createVendorOrderFulfillment,
   getVendorReturnTo,
   getVendorVerifyRedirectPath,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
   getConfiguredAdminEmails,
   isConfiguredAdminEmail,
+  parseShipmentRegistrationInput,
   sanitizeVendorReturnTo,
   serializeVendorProduct,
   syncShopifyInventoryQuantity,
@@ -513,6 +515,7 @@ test("getVendorOrdersPageData returns mapped orders when read_draft_orders is gr
       createdAtLabel: "2026/04/29 17:35",
       customerName: "Taro Yamada",
       email: "taro@example.com",
+      shippingAddressLabel: "未設定",
       totalAmount: 8400,
       totalCurrencyCode: "JPY",
       totalLabel: "￥8,400",
@@ -522,8 +525,177 @@ test("getVendorOrdersPageData returns mapped orders when read_draft_orders is gr
       fulfillmentStatus: "UNFULFILLED",
       fulfillmentStatusLabel: "未発送",
       fulfillmentStatusTone: "neutral",
+      trackingLabel: "-",
+      trackingUrl: null,
+      canRegisterShipment: true,
     },
   ]);
+});
+
+test("parseShipmentRegistrationInput validates tracking fields", () => {
+  const valid = parseShipmentRegistrationInput({
+    orderId: "gid://shopify/Order/1001",
+    trackingNumber: "JP123456789",
+    trackingCompany: "日本郵便",
+    trackingUrl: "https://track.example/JP123456789",
+    notifyCustomer: "on",
+  });
+
+  assert.deepEqual(valid, {
+    ok: true,
+    orderId: "gid://shopify/Order/1001",
+    trackingNumber: "JP123456789",
+    trackingCompany: "日本郵便",
+    trackingUrl: "https://track.example/JP123456789",
+    notifyCustomer: true,
+  });
+
+  assert.equal(
+    parseShipmentRegistrationInput({
+      orderId: "gid://shopify/Order/1001",
+    }).error,
+    "追跡番号を入力してください。",
+  );
+
+  assert.equal(
+    parseShipmentRegistrationInput({
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingUrl: "ftp://track.example/JP123456789",
+    }).error,
+    "追跡URLは https:// から始まるURLで入力してください。",
+  );
+});
+
+test("createVendorOrderFulfillment creates a Shopify fulfillment for a vendor order", async () => {
+  const calls = [];
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingCompany: "日本郵便",
+      trackingUrl: "https://track.example/JP123456789",
+      notifyCustomer: true,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    shopifyGraphQLWithOfflineSessionImpl: async (call) => {
+      calls.push(call);
+
+      if (call.query.includes("VendorOrderFulfillmentTarget")) {
+        return {
+          data: {
+            order: {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              tags: ["vendor-storefront", "vendor:amber-cellar"],
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              fulfillmentOrders: {
+                nodes: [
+                  {
+                    id: "gid://shopify/FulfillmentOrder/9001",
+                    status: "OPEN",
+                    requestStatus: "UNSUBMITTED",
+                    assignedLocation: {
+                      name: "Main",
+                      location: {
+                        id: "gid://shopify/Location/4001",
+                        name: "Main",
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }
+
+      if (call.query.includes("VendorOrderFulfillmentCreate")) {
+        return {
+          data: {
+            fulfillmentCreate: {
+              fulfillment: {
+                id: "gid://shopify/Fulfillment/7001",
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+
+      throw new Error("Unexpected GraphQL query");
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    orderId: "gid://shopify/Order/1001",
+    orderName: "#1001",
+    fulfillmentId: "gid://shopify/Fulfillment/7001",
+    message: "#1001を発送済みにしました。",
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].variables.fulfillment, {
+    lineItemsByFulfillmentOrder: [
+      {
+        fulfillmentOrderId: "gid://shopify/FulfillmentOrder/9001",
+      },
+    ],
+    notifyCustomer: true,
+    trackingInfo: {
+      company: "日本郵便",
+      number: "JP123456789",
+      url: "https://track.example/JP123456789",
+    },
+  });
+});
+
+test("createVendorOrderFulfillment rejects another vendor order", async () => {
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingCompany: "",
+      trackingUrl: null,
+      notifyCustomer: false,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    shopifyGraphQLWithOfflineSessionImpl: async () => ({
+      data: {
+        order: {
+          id: "gid://shopify/Order/1001",
+          name: "#1001",
+          tags: ["vendor-storefront", "vendor:other-shop"],
+          displayFinancialStatus: "PAID",
+          displayFulfillmentStatus: "UNFULFILLED",
+          fulfillmentOrders: {
+            nodes: [
+              {
+                id: "gid://shopify/FulfillmentOrder/9001",
+                status: "OPEN",
+                requestStatus: "UNSUBMITTED",
+                assignedLocation: {
+                  name: "Main",
+                  location: {
+                    id: "gid://shopify/Location/4001",
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+  assert.equal(result.error, "この注文は現在の店舗では発送登録できません。");
 });
 
 test("getVendorOrdersPageData does not query draftOrders before read_draft_orders is granted", async () => {

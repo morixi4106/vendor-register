@@ -10,6 +10,10 @@ import { summarizeVendorDeliveryPolicy } from "../utils/productCountryPolicy.js"
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
+export const READ_MERCHANT_FULFILLMENT_ORDERS_SCOPE =
+  "read_merchant_managed_fulfillment_orders";
+export const WRITE_MERCHANT_FULFILLMENT_ORDERS_SCOPE =
+  "write_merchant_managed_fulfillment_orders";
 export const VENDOR_DRAFT_ORDERS_PAGE_SIZE = 50;
 
 const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `
@@ -537,13 +541,70 @@ const VENDOR_DRAFT_ORDERS_QUERY = `
           customer {
             displayName
           }
+          shippingAddress {
+            name
+            address1
+            address2
+            city
+            province
+            zip
+            country
+            countryCodeV2
+          }
           currentTotalPriceSet {
             shopMoney {
               amount
               currencyCode
             }
           }
+          fulfillments {
+            trackingInfo {
+              company
+              number
+              url
+            }
+          }
         }
+      }
+    }
+  }
+`;
+
+const VENDOR_ORDER_FULFILLMENT_TARGET_QUERY = `
+  query VendorOrderFulfillmentTarget($orderId: ID!) {
+    order(id: $orderId) {
+      id
+      name
+      tags
+      displayFinancialStatus
+      displayFulfillmentStatus
+      fulfillmentOrders(first: 20) {
+        nodes {
+          id
+          status
+          requestStatus
+          assignedLocation {
+            name
+            location {
+              id
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const VENDOR_ORDER_FULFILLMENT_CREATE_MUTATION = `
+  mutation VendorOrderFulfillmentCreate($fulfillment: FulfillmentInput!, $message: String) {
+    fulfillmentCreate(fulfillment: $fulfillment, message: $message) {
+      fulfillment {
+        id
+      }
+      userErrors {
+        field
+        message
       }
     }
   }
@@ -640,6 +701,57 @@ function mapDisplayFulfillmentStatusTone(value) {
   }
 }
 
+function formatShippingAddress(address) {
+  if (!address) return "未設定";
+
+  const parts = [
+    address.name,
+    address.zip,
+    address.country,
+    address.province,
+    address.city,
+    address.address1,
+    address.address2,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" ") : "未設定";
+}
+
+function summarizeTrackingInfo(fulfillments = []) {
+  const trackingItems = [];
+
+  for (const fulfillment of Array.isArray(fulfillments) ? fulfillments : []) {
+    for (const info of Array.isArray(fulfillment?.trackingInfo)
+      ? fulfillment.trackingInfo
+      : []) {
+      const number = String(info?.number || "").trim();
+      if (!number) continue;
+
+      trackingItems.push({
+        company: String(info?.company || "").trim(),
+        number,
+        url: String(info?.url || "").trim(),
+      });
+    }
+  }
+
+  if (trackingItems.length === 0) {
+    return {
+      trackingLabel: "-",
+      trackingUrl: null,
+    };
+  }
+
+  return {
+    trackingLabel: trackingItems
+      .map((item) => (item.company ? `${item.company}: ${item.number}` : item.number))
+      .join(", "),
+    trackingUrl: trackingItems.find((item) => item.url)?.url || null,
+  };
+}
+
 function serializeVendorOrderRow(draftOrder) {
   const order = draftOrder?.order;
 
@@ -652,6 +764,7 @@ function serializeVendorOrderRow(draftOrder) {
   const financialStatus = String(order?.displayFinancialStatus || "").trim();
   const fulfillmentStatus = String(order?.displayFulfillmentStatus || "").trim();
   const currencyCode = shopMoney?.currencyCode || "JPY";
+  const tracking = summarizeTrackingInfo(order?.fulfillments);
 
   return {
     id: order.id,
@@ -663,6 +776,7 @@ function serializeVendorOrderRow(draftOrder) {
     createdAtLabel: formatDateTime(createdAt),
     customerName: order?.customer?.displayName || "未設定",
     email: order?.email || "未設定",
+    shippingAddressLabel: formatShippingAddress(order?.shippingAddress),
     totalAmount: Number(shopMoney?.amount || 0),
     totalCurrencyCode: currencyCode,
     totalLabel: formatMoney(shopMoney?.amount || 0, currencyCode),
@@ -672,7 +786,296 @@ function serializeVendorOrderRow(draftOrder) {
     fulfillmentStatus,
     fulfillmentStatusLabel: mapDisplayFulfillmentStatusLabel(fulfillmentStatus),
     fulfillmentStatusTone: mapDisplayFulfillmentStatusTone(fulfillmentStatus),
+    trackingLabel: tracking.trackingLabel,
+    trackingUrl: tracking.trackingUrl,
+    canRegisterShipment:
+      financialStatus === "PAID" &&
+      !["FULFILLED", "RESTOCKED"].includes(fulfillmentStatus),
   };
+}
+
+function parseTrackingUrl(value) {
+  const normalizedValue = String(value || "").trim();
+
+  if (!normalizedValue) return null;
+
+  try {
+    const url = new URL(normalizedValue);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return false;
+    }
+    return url.toString();
+  } catch {
+    return false;
+  }
+}
+
+export function parseShipmentRegistrationInput(formLike) {
+  const getValue =
+    typeof formLike?.get === "function"
+      ? (key) => formLike.get(key)
+      : (key) => formLike?.[key];
+
+  const orderId = String(getValue("orderId") || "").trim();
+  const trackingNumber = String(getValue("trackingNumber") || "").trim();
+  const trackingCompany = String(getValue("trackingCompany") || "").trim();
+  const trackingUrl = parseTrackingUrl(getValue("trackingUrl"));
+  const notifyCustomer = String(getValue("notifyCustomer") || "") === "on";
+
+  if (!orderId.startsWith("gid://shopify/Order/")) {
+    return {
+      ok: false,
+      status: 400,
+      error: "注文情報が不正です。",
+    };
+  }
+
+  if (!trackingNumber) {
+    return {
+      ok: false,
+      status: 400,
+      error: "追跡番号を入力してください。",
+    };
+  }
+
+  if (trackingNumber.length > 120) {
+    return {
+      ok: false,
+      status: 400,
+      error: "追跡番号は120文字以内で入力してください。",
+    };
+  }
+
+  if (trackingCompany.length > 80) {
+    return {
+      ok: false,
+      status: 400,
+      error: "配送会社名は80文字以内で入力してください。",
+    };
+  }
+
+  if (trackingUrl === false) {
+    return {
+      ok: false,
+      status: 400,
+      error: "追跡URLは https:// から始まるURLで入力してください。",
+    };
+  }
+
+  return {
+    ok: true,
+    orderId,
+    trackingNumber,
+    trackingCompany,
+    trackingUrl,
+    notifyCustomer,
+  };
+}
+
+function toPublicFulfillmentError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+
+  if (isReconnectableShopifyError(message)) {
+    return "公開ストアとの接続確認が必要です。管理者に連絡してください。";
+  }
+
+  if (
+    message.includes("ACCESS_DENIED") ||
+    message.includes("access denied") ||
+    message.includes("merchant_managed_fulfillment_orders") ||
+    message.includes("fulfill_and_ship_orders")
+  ) {
+    return "発送登録に必要な権限が不足しています。管理者に連絡してください。";
+  }
+
+  return "発送登録に失敗しました。時間を置いて再度お試しください。";
+}
+
+function getFulfillableFulfillmentOrders(order) {
+  const nodes = order?.fulfillmentOrders?.nodes;
+
+  if (!Array.isArray(nodes)) return [];
+
+  return nodes.filter((fulfillmentOrder) => {
+    const status = String(fulfillmentOrder?.status || "").trim();
+    const requestStatus = String(fulfillmentOrder?.requestStatus || "").trim();
+
+    if (!["OPEN", "IN_PROGRESS", "SCHEDULED"].includes(status)) {
+      return false;
+    }
+
+    if (
+      [
+        "SUBMITTED",
+        "ACCEPTED",
+        "CANCELLATION_REQUESTED",
+        "CANCELLATION_REJECTED",
+      ].includes(requestStatus)
+    ) {
+      return false;
+    }
+
+    return Boolean(fulfillmentOrder?.id);
+  });
+}
+
+function buildFulfillmentInput({ fulfillmentOrders, shipment }) {
+  const trackingInfo = {
+    number: shipment.trackingNumber,
+  };
+
+  if (shipment.trackingCompany) {
+    trackingInfo.company = shipment.trackingCompany;
+  }
+
+  if (shipment.trackingUrl) {
+    trackingInfo.url = shipment.trackingUrl;
+  }
+
+  return {
+    lineItemsByFulfillmentOrder: fulfillmentOrders.map((fulfillmentOrder) => ({
+      fulfillmentOrderId: fulfillmentOrder.id,
+    })),
+    notifyCustomer: shipment.notifyCustomer,
+    trackingInfo,
+  };
+}
+
+export async function createVendorOrderFulfillment({
+  storeId,
+  vendorHandle,
+  shipment,
+  listVendorStoreShopDomainsImpl = listVendorStoreShopDomains,
+  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+}) {
+  const shopDomains = await listVendorStoreShopDomainsImpl(storeId);
+
+  if (shopDomains.length !== 1) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        shopDomains.length === 0
+          ? "公開ストアとの接続情報を確認中です。"
+          : "公開ストアの接続先を確認中です。",
+    };
+  }
+
+  try {
+    const shopDomain = shopDomains[0];
+    const { data: targetData } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: VENDOR_ORDER_FULFILLMENT_TARGET_QUERY,
+      variables: {
+        orderId: shipment.orderId,
+      },
+    });
+
+    const order = targetData?.order;
+
+    if (!order?.id) {
+      return {
+        ok: false,
+        status: 404,
+        error: "注文が見つかりません。",
+      };
+    }
+
+    const tags = Array.isArray(order.tags) ? order.tags : [];
+    if (
+      !tags.includes("vendor-storefront") ||
+      !tags.includes(`vendor:${vendorHandle}`)
+    ) {
+      return {
+        ok: false,
+        status: 403,
+        error: "この注文は現在の店舗では発送登録できません。",
+      };
+    }
+
+    if (order.displayFinancialStatus !== "PAID") {
+      return {
+        ok: false,
+        status: 400,
+        error: "支払い確認後に発送登録できます。",
+      };
+    }
+
+    if (order.displayFulfillmentStatus === "FULFILLED") {
+      return {
+        ok: false,
+        status: 400,
+        error: "この注文はすでに発送済みです。",
+      };
+    }
+
+    const fulfillmentOrders = getFulfillableFulfillmentOrders(order);
+
+    if (fulfillmentOrders.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: "発送できる注文行がありません。",
+      };
+    }
+
+    const locationKeys = Array.from(
+      new Set(
+        fulfillmentOrders.map(
+          (fulfillmentOrder) =>
+            fulfillmentOrder?.assignedLocation?.location?.id ||
+            fulfillmentOrder?.assignedLocation?.name ||
+            "unknown",
+        ),
+      ),
+    );
+
+    if (locationKeys.length > 1) {
+      return {
+        ok: false,
+        status: 400,
+        error: "複数の発送元に分かれた注文は、管理者側で発送登録してください。",
+      };
+    }
+
+    const { data: createData } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: VENDOR_ORDER_FULFILLMENT_CREATE_MUTATION,
+      variables: {
+        fulfillment: buildFulfillmentInput({ fulfillmentOrders, shipment }),
+        message: "Shipment registered from vendor portal.",
+      },
+    });
+
+    const payload = createData?.fulfillmentCreate;
+    const userError = getFirstUserErrorMessage(payload?.userErrors, null);
+
+    if (!payload || userError) {
+      return {
+        ok: false,
+        status: 400,
+        error: userError || "発送登録に失敗しました。",
+      };
+    }
+
+    return {
+      ok: true,
+      orderId: order.id,
+      orderName: order.name,
+      fulfillmentId: payload.fulfillment?.id || null,
+      message: `${order.name || "注文"}を発送済みにしました。`,
+    };
+  } catch (error) {
+    console.error("vendor fulfillment create error:", error);
+
+    return {
+      ok: false,
+      status: 500,
+      error: toPublicFulfillmentError(error),
+    };
+  }
 }
 
 export async function listVendorDraftOrderOrders(
