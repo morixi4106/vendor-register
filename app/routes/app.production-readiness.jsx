@@ -1,5 +1,11 @@
 import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
 
 import { authenticate } from "../shopify.server";
 
@@ -11,8 +17,46 @@ export const loader = async ({ request }) => {
   return json(await getProductionReadiness());
 };
 
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const {
+    getCarrierCallbackUrl,
+    upsertShippingV2CarrierService,
+  } = await import("../services/carrierShippingRates.server.js");
+  const appUrl = process.env.APP_URL;
+
+  if (!appUrl) {
+    return json(
+      {
+        carrierService: {
+          ok: false,
+          message: "APP_URL is not configured.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  const result = await upsertShippingV2CarrierService({
+    shopDomain: session.shop,
+    appUrl,
+  });
+
+  return json({
+    carrierService: {
+      ok: true,
+      shopDomain: session.shop,
+      callbackUrl: getCarrierCallbackUrl(appUrl),
+      result,
+    },
+  });
+};
+
 export default function ProductionReadinessPage() {
   const data = useLoaderData();
+  const actionData = useActionData();
+  const navigation = useNavigation();
+  const isCarrierSubmitting = navigation.state === "submitting";
   const displayChecks = data.checks.map((check) =>
     decorateCheckForDisplay(check, data),
   );
@@ -187,6 +231,57 @@ export default function ProductionReadinessPage() {
           color:#111827;
           font-weight:800;
         }
+        .readiness-tool{
+          display:flex;
+          justify-content:space-between;
+          gap:16px;
+          align-items:center;
+          flex-wrap:wrap;
+        }
+        .readiness-tool__body{
+          display:grid;
+          gap:6px;
+          min-width:260px;
+        }
+        .readiness-tool__title{
+          margin:0;
+          font-size:18px;
+          font-weight:900;
+        }
+        .readiness-tool__text{
+          margin:0;
+          color:#4b5563;
+          line-height:1.7;
+        }
+        .readiness-button{
+          border:0;
+          border-radius:999px;
+          min-height:44px;
+          padding:0 18px;
+          background:#111827;
+          color:#fff;
+          font-weight:900;
+          cursor:pointer;
+          white-space:nowrap;
+        }
+        .readiness-button:disabled{
+          cursor:wait;
+          opacity:.65;
+        }
+        .readiness-result{
+          margin:14px 0 0;
+          border:1px solid #d1fae5;
+          background:#ecfdf5;
+          color:#065f46;
+          border-radius:12px;
+          padding:12px 14px;
+          line-height:1.7;
+        }
+        .readiness-result--error{
+          border-color:#fecaca;
+          background:#fef2f2;
+          color:#991b1b;
+        }
         @media (max-width: 720px){
           .readiness-page{
             padding:16px;
@@ -217,6 +312,34 @@ export default function ProductionReadinessPage() {
             {data.canGoLive ? "コード上のブロッカーなし" : "要対応あり"}
           </span>
         </div>
+      </section>
+
+      <section className="readiness-card">
+        <div className="readiness-tool">
+          <div className="readiness-tool__body">
+            <h2 className="readiness-tool__title">配送サービス再登録</h2>
+            <p className="readiness-tool__text">
+              アプリを再インストールした後は、Shopify側の配送サービス登録が外れることがあります。
+              配送方法にShipping V2が出ない場合はここから再登録します。
+            </p>
+          </div>
+          <Form method="post">
+            <button className="readiness-button" type="submit" disabled={isCarrierSubmitting}>
+              {isCarrierSubmitting ? "再登録中" : "Shipping V2を再登録"}
+            </button>
+          </Form>
+        </div>
+        {actionData?.carrierService ? (
+          <div
+            className={`readiness-result ${
+              actionData.carrierService.ok ? "" : "readiness-result--error"
+            }`}
+          >
+            {actionData.carrierService.ok
+              ? `登録しました。Callback: ${actionData.carrierService.callbackUrl}`
+              : actionData.carrierService.message || "再登録に失敗しました。"}
+          </div>
+        ) : null}
       </section>
 
       <section className="readiness-card">

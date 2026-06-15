@@ -39,6 +39,10 @@ export default function App() {
           本番確認
         </Link>
 
+        <Link to="/app/carrier-service">
+          配送サービス
+        </Link>
+
         <Link to="/app/contact-inquiries">
           問い合わせ一覧
         </Link>
