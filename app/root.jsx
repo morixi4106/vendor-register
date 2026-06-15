@@ -1,12 +1,31 @@
+import { json } from "@remix-run/node";
 import {
   Links,
   Meta,
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLoaderData,
 } from "@remix-run/react";
 
+const FALLBACK_FAVICON_VERSION = "local";
+
+export const loader = async () => {
+  const commit =
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.COMMIT_SHA ||
+    process.env.GIT_COMMIT ||
+    "";
+
+  return json({
+    faviconVersion: commit ? commit.slice(0, 12) : FALLBACK_FAVICON_VERSION,
+  });
+};
+
 export default function App() {
+  const { faviconVersion = FALLBACK_FAVICON_VERSION } = useLoaderData() || {};
+  const faviconCacheKey = `?v=${encodeURIComponent(faviconVersion)}`;
+
   return (
     <html>
       <head>
@@ -21,19 +40,19 @@ export default function App() {
           rel="icon"
           type="image/png"
           sizes="32x32"
-          href="/favicon-32.png?v=20260615"
+          href={`/favicon-32.png${faviconCacheKey}`}
         />
         <link
           rel="icon"
           type="image/png"
           sizes="16x16"
-          href="/favicon-16.png?v=20260615"
+          href={`/favicon-16.png${faviconCacheKey}`}
         />
-        <link rel="shortcut icon" href="/favicon.ico?v=20260615" />
+        <link rel="shortcut icon" href={`/favicon.ico${faviconCacheKey}`} />
         <link
           rel="apple-touch-icon"
           sizes="180x180"
-          href="/apple-touch-icon.png?v=20260615"
+          href={`/apple-touch-icon.png${faviconCacheKey}`}
         />
         <Meta />
         <Links />
