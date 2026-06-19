@@ -47,6 +47,15 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
     label: "dispute",
   },
 ];
+const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG =
+  "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED";
+const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
+  ...MULTI_SELLER_SETTLEMENT_FLAGS,
+  {
+    key: "VENDOR_ORDERS_USE_SELLER_ORDERS",
+    label: "seller order reads",
+  },
+];
 
 const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_products",
@@ -168,6 +177,22 @@ function inspectMultiSellerSettlementFlags(env) {
   };
 }
 
+function inspectMultiSellerStorefrontCheckoutFlag(env) {
+  const enabled = isEnabledEnvFlag(env, MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG);
+  const prerequisites = MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS.map((flag) => ({
+    ...flag,
+    enabled: isEnabledEnvFlag(env, flag.key),
+  }));
+  const missing = prerequisites.filter((flag) => !flag.enabled);
+
+  return {
+    enabled,
+    prerequisites,
+    missing,
+    ready: enabled && missing.length === 0,
+  };
+}
+
 function normalizeProvider(value, fallback) {
   return String(value || fallback)
     .trim()
@@ -261,6 +286,8 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const checks = [];
   const isProductionRuntime = env.NODE_ENV === "production";
   const multiSellerSettlementFlags = inspectMultiSellerSettlementFlags(env);
+  const multiSellerStorefrontCheckout =
+    inspectMultiSellerStorefrontCheckoutFlag(env);
   const {
     paymentProvider,
     sellerPayoutProvider,
@@ -368,6 +395,31 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
         : multiSellerSettlementFlags.allEnabled
           ? "Keep storefront multi-seller checkout disabled until ready; enable MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED only with VENDOR_ORDERS_USE_SELLER_ORDERS and seller-specific fulfillment verified."
           : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled/dispute together only for controlled backend tests.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "multi_seller_storefront_checkout_flag",
+      category: "app",
+      status: !multiSellerStorefrontCheckout.enabled
+        ? "pass"
+        : multiSellerStorefrontCheckout.ready
+          ? "warning"
+          : "fail",
+      title: "Multi-seller storefront checkout",
+      detail: !multiSellerStorefrontCheckout.enabled
+        ? "Storefront multi-seller checkout is disabled."
+        : multiSellerStorefrontCheckout.ready
+          ? "Storefront multi-seller checkout is enabled with backend settlement flags and SellerOrder reads."
+          : `MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED is enabled, but missing prerequisites: ${multiSellerStorefrontCheckout.missing
+              .map((flag) => flag.label)
+              .join(", ")}.`,
+      action: !multiSellerStorefrontCheckout.enabled
+        ? "No action is needed unless intentionally opening multi-seller checkout."
+        : multiSellerStorefrontCheckout.ready
+          ? "Keep enabled only after controlled checkout, settlement, refund, cancellation, dispute, and seller-specific fulfillment tests pass."
+          : "Disable MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED, or enable all backend settlement flags and VENDOR_ORDERS_USE_SELLER_ORDERS before opening this path.",
     }),
   );
 

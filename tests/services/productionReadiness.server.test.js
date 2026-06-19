@@ -340,3 +340,48 @@ test("getProductionReadiness warns when all multi-seller settlement flags are en
   assert.equal(check.status, "warning");
   assert.match(check.action, /storefront multi-seller checkout disabled/);
 });
+
+test("getProductionReadiness blocks storefront multi-seller checkout without prerequisites", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("multi_seller_storefront_checkout_flag");
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /missing prerequisites/);
+  assert.match(check.detail, /paid/);
+  assert.match(check.detail, /seller order reads/);
+});
+
+test("getProductionReadiness warns when storefront multi-seller checkout is fully enabled", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED: "true",
+      VENDOR_ORDERS_USE_SELLER_ORDERS: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("multi_seller_storefront_checkout_flag");
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(check.status, "warning");
+  assert.match(check.detail, /Storefront multi-seller checkout is enabled/);
+});
