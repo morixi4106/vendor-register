@@ -7,6 +7,10 @@ import {
 } from "../utils/shopifyAdmin.server.js";
 import { formatMoney as formatCurrencyMoney } from "../utils/money.js";
 import { summarizeVendorDeliveryPolicy } from "../utils/productCountryPolicy.js";
+import {
+  buildCarrierTrackingUrl,
+  getShippingCarrierById,
+} from "../utils/shippingCarriers.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_ORDERS_SCOPE = "read_orders";
@@ -796,9 +800,173 @@ function summarizeTrackingInfo(fulfillments = []) {
   };
 }
 
+function getLedgerMetadata(entry) {
+  const metadata = entry?.metadataJson;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata
+    : {};
+}
+
+function createOrderSettlementSummary(orderId, entries = []) {
+  let paidAmount = 0;
+  let refundAmount = 0;
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const entryType = String(
+      entry?.entryType ||
+        (String(entry?.stripeObjectId || "").trim() === orderId
+          ? "shopify_order_paid"
+          : ""),
+    ).trim();
+    const amount = Number(entry?.amount || 0);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      continue;
+    }
+
+    if (
+      entryType === "shopify_order_paid" &&
+      String(entry?.stripeObjectId || "").trim() === orderId
+    ) {
+      paidAmount += amount;
+      continue;
+    }
+
+    if (
+      entryType === "refund" &&
+      String(getLedgerMetadata(entry).shopifyOrderId || "").trim() === orderId
+    ) {
+      refundAmount += amount;
+    }
+  }
+
+  return {
+    paidAmount,
+    refundAmount,
+    netAmount: Math.max(0, paidAmount - refundAmount),
+    hasPaidLedger: paidAmount > 0,
+    hasRefundLedger: refundAmount > 0,
+    fullyRefunded: paidAmount > 0 && refundAmount >= paidAmount,
+    partiallyRefunded: paidAmount > 0 && refundAmount > 0 && refundAmount < paidAmount,
+  };
+}
+
+function createOrderSettlementSummaryMap(entries = [], orderIds = []) {
+  const entryList = Array.isArray(entries) ? entries : [];
+
+  return new Map(
+    orderIds.map((orderId) => [
+      orderId,
+      createOrderSettlementSummary(orderId, entryList),
+    ]),
+  );
+}
+
+async function listVendorOrderRefundLedgerReferences(
+  { storeId, orderIds },
+  { prismaClient = prisma } = {},
+) {
+  const orderIdSet = new Set(
+    (Array.isArray(orderIds) ? orderIds : [])
+      .map((orderId) => String(orderId || "").trim())
+      .filter(Boolean),
+  );
+
+  if (orderIdSet.size === 0) {
+    return [];
+  }
+
+  const entries = await prismaClient.ledgerEntry.findMany({
+    where: {
+      entryType: "refund",
+      seller: {
+        is: {
+          vendorStoreId: storeId,
+        },
+      },
+    },
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    take: Math.max(200, orderIdSet.size * 10),
+    select: {
+      id: true,
+      entryType: true,
+      stripeObjectId: true,
+      amount: true,
+      currencyCode: true,
+      metadataJson: true,
+      occurredAt: true,
+      createdAt: true,
+    },
+  });
+
+  return entries.filter((entry) =>
+    orderIdSet.has(String(getLedgerMetadata(entry).shopifyOrderId || "").trim()),
+  );
+}
+
+async function listVendorOrderSettlementLedgerEntries(
+  { storeId, orderId },
+  { prismaClient = prisma } = {},
+) {
+  const normalizedOrderId = String(orderId || "").trim();
+
+  if (!normalizedOrderId) {
+    return [];
+  }
+
+  const entries = await prismaClient.ledgerEntry.findMany({
+    where: {
+      seller: {
+        is: {
+          vendorStoreId: storeId,
+        },
+      },
+      OR: [
+        {
+          entryType: "shopify_order_paid",
+          stripeObjectId: normalizedOrderId,
+        },
+        {
+          entryType: "refund",
+        },
+      ],
+    },
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    take: 200,
+    select: {
+      id: true,
+      entryType: true,
+      stripeObjectId: true,
+      amount: true,
+      currencyCode: true,
+      metadataJson: true,
+      occurredAt: true,
+      createdAt: true,
+    },
+  });
+
+  return entries.filter((entry) => {
+    if (entry.entryType === "shopify_order_paid") {
+      return String(entry.stripeObjectId || "").trim() === normalizedOrderId;
+    }
+
+    if (entry.entryType === "refund") {
+      return (
+        String(getLedgerMetadata(entry).shopifyOrderId || "").trim() ===
+        normalizedOrderId
+      );
+    }
+
+    return false;
+  });
+}
+
 function serializeVendorOrderRow(orderRecord) {
   const order = orderRecord?.order || orderRecord;
   const ledgerEntry = orderRecord?.ledgerEntry || null;
+  const ledgerSummary =
+    orderRecord?.ledgerSummary ||
+    createOrderSettlementSummary(order?.id, ledgerEntry ? [ledgerEntry] : []);
 
   if (!order?.id || !order?.name) {
     return null;
@@ -808,10 +976,15 @@ function serializeVendorOrderRow(orderRecord) {
   const createdAt =
     order?.createdAt ||
     orderRecord?.completedAt ||
-    orderRecord?.createdAt ||
-    ledgerEntry?.occurredAt ||
-    ledgerEntry?.createdAt;
+      orderRecord?.createdAt ||
+      ledgerEntry?.occurredAt ||
+      ledgerEntry?.createdAt;
   const financialStatus = String(order?.displayFinancialStatus || "").trim();
+  const appFinancialStatus = ledgerSummary.fullyRefunded
+    ? "REFUNDED"
+    : ledgerSummary.partiallyRefunded
+      ? "PARTIALLY_REFUNDED"
+      : financialStatus;
   const fulfillmentStatus = String(order?.displayFulfillmentStatus || "").trim();
   const currencyCode = shopMoney?.currencyCode || "JPY";
   const tracking = summarizeTrackingInfo(order?.fulfillments);
@@ -827,12 +1000,17 @@ function serializeVendorOrderRow(orderRecord) {
     customerName: order?.customer?.displayName || "未設定",
     email: order?.email || "未設定",
     shippingAddressLabel: formatShippingAddress(order?.shippingAddress),
+    shippingCountryCode: order?.shippingAddress?.countryCodeV2 || null,
     totalAmount: Number(shopMoney?.amount || 0),
     totalCurrencyCode: currencyCode,
     totalLabel: formatMoney(shopMoney?.amount || 0, currencyCode),
-    financialStatus,
-    financialStatusLabel: mapDisplayFinancialStatusLabel(financialStatus),
-    financialStatusTone: mapDisplayFinancialStatusTone(financialStatus),
+    financialStatus: appFinancialStatus,
+    financialStatusLabel: mapDisplayFinancialStatusLabel(appFinancialStatus),
+    financialStatusTone: mapDisplayFinancialStatusTone(appFinancialStatus),
+    ledgerPaidAmount: ledgerSummary.paidAmount,
+    ledgerRefundAmount: ledgerSummary.refundAmount,
+    ledgerNetAmount: ledgerSummary.netAmount,
+    isFullyRefundedByLedger: ledgerSummary.fullyRefunded,
     fulfillmentStatus,
     fulfillmentStatusLabel: mapDisplayFulfillmentStatusLabel(fulfillmentStatus),
     fulfillmentStatusTone: mapDisplayFulfillmentStatusTone(fulfillmentStatus),
@@ -840,6 +1018,7 @@ function serializeVendorOrderRow(orderRecord) {
     trackingUrl: tracking.trackingUrl,
     canRegisterShipment:
       financialStatus === "PAID" &&
+      !ledgerSummary.fullyRefunded &&
       !["FULFILLED", "RESTOCKED"].includes(fulfillmentStatus),
   };
 }
@@ -868,8 +1047,9 @@ export function parseShipmentRegistrationInput(formLike) {
 
   const orderId = String(getValue("orderId") || "").trim();
   const trackingNumber = String(getValue("trackingNumber") || "").trim();
-  const trackingCompany = String(getValue("trackingCompany") || "").trim();
-  const trackingUrl = parseTrackingUrl(getValue("trackingUrl"));
+  const trackingCarrierId = String(getValue("trackingCarrierId") || "").trim();
+  const carrier = getShippingCarrierById(trackingCarrierId);
+  const trackingUrlOverride = parseTrackingUrl(getValue("trackingUrl"));
   const notifyCustomer = String(getValue("notifyCustomer") || "") === "on";
 
   if (!orderId.startsWith("gid://shopify/Order/")) {
@@ -888,6 +1068,14 @@ export function parseShipmentRegistrationInput(formLike) {
     };
   }
 
+  if (!carrier) {
+    return {
+      ok: false,
+      status: 400,
+      error: "配送会社を選択してください。",
+    };
+  }
+
   if (trackingNumber.length > 120) {
     return {
       ok: false,
@@ -896,15 +1084,7 @@ export function parseShipmentRegistrationInput(formLike) {
     };
   }
 
-  if (trackingCompany.length > 80) {
-    return {
-      ok: false,
-      status: 400,
-      error: "配送会社名は80文字以内で入力してください。",
-    };
-  }
-
-  if (trackingUrl === false) {
+  if (trackingUrlOverride === false) {
     return {
       ok: false,
       status: 400,
@@ -912,11 +1092,16 @@ export function parseShipmentRegistrationInput(formLike) {
     };
   }
 
+  const trackingUrl =
+    trackingUrlOverride || buildCarrierTrackingUrl(carrier, trackingNumber);
+
   return {
     ok: true,
     orderId,
     trackingNumber,
-    trackingCompany,
+    trackingCarrierId: carrier.id,
+    trackingCompany: carrier.shopifyCompany,
+    trackingCompanyLabel: carrier.label,
     trackingUrl,
     notifyCustomer,
   };
@@ -1045,29 +1230,34 @@ export async function createVendorOrderFulfillment({
       };
     }
 
-    if (!hasVendorStorefrontTag) {
-      const ledgerEntry = await prismaClient.ledgerEntry.findFirst({
-        where: {
-          entryType: "shopify_order_paid",
-          stripeObjectId: shipment.orderId,
-          seller: {
-            is: {
-              vendorStoreId: storeId,
-            },
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
+    const settlementEntries = await listVendorOrderSettlementLedgerEntries(
+      {
+        storeId,
+        orderId: shipment.orderId,
+      },
+      { prismaClient },
+    );
+    const settlementSummary = createOrderSettlementSummary(
+      shipment.orderId,
+      settlementEntries,
+    );
 
-      if (!ledgerEntry) {
+    if (!hasVendorStorefrontTag) {
+      if (!settlementSummary.hasPaidLedger) {
         return {
           ok: false,
           status: 403,
           error: "この注文は現在の店舗では発送登録できません。",
         };
       }
+    }
+
+    if (settlementSummary.fullyRefunded) {
+      return {
+        ok: false,
+        status: 400,
+        error: "返金済みの注文は発送登録できません。",
+      };
     }
 
     if (order.displayFinancialStatus !== "PAID") {
@@ -1216,6 +1406,7 @@ export async function listVendorShopifyOrderLedgerReferences(
     take: first,
     select: {
       id: true,
+      entryType: true,
       stripeObjectId: true,
       amount: true,
       currencyCode: true,
@@ -1290,12 +1481,21 @@ export async function listVendorShopifyOrdersFromLedger(
       .filter((node) => node?.id)
       .map((node) => [String(node.id), node]),
   );
+  const refundEntries = await listVendorOrderRefundLedgerReferences(
+    { storeId, orderIds },
+    { prismaClient },
+  );
+  const ledgerSummaryByOrderId = createOrderSettlementSummaryMap(
+    [...ledgerEntries, ...refundEntries],
+    orderIds,
+  );
 
   const orders = ledgerEntries
     .map((ledgerEntry) =>
       serializeVendorOrderRow({
         order: orderById.get(ledgerEntry.shopifyOrderId),
         ledgerEntry,
+        ledgerSummary: ledgerSummaryByOrderId.get(ledgerEntry.shopifyOrderId),
       }),
     )
     .filter(Boolean);

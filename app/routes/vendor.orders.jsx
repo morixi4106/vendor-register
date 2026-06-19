@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import { listShippingCarriersForCountry } from "../utils/shippingCarriers";
 
 function createOrdersPageContent(accessState, orderCount) {
   switch (accessState.status) {
@@ -186,7 +187,8 @@ export default function VendorOrdersPage() {
           align-items:center;
           min-width:420px;
         }
-        .vendor-orders__action-form input{
+        .vendor-orders__action-form input,
+        .vendor-orders__action-form select{
           width:100%;
           border:1px solid #d1d5db;
           border-radius:10px;
@@ -224,6 +226,12 @@ export default function VendorOrdersPage() {
           color:#6b7280;
           font-size:13px;
           line-height:1.6;
+        }
+        .vendor-orders__tracking-hint{
+          grid-column:1 / -1;
+          color:#6b7280;
+          font-size:12px;
+          line-height:1.5;
         }
         @media (max-width: 900px){
           .vendor-orders__action-form{
@@ -303,93 +311,95 @@ export default function VendorOrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
-                    <td>{order.createdAtLabel}</td>
-                    <td className="vendor-table__name">{order.shopifyOrderNumber}</td>
-                    <td>{order.customerName}</td>
-                    <td>{order.shippingAddressLabel}</td>
-                    <td>{order.totalLabel}</td>
-                    <td>
-                      <span className={badgeClassName(order.financialStatusTone)}>
-                        {order.financialStatusLabel}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={badgeClassName(order.fulfillmentStatusTone)}>
-                        {order.fulfillmentStatusLabel}
-                      </span>
-                    </td>
-                    <td>
-                      {order.trackingUrl ? (
-                        <a href={order.trackingUrl} target="_blank" rel="noreferrer">
-                          {order.trackingLabel}
-                        </a>
-                      ) : (
-                        order.trackingLabel
-                      )}
-                    </td>
-                    <td>
-                      {order.canRegisterShipment ? (
-                        <Form method="post" className="vendor-orders__action-form">
-                          <input type="hidden" name="intent" value="register-shipment" />
-                          <input type="hidden" name="orderId" value={order.orderId} />
-                          <input
-                            name="trackingNumber"
-                            aria-label={`${order.shopifyOrderNumber}の追跡番号`}
-                            placeholder="追跡番号"
-                            required
-                          />
-                          <input
-                            name="trackingCompany"
-                            aria-label={`${order.shopifyOrderNumber}の配送会社`}
-                            placeholder="配送会社"
-                            list="vendor-shipping-carriers"
-                          />
-                          <input
-                            name="trackingUrl"
-                            aria-label={`${order.shopifyOrderNumber}の追跡URL`}
-                            placeholder="追跡URL 任意"
-                            type="url"
-                            style={{ gridColumn: "1 / -2" }}
-                          />
-                          <button
-                            type="submit"
-                            className="vendor-orders__ship-button"
-                            disabled={isSubmitting}
-                          >
-                            発送済みにする
-                          </button>
-                          <label className="vendor-orders__notify">
-                            <input
-                              type="checkbox"
-                              name="notifyCustomer"
-                              defaultChecked
-                            />
-                            購入者へ通知
-                          </label>
-                        </Form>
-                      ) : (
-                        <span className="vendor-orders__muted">
-                          {order.fulfillmentStatus === "FULFILLED"
-                            ? "発送済み"
-                            : "発送登録できません"}
+                {orders.map((order) => {
+                  const carrierOptions = listShippingCarriersForCountry(
+                    order.shippingCountryCode,
+                  );
+
+                  return (
+                    <tr key={order.id}>
+                      <td>{order.createdAtLabel}</td>
+                      <td className="vendor-table__name">{order.shopifyOrderNumber}</td>
+                      <td>{order.customerName}</td>
+                      <td>{order.shippingAddressLabel}</td>
+                      <td>{order.totalLabel}</td>
+                      <td>
+                        <span className={badgeClassName(order.financialStatusTone)}>
+                          {order.financialStatusLabel}
                         </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td>
+                        <span className={badgeClassName(order.fulfillmentStatusTone)}>
+                          {order.fulfillmentStatusLabel}
+                        </span>
+                      </td>
+                      <td>
+                        {order.trackingUrl ? (
+                          <a href={order.trackingUrl} target="_blank" rel="noreferrer">
+                            {order.trackingLabel}
+                          </a>
+                        ) : (
+                          order.trackingLabel
+                        )}
+                      </td>
+                      <td>
+                        {order.canRegisterShipment ? (
+                          <Form method="post" className="vendor-orders__action-form">
+                            <input type="hidden" name="intent" value="register-shipment" />
+                            <input type="hidden" name="orderId" value={order.orderId} />
+                            <input
+                              name="trackingNumber"
+                              aria-label={`${order.shopifyOrderNumber}の追跡番号`}
+                              placeholder="追跡番号"
+                              required
+                            />
+                            <select
+                              name="trackingCarrierId"
+                              aria-label={`${order.shopifyOrderNumber}の配送会社`}
+                              required
+                              defaultValue=""
+                            >
+                              <option value="" disabled>
+                                配送会社
+                              </option>
+                              {carrierOptions.map((carrier) => (
+                                <option key={carrier.id} value={carrier.id}>
+                                  {carrier.label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="submit"
+                              className="vendor-orders__ship-button"
+                              disabled={isSubmitting}
+                            >
+                              発送済みにする
+                            </button>
+                            <div className="vendor-orders__tracking-hint">
+                              追跡URLは配送会社と追跡番号から自動で設定されます。
+                            </div>
+                            <label className="vendor-orders__notify">
+                              <input
+                                type="checkbox"
+                                name="notifyCustomer"
+                                defaultChecked
+                              />
+                              購入者へ通知
+                            </label>
+                          </Form>
+                        ) : (
+                          <span className="vendor-orders__muted">
+                            {order.fulfillmentStatus === "FULFILLED"
+                              ? "発送済み"
+                              : "発送登録できません"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-            <datalist id="vendor-shipping-carriers">
-              <option value="日本郵便" />
-              <option value="ヤマト運輸" />
-              <option value="佐川急便" />
-              <option value="EMS" />
-              <option value="DHL" />
-              <option value="FedEx" />
-              <option value="UPS" />
-            </datalist>
           </div>
         )}
       </section>

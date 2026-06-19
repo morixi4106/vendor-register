@@ -548,10 +548,15 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
       prismaClient: {
         ledgerEntry: {
           findMany: async (query) => {
+            if (query.where.entryType === "refund") {
+              return [];
+            }
+
             receivedLedgerQuery = query;
             return [
               {
                 id: "ledger_1",
+                entryType: "shopify_order_paid",
                 stripeObjectId: "gid://shopify/Order/1001",
                 amount: 8400,
                 currencyCode: "jpy",
@@ -580,6 +585,9 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
                 displayFulfillmentStatus: "UNFULFILLED",
                 customer: {
                   displayName: "Taro Yamada",
+                },
+                shippingAddress: {
+                  countryCodeV2: "JP",
                 },
                 currentTotalPriceSet: {
                   shopMoney: {
@@ -618,15 +626,93 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
   assert.equal(result.orders[0].totalAmount, 8400);
   assert.equal(result.orders[0].financialStatus, "PAID");
   assert.equal(result.orders[0].fulfillmentStatus, "UNFULFILLED");
+  assert.equal(result.orders[0].shippingCountryCode, "JP");
   assert.equal(result.orders[0].canRegisterShipment, true);
+});
+
+test("getVendorOrdersPageData marks fully refunded ledger orders as not shippable", async () => {
+  const result = await getVendorOrdersPageData(
+    {
+      storeId: "store_1",
+    },
+    {
+      listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async (query) => {
+            if (query.where.entryType === "refund") {
+              return [
+                {
+                  id: "ledger_refund_1",
+                  entryType: "refund",
+                  stripeObjectId: "gid://shopify/Refund/5001",
+                  amount: 8400,
+                  currencyCode: "jpy",
+                  metadataJson: {
+                    shopifyOrderId: "gid://shopify/Order/1001",
+                  },
+                  occurredAt: new Date("2026-04-29T09:35:00Z"),
+                  createdAt: new Date("2026-04-29T09:36:00Z"),
+                },
+              ];
+            }
+
+            return [
+              {
+                id: "ledger_1",
+                entryType: "shopify_order_paid",
+                stripeObjectId: "gid://shopify/Order/1001",
+                amount: 8400,
+                currencyCode: "jpy",
+                metadataJson: {},
+                occurredAt: new Date("2026-04-29T08:35:00Z"),
+                createdAt: new Date("2026-04-29T08:36:00Z"),
+              },
+            ];
+          },
+        },
+      },
+      shopifyGraphQLWithOfflineSessionImpl: async () => ({
+        data: {
+          nodes: [
+            {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              createdAt: "2026-04-29T08:35:00Z",
+              email: "taro@example.com",
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              customer: {
+                displayName: "Taro Yamada",
+              },
+              currentTotalPriceSet: {
+                shopMoney: {
+                  amount: "8400",
+                  currencyCode: "JPY",
+                },
+              },
+              fulfillments: [],
+            },
+          ],
+        },
+      }),
+    },
+  );
+
+  assert.equal(result.orders.length, 1);
+  assert.equal(result.orders[0].financialStatus, "REFUNDED");
+  assert.equal(result.orders[0].financialStatusLabel, "返金済み");
+  assert.equal(result.orders[0].ledgerRefundAmount, 8400);
+  assert.equal(result.orders[0].isFullyRefundedByLedger, true);
+  assert.equal(result.orders[0].canRegisterShipment, false);
 });
 
 test("parseShipmentRegistrationInput validates tracking fields", () => {
   const valid = parseShipmentRegistrationInput({
     orderId: "gid://shopify/Order/1001",
     trackingNumber: "JP123456789",
-    trackingCompany: "日本郵便",
-    trackingUrl: "https://track.example/JP123456789",
+    trackingCarrierId: "japan_post",
     notifyCustomer: "on",
   });
 
@@ -634,8 +720,11 @@ test("parseShipmentRegistrationInput validates tracking fields", () => {
     ok: true,
     orderId: "gid://shopify/Order/1001",
     trackingNumber: "JP123456789",
-    trackingCompany: "日本郵便",
-    trackingUrl: "https://track.example/JP123456789",
+    trackingCarrierId: "japan_post",
+    trackingCompany: "Japan Post",
+    trackingCompanyLabel: "日本郵便",
+    trackingUrl:
+      "https://trackings.post.japanpost.jp/services/srv/search/direct?locale=ja&reqCodeNo1=JP123456789",
     notifyCustomer: true,
   });
 
@@ -650,6 +739,16 @@ test("parseShipmentRegistrationInput validates tracking fields", () => {
     parseShipmentRegistrationInput({
       orderId: "gid://shopify/Order/1001",
       trackingNumber: "JP123456789",
+      trackingCarrierId: "unknown",
+    }).error,
+    "配送会社を選択してください。",
+  );
+
+  assert.equal(
+    parseShipmentRegistrationInput({
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingCarrierId: "japan_post",
       trackingUrl: "ftp://track.example/JP123456789",
     }).error,
     "追跡URLは https:// から始まるURLで入力してください。",
@@ -664,11 +763,17 @@ test("createVendorOrderFulfillment creates a Shopify fulfillment for a vendor or
     shipment: {
       orderId: "gid://shopify/Order/1001",
       trackingNumber: "JP123456789",
-      trackingCompany: "日本郵便",
-      trackingUrl: "https://track.example/JP123456789",
+      trackingCompany: "Japan Post",
+      trackingUrl:
+        "https://trackings.post.japanpost.jp/services/srv/search/direct?locale=ja&reqCodeNo1=JP123456789",
       notifyCustomer: true,
     },
     listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    prismaClient: {
+      ledgerEntry: {
+        findMany: async () => [],
+      },
+    },
     shopifyGraphQLWithOfflineSessionImpl: async (call) => {
       calls.push(call);
 
@@ -735,9 +840,10 @@ test("createVendorOrderFulfillment creates a Shopify fulfillment for a vendor or
     ],
     notifyCustomer: true,
     trackingInfo: {
-      company: "日本郵便",
+      company: "Japan Post",
       number: "JP123456789",
-      url: "https://track.example/JP123456789",
+      url:
+        "https://trackings.post.japanpost.jp/services/srv/search/direct?locale=ja&reqCodeNo1=JP123456789",
     },
   });
 });
@@ -757,15 +863,24 @@ test("createVendorOrderFulfillment allows ledger-owned Shopify checkout orders w
     listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
     prismaClient: {
       ledgerEntry: {
-        findFirst: async (query) => {
-          assert.equal(query.where.entryType, "shopify_order_paid");
-          assert.equal(query.where.stripeObjectId, "gid://shopify/Order/1001");
+        findMany: async (query) => {
           assert.deepEqual(query.where.seller, {
             is: {
               vendorStoreId: "store_1",
             },
           });
-          return { id: "ledger_1" };
+          return [
+            {
+              id: "ledger_1",
+              entryType: "shopify_order_paid",
+              stripeObjectId: "gid://shopify/Order/1001",
+              amount: 8400,
+              currencyCode: "jpy",
+              metadataJson: {},
+              occurredAt: new Date("2026-04-29T08:35:00Z"),
+              createdAt: new Date("2026-04-29T08:36:00Z"),
+            },
+          ];
         },
       },
     },
@@ -823,6 +938,79 @@ test("createVendorOrderFulfillment allows ledger-owned Shopify checkout orders w
   assert.equal(result.orderId, "gid://shopify/Order/1001");
   assert.equal(result.fulfillmentId, "gid://shopify/Fulfillment/7001");
   assert.equal(calls.length, 2);
+});
+
+test("createVendorOrderFulfillment rejects fully refunded ledger-owned orders", async () => {
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      trackingNumber: "JP123456789",
+      trackingCompany: "Japan Post",
+      trackingUrl: null,
+      notifyCustomer: false,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    prismaClient: {
+      ledgerEntry: {
+        findMany: async () => [
+          {
+            id: "ledger_1",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1001",
+            amount: 8400,
+            currencyCode: "jpy",
+            metadataJson: {},
+            occurredAt: new Date("2026-04-29T08:35:00Z"),
+            createdAt: new Date("2026-04-29T08:36:00Z"),
+          },
+          {
+            id: "ledger_refund_1",
+            entryType: "refund",
+            stripeObjectId: "gid://shopify/Refund/5001",
+            amount: 8400,
+            currencyCode: "jpy",
+            metadataJson: {
+              shopifyOrderId: "gid://shopify/Order/1001",
+            },
+            occurredAt: new Date("2026-04-29T09:35:00Z"),
+            createdAt: new Date("2026-04-29T09:36:00Z"),
+          },
+        ],
+      },
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async () => ({
+      data: {
+        order: {
+          id: "gid://shopify/Order/1001",
+          name: "#1001",
+          tags: [],
+          displayFinancialStatus: "PAID",
+          displayFulfillmentStatus: "UNFULFILLED",
+          fulfillmentOrders: {
+            nodes: [
+              {
+                id: "gid://shopify/FulfillmentOrder/9001",
+                status: "OPEN",
+                requestStatus: "UNSUBMITTED",
+                assignedLocation: {
+                  name: "Main",
+                  location: {
+                    id: "gid://shopify/Location/4001",
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+  assert.equal(result.error, "返金済みの注文は発送登録できません。");
 });
 
 test("createVendorOrderFulfillment rejects another vendor order", async () => {
