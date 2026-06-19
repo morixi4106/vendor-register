@@ -1213,6 +1213,45 @@ test('api.draft-order.checkout allows multi-seller products when all storefront 
   );
 });
 
+test('api.draft-order.checkout rejects multi-seller products without SellerOrder vendor reads', async () => {
+  let callCount = 0;
+  const {
+    VENDOR_ORDERS_USE_SELLER_ORDERS: _sellerOrderReads,
+    ...envWithoutSellerOrderReads
+  } = MULTI_SELLER_CHECKOUT_ENV;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: envWithoutSellerOrderReads,
+    prismaClient: createFakePrisma({
+      products: createMultiSellerProducts(),
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        items: [
+          { productId: 'prod_1', quantity: 1 },
+          { productId: 'prod_other', quantity: 1 },
+        ],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+});
+
 test('api.draft-order.checkout rejects sales credit on multi-seller checkout', async () => {
   let callCount = 0;
   const action = createPublicVendorDraftOrderCheckoutAction({
