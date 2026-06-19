@@ -161,6 +161,125 @@ model Seller {
   @@map("sellers")
 }
 
+model MarketplaceOrder {
+  id                 String    @id @default(cuid())
+  shopDomain         String
+  shopifyOrderId     String
+  shopifyOrderName   String?
+  shopifyOrderNumber String?
+  buyerEmail         String?
+  buyerName          String?
+  totalAmount        Int       @default(0)
+  subtotalAmount     Int       @default(0)
+  shippingAmount     Int       @default(0)
+  discountAmount     Int       @default(0)
+  taxAmount          Int       @default(0)
+  currencyCode       String    @default("jpy")
+  financialStatus    String?
+  fulfillmentStatus  String?
+  processedAt        DateTime?
+  cancelledAt        DateTime?
+  metadataJson       Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sellerOrders SellerOrder[]
+  shadowChecks SellerOrderShadowCheck[]
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([shopifyOrderId])
+  @@index([shopDomain, createdAt])
+  @@map("marketplace_orders")
+}
+
+model SellerOrder {
+  id                       String   @id @default(cuid())
+  marketplaceOrderId       String
+  shopifyOrderId           String
+  shopifyOrderName         String?
+  sellerId                 String
+  vendorStoreId            String?
+  sellerSubtotalAmount     Int      @default(0)
+  sellerDiscountAmount     Int      @default(0)
+  sellerRefundAmount       Int      @default(0)
+  sellerNetAmount          Int      @default(0)
+  sellerPayableAmount      Int      @default(0)
+  shippingQuotedAmount     Int      @default(0)
+  shippingChargedAmount    Int      @default(0)
+  shippingAllocationMethod String   @default("not_allocated")
+  currencyCode             String   @default("jpy")
+  paymentStatus            String   @default("paid")
+  fulfillmentStatus        String   @default("unfulfilled")
+  settlementStatus         String   @default("shadow")
+  riskStatus               String   @default("normal")
+  metadataJson             Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  marketplaceOrder MarketplaceOrder  @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
+  lines            SellerOrderLine[]
+
+  @@unique([shopifyOrderId, sellerId])
+  @@index([sellerId, createdAt])
+  @@index([vendorStoreId, createdAt])
+  @@index([marketplaceOrderId])
+  @@map("seller_orders")
+}
+
+model SellerOrderLine {
+  id                 String   @id @default(cuid())
+  sellerOrderId      String
+  shopifyLineItemId  String
+  shopifyProductId   String?
+  shopifyVariantId   String?
+  productId          String?
+  title              String?
+  sku                String?
+  quantity           Int      @default(0)
+  fulfilledQuantity  Int      @default(0)
+  refundedQuantity   Int      @default(0)
+  unitAmount         Int      @default(0)
+  lineSubtotalAmount Int      @default(0)
+  discountAmount     Int      @default(0)
+  taxAmount          Int      @default(0)
+  netAmount          Int      @default(0)
+  currencyCode       String   @default("jpy")
+  metadataJson       Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerOrderId, shopifyLineItemId])
+  @@index([shopifyLineItemId])
+  @@index([productId])
+  @@map("seller_order_lines")
+}
+
+model SellerOrderShadowCheck {
+  id                          String   @id @default(cuid())
+  marketplaceOrderId          String?
+  shopDomain                  String
+  shopifyOrderId              String
+  shopifyOrderName            String?
+  status                      String
+  legacyLedgerAmount          Int?
+  sellerOrderCalculatedAmount Int?
+  legacySellerIdsJson         Json?
+  sellerOrderSellerIdsJson    Json?
+  differencesJson             Json?
+  errorMessage                String?
+  checkedAt                   DateTime @default(now())
+  createdAt                   DateTime @default(now())
+
+  marketplaceOrder MarketplaceOrder? @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+
+  @@index([status, checkedAt])
+  @@index([shopifyOrderId])
+  @@index([marketplaceOrderId])
+  @@map("seller_order_shadow_checks")
+}
+
 model SalesCreditOffset {
   id                String    @id @default(cuid())
   sellerId          String

@@ -36,6 +36,58 @@ const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskRateBps: 10000,
 };
 
+function createSellerOrderShadowFakeModels(state) {
+  return {
+    marketplaceOrder: {
+      async upsert({ where, create, update }) {
+        const key = `${where.shopDomain_shopifyOrderId.shopDomain}:${where.shopDomain_shopifyOrderId.shopifyOrderId}`;
+        const existing = state.marketplaceOrders.get(key);
+        const record = existing
+          ? { ...existing, ...update }
+          : { id: `mo_${state.marketplaceOrders.size + 1}`, ...create };
+
+        state.marketplaceOrders.set(key, record);
+        return record;
+      },
+    },
+    sellerOrder: {
+      async upsert({ where, create, update }) {
+        const key = `${where.shopifyOrderId_sellerId.shopifyOrderId}:${where.shopifyOrderId_sellerId.sellerId}`;
+        const existing = state.sellerOrders.get(key);
+        const record = existing
+          ? { ...existing, ...update }
+          : { id: `so_${state.sellerOrders.size + 1}`, ...create };
+
+        state.sellerOrders.set(key, record);
+        return record;
+      },
+    },
+    sellerOrderLine: {
+      async upsert({ where, create, update }) {
+        const key = `${where.sellerOrderId_shopifyLineItemId.sellerOrderId}:${where.sellerOrderId_shopifyLineItemId.shopifyLineItemId}`;
+        const existing = state.sellerOrderLines.get(key);
+        const record = existing
+          ? { ...existing, ...update }
+          : { id: `sol_${state.sellerOrderLines.size + 1}`, ...create };
+
+        state.sellerOrderLines.set(key, record);
+        return record;
+      },
+    },
+    sellerOrderShadowCheck: {
+      async create({ data }) {
+        const record = {
+          id: `sosc_${state.sellerOrderShadowChecks.length + 1}`,
+          ...data,
+        };
+
+        state.sellerOrderShadowChecks.push(record);
+        return record;
+      },
+    },
+  };
+}
+
 test("createSellerStripeAccount creates a connected account with manual payouts and no hosted dashboard", async () => {
   const stripeCalls = {
     accountsCreate: [],
@@ -1183,6 +1235,127 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
 });
 
+test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", async () => {
+  const state = {
+    ledgerEntries: [],
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          entryType: "shopify_order_paid",
+          stripeObjectId: "gid://shopify/Order/1101",
+        });
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Shadow Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Shadow Store",
+              seller: null,
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "shadow-store",
+                storeName: "Shadow Store",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1101,
+        admin_graphql_api_id: "gid://shopify/Order/1101",
+        name: "#1101",
+        order_number: 1101,
+        currency: "JPY",
+        financial_status: "paid",
+        processed_at: "2026-06-19T09:00:00Z",
+        email: "buyer@example.com",
+        total_price: "1900",
+        subtotal_price: "2000",
+        total_discounts: "100",
+        total_tax: "0",
+        line_items: [
+          {
+            id: 501,
+            product_id: 911,
+            variant_id: 912,
+            title: "Shadow Product",
+            sku: "SHADOW-1",
+            price: "1000",
+            quantity: 2,
+            discount_allocations: [{ amount: "100" }],
+          },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.amount, 1900);
+  assert.equal(result.sellerOrderShadow.ok, true);
+  assert.equal(result.sellerOrderShadow.status, "matched");
+  assert.equal(state.marketplaceOrders.size, 1);
+  assert.equal(state.sellerOrders.size, 1);
+  assert.equal(state.sellerOrderLines.size, 1);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+
+  const sellerOrder = Array.from(state.sellerOrders.values())[0];
+  assert.equal(sellerOrder.sellerId, "seller_1");
+  assert.equal(sellerOrder.vendorStoreId, "store_1");
+  assert.equal(sellerOrder.sellerSubtotalAmount, 2000);
+  assert.equal(sellerOrder.sellerDiscountAmount, 100);
+  assert.equal(sellerOrder.sellerPayableAmount, 1900);
+
+  const line = Array.from(state.sellerOrderLines.values())[0];
+  assert.equal(line.shopifyLineItemId, "gid://shopify/LineItem/501");
+  assert.equal(line.shopifyProductId, "gid://shopify/Product/911");
+  assert.equal(line.shopifyVariantId, "gid://shopify/ProductVariant/912");
+  assert.equal(line.quantity, 2);
+  assert.equal(line.netAmount, 1900);
+
+  assert.equal(state.sellerOrderShadowChecks[0].status, "matched");
+  assert.equal(state.sellerOrderShadowChecks[0].legacyLedgerAmount, 1900);
+  assert.equal(
+    state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
+    1900,
+  );
+});
+
 test("processShopifyOrderPaidSettlement reads Shopify transaction risk when the webhook payload is incomplete", async () => {
   const state = {
     ledgerEntries: [],
@@ -1764,6 +1937,109 @@ test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", as
   assert.equal(result.reason, "multi_seller_shopify_order_unsupported");
   assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
   assert.equal(state.ledgerEntries.length, 0);
+});
+
+test("processShopifyOrderPaidSettlement records a shadow check for unsupported multi-seller orders", async () => {
+  const state = {
+    ledgerEntries: [],
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor-1",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+          {
+            id: "product_2",
+            name: "Product 2",
+            shopifyProductId: "gid://shopify/Product/2",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_2",
+            vendorStore: {
+              id: "store_2",
+              vendorAuth: {
+                id: "vendor_2",
+                handle: "vendor-2",
+                seller: {
+                  id: "seller_2",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1201,
+        admin_graphql_api_id: "gid://shopify/Order/1201",
+        name: "#1201",
+        currency: "JPY",
+        line_items: [
+          { id: 11, product_id: 1, price: "1000", quantity: 1 },
+          { id: 12, product_id: 2, price: "2000", quantity: 1 },
+        ],
+      },
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "multi_seller_shopify_order_unsupported");
+  assert.equal(state.ledgerEntries.length, 0);
+  assert.equal(state.marketplaceOrders.size, 1);
+  assert.equal(state.sellerOrders.size, 0);
+  assert.equal(state.sellerOrderLines.size, 0);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+  assert.equal(
+    state.sellerOrderShadowChecks[0].status,
+    "multi_seller_detected",
+  );
+  assert.deepEqual(state.sellerOrderShadowChecks[0].sellerOrderSellerIdsJson, [
+    "seller_1",
+    "seller_2",
+  ]);
+  assert.equal(
+    state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
+    3000,
+  );
 });
 
 test("processShopifyRefundSettlement records a seller refund debit ledger entry", async () => {

@@ -39,6 +39,10 @@ export default function App() {
           本番確認
         </Link>
 
+        <Link to="/app/seller-order-shadow">
+          SellerOrder検証
+        </Link>
+
         <Link to="/app/carrier-service">
           配送サービス
         </Link>

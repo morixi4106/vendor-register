@@ -146,6 +146,14 @@ const SHOPIFY_ORDER_RISK_ENTRY_TYPES = [
   ...SHOPIFY_ORDER_DISPUTE_ENTRY_TYPES,
 ];
 const SHOPIFY_DISPUTE_RELEASE_STATUSES = new Set(["charge_refunded", "won"]);
+const SELLER_ORDER_SHADOW_CHECK_STATUSES = {
+  MATCHED: "matched",
+  AMOUNT_MISMATCH: "amount_mismatch",
+  SELLER_MISMATCH: "seller_mismatch",
+  MULTI_SELLER_DETECTED: "multi_seller_detected",
+  SHADOW_WRITTEN: "shadow_written",
+  FAILED: "failed",
+};
 const SHOPIFY_ORDER_PAYMENT_RISK_QUERY = `#graphql
   query SalesCreditOrderPaymentRisk($id: ID!) {
     order(id: $id) {
@@ -506,6 +514,21 @@ function getWisePayoutConfig(env = process.env) {
     isSandbox: /sandbox/i.test(normalizedBaseUrl),
     liveTransfersEnabled,
   };
+}
+
+function isSellerOrderShadowWriteEnabled(env = process.env) {
+  return !["0", "false", "no", "off"].includes(
+    normalizeLowercase(env.SELLER_ORDER_SHADOW_WRITE_ENABLED) || "",
+  );
+}
+
+function hasSellerOrderShadowModels(prismaClient) {
+  return Boolean(
+    prismaClient?.marketplaceOrder?.upsert &&
+      prismaClient?.sellerOrder?.upsert &&
+      prismaClient?.sellerOrderLine?.upsert &&
+      prismaClient?.sellerOrderShadowCheck?.create,
+  );
 }
 
 function decimalAmountFromMinorUnits(
@@ -3110,6 +3133,468 @@ function buildProductCandidateMap(products, shopDomain) {
   return productMap;
 }
 
+function normalizeShopifyLineItemId(lineItem, index = 0) {
+  return (
+    normalizeShopifyGid("LineItem", lineItem?.admin_graphql_api_id) ||
+    normalizeShopifyGid("LineItem", lineItem?.id) ||
+    normalizeText(lineItem?.id) ||
+    `line:${index + 1}`
+  );
+}
+
+function normalizeShopifyVariantId(lineItem) {
+  return (
+    normalizeShopifyGid("ProductVariant", lineItem?.variant_id) ||
+    normalizeShopifyGid("ProductVariant", lineItem?.variant?.id) ||
+    normalizeShopifyGid(
+      "ProductVariant",
+      lineItem?.variant?.admin_graphql_api_id,
+    ) ||
+    normalizeText(lineItem?.variant_id)
+  );
+}
+
+function getShopifyLineTaxAmount(lineItem, currencyCode) {
+  const taxLines = Array.isArray(lineItem?.tax_lines) ? lineItem.tax_lines : [];
+
+  return taxLines.reduce((total, taxLine) => {
+    const amount =
+      taxLine?.price_set?.shop_money?.amount ??
+      taxLine?.price_set?.presentment_money?.amount ??
+      taxLine?.price;
+
+    return total + moneyAmountToMinorUnits(amount, currencyCode);
+  }, 0);
+}
+
+function getShopifyLineAmountBreakdown(lineItem, currencyCode) {
+  const quantity = toPositiveInteger(lineItem?.quantity) || 0;
+  const unitAmount = moneyAmountToMinorUnits(
+    lineItem?.price_set?.shop_money?.amount ??
+      lineItem?.price_set?.presentment_money?.amount ??
+      lineItem?.price,
+    currencyCode,
+  );
+  const lineSubtotalAmount = unitAmount * quantity;
+  const discountAmount = getLineDiscountAmount(lineItem, currencyCode);
+  const taxAmount = getShopifyLineTaxAmount(lineItem, currencyCode);
+
+  return {
+    quantity,
+    unitAmount,
+    lineSubtotalAmount,
+    discountAmount,
+    taxAmount,
+    netAmount: Math.max(0, lineSubtotalAmount - discountAmount),
+  };
+}
+
+function getShopifyOrderShippingAmount(payload, currencyCode) {
+  const shippingLines = Array.isArray(payload?.shipping_lines)
+    ? payload.shipping_lines
+    : [];
+
+  return shippingLines.reduce((total, shippingLine) => {
+    const amount =
+      shippingLine?.price_set?.shop_money?.amount ??
+      shippingLine?.price_set?.presentment_money?.amount ??
+      shippingLine?.price;
+
+    return total + moneyAmountToMinorUnits(amount, currencyCode);
+  }, 0);
+}
+
+function normalizeDateValue(value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const date = new Date(normalized);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeBuyerName(payload) {
+  const customer = isPlainObject(payload?.customer) ? payload.customer : {};
+  return normalizeText(
+    [
+      payload?.billing_address?.first_name ||
+        payload?.shipping_address?.first_name ||
+        customer?.first_name,
+      payload?.billing_address?.last_name ||
+        payload?.shipping_address?.last_name ||
+        customer?.last_name,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function buildMarketplaceOrderSnapshot({
+  payload,
+  shopDomain,
+  shopifyOrderId,
+  shopifyOrderName,
+  currencyCode,
+}) {
+  return {
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    shopifyOrderNumber: normalizeText(payload?.order_number),
+    buyerEmail: normalizeText(payload?.email || payload?.customer?.email),
+    buyerName: normalizeBuyerName(payload),
+    totalAmount: moneyAmountToMinorUnits(
+      payload?.total_price_set?.shop_money?.amount ??
+        payload?.total_price_set?.presentment_money?.amount ??
+        payload?.total_price,
+      currencyCode,
+    ),
+    subtotalAmount: moneyAmountToMinorUnits(
+      payload?.subtotal_price_set?.shop_money?.amount ??
+        payload?.subtotal_price_set?.presentment_money?.amount ??
+        payload?.subtotal_price,
+      currencyCode,
+    ),
+    shippingAmount: getShopifyOrderShippingAmount(payload, currencyCode),
+    discountAmount: moneyAmountToMinorUnits(
+      payload?.total_discounts_set?.shop_money?.amount ??
+        payload?.total_discounts_set?.presentment_money?.amount ??
+        payload?.total_discounts,
+      currencyCode,
+    ),
+    taxAmount: moneyAmountToMinorUnits(
+      payload?.total_tax_set?.shop_money?.amount ??
+        payload?.total_tax_set?.presentment_money?.amount ??
+        payload?.total_tax,
+      currencyCode,
+    ),
+    currencyCode,
+    financialStatus: normalizeLowercase(payload?.financial_status),
+    fulfillmentStatus: normalizeLowercase(payload?.fulfillment_status),
+    processedAt: normalizeDateValue(payload?.processed_at || payload?.created_at),
+    cancelledAt: normalizeDateValue(payload?.cancelled_at),
+    metadataJson: {
+      source: "shopify_order_paid_shadow",
+      shopifyOrderNumericId: normalizeText(payload?.id),
+      lineItemCount: Array.isArray(payload?.line_items)
+        ? payload.line_items.length
+        : 0,
+    },
+  };
+}
+
+function buildSellerOrderShadowBuckets({
+  matchedLines,
+  currencyCode,
+  salesCreditOffset,
+}) {
+  const bucketsBySellerId = new Map();
+
+  matchedLines.forEach(({ lineItem, product }, index) => {
+    const seller = getProductSeller(product);
+    const sellerId = normalizeText(seller?.id);
+
+    if (!sellerId) {
+      return;
+    }
+
+    const vendor = getProductVendor(product);
+    const vendorStoreId = normalizeText(
+      product?.vendorStoreId || product?.vendorStore?.id,
+    );
+    const breakdown = getShopifyLineAmountBreakdown(lineItem, currencyCode);
+    const bucket =
+      bucketsBySellerId.get(sellerId) ||
+      {
+        sellerId,
+        vendorStoreId,
+        vendorId: normalizeText(vendor?.id),
+        vendorHandle: normalizeText(vendor?.handle),
+        sellerSubtotalAmount: 0,
+        sellerDiscountAmount: 0,
+        sellerTaxAmount: 0,
+        sellerNetItemAmount: 0,
+        sellerNetAmount: 0,
+        sellerPayableAmount: 0,
+        salesCreditOffsetAmount: 0,
+        lines: [],
+      };
+
+    bucket.sellerSubtotalAmount += breakdown.lineSubtotalAmount;
+    bucket.sellerDiscountAmount += breakdown.discountAmount;
+    bucket.sellerTaxAmount += breakdown.taxAmount;
+    bucket.sellerNetItemAmount += breakdown.netAmount;
+    bucket.sellerNetAmount += breakdown.netAmount;
+    bucket.sellerPayableAmount += breakdown.netAmount;
+    bucket.lines.push({
+      shopifyLineItemId: normalizeShopifyLineItemId(lineItem, index),
+      shopifyProductId:
+        normalizeText(product?.shopifyProductId) ||
+        getShopifyLineProductIdCandidates(lineItem)[0] ||
+        null,
+      shopifyVariantId: normalizeShopifyVariantId(lineItem),
+      productId: normalizeText(product?.id),
+      title: normalizeText(lineItem?.title || product?.name),
+      sku: normalizeText(lineItem?.sku),
+      ...breakdown,
+      currencyCode,
+      metadataJson: {
+        shopifyProductIdFromLine: normalizeText(lineItem?.product_id),
+        localProductName: normalizeText(product?.name),
+      },
+    });
+
+    bucketsBySellerId.set(sellerId, bucket);
+  });
+
+  const buckets = Array.from(bucketsBySellerId.values());
+  const salesCreditAmount = clampInteger(salesCreditOffset?.amount);
+
+  if (salesCreditAmount > 0 && buckets.length === 1) {
+    buckets[0].salesCreditOffsetAmount = salesCreditAmount;
+    buckets[0].sellerNetAmount += salesCreditAmount;
+    buckets[0].sellerPayableAmount += salesCreditAmount;
+  }
+
+  return buckets;
+}
+
+function buildSellerOrderShadowStatus({
+  ledgerEntry,
+  sellerBuckets,
+  multiSellerDetected,
+}) {
+  if (multiSellerDetected) {
+    return SELLER_ORDER_SHADOW_CHECK_STATUSES.MULTI_SELLER_DETECTED;
+  }
+
+  if (!ledgerEntry) {
+    return SELLER_ORDER_SHADOW_CHECK_STATUSES.SHADOW_WRITTEN;
+  }
+
+  const calculatedAmount = sellerBuckets.reduce(
+    (total, bucket) => total + bucket.sellerPayableAmount,
+    0,
+  );
+  const sellerIds = uniqueValues(sellerBuckets.map((bucket) => bucket.sellerId));
+
+  if (
+    ledgerEntry.sellerId &&
+    sellerIds.length === 1 &&
+    sellerIds[0] !== ledgerEntry.sellerId
+  ) {
+    return SELLER_ORDER_SHADOW_CHECK_STATUSES.SELLER_MISMATCH;
+  }
+
+  if (ledgerEntry.amount !== calculatedAmount) {
+    return SELLER_ORDER_SHADOW_CHECK_STATUSES.AMOUNT_MISMATCH;
+  }
+
+  return SELLER_ORDER_SHADOW_CHECK_STATUSES.MATCHED;
+}
+
+async function createSellerOrderShadowFailureCheck(
+  {
+    prismaClient,
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    error,
+  },
+) {
+  if (!prismaClient?.sellerOrderShadowCheck?.create) {
+    return null;
+  }
+
+  try {
+    return await prismaClient.sellerOrderShadowCheck.create({
+      data: {
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        status: SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED,
+        errorMessage:
+          normalizeText(error?.message) || "seller_order_shadow_failed",
+      },
+    });
+  } catch (shadowError) {
+    console.error("seller order shadow failure check error:", shadowError);
+    return null;
+  }
+}
+
+async function recordShopifyOrderSellerOrderShadow(
+  {
+    payload,
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    currencyCode,
+    matchedLines,
+    ledgerEntry = null,
+    salesCreditOffset = null,
+    multiSellerDetected = false,
+    writeSellerOrders = true,
+  },
+  { prismaClient = prisma, env = process.env } = {},
+) {
+  if (!isSellerOrderShadowWriteEnabled(env)) {
+    return { ok: true, skipped: true, reason: "shadow_write_disabled" };
+  }
+
+  if (!hasSellerOrderShadowModels(prismaClient)) {
+    return { ok: true, skipped: true, reason: "shadow_models_unavailable" };
+  }
+
+  try {
+    const marketplaceData = buildMarketplaceOrderSnapshot({
+      payload,
+      shopDomain,
+      shopifyOrderId,
+      shopifyOrderName,
+      currencyCode,
+    });
+    const sellerBuckets = buildSellerOrderShadowBuckets({
+      matchedLines,
+      currencyCode,
+      salesCreditOffset,
+    });
+    const calculatedAmount = sellerBuckets.reduce(
+      (total, bucket) => total + bucket.sellerPayableAmount,
+      0,
+    );
+    const sellerIds = uniqueValues(
+      sellerBuckets.map((bucket) => bucket.sellerId),
+    );
+    const marketplaceOrder = await prismaClient.marketplaceOrder.upsert({
+      where: {
+        shopDomain_shopifyOrderId: {
+          shopDomain,
+          shopifyOrderId,
+        },
+      },
+      update: marketplaceData,
+      create: marketplaceData,
+    });
+    const writtenSellerOrders = [];
+
+    if (writeSellerOrders && !multiSellerDetected) {
+      for (const bucket of sellerBuckets) {
+        const sellerOrderData = {
+          marketplaceOrderId: marketplaceOrder.id,
+          shopifyOrderId,
+          shopifyOrderName,
+          sellerId: bucket.sellerId,
+          vendorStoreId: bucket.vendorStoreId,
+          sellerSubtotalAmount: bucket.sellerSubtotalAmount,
+          sellerDiscountAmount: bucket.sellerDiscountAmount,
+          sellerRefundAmount: 0,
+          sellerNetAmount: bucket.sellerNetAmount,
+          sellerPayableAmount: bucket.sellerPayableAmount,
+          shippingQuotedAmount: 0,
+          shippingChargedAmount: 0,
+          shippingAllocationMethod: "not_allocated",
+          currencyCode,
+          paymentStatus: "paid",
+          fulfillmentStatus: "unfulfilled",
+          settlementStatus: "shadow",
+          riskStatus: "normal",
+          metadataJson: {
+            vendorId: bucket.vendorId,
+            vendorHandle: bucket.vendorHandle,
+            sellerNetItemAmount: bucket.sellerNetItemAmount,
+            sellerTaxAmount: bucket.sellerTaxAmount,
+            salesCreditOffsetId: salesCreditOffset?.offsetId || null,
+            salesCreditOffsetAmount: bucket.salesCreditOffsetAmount,
+          },
+        };
+        const sellerOrder = await prismaClient.sellerOrder.upsert({
+          where: {
+            shopifyOrderId_sellerId: {
+              shopifyOrderId,
+              sellerId: bucket.sellerId,
+            },
+          },
+          update: sellerOrderData,
+          create: sellerOrderData,
+        });
+
+        writtenSellerOrders.push(sellerOrder);
+
+        for (const line of bucket.lines) {
+          await prismaClient.sellerOrderLine.upsert({
+            where: {
+              sellerOrderId_shopifyLineItemId: {
+                sellerOrderId: sellerOrder.id,
+                shopifyLineItemId: line.shopifyLineItemId,
+              },
+            },
+            update: line,
+            create: {
+              ...line,
+              sellerOrderId: sellerOrder.id,
+            },
+          });
+        }
+      }
+    }
+
+    const status = buildSellerOrderShadowStatus({
+      ledgerEntry,
+      sellerBuckets,
+      multiSellerDetected,
+    });
+    const shadowCheck = await prismaClient.sellerOrderShadowCheck.create({
+      data: {
+        marketplaceOrderId: marketplaceOrder.id,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        status,
+        legacyLedgerAmount: ledgerEntry?.amount ?? null,
+        sellerOrderCalculatedAmount: calculatedAmount,
+        legacySellerIdsJson: ledgerEntry?.sellerId ? [ledgerEntry.sellerId] : [],
+        sellerOrderSellerIdsJson: sellerIds,
+        differencesJson: {
+          legacyLedgerEntryId: ledgerEntry?.id || null,
+          multiSellerDetected,
+          sellerOrderCount: writtenSellerOrders.length,
+          lineCount: sellerBuckets.reduce(
+            (total, bucket) => total + bucket.lines.length,
+            0,
+          ),
+        },
+      },
+    });
+
+    return {
+      ok: true,
+      marketplaceOrder,
+      sellerOrders: writtenSellerOrders,
+      shadowCheck,
+      status,
+    };
+  } catch (error) {
+    console.error("seller order shadow write error:", error);
+    await createSellerOrderShadowFailureCheck({
+      prismaClient,
+      shopDomain,
+      shopifyOrderId,
+      shopifyOrderName,
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "seller_order_shadow_write_failed",
+      errorMessage: normalizeText(error?.message),
+    };
+  }
+}
+
 export async function processShopifyOrderPaidSettlement(
   { payload, shop },
   { prismaClient = prisma, shopifyGraphQLWithOfflineSessionImpl = null } = {},
@@ -3294,6 +3779,21 @@ export async function processShopifyOrderPaidSettlement(
   }
 
   if (sellerIds.length > 1) {
+    await recordShopifyOrderSellerOrderShadow(
+      {
+        payload,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        matchedLines,
+        salesCreditOffset,
+        multiSellerDetected: true,
+        writeSellerOrders: false,
+      },
+      { prismaClient },
+    );
+
     return {
       ok: false,
       reason: "multi_seller_shopify_order_unsupported",
@@ -3435,6 +3935,19 @@ export async function processShopifyOrderPaidSettlement(
       },
       { prismaClient: tx },
     );
+    const sellerOrderShadow = await recordShopifyOrderSellerOrderShadow(
+      {
+        payload,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        matchedLines,
+        ledgerEntry,
+        salesCreditOffset,
+      },
+      { prismaClient: tx },
+    );
 
     return {
       ok: true,
@@ -3447,6 +3960,7 @@ export async function processShopifyOrderPaidSettlement(
       matchedLineCount: matchedLines.length,
       unmatchedProductIds: unmatchedProductIds.filter(Boolean),
       salesCreditCapture,
+      sellerOrderShadow,
     };
   });
 }
