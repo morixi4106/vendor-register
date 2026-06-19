@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { Form, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
 
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
@@ -169,7 +169,10 @@ export default function SellerOrderShadowPage() {
   const { available, status, limit, summary, checks, errorMessage } =
     useLoaderData();
   const navigation = useNavigation();
+  const backfillFetcher = useFetcher();
   const isLoading = navigation.state !== "idle";
+  const isBackfillRunning = backfillFetcher.state !== "idle";
+  const backfillResult = backfillFetcher.data;
 
   return (
     <main className="shadow-admin">
@@ -211,6 +214,13 @@ export default function SellerOrderShadowPage() {
           align-items:flex-end;
           flex-wrap:wrap;
         }
+        .shadow-admin__actions{
+          display:flex;
+          gap:12px;
+          align-items:flex-end;
+          flex-wrap:wrap;
+          margin-top:18px;
+        }
         .shadow-admin__field{
           display:grid;
           gap:6px;
@@ -237,6 +247,43 @@ export default function SellerOrderShadowPage() {
           color:#fff;
           font-weight:700;
           cursor:pointer;
+        }
+        .shadow-admin__button--secondary{
+          background:#fff;
+          color:#111827;
+          border-color:#d1d5db;
+        }
+        .shadow-admin__checkbox{
+          min-height:40px;
+          display:flex;
+          gap:8px;
+          align-items:center;
+          padding:0 10px;
+          border:1px solid #d1d5db;
+          border-radius:10px;
+          color:#374151;
+          font-size:13px;
+          font-weight:700;
+        }
+        .shadow-admin__result{
+          margin-top:14px;
+          border-radius:12px;
+          border:1px solid #d1d5db;
+          padding:12px;
+          background:#f9fafb;
+          color:#374151;
+          font-size:13px;
+          line-height:1.7;
+        }
+        .shadow-admin__result--ok{
+          border-color:#a7f3d0;
+          background:#ecfdf5;
+          color:#047857;
+        }
+        .shadow-admin__result--error{
+          border-color:#fecaca;
+          background:#fef2f2;
+          color:#b91c1c;
         }
         .shadow-admin__summary{
           display:grid;
@@ -369,6 +416,68 @@ export default function SellerOrderShadowPage() {
             </button>
           </Form>
         </div>
+      </section>
+
+      <section className="shadow-admin__card">
+        <div>
+          <h2 className="shadow-admin__title">検証データ補完</h2>
+          <p className="shadow-admin__subtitle">
+            過去の売上台帳から SellerOrder 検証データを作ります。まずは少ない件数で実行してください。
+          </p>
+        </div>
+        <backfillFetcher.Form
+          method="post"
+          action="/internal/seller-order-shadow/backfill"
+          className="shadow-admin__actions"
+        >
+          <input type="hidden" name="confirm" value="backfill" />
+          <label className="shadow-admin__field">
+            対象日数
+            <input
+              name="days"
+              type="number"
+              min="1"
+              max="365"
+              defaultValue="7"
+              className="shadow-admin__input"
+            />
+          </label>
+          <label className="shadow-admin__field">
+            件数
+            <input
+              name="limit"
+              type="number"
+              min="1"
+              max={MAX_LIMIT}
+              defaultValue="10"
+              className="shadow-admin__input"
+            />
+          </label>
+          <label className="shadow-admin__checkbox">
+            <input type="checkbox" name="retryFailed" value="true" />
+            失敗分を再試行
+          </label>
+          <button
+            type="submit"
+            className="shadow-admin__button shadow-admin__button--secondary"
+            disabled={isBackfillRunning}
+          >
+            {isBackfillRunning ? "補完中" : "補完を実行"}
+          </button>
+        </backfillFetcher.Form>
+        {backfillResult ? (
+          <div
+            className={`shadow-admin__result ${
+              backfillResult.ok
+                ? "shadow-admin__result--ok"
+                : "shadow-admin__result--error"
+            }`}
+          >
+            {backfillResult.ok
+              ? `完了: 対象 ${backfillResult.scanned || 0} 件 / 作成 ${backfillResult.created || 0} 件 / 既存 ${backfillResult.skippedExisting || 0} 件 / 失敗 ${backfillResult.failed || 0} 件`
+              : `失敗: ${backfillResult.reason || "unknown_error"}`}
+          </div>
+        ) : null}
       </section>
 
       {!available ? (
