@@ -473,6 +473,13 @@ export default function VendorOrdersPage() {
                           <Form method="post" className="vendor-orders__action-form">
                             <input type="hidden" name="intent" value="register-shipment" />
                             <input type="hidden" name="orderId" value={order.orderId} />
+                            {order.sellerOrderId ? (
+                              <input
+                                type="hidden"
+                                name="sellerOrderId"
+                                value={order.sellerOrderId}
+                              />
+                            ) : null}
                             <input
                               name="trackingNumber"
                               aria-label={`${order.shopifyOrderNumber}の追跡番号`}

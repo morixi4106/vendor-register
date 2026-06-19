@@ -163,6 +163,10 @@ function normalizeBooleanInput(value) {
   );
 }
 
+function normalizeLowercase(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function shouldUseSellerOrderVendorOrdersRead(env = process.env) {
   return normalizeBooleanInput(env.VENDOR_ORDERS_USE_SELLER_ORDERS);
 }
@@ -649,6 +653,16 @@ const VENDOR_ORDER_FULFILLMENT_TARGET_QUERY = `
           id
           status
           requestStatus
+          lineItems(first: 100) {
+            nodes {
+              id
+              remainingQuantity
+              totalQuantity
+              lineItem {
+                id
+              }
+            }
+          }
           assignedLocation {
             name
             location {
@@ -961,6 +975,30 @@ function summarizeTrackingInfo(fulfillments = []) {
   };
 }
 
+function summarizeSellerOrderTrackingInfo(sellerOrder) {
+  const metadata =
+    sellerOrder?.metadataJson &&
+    typeof sellerOrder.metadataJson === "object" &&
+    !Array.isArray(sellerOrder.metadataJson)
+      ? sellerOrder.metadataJson
+      : {};
+  const shipment = metadata.lastShipment;
+
+  if (!shipment || typeof shipment !== "object") {
+    return null;
+  }
+
+  const number = String(shipment.trackingNumber || "").trim();
+  if (!number) return null;
+
+  const company = String(shipment.trackingCompany || "").trim();
+
+  return {
+    trackingLabel: company ? `${company}: ${number}` : number,
+    trackingUrl: String(shipment.trackingUrl || "").trim() || null,
+  };
+}
+
 function getLedgerMetadata(entry) {
   const metadata = entry?.metadataJson;
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
@@ -1049,6 +1087,21 @@ function createSellerOrderSettlementSummary(sellerOrder) {
       normalizedRefundAmount > 0 &&
       normalizedRefundAmount < normalizedPaidAmount,
   };
+}
+
+function mapSellerOrderFulfillmentStatusToDisplay(value) {
+  switch (normalizeLowercase(value)) {
+    case "fulfilled":
+      return "FULFILLED";
+    case "partially_fulfilled":
+    case "partial":
+      return "PARTIALLY_FULFILLED";
+    case "unfulfilled":
+    case "open":
+      return "UNFULFILLED";
+    default:
+      return "";
+  }
 }
 
 async function listVendorOrderRefundLedgerReferences(
@@ -1176,13 +1229,18 @@ function serializeVendorOrderRow(orderRecord) {
     : ledgerSummary.partiallyRefunded
       ? "PARTIALLY_REFUNDED"
       : financialStatus;
-  const fulfillmentStatus = String(order?.displayFulfillmentStatus || "").trim();
+  const fulfillmentStatus =
+    mapSellerOrderFulfillmentStatusToDisplay(sellerOrder?.fulfillmentStatus) ||
+    String(order?.displayFulfillmentStatus || "").trim();
   const currencyCode = shopMoney?.currencyCode || "JPY";
-  const tracking = summarizeTrackingInfo(order?.fulfillments);
+  const tracking =
+    summarizeSellerOrderTrackingInfo(sellerOrder) ||
+    summarizeTrackingInfo(order?.fulfillments);
 
   return {
     id: order.id,
     orderId: order.id,
+    sellerOrderId: sellerOrder?.id || null,
     publicOrderIdLabel: formatPublicResourceId(order.id),
     orderName: order.name,
     shopifyOrderNumber: order.name,
@@ -1240,6 +1298,7 @@ export function parseShipmentRegistrationInput(formLike) {
       : (key) => formLike?.[key];
 
   const orderId = String(getValue("orderId") || "").trim();
+  const sellerOrderId = String(getValue("sellerOrderId") || "").trim();
   const trackingNumber = String(getValue("trackingNumber") || "").trim();
   const trackingCarrierId = String(getValue("trackingCarrierId") || "").trim();
   const carrier = getShippingCarrierById(trackingCarrierId);
@@ -1292,6 +1351,7 @@ export function parseShipmentRegistrationInput(formLike) {
   return {
     ok: true,
     orderId,
+    sellerOrderId: sellerOrderId || null,
     trackingNumber,
     trackingCarrierId: carrier.id,
     trackingCompany: carrier.shopifyCompany,
@@ -1348,7 +1408,99 @@ function getFulfillableFulfillmentOrders(order) {
   });
 }
 
-function buildFulfillmentInput({ fulfillmentOrders, shipment }) {
+function toFulfillmentQuantity(value) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 0;
+  return Math.max(0, Math.floor(numberValue));
+}
+
+function getFulfillmentOrderLineItemNodes(fulfillmentOrder) {
+  const nodes = fulfillmentOrder?.lineItems?.nodes;
+  return Array.isArray(nodes) ? nodes : [];
+}
+
+function buildSellerOrderFulfillmentGroups({ fulfillmentOrders, sellerOrder }) {
+  const sellerLines = Array.isArray(sellerOrder?.lines) ? sellerOrder.lines : [];
+  const remainingByShopifyLineItemId = new Map();
+
+  for (const line of sellerLines) {
+    const shopifyLineItemId = String(line?.shopifyLineItemId || "").trim();
+    if (!shopifyLineItemId) continue;
+
+    const quantity = toFulfillmentQuantity(line?.quantity);
+    const fulfilledQuantity = toFulfillmentQuantity(line?.fulfilledQuantity);
+    const refundedQuantity = toFulfillmentQuantity(line?.refundedQuantity);
+    const remainingQuantity = Math.max(
+      0,
+      quantity - fulfilledQuantity - refundedQuantity,
+    );
+
+    if (remainingQuantity > 0) {
+      remainingByShopifyLineItemId.set(shopifyLineItemId, remainingQuantity);
+    }
+  }
+
+  const groups = [];
+
+  for (const fulfillmentOrder of fulfillmentOrders) {
+    const fulfillmentOrderLineItems = [];
+
+    for (const fulfillmentOrderLineItem of getFulfillmentOrderLineItemNodes(
+      fulfillmentOrder,
+    )) {
+      const shopifyLineItemId = String(
+        fulfillmentOrderLineItem?.lineItem?.id || "",
+      ).trim();
+      const sellerRemainingQuantity =
+        remainingByShopifyLineItemId.get(shopifyLineItemId) || 0;
+
+      if (sellerRemainingQuantity <= 0) continue;
+
+      const fulfillmentRemainingQuantity = toFulfillmentQuantity(
+        fulfillmentOrderLineItem?.remainingQuantity,
+      );
+      const fallbackTotalQuantity = toFulfillmentQuantity(
+        fulfillmentOrderLineItem?.totalQuantity,
+      );
+      const maxFulfillableQuantity =
+        fulfillmentRemainingQuantity > 0
+          ? fulfillmentRemainingQuantity
+          : fallbackTotalQuantity;
+      const quantity = Math.min(
+        sellerRemainingQuantity,
+        maxFulfillableQuantity,
+      );
+
+      if (quantity <= 0) continue;
+
+      fulfillmentOrderLineItems.push({
+        id: fulfillmentOrderLineItem.id,
+        quantity,
+        shopifyLineItemId,
+      });
+      remainingByShopifyLineItemId.set(
+        shopifyLineItemId,
+        sellerRemainingQuantity - quantity,
+      );
+    }
+
+    if (fulfillmentOrderLineItems.length > 0) {
+      groups.push({
+        fulfillmentOrder,
+        fulfillmentOrderId: fulfillmentOrder.id,
+        fulfillmentOrderLineItems,
+      });
+    }
+  }
+
+  return groups;
+}
+
+function buildFulfillmentInput({
+  fulfillmentOrders,
+  shipment,
+  sellerFulfillmentGroups = null,
+}) {
   const trackingInfo = {
     number: shipment.trackingNumber,
   };
@@ -1361,13 +1513,139 @@ function buildFulfillmentInput({ fulfillmentOrders, shipment }) {
     trackingInfo.url = shipment.trackingUrl;
   }
 
+  const lineItemsByFulfillmentOrder = Array.isArray(sellerFulfillmentGroups)
+    ? sellerFulfillmentGroups.map((group) => ({
+        fulfillmentOrderId: group.fulfillmentOrderId,
+        fulfillmentOrderLineItems: group.fulfillmentOrderLineItems.map((line) => ({
+          id: line.id,
+          quantity: line.quantity,
+        })),
+      }))
+    : fulfillmentOrders.map((fulfillmentOrder) => ({
+        fulfillmentOrderId: fulfillmentOrder.id,
+      }));
+
   return {
-    lineItemsByFulfillmentOrder: fulfillmentOrders.map((fulfillmentOrder) => ({
-      fulfillmentOrderId: fulfillmentOrder.id,
-    })),
+    lineItemsByFulfillmentOrder,
     notifyCustomer: shipment.notifyCustomer,
     trackingInfo,
   };
+}
+
+async function findVendorSellerOrderForShipment({
+  prismaClient,
+  storeId,
+  shipment,
+}) {
+  const sellerOrderId = String(shipment?.sellerOrderId || "").trim();
+  if (!sellerOrderId || !prismaClient?.sellerOrder?.findFirst) {
+    return null;
+  }
+
+  return prismaClient.sellerOrder.findFirst({
+    where: {
+      id: sellerOrderId,
+      vendorStoreId: storeId,
+      shopifyOrderId: shipment.orderId,
+    },
+    select: {
+      id: true,
+      shopifyOrderId: true,
+      sellerRefundAmount: true,
+      sellerNetAmount: true,
+      sellerPayableAmount: true,
+      currencyCode: true,
+      paymentStatus: true,
+      fulfillmentStatus: true,
+      metadataJson: true,
+      lines: {
+        select: {
+          id: true,
+          shopifyLineItemId: true,
+          quantity: true,
+          fulfilledQuantity: true,
+          refundedQuantity: true,
+        },
+      },
+    },
+  });
+}
+
+async function markSellerOrderShipmentRegistered({
+  prismaClient,
+  sellerOrder,
+  sellerFulfillmentGroups,
+  fulfillmentId,
+  shipment,
+}) {
+  if (
+    !sellerOrder?.id ||
+    !prismaClient?.sellerOrder?.update ||
+    !prismaClient?.sellerOrderLine?.update
+  ) {
+    return;
+  }
+
+  const fulfilledByShopifyLineItemId = new Map();
+  for (const group of Array.isArray(sellerFulfillmentGroups)
+    ? sellerFulfillmentGroups
+    : []) {
+    for (const line of group.fulfillmentOrderLineItems || []) {
+      fulfilledByShopifyLineItemId.set(
+        line.shopifyLineItemId,
+        (fulfilledByShopifyLineItemId.get(line.shopifyLineItemId) || 0) +
+          line.quantity,
+      );
+    }
+  }
+
+  let fulfilledLineCount = 0;
+  for (const line of Array.isArray(sellerOrder.lines) ? sellerOrder.lines : []) {
+    const fulfilledQuantity =
+      fulfilledByShopifyLineItemId.get(line.shopifyLineItemId) || 0;
+    if (fulfilledQuantity <= 0) continue;
+
+    fulfilledLineCount += 1;
+    await prismaClient.sellerOrderLine.update({
+      where: {
+        id: line.id,
+      },
+      data: {
+        fulfilledQuantity: Math.min(
+          toFulfillmentQuantity(line.quantity),
+          toFulfillmentQuantity(line.fulfilledQuantity) + fulfilledQuantity,
+        ),
+      },
+    });
+  }
+
+  if (fulfilledLineCount === 0) return;
+
+  const existingMetadata =
+    sellerOrder.metadataJson &&
+    typeof sellerOrder.metadataJson === "object" &&
+    !Array.isArray(sellerOrder.metadataJson)
+      ? sellerOrder.metadataJson
+      : {};
+
+  await prismaClient.sellerOrder.update({
+    where: {
+      id: sellerOrder.id,
+    },
+    data: {
+      fulfillmentStatus: "fulfilled",
+      metadataJson: {
+        ...existingMetadata,
+        lastShipment: {
+          fulfillmentId: fulfillmentId || null,
+          trackingNumber: shipment.trackingNumber,
+          trackingCompany: shipment.trackingCompany || null,
+          trackingUrl: shipment.trackingUrl || null,
+          shippedAt: new Date().toISOString(),
+        },
+      },
+    },
+  });
 }
 
 export async function createVendorOrderFulfillment({
@@ -1424,19 +1702,34 @@ export async function createVendorOrderFulfillment({
       };
     }
 
-    const settlementEntries = await listVendorOrderSettlementLedgerEntries(
-      {
-        storeId,
-        orderId: shipment.orderId,
-      },
-      { prismaClient },
-    );
-    const settlementSummary = createOrderSettlementSummary(
-      shipment.orderId,
-      settlementEntries,
-    );
+    const sellerOrder = await findVendorSellerOrderForShipment({
+      prismaClient,
+      storeId,
+      shipment,
+    });
 
-    if (!hasVendorStorefrontTag) {
+    if (shipment.sellerOrderId && !sellerOrder) {
+      return {
+        ok: false,
+        status: 404,
+        error: "この注文は現在の店舗では発送登録できません。",
+      };
+    }
+
+    const settlementSummary = sellerOrder
+      ? createSellerOrderSettlementSummary(sellerOrder)
+      : createOrderSettlementSummary(
+          shipment.orderId,
+          await listVendorOrderSettlementLedgerEntries(
+            {
+              storeId,
+              orderId: shipment.orderId,
+            },
+            { prismaClient },
+          ),
+        );
+
+    if (!sellerOrder && !hasVendorStorefrontTag) {
       if (!settlementSummary.hasPaidLedger) {
         return {
           ok: false,
@@ -1480,9 +1773,27 @@ export async function createVendorOrderFulfillment({
       };
     }
 
+    const sellerFulfillmentGroups = sellerOrder
+      ? buildSellerOrderFulfillmentGroups({
+          fulfillmentOrders,
+          sellerOrder,
+        })
+      : null;
+    const fulfillmentOrdersForShipment = sellerFulfillmentGroups
+      ? sellerFulfillmentGroups.map((group) => group.fulfillmentOrder)
+      : fulfillmentOrders;
+
+    if (sellerOrder && sellerFulfillmentGroups.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: "この店舗で発送できる未発送の商品がありません。",
+      };
+    }
+
     const locationKeys = Array.from(
       new Set(
-        fulfillmentOrders.map(
+        fulfillmentOrdersForShipment.map(
           (fulfillmentOrder) =>
             fulfillmentOrder?.assignedLocation?.location?.id ||
             fulfillmentOrder?.assignedLocation?.name ||
@@ -1504,7 +1815,11 @@ export async function createVendorOrderFulfillment({
       apiVersion: SHOPIFY_API_VERSION,
       query: VENDOR_ORDER_FULFILLMENT_CREATE_MUTATION,
       variables: {
-        fulfillment: buildFulfillmentInput({ fulfillmentOrders, shipment }),
+        fulfillment: buildFulfillmentInput({
+          fulfillmentOrders,
+          shipment,
+          sellerFulfillmentGroups,
+        }),
         message: "Shipment registered from vendor portal.",
       },
     });
@@ -1519,6 +1834,14 @@ export async function createVendorOrderFulfillment({
         error: userError || "発送登録に失敗しました。",
       };
     }
+
+    await markSellerOrderShipmentRegistered({
+      prismaClient,
+      sellerOrder,
+      sellerFulfillmentGroups,
+      fulfillmentId: payload.fulfillment?.id || null,
+      shipment,
+    });
 
     return {
       ok: true,
@@ -1654,6 +1977,7 @@ export async function listVendorShopifyOrderSellerOrderReferences(
       currencyCode: true,
       paymentStatus: true,
       fulfillmentStatus: true,
+      metadataJson: true,
       createdAt: true,
       updatedAt: true,
     },

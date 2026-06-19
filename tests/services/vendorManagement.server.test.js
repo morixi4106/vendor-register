@@ -844,6 +844,7 @@ test("parseShipmentRegistrationInput validates tracking fields", () => {
   assert.deepEqual(valid, {
     ok: true,
     orderId: "gid://shopify/Order/1001",
+    sellerOrderId: null,
     trackingNumber: "JP123456789",
     trackingCarrierId: "japan_post",
     trackingCompany: "Japan Post",
@@ -971,6 +972,169 @@ test("createVendorOrderFulfillment creates a Shopify fulfillment for a vendor or
         "https://trackings.post.japanpost.jp/services/srv/search/direct?locale=ja&reqCodeNo1=JP123456789",
     },
   });
+});
+
+test("createVendorOrderFulfillment limits SellerOrder shipments to matching line items", async () => {
+  const calls = [];
+  const lineUpdates = [];
+  let sellerOrderUpdate = null;
+
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      sellerOrderId: "seller_order_1",
+      trackingNumber: "JP123456789",
+      trackingCompany: "Japan Post",
+      trackingUrl: null,
+      notifyCustomer: false,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    prismaClient: {
+      sellerOrder: {
+        findFirst: async (query) => {
+          assert.deepEqual(query.where, {
+            id: "seller_order_1",
+            vendorStoreId: "store_1",
+            shopifyOrderId: "gid://shopify/Order/1001",
+          });
+
+          return {
+            id: "seller_order_1",
+            shopifyOrderId: "gid://shopify/Order/1001",
+            sellerRefundAmount: 0,
+            sellerNetAmount: 2000,
+            sellerPayableAmount: 2000,
+            currencyCode: "jpy",
+            paymentStatus: "paid",
+            fulfillmentStatus: "unfulfilled",
+            metadataJson: {},
+            lines: [
+              {
+                id: "seller_order_line_1",
+                shopifyLineItemId: "gid://shopify/LineItem/line-1",
+                quantity: 2,
+                fulfilledQuantity: 0,
+                refundedQuantity: 0,
+              },
+            ],
+          };
+        },
+        update: async (query) => {
+          sellerOrderUpdate = query;
+          return query.data;
+        },
+      },
+      sellerOrderLine: {
+        update: async (query) => {
+          lineUpdates.push(query);
+          return query.data;
+        },
+      },
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async (call) => {
+      calls.push(call);
+
+      if (call.query.includes("VendorOrderFulfillmentTarget")) {
+        return {
+          data: {
+            order: {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              tags: [],
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              fulfillmentOrders: {
+                nodes: [
+                  {
+                    id: "gid://shopify/FulfillmentOrder/9001",
+                    status: "OPEN",
+                    requestStatus: "UNSUBMITTED",
+                    lineItems: {
+                      nodes: [
+                        {
+                          id: "gid://shopify/FulfillmentOrderLineItem/fo-line-1",
+                          remainingQuantity: 2,
+                          totalQuantity: 2,
+                          lineItem: {
+                            id: "gid://shopify/LineItem/line-1",
+                          },
+                        },
+                        {
+                          id: "gid://shopify/FulfillmentOrderLineItem/fo-line-2",
+                          remainingQuantity: 1,
+                          totalQuantity: 1,
+                          lineItem: {
+                            id: "gid://shopify/LineItem/line-2",
+                          },
+                        },
+                      ],
+                    },
+                    assignedLocation: {
+                      name: "Main",
+                      location: {
+                        id: "gid://shopify/Location/4001",
+                        name: "Main",
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }
+
+      if (call.query.includes("VendorOrderFulfillmentCreate")) {
+        return {
+          data: {
+            fulfillmentCreate: {
+              fulfillment: {
+                id: "gid://shopify/Fulfillment/7001",
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+
+      throw new Error("Unexpected GraphQL query");
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls[1].variables.fulfillment.lineItemsByFulfillmentOrder, [
+    {
+      fulfillmentOrderId: "gid://shopify/FulfillmentOrder/9001",
+      fulfillmentOrderLineItems: [
+        {
+          id: "gid://shopify/FulfillmentOrderLineItem/fo-line-1",
+          quantity: 2,
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(lineUpdates, [
+    {
+      where: {
+        id: "seller_order_line_1",
+      },
+      data: {
+        fulfilledQuantity: 2,
+      },
+    },
+  ]);
+  assert.equal(sellerOrderUpdate.where.id, "seller_order_1");
+  assert.equal(sellerOrderUpdate.data.fulfillmentStatus, "fulfilled");
+  assert.equal(
+    sellerOrderUpdate.data.metadataJson.lastShipment.fulfillmentId,
+    "gid://shopify/Fulfillment/7001",
+  );
+  assert.equal(
+    sellerOrderUpdate.data.metadataJson.lastShipment.trackingNumber,
+    "JP123456789",
+  );
 });
 
 test("createVendorOrderFulfillment allows ledger-owned Shopify checkout orders without vendor tags", async () => {
