@@ -149,6 +149,24 @@ export function isConfiguredAdminEmail(email, env = process.env) {
   return getConfiguredAdminEmails(env).includes(normalizedEmail);
 }
 
+function normalizeBooleanInput(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (value == null) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(
+    String(value).trim().toLowerCase(),
+  );
+}
+
+function shouldUseSellerOrderVendorOrdersRead(env = process.env) {
+  return normalizeBooleanInput(env.VENDOR_ORDERS_USE_SELLER_ORDERS);
+}
+
 export function formatMoney(amount, currencyCode = "JPY") {
   return formatCurrencyMoney(amount, currencyCode);
 }
@@ -1005,6 +1023,34 @@ function createOrderSettlementSummaryMap(entries = [], orderIds = []) {
   );
 }
 
+function createSellerOrderSettlementSummary(sellerOrder) {
+  const paidAmount = Number(
+    sellerOrder?.sellerPayableAmount ?? sellerOrder?.sellerNetAmount ?? 0,
+  );
+  const refundAmount = Number(sellerOrder?.sellerRefundAmount ?? 0);
+  const normalizedPaidAmount = Number.isFinite(paidAmount)
+    ? Math.max(0, paidAmount)
+    : 0;
+  const normalizedRefundAmount = Number.isFinite(refundAmount)
+    ? Math.max(0, refundAmount)
+    : 0;
+
+  return {
+    paidAmount: normalizedPaidAmount,
+    refundAmount: normalizedRefundAmount,
+    netAmount: Math.max(0, normalizedPaidAmount - normalizedRefundAmount),
+    hasPaidLedger: normalizedPaidAmount > 0,
+    hasRefundLedger: normalizedRefundAmount > 0,
+    fullyRefunded:
+      normalizedPaidAmount > 0 &&
+      normalizedRefundAmount >= normalizedPaidAmount,
+    partiallyRefunded:
+      normalizedPaidAmount > 0 &&
+      normalizedRefundAmount > 0 &&
+      normalizedRefundAmount < normalizedPaidAmount,
+  };
+}
+
 async function listVendorOrderRefundLedgerReferences(
   { storeId, orderIds },
   { prismaClient = prisma } = {},
@@ -1107,6 +1153,7 @@ async function listVendorOrderSettlementLedgerEntries(
 function serializeVendorOrderRow(orderRecord) {
   const order = orderRecord?.order || orderRecord;
   const ledgerEntry = orderRecord?.ledgerEntry || null;
+  const sellerOrder = orderRecord?.sellerOrder || null;
   const ledgerSummary =
     orderRecord?.ledgerSummary ||
     createOrderSettlementSummary(order?.id, ledgerEntry ? [ledgerEntry] : []);
@@ -1120,6 +1167,7 @@ function serializeVendorOrderRow(orderRecord) {
     order?.createdAt ||
     orderRecord?.completedAt ||
       orderRecord?.createdAt ||
+      sellerOrder?.createdAt ||
       ledgerEntry?.occurredAt ||
       ledgerEntry?.createdAt;
   const financialStatus = String(order?.displayFinancialStatus || "").trim();
@@ -1582,6 +1630,55 @@ export async function listVendorShopifyOrderLedgerReferences(
     });
 }
 
+export async function listVendorShopifyOrderSellerOrderReferences(
+  { storeId, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.sellerOrder?.findMany) {
+    return [];
+  }
+
+  const sellerOrders = await prismaClient.sellerOrder.findMany({
+    where: {
+      vendorStoreId: storeId,
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: first,
+    select: {
+      id: true,
+      shopifyOrderId: true,
+      shopifyOrderName: true,
+      sellerRefundAmount: true,
+      sellerNetAmount: true,
+      sellerPayableAmount: true,
+      currencyCode: true,
+      paymentStatus: true,
+      fulfillmentStatus: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  const seenOrderIds = new Set();
+  return sellerOrders
+    .map((sellerOrder) => ({
+      ...sellerOrder,
+      shopifyOrderId: String(sellerOrder?.shopifyOrderId || "").trim(),
+    }))
+    .filter((sellerOrder) => {
+      if (!sellerOrder.shopifyOrderId.startsWith("gid://shopify/Order/")) {
+        return false;
+      }
+
+      if (seenOrderIds.has(sellerOrder.shopifyOrderId)) {
+        return false;
+      }
+
+      seenOrderIds.add(sellerOrder.shopifyOrderId);
+      return true;
+    });
+}
+
 export async function listVendorShopifyOrdersFromLedger(
   { storeId, shopDomain, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
   {
@@ -1652,6 +1749,68 @@ export async function listVendorShopifyOrdersFromLedger(
   };
 }
 
+export async function listVendorShopifyOrdersFromSellerOrders(
+  { storeId, shopDomain, first = VENDOR_DRAFT_ORDERS_PAGE_SIZE },
+  {
+    prismaClient = prisma,
+    shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  } = {},
+) {
+  const queryString = "seller_order:shadow";
+  const sellerOrders = await listVendorShopifyOrderSellerOrderReferences(
+    { storeId, first },
+    { prismaClient },
+  );
+  const orderIds = sellerOrders.map((sellerOrder) => sellerOrder.shopifyOrderId);
+
+  if (orderIds.length === 0) {
+    return {
+      queryString,
+      orders: [],
+    };
+  }
+
+  const response = await shopifyGraphQLWithOfflineSessionImpl({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: VENDOR_LEDGER_ORDERS_QUERY,
+    variables: {
+      ids: orderIds,
+    },
+  });
+  const data = response?.data;
+
+  if (Array.isArray(response?.errors) && response.errors.length > 0) {
+    throw new Error("VENDOR_SELLER_ORDERS_QUERY_FAILED");
+  }
+
+  const nodes = data?.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error("VENDOR_SELLER_ORDERS_QUERY_UNAVAILABLE");
+  }
+
+  const orderById = new Map(
+    nodes
+      .filter((node) => node?.id)
+      .map((node) => [String(node.id), node]),
+  );
+
+  const orders = sellerOrders
+    .map((sellerOrder) =>
+      serializeVendorOrderRow({
+        order: orderById.get(sellerOrder.shopifyOrderId),
+        sellerOrder,
+        ledgerSummary: createSellerOrderSettlementSummary(sellerOrder),
+      }),
+    )
+    .filter(Boolean);
+
+  return {
+    queryString,
+    orders,
+  };
+}
+
 export async function getVendorOrdersPageData(
   { storeId },
   {
@@ -1659,6 +1818,7 @@ export async function getVendorOrdersPageData(
     listGrantedAppAccessScopesImpl = listGrantedAppAccessScopes,
     shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
     prismaClient = prisma,
+    useSellerOrderRead = shouldUseSellerOrderVendorOrdersRead(),
   } = {},
 ) {
   const accessState = await getVendorOrdersAccessState(
@@ -1679,7 +1839,11 @@ export async function getVendorOrdersPageData(
   }
 
   try {
-    const result = await listVendorShopifyOrdersFromLedger(
+    const listVendorOrdersImpl =
+      useSellerOrderRead && prismaClient?.sellerOrder?.findMany
+        ? listVendorShopifyOrdersFromSellerOrders
+        : listVendorShopifyOrdersFromLedger;
+    const result = await listVendorOrdersImpl(
       {
         storeId,
         shopDomain: accessState.shopDomain,

@@ -656,6 +656,105 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 
+test("getVendorOrdersPageData can read mapped orders from seller orders behind flag", async () => {
+  let receivedGraphQLCall = null;
+  let receivedSellerOrderQuery = null;
+  let ledgerQueryCount = 0;
+  const result = await getVendorOrdersPageData(
+    {
+      storeId: "store_1",
+    },
+    {
+      listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      useSellerOrderRead: true,
+      prismaClient: {
+        sellerOrder: {
+          findMany: async (query) => {
+            receivedSellerOrderQuery = query;
+            return [
+              {
+                id: "seller_order_1",
+                shopifyOrderId: "gid://shopify/Order/1001",
+                shopifyOrderName: "#1001",
+                sellerRefundAmount: 0,
+                sellerNetAmount: 8400,
+                sellerPayableAmount: 8400,
+                currencyCode: "jpy",
+                paymentStatus: "paid",
+                fulfillmentStatus: "unfulfilled",
+                createdAt: new Date("2026-04-29T08:35:00Z"),
+                updatedAt: new Date("2026-04-29T08:36:00Z"),
+              },
+            ];
+          },
+        },
+        ledgerEntry: {
+          findMany: async () => {
+            ledgerQueryCount += 1;
+            return [];
+          },
+        },
+      },
+      shopifyGraphQLWithOfflineSessionImpl: async (input) => {
+        receivedGraphQLCall = input;
+
+        return {
+          data: {
+            nodes: [
+              {
+                id: "gid://shopify/Order/1001",
+                name: "#1001",
+                createdAt: "2026-04-29T08:35:00Z",
+                email: "taro@example.com",
+                displayFinancialStatus: "PAID",
+                displayFulfillmentStatus: "UNFULFILLED",
+                customer: {
+                  displayName: "Taro Yamada",
+                },
+                shippingAddress: {
+                  name: "Taro Yamada",
+                  zip: "100-0001",
+                  country: "Japan",
+                  province: "Tokyo",
+                  city: "Chiyoda",
+                  address1: "1-1-1",
+                  address2: "1-1-1",
+                  countryCodeV2: "JP",
+                },
+                currentTotalPriceSet: {
+                  shopMoney: {
+                    amount: "8400",
+                    currencyCode: "JPY",
+                  },
+                },
+                fulfillments: [],
+              },
+            ],
+          },
+        };
+      },
+    },
+  );
+
+  assert.deepEqual(receivedSellerOrderQuery.where, {
+    vendorStoreId: "store_1",
+  });
+  assert.equal(ledgerQueryCount, 0);
+  assert.equal(receivedGraphQLCall.shopDomain, "shop-a.myshopify.com");
+  assert.deepEqual(receivedGraphQLCall.variables, {
+    ids: ["gid://shopify/Order/1001"],
+  });
+  assert.equal(result.accessState.status, "ready");
+  assert.equal(result.queryString, "seller_order:shadow");
+  assert.equal(result.orders.length, 1);
+  assert.equal(result.orders[0].id, "gid://shopify/Order/1001");
+  assert.equal(result.orders[0].ledgerPaidAmount, 8400);
+  assert.equal(result.orders[0].ledgerRefundAmount, 0);
+  assert.equal(result.orders[0].ledgerNetAmount, 8400);
+  assert.equal(result.orders[0].canRegisterShipment, true);
+});
+
 test("getVendorOrdersPageData marks fully refunded ledger orders as not shippable", async () => {
   const result = await getVendorOrdersPageData(
     {
