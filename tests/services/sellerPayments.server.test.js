@@ -3058,6 +3058,10 @@ test("processShopifyDisputeSettlement holds seller payout balance and marks sell
     },
     statusHistory: [],
     ledgerEntries: [],
+    sellerOrder: {
+      id: "seller_order_1",
+      riskStatus: "normal",
+    },
   };
   const fakePrisma = {
     ledgerEntry: {
@@ -3126,6 +3130,28 @@ test("processShopifyDisputeSettlement holds seller payout balance and marks sell
         return data;
       },
     },
+    sellerOrder: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          shopifyOrderId: "gid://shopify/Order/1001",
+          sellerId: "seller_1",
+          marketplaceOrder: {
+            shopDomain: "b30ize-1a.myshopify.com",
+          },
+        });
+        return state.sellerOrder;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, {
+          id: "seller_order_1",
+        });
+        state.sellerOrder = {
+          ...state.sellerOrder,
+          ...data,
+        };
+        return state.sellerOrder;
+      },
+    },
     async $transaction(callback) {
       return callback(fakePrisma);
     },
@@ -3174,11 +3200,17 @@ test("processShopifyDisputeSettlement holds seller payout balance and marks sell
     state.ledgerEntries[0].metadataJson.disputeStatus,
     "needs_response",
   );
+  assert.equal(state.sellerOrder.riskStatus, "disputed");
+  assert.equal(result.sellerOrderShadowRisk.ok, true);
 });
 
 test("processShopifyDisputeSettlement releases held funds when dispute is won", async () => {
   const state = {
     ledgerEntries: [],
+    sellerOrder: {
+      id: "seller_order_1",
+      riskStatus: "disputed",
+    },
   };
   const fakePrisma = {
     ledgerEntry: {
@@ -3224,6 +3256,28 @@ test("processShopifyDisputeSettlement releases held funds when dispute is won", 
         };
       },
     },
+    sellerOrder: {
+      async findFirst({ where }) {
+        assert.deepEqual(where, {
+          shopifyOrderId: "gid://shopify/Order/1001",
+          sellerId: "seller_1",
+          marketplaceOrder: {
+            shopDomain: "b30ize-1a.myshopify.com",
+          },
+        });
+        return state.sellerOrder;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, {
+          id: "seller_order_1",
+        });
+        state.sellerOrder = {
+          ...state.sellerOrder,
+          ...data,
+        };
+        return state.sellerOrder;
+      },
+    },
   };
 
   const result = await processShopifyDisputeSettlement(
@@ -3257,6 +3311,8 @@ test("processShopifyDisputeSettlement releases held funds when dispute is won", 
     "gid://shopify/Order/1001",
   );
   assert.equal(state.ledgerEntries[0].metadataJson.disputeStatus, "won");
+  assert.equal(state.sellerOrder.riskStatus, "normal");
+  assert.equal(result.sellerOrderShadowRisk.ok, true);
 });
 
 test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payouts as deductions", () => {

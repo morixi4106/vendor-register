@@ -3194,6 +3194,59 @@ async function updateSellerOrderShadowForCancellation(
   };
 }
 
+async function updateSellerOrderShadowRiskStatus(
+  {
+    shopDomain,
+    shopifyOrderId,
+    sellerId,
+    riskStatus,
+  },
+  { prismaClient = prisma } = {},
+) {
+  if (
+    !prismaClient?.sellerOrder?.findFirst ||
+    !prismaClient?.sellerOrder?.update
+  ) {
+    return { ok: true, skipped: true, reason: "shadow_models_unavailable" };
+  }
+
+  const sellerOrder = await prismaClient.sellerOrder.findFirst({
+    where: {
+      shopifyOrderId,
+      sellerId,
+      marketplaceOrder: {
+        shopDomain,
+      },
+    },
+    select: {
+      id: true,
+      riskStatus: true,
+    },
+  });
+
+  if (!sellerOrder?.id) {
+    return { ok: true, skipped: true, reason: "seller_order_not_found" };
+  }
+
+  if (sellerOrder.riskStatus === riskStatus) {
+    return { ok: true, sellerOrder, unchanged: true };
+  }
+
+  const updatedSellerOrder = await prismaClient.sellerOrder.update({
+    where: {
+      id: sellerOrder.id,
+    },
+    data: {
+      riskStatus,
+    },
+  });
+
+  return {
+    ok: true,
+    sellerOrder: updatedSellerOrder,
+  };
+}
+
 async function findShopifyOrderLedgerEntries(shopifyOrderId, prismaClient) {
   if (!shopifyOrderId) {
     return [];
@@ -5239,6 +5292,15 @@ export async function processShopifyDisputeSettlement(
       },
       { prismaClient },
     );
+    const sellerOrderShadowRisk = await updateSellerOrderShadowRiskStatus(
+      {
+        shopDomain,
+        shopifyOrderId,
+        sellerId,
+        riskStatus: "normal",
+      },
+      { prismaClient },
+    );
 
     return {
       ok: true,
@@ -5247,6 +5309,7 @@ export async function processShopifyDisputeSettlement(
       sellerId,
       amount: settlementAmount,
       currencyCode,
+      sellerOrderShadowRisk,
     };
   }
 
@@ -5309,6 +5372,15 @@ export async function processShopifyDisputeSettlement(
     },
     { prismaClient },
   );
+  const sellerOrderShadowRisk = await updateSellerOrderShadowRiskStatus(
+    {
+      shopDomain,
+      shopifyOrderId,
+      sellerId,
+      riskStatus: "disputed",
+    },
+    { prismaClient },
+  );
 
   return {
     ok: true,
@@ -5317,6 +5389,7 @@ export async function processShopifyDisputeSettlement(
     sellerId,
     amount: settlementAmount,
     currencyCode,
+    sellerOrderShadowRisk,
   };
 }
 
