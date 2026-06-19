@@ -2298,6 +2298,112 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
   );
 });
 
+test("processShopifyOrderPaidSettlement can process multi-seller orders behind a flag", async () => {
+  const state = {
+    ledgerEntries: [],
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `ledger_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor-1",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+          {
+            id: "product_2",
+            name: "Product 2",
+            shopifyProductId: "gid://shopify/Product/2",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_2",
+            vendorStore: {
+              id: "store_2",
+              vendorAuth: {
+                id: "vendor_2",
+                handle: "vendor-2",
+                seller: {
+                  id: "seller_2",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1202,
+        admin_graphql_api_id: "gid://shopify/Order/1202",
+        name: "#1202",
+        currency: "JPY",
+        line_items: [
+          { id: 21, product_id: 1, price: "1000", quantity: 1 },
+          { id: 22, product_id: 2, price: "2000", quantity: 1 },
+        ],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        SELLER_ORDER_SHADOW_WRITE_ENABLED: "true",
+        MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.multiSeller, true);
+  assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
+  assert.equal(result.amount, 3000);
+  assert.equal(state.ledgerEntries.length, 2);
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].amount, 1000);
+  assert.equal(state.ledgerEntries[1].sellerId, "seller_2");
+  assert.equal(state.ledgerEntries[1].amount, 2000);
+  assert.equal(state.sellerOrders.size, 2);
+  assert.equal(state.sellerOrderLines.size, 2);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+  assert.equal(state.sellerOrderShadowChecks[0].status, "shadow_written");
+});
+
 test("processShopifyRefundSettlement records a seller refund debit ledger entry", async () => {
   const state = {
     ledgerEntries: [],

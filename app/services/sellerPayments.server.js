@@ -520,6 +520,13 @@ function isSellerOrderShadowWriteEnabled(env = process.env) {
   return normalizeLowercase(env.SELLER_ORDER_SHADOW_WRITE_ENABLED) === "true";
 }
 
+function isMultiSellerShopifyOrderSettlementEnabled(env = process.env) {
+  return (
+    normalizeLowercase(env.MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED) ===
+    "true"
+  );
+}
+
 function hasSellerOrderShadowModels(prismaClient) {
   return Boolean(
     prismaClient?.marketplaceOrder?.upsert &&
@@ -3663,6 +3670,36 @@ function buildSellerOrderShadowStatus({
   return SELLER_ORDER_SHADOW_CHECK_STATUSES.MATCHED;
 }
 
+function buildShopifyOrderPaidSettlementBuckets(matchedLines) {
+  const bucketsBySellerId = new Map();
+
+  for (const matchedLine of Array.isArray(matchedLines) ? matchedLines : []) {
+    const seller = getProductSeller(matchedLine?.product);
+    const sellerId = normalizeText(seller?.id);
+
+    if (!sellerId) {
+      continue;
+    }
+
+    const vendor = getProductVendor(matchedLine?.product);
+    const bucket =
+      bucketsBySellerId.get(sellerId) ||
+      {
+        seller,
+        sellerId,
+        vendor,
+        amount: 0,
+        matchedLines: [],
+      };
+
+    bucket.amount += clampInteger(matchedLine?.amount);
+    bucket.matchedLines.push(matchedLine);
+    bucketsBySellerId.set(sellerId, bucket);
+  }
+
+  return Array.from(bucketsBySellerId.values());
+}
+
 async function createSellerOrderShadowFailureCheck(
   {
     prismaClient,
@@ -4540,26 +4577,173 @@ export async function processShopifyOrderPaidSettlement(
   }
 
   if (sellerIds.length > 1) {
-    await recordShopifyOrderSellerOrderShadow(
-      {
-        payload,
-        shopDomain,
-        shopifyOrderId,
-        shopifyOrderName,
+    if (!isMultiSellerShopifyOrderSettlementEnabled(env)) {
+      const sellerOrderShadow = await recordShopifyOrderSellerOrderShadow(
+        {
+          payload,
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          currencyCode,
+          matchedLines,
+          salesCreditOffset,
+          multiSellerDetected: true,
+          writeSellerOrders: false,
+        },
+        { prismaClient, env },
+      );
+
+      return {
+        ok: false,
+        reason: "multi_seller_shopify_order_unsupported",
+        sellerIds,
+        sellerOrderShadow,
+      };
+    }
+
+    if (salesCreditOffset?.offsetId) {
+      const sellerOrderShadow = await recordShopifyOrderSellerOrderShadow(
+        {
+          payload,
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          currencyCode,
+          matchedLines,
+          salesCreditOffset,
+          multiSellerDetected: true,
+          writeSellerOrders: false,
+        },
+        { prismaClient, env },
+      );
+
+      return {
+        ok: false,
+        reason: "multi_seller_sales_credit_unsupported",
+        sellerIds,
+        amount: 0,
         currencyCode,
-        matchedLines,
-        salesCreditOffset,
-        multiSellerDetected: true,
-        writeSellerOrders: false,
-      },
-      { prismaClient, env },
+        sellerOrderShadow,
+      };
+    }
+
+    const sellerBuckets = buildShopifyOrderPaidSettlementBuckets(matchedLines);
+    const inactiveSeller = sellerBuckets.find(
+      (bucket) => bucket?.seller?.status !== "active",
     );
 
-    return {
-      ok: false,
-      reason: "multi_seller_shopify_order_unsupported",
-      sellerIds,
-    };
+    if (inactiveSeller) {
+      return {
+        ok: false,
+        reason: "seller_not_active",
+        sellerId: inactiveSeller.sellerId,
+        sellerIds,
+      };
+    }
+
+    const settlementAmount = sellerBuckets.reduce(
+      (total, bucket) => total + clampInteger(bucket.amount),
+      0,
+    );
+
+    if (settlementAmount <= 0) {
+      return {
+        ok: false,
+        reason: "shopify_order_settlement_amount_empty",
+        sellerIds,
+      };
+    }
+
+    const occurredAt = payload?.processed_at
+      ? new Date(payload.processed_at)
+      : payload?.created_at
+        ? new Date(payload.created_at)
+        : new Date();
+
+    return runInTransaction(prismaClient, async (tx) => {
+      const ledgerEntries = [];
+
+      for (const bucket of sellerBuckets) {
+        if (bucket.amount <= 0) {
+          continue;
+        }
+
+        const ledgerEntry = await createLedgerEntry(
+          {
+            sellerId: bucket.sellerId,
+            sellerStripeAccountId: bucket.seller?.stripeAccount?.id || null,
+            stripeAccountId:
+              bucket.seller?.stripeAccount?.stripeAccountId || null,
+            entryType: "shopify_order_paid",
+            stripeObjectId: shopifyOrderId,
+            amount: bucket.amount,
+            currencyCode,
+            direction: "credit",
+            description: "Shopify order paid",
+            metadataJson: {
+              shopDomain,
+              shopifyOrderId,
+              shopifyOrderName,
+              shopifyOrderNumericId: normalizeText(payload?.id),
+              vendorId: normalizeText(bucket.vendor?.id),
+              vendorHandle: normalizeText(bucket.vendor?.handle),
+              settlementMode: "shopify_order_to_monthly_settlement",
+              multiSellerSettlement: true,
+              cashSettlementAmount: bucket.amount,
+              salesCreditOffsetId: null,
+              salesCreditOffsetAmount: 0,
+              salesCreditBuyerSellerId: null,
+              matchedLineCount: bucket.matchedLines.length,
+              unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+              lineItems: bucket.matchedLines.map(
+                ({ lineItem, product, amount }) => ({
+                  shopifyLineItemId: normalizeText(lineItem?.id),
+                  shopifyProductId: normalizeText(product.shopifyProductId),
+                  localProductId: product.id,
+                  localProductName: product.name,
+                  quantity: toPositiveInteger(lineItem?.quantity) || 0,
+                  amount,
+                }),
+              ),
+            },
+            occurredAt,
+          },
+          { prismaClient: tx },
+        );
+
+        ledgerEntries.push(ledgerEntry);
+      }
+
+      const writtenSellerOrderShadow =
+        await recordShopifyOrderSellerOrderShadow(
+          {
+            payload,
+            shopDomain,
+            shopifyOrderId,
+            shopifyOrderName,
+            currencyCode,
+            matchedLines,
+            salesCreditOffset: null,
+            multiSellerDetected: false,
+            writeSellerOrders: true,
+          },
+          { prismaClient: tx, env },
+        );
+
+      return {
+        ok: true,
+        duplicate: false,
+        multiSeller: true,
+        ledgerEntries,
+        sellerIds,
+        amount: settlementAmount,
+        currencyCode,
+        paymentRisk,
+        matchedLineCount: matchedLines.length,
+        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+        sellerOrderShadow: writtenSellerOrderShadow,
+      };
+    });
   }
 
   const seller = getProductSeller(matchedLines[0].product);
