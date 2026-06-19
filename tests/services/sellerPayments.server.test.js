@@ -2877,6 +2877,13 @@ test("processShopifyRefundSettlement does not double debit after order cancellat
 test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout balance", async () => {
   const state = {
     ledgerEntries: [],
+    sellerOrder: {
+      id: "seller_order_1",
+      sellerRefundAmount: 0,
+      sellerPayableAmount: 99,
+      sellerNetAmount: 99,
+      paymentStatus: "paid",
+    },
   };
   const fakePrisma = {
     ledgerEntry: {
@@ -2922,6 +2929,30 @@ test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout b
         };
       },
     },
+    sellerOrder: {
+      async findFirst({ where, select }) {
+        assert.deepEqual(where, {
+          shopifyOrderId: "gid://shopify/Order/1001",
+          sellerId: "seller_1",
+          marketplaceOrder: {
+            shopDomain: "b30ize-1a.myshopify.com",
+          },
+        });
+        assert.equal(select.sellerRefundAmount, true);
+        assert.equal(select.sellerPayableAmount, true);
+        return state.sellerOrder;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, {
+          id: "seller_order_1",
+        });
+        state.sellerOrder = {
+          ...state.sellerOrder,
+          ...data,
+        };
+        return state.sellerOrder;
+      },
+    },
   };
 
   const result = await processShopifyOrderCancelledSettlement(
@@ -2955,6 +2986,10 @@ test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout b
     "gid://shopify/Order/1001",
   );
   assert.equal(state.ledgerEntries[0].metadataJson.cancelReason, "customer");
+  assert.equal(state.sellerOrder.sellerRefundAmount, 99);
+  assert.equal(state.sellerOrder.paymentStatus, "cancelled");
+  assert.equal(result.sellerOrderShadowCancellation.ok, true);
+  assert.equal(result.sellerOrderShadowCancellation.refundAmount, 99);
 });
 
 test("processShopifyOrderCancelledSettlement only reverses the remaining unpaid balance", async () => {

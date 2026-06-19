@@ -3126,6 +3126,74 @@ async function updateSellerOrderShadowForRefund(
   };
 }
 
+async function updateSellerOrderShadowForCancellation(
+  {
+    shopDomain,
+    shopifyOrderId,
+    sellerId,
+    settlementAmount,
+  },
+  { prismaClient = prisma } = {},
+) {
+  if (
+    !prismaClient?.sellerOrder?.findFirst ||
+    !prismaClient?.sellerOrder?.update
+  ) {
+    return { ok: true, skipped: true, reason: "shadow_models_unavailable" };
+  }
+
+  const sellerOrder = await prismaClient.sellerOrder.findFirst({
+    where: {
+      shopifyOrderId,
+      sellerId,
+      marketplaceOrder: {
+        shopDomain,
+      },
+    },
+    select: {
+      id: true,
+      sellerRefundAmount: true,
+      sellerPayableAmount: true,
+      sellerNetAmount: true,
+      paymentStatus: true,
+    },
+  });
+
+  if (!sellerOrder?.id) {
+    return { ok: true, skipped: true, reason: "seller_order_not_found" };
+  }
+
+  const nextRefundAmount =
+    clampInteger(sellerOrder.sellerRefundAmount) + clampInteger(settlementAmount);
+  const paidAmount =
+    clampInteger(sellerOrder.sellerPayableAmount) ||
+    clampInteger(sellerOrder.sellerNetAmount);
+  const nextPaymentStatus =
+    paidAmount > 0 && nextRefundAmount >= paidAmount
+      ? "cancelled"
+      : getSellerOrderPaymentStatusAfterRefund({
+          paidAmount,
+          refundAmount: nextRefundAmount,
+          fallback: sellerOrder.paymentStatus,
+        });
+
+  const updatedSellerOrder = await prismaClient.sellerOrder.update({
+    where: {
+      id: sellerOrder.id,
+    },
+    data: {
+      sellerRefundAmount: nextRefundAmount,
+      paymentStatus: nextPaymentStatus,
+    },
+  });
+
+  return {
+    ok: true,
+    sellerOrder: updatedSellerOrder,
+    refundAmount: nextRefundAmount,
+  };
+}
+
 async function findShopifyOrderLedgerEntries(shopifyOrderId, prismaClient) {
   if (!shopifyOrderId) {
     return [];
@@ -5015,6 +5083,16 @@ export async function processShopifyOrderCancelledSettlement(
           { prismaClient: tx, now: occurredAt },
         )
       : null;
+    const sellerOrderShadowCancellation =
+      await updateSellerOrderShadowForCancellation(
+        {
+          shopDomain,
+          shopifyOrderId,
+          sellerId,
+          settlementAmount,
+        },
+        { prismaClient: tx },
+      );
 
     return {
       ok: true,
@@ -5024,6 +5102,7 @@ export async function processShopifyOrderCancelledSettlement(
       amount: settlementAmount,
       currencyCode,
       salesCreditReversal,
+      sellerOrderShadowCancellation,
     };
   });
 }
