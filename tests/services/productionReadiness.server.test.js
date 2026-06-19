@@ -386,3 +386,42 @@ test("getProductionReadiness warns when storefront multi-seller checkout is full
   assert.equal(check.status, "warning");
   assert.match(check.detail, /Storefront multi-seller checkout is enabled/);
 });
+
+test("getProductionReadiness warns when SellerOrder vendor reads are enabled without shadow write", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      VENDOR_ORDERS_USE_SELLER_ORDERS: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("seller_order_vendor_order_reads");
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(check.status, "warning");
+  assert.match(check.detail, /SELLER_ORDER_SHADOW_WRITE_ENABLED is disabled/);
+});
+
+test("getProductionReadiness shows SellerOrder vendor reads fallback when shadow write is enabled", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      VENDOR_ORDERS_USE_SELLER_ORDERS: "true",
+      SELLER_ORDER_SHADOW_WRITE_ENABLED: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("seller_order_vendor_order_reads");
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(check.status, "warning");
+  assert.match(check.detail, /fall back to the legacy ledger path/);
+});

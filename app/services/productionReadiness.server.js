@@ -50,10 +50,11 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG =
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED";
 const SELLER_ORDER_SHADOW_WRITE_FLAG = "SELLER_ORDER_SHADOW_WRITE_ENABLED";
+const VENDOR_ORDER_SELLER_ORDER_READ_FLAG = "VENDOR_ORDERS_USE_SELLER_ORDERS";
 const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
   ...MULTI_SELLER_SETTLEMENT_FLAGS,
   {
-    key: "VENDOR_ORDERS_USE_SELLER_ORDERS",
+    key: VENDOR_ORDER_SELLER_ORDER_READ_FLAG,
     label: "seller order reads",
   },
 ];
@@ -293,6 +294,10 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
     env,
     SELLER_ORDER_SHADOW_WRITE_FLAG,
   );
+  const sellerOrderVendorOrderReadsEnabled = isEnabledEnvFlag(
+    env,
+    VENDOR_ORDER_SELLER_ORDER_READ_FLAG,
+  );
   const {
     paymentProvider,
     sellerPayoutProvider,
@@ -425,6 +430,25 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
           : multiSellerSettlementFlags.anyEnabled
             ? "Set SELLER_ORDER_SHADOW_WRITE_ENABLED=true while running controlled multi-seller backend tests."
             : "Set SELLER_ORDER_SHADOW_WRITE_ENABLED=true when collecting SellerOrder validation data.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "seller_order_vendor_order_reads",
+      category: "app",
+      status: sellerOrderVendorOrderReadsEnabled ? "warning" : "pass",
+      title: "Vendor order SellerOrder reads",
+      detail: !sellerOrderVendorOrderReadsEnabled
+        ? "VENDOR_ORDERS_USE_SELLER_ORDERS is disabled. Vendor order pages use the legacy ledger path."
+        : sellerOrderShadowWriteEnabled
+          ? "VENDOR_ORDERS_USE_SELLER_ORDERS is enabled. Vendor order pages prefer SellerOrder reads and fall back to the legacy ledger path if SellerOrder reads fail."
+          : "VENDOR_ORDERS_USE_SELLER_ORDERS is enabled, but SELLER_ORDER_SHADOW_WRITE_ENABLED is disabled. Vendor order pages can fall back to the legacy ledger path, but new verification data will not accumulate.",
+      action: !sellerOrderVendorOrderReadsEnabled
+        ? "Enable this only after SellerOrder shadow checks are matched enough for controlled testing."
+        : sellerOrderShadowWriteEnabled
+          ? "Review /app/seller-order-shadow and keep the legacy fallback in place during the read switch."
+          : "Set SELLER_ORDER_SHADOW_WRITE_ENABLED=true before relying on SellerOrder reads for ongoing validation.",
     }),
   );
 
