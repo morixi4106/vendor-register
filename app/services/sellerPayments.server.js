@@ -527,6 +527,13 @@ function isMultiSellerShopifyOrderSettlementEnabled(env = process.env) {
   );
 }
 
+function isMultiSellerShopifyRefundSettlementEnabled(env = process.env) {
+  return (
+    normalizeLowercase(env.MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED) ===
+    "true"
+  );
+}
+
 function hasSellerOrderShadowModels(prismaClient) {
   return Boolean(
     prismaClient?.marketplaceOrder?.upsert &&
@@ -4912,7 +4919,7 @@ export async function processShopifyOrderPaidSettlement(
 
 export async function processShopifyRefundSettlement(
   { payload, shop },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   const shopDomain = normalizeLowercase(
     shop || payload?.shop_domain || payload?.shop,
@@ -4923,6 +4930,8 @@ export async function processShopifyRefundSettlement(
     ? payload.refund_line_items
     : [];
   const currencyCode = getShopifyRefundCurrencyCode(payload, refundLineItems);
+  const multiSellerRefundSettlementEnabled =
+    isMultiSellerShopifyRefundSettlementEnabled(env);
 
   if (!shopDomain || !shopifyRefundId || refundLineItems.length === 0) {
     return {
@@ -4938,7 +4947,7 @@ export async function processShopifyRefundSettlement(
     },
   });
 
-  if (existingLedgerEntry) {
+  if (existingLedgerEntry && !multiSellerRefundSettlementEnabled) {
     return {
       ok: true,
       duplicate: true,
@@ -5054,11 +5063,182 @@ export async function processShopifyRefundSettlement(
     };
   }
 
-  if (sellerIds.length > 1) {
+  if (sellerIds.length > 1 && !multiSellerRefundSettlementEnabled) {
     return {
       ok: false,
       reason: "multi_seller_shopify_refund_unsupported",
       sellerIds,
+    };
+  }
+
+  const orderLedgerEntries = await findShopifyOrderLedgerEntries(
+    shopifyOrderId,
+    prismaClient,
+  );
+
+  if (sellerIds.length > 1) {
+    const existingRefundEntries = orderLedgerEntries.filter(
+      (entry) =>
+        entry?.entryType === "refund" &&
+        entry?.stripeObjectId === shopifyRefundId,
+    );
+
+    if (
+      existingRefundEntries.length > 0 ||
+      existingLedgerEntry?.stripeObjectId === shopifyRefundId
+    ) {
+      return {
+        ok: true,
+        duplicate: true,
+        multiSeller: true,
+        ledgerEntries:
+          existingRefundEntries.length > 0
+            ? existingRefundEntries
+            : [existingLedgerEntry],
+      };
+    }
+
+    const salesCreditOffset = getSalesCreditOffsetFromPaidEntries(
+      orderLedgerEntries.filter(
+        (entry) => entry?.entryType === "shopify_order_paid",
+      ),
+    );
+
+    if (salesCreditOffset?.offsetId) {
+      return {
+        ok: false,
+        reason: "multi_seller_sales_credit_refund_unsupported",
+        sellerIds,
+      };
+    }
+
+    const sellerBuckets = buildShopifyOrderPaidSettlementBuckets(matchedLines);
+    const occurredAt = payload?.processed_at
+      ? new Date(payload.processed_at)
+      : payload?.created_at
+        ? new Date(payload.created_at)
+        : new Date();
+
+    return runInTransaction(prismaClient, async (tx) => {
+      const ledgerEntries = [];
+      const sellerOrderShadowRefunds = [];
+      let settlementAmount = 0;
+
+      for (const bucket of sellerBuckets) {
+        const seller = bucket.seller;
+
+        if (!seller?.id) {
+          continue;
+        }
+
+        const requestedSellerRefundAmount = bucket.matchedLines.reduce(
+          (total, matchedLine) => total + clampInteger(matchedLine?.amount),
+          0,
+        );
+        const orderLedgerSummary = summarizeShopifyOrderLedgerEntries(
+          orderLedgerEntries,
+          seller.id,
+        );
+        const sellerSettlementAmount = capShopifyOrderReversalAmount(
+          requestedSellerRefundAmount,
+          orderLedgerSummary,
+        );
+
+        if (sellerSettlementAmount <= 0) {
+          continue;
+        }
+
+        const vendor =
+          bucket.vendor || getProductVendor(bucket.matchedLines[0]?.product);
+        const ledgerEntry = await createLedgerEntry(
+          {
+            sellerId: seller.id,
+            sellerStripeAccountId: seller.stripeAccount?.id || null,
+            stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
+            entryType: "refund",
+            stripeObjectId: shopifyRefundId,
+            amount: sellerSettlementAmount,
+            currencyCode,
+            direction: "debit",
+            description: "Shopify refund",
+            metadataJson: {
+              shopDomain,
+              shopifyRefundId,
+              shopifyRefundNumericId: normalizeText(payload?.id),
+              shopifyOrderId,
+              shopifyOrderNumericId: normalizeText(payload?.order_id),
+              vendorId: normalizeText(vendor?.id),
+              vendorHandle: normalizeText(vendor?.handle),
+              settlementMode: "shopify_refund_to_monthly_settlement",
+              multiSellerRefundSettlement: true,
+              matchedLineCount: bucket.matchedLines.length,
+              unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+              lineItems: bucket.matchedLines.map(
+                ({ refundLineItem, product, amount }) => ({
+                  shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
+                  shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
+                  shopifyProductId: normalizeText(product.shopifyProductId),
+                  localProductId: product.id,
+                  localProductName: product.name,
+                  quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
+                  amount,
+                }),
+              ),
+            },
+            occurredAt,
+          },
+          { prismaClient: tx },
+        );
+        const sellerOrderShadowRefund = await updateSellerOrderShadowForRefund(
+          {
+            shopDomain,
+            shopifyOrderId,
+            sellerId: seller.id,
+            matchedLines: bucket.matchedLines,
+            settlementAmount: sellerSettlementAmount,
+          },
+          { prismaClient: tx },
+        );
+
+        ledgerEntries.push(ledgerEntry);
+        sellerOrderShadowRefunds.push({
+          sellerId: seller.id,
+          ...sellerOrderShadowRefund,
+        });
+        settlementAmount += sellerSettlementAmount;
+      }
+
+      if (ledgerEntries.length === 0) {
+        return {
+          ok: true,
+          reason: "shopify_refund_order_already_reversed",
+          multiSeller: true,
+          sellerIds,
+          amount: 0,
+          currencyCode,
+        };
+      }
+
+      return {
+        ok: true,
+        duplicate: false,
+        multiSeller: true,
+        ledgerEntries,
+        sellerIds,
+        amount: settlementAmount,
+        currencyCode,
+        matchedLineCount: matchedLines.length,
+        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+        sellerOrderShadowRefunds,
+      };
+    });
+  }
+
+  if (existingLedgerEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingLedgerEntry,
     };
   }
 
@@ -5067,10 +5247,6 @@ export async function processShopifyRefundSettlement(
   const requestedSettlementAmount = matchedLines.reduce(
     (total, matchedLine) => total + matchedLine.amount,
     0,
-  );
-  const orderLedgerEntries = await findShopifyOrderLedgerEntries(
-    shopifyOrderId,
-    prismaClient,
   );
   const orderLedgerSummary = summarizeShopifyOrderLedgerEntries(
     orderLedgerEntries,

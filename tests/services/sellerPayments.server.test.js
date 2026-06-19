@@ -2893,6 +2893,145 @@ test("processShopifyRefundSettlement refuses multi-seller Shopify refunds", asyn
   assert.equal(state.ledgerEntries.length, 0);
 });
 
+test("processShopifyRefundSettlement can process multi-seller refunds behind a flag", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid_1",
+            sellerId: "seller_1",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1003",
+            amount: 1000,
+          },
+          {
+            id: "ledger_paid_2",
+            sellerId: "seller_2",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1003",
+            amount: 2000,
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `ledger_refund_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Product 1",
+            shopifyProductId: "gid://shopify/Product/1",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "vendor-1",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_1",
+                    stripeAccountId: "acct_1",
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "product_2",
+            name: "Product 2",
+            shopifyProductId: "gid://shopify/Product/2",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStore: {
+              vendorAuth: {
+                id: "vendor_2",
+                handle: "vendor-2",
+                seller: {
+                  id: "seller_2",
+                  status: "active",
+                  stripeAccount: {
+                    id: "ssa_2",
+                    stripeAccountId: "acct_2",
+                  },
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyRefundSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 2003,
+        admin_graphql_api_id: "gid://shopify/Refund/2003",
+        order_id: 1003,
+        refund_line_items: [
+          {
+            id: 701,
+            line_item_id: 1,
+            quantity: 1,
+            subtotal: 1000,
+            line_item: {
+              product_id: 1,
+            },
+          },
+          {
+            id: 702,
+            line_item_id: 2,
+            quantity: 1,
+            subtotal: 2000,
+            line_item: {
+              product_id: 2,
+            },
+          },
+        ],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: "true",
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.multiSeller, true);
+  assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
+  assert.equal(result.amount, 3000);
+  assert.equal(state.ledgerEntries.length, 2);
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].amount, 1000);
+  assert.equal(state.ledgerEntries[1].sellerId, "seller_2");
+  assert.equal(state.ledgerEntries[1].amount, 2000);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.multiSellerRefundSettlement,
+    true,
+  );
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.multiSellerRefundSettlement,
+    true,
+  );
+});
+
 test("processShopifyRefundSettlement does not double debit after order cancellation reversal", async () => {
   const state = {
     ledgerEntries: [],
