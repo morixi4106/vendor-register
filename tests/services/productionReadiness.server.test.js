@@ -299,3 +299,43 @@ test("getProductionReadiness blocks Wise mode when Wise env is incomplete", asyn
   assert.equal(result.canGoLive, false);
   assert.equal(checksById.get("wise_api_environment").status, "fail");
 });
+
+test("getProductionReadiness blocks partially enabled multi-seller settlement flags", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("multi_seller_backend_settlement_flags");
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /Missing: refund, cancelled/);
+});
+
+test("getProductionReadiness warns when all multi-seller settlement flags are enabled", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+  const check = checksById.get("multi_seller_backend_settlement_flags");
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(check.status, "warning");
+  assert.match(check.action, /storefront multi-seller checkout disabled/);
+});

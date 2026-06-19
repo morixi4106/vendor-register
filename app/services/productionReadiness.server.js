@@ -29,6 +29,20 @@ const SELLER_PAYOUT_PROVIDER_LABELS = {
   [SELLER_PAYOUT_PROVIDER_MANUAL]: "Manual bank/Wise transfer",
   [SELLER_PAYOUT_PROVIDER_WISE]: "Wise API payout",
 };
+const MULTI_SELLER_SETTLEMENT_FLAGS = [
+  {
+    key: "MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED",
+    label: "paid",
+  },
+  {
+    key: "MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED",
+    label: "refund",
+  },
+  {
+    key: "MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED",
+    label: "cancelled",
+  },
+];
 
 const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_products",
@@ -125,6 +139,31 @@ function isStripeConnectProductionEnabled(env) {
   );
 }
 
+function isEnabledEnvFlag(env, key) {
+  return STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES.has(
+    String(env[key] || "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function inspectMultiSellerSettlementFlags(env) {
+  const flags = MULTI_SELLER_SETTLEMENT_FLAGS.map((flag) => ({
+    ...flag,
+    enabled: isEnabledEnvFlag(env, flag.key),
+  }));
+  const enabled = flags.filter((flag) => flag.enabled);
+  const disabled = flags.filter((flag) => !flag.enabled);
+
+  return {
+    flags,
+    enabled,
+    disabled,
+    anyEnabled: enabled.length > 0,
+    allEnabled: enabled.length === flags.length,
+  };
+}
+
 function normalizeProvider(value, fallback) {
   return String(value || fallback)
     .trim()
@@ -217,6 +256,7 @@ export function inspectStripeEnvironment(env = process.env) {
 function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const checks = [];
   const isProductionRuntime = env.NODE_ENV === "production";
+  const multiSellerSettlementFlags = inspectMultiSellerSettlementFlags(env);
   const {
     paymentProvider,
     sellerPayoutProvider,
@@ -295,6 +335,35 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: stripeConnectProductionEnabled
         ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode."
         : "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "multi_seller_backend_settlement_flags",
+      category: "app",
+      status: !multiSellerSettlementFlags.anyEnabled
+        ? "pass"
+        : multiSellerSettlementFlags.allEnabled
+          ? "warning"
+          : "fail",
+      title: "Multi-seller backend settlement flags",
+      detail: !multiSellerSettlementFlags.anyEnabled
+        ? "Multi-seller settlement flags are disabled. Current live checkout should remain single-seller."
+        : multiSellerSettlementFlags.allEnabled
+          ? `Backend settlement flags are enabled for ${multiSellerSettlementFlags.enabled
+              .map((flag) => flag.label)
+              .join(", ")}. This is for controlled backend testing only.`
+          : `Only some backend settlement flags are enabled: ${multiSellerSettlementFlags.enabled
+              .map((flag) => flag.label)
+              .join(", ") || "none"}. Missing: ${multiSellerSettlementFlags.disabled
+              .map((flag) => flag.label)
+              .join(", ")}.`,
+      action: !multiSellerSettlementFlags.anyEnabled
+        ? "No action is needed unless running controlled multi-seller backend tests."
+        : multiSellerSettlementFlags.allEnabled
+          ? "Keep storefront multi-seller checkout disabled until dispute allocation, SellerOrder reads, and seller-specific fulfillment are complete."
+          : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled together only for controlled backend tests.",
     }),
   );
 
