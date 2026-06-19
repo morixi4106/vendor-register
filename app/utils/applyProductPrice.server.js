@@ -419,6 +419,7 @@ export function createApplyProductPrice({
         data: {
           shopDomain,
           shopifyProductId: product.id,
+          shopifyVariantId: variant.id,
           priceSyncStatus: PRICE_SYNC_STATUS.APPLIED,
           priceSyncError: null,
           priceAppliedAt: attemptedAt,

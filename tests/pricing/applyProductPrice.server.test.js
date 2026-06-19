@@ -133,6 +133,7 @@ test('applyProductPrice success saves snapshot, clears priceSyncError, and appen
   assert.equal(successUpdate.priceSyncError, null);
   assert.ok(successUpdate.priceAppliedAt instanceof Date);
   assert.ok(successUpdate.lastPriceApplyAttemptAt instanceof Date);
+  assert.equal(successUpdate.shopifyVariantId, 'gid://shopify/ProductVariant/1');
   assert.equal(successUpdate.calculatedPrice, 2435);
   assert.equal(successUpdate.priceSnapshotJson.calculatedPrice, 2435);
 
