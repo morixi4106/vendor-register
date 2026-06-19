@@ -750,21 +750,40 @@ function mapDisplayFulfillmentStatusTone(value) {
 }
 
 function formatShippingAddress(address) {
-  if (!address) return "未設定";
+  const parts = formatShippingAddressLines(address);
+  return parts.length > 0 ? parts.join(" ") : "未設定";
+}
 
-  const parts = [
+function formatShippingAddressLines(address) {
+  if (!address) return [];
+
+  return [
     address.name,
     address.zip,
-    address.country,
-    address.province,
-    address.city,
+    [address.country, address.province, address.city]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" "),
     address.address1,
     address.address2,
   ]
     .map((part) => String(part || "").trim())
     .filter(Boolean);
+}
 
-  return parts.length > 0 ? parts.join(" ") : "未設定";
+function formatShippingAddressSummary(address) {
+  if (!address) return "未設定";
+
+  const cityParts = [address.province, address.city]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+
+  if (cityParts.length > 0) {
+    return cityParts.join(" ");
+  }
+
+  const fallback = String(address.country || "").trim();
+  return fallback || "未設定";
 }
 
 function summarizeTrackingInfo(fulfillments = []) {
@@ -1000,6 +1019,8 @@ function serializeVendorOrderRow(orderRecord) {
     customerName: order?.customer?.displayName || "未設定",
     email: order?.email || "未設定",
     shippingAddressLabel: formatShippingAddress(order?.shippingAddress),
+    shippingAddressLines: formatShippingAddressLines(order?.shippingAddress),
+    shippingAddressSummary: formatShippingAddressSummary(order?.shippingAddress),
     shippingCountryCode: order?.shippingAddress?.countryCodeV2 || null,
     totalAmount: Number(shopMoney?.amount || 0),
     totalCurrencyCode: currencyCode,

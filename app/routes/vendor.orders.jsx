@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import { listShippingCarriersForCountry } from "../utils/shippingCarriers";
 
@@ -152,6 +153,7 @@ export default function VendorOrdersPage() {
   const { store, ordersAccess, orders } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
+  const [selectedAddressOrder, setSelectedAddressOrder] = useState(null);
   const pageContent = createOrdersPageContent(ordersAccess, orders.length);
   const isReady = ordersAccess.status === "ready";
   const isSubmitting = navigation.state !== "idle";
@@ -232,6 +234,85 @@ export default function VendorOrdersPage() {
           color:#6b7280;
           font-size:12px;
           line-height:1.5;
+        }
+        .vendor-orders__address-cell{
+          min-width:128px;
+        }
+        .vendor-orders__address-button{
+          border:1px solid #d1d5db;
+          border-radius:999px;
+          background:#fff;
+          color:#111827;
+          font-weight:700;
+          padding:7px 12px;
+          cursor:pointer;
+          white-space:nowrap;
+        }
+        .vendor-orders__address-button:hover{
+          border-color:#9ca3af;
+          background:#f9fafb;
+        }
+        .vendor-orders__address-summary{
+          margin-top:6px;
+          color:#6b7280;
+          font-size:12px;
+          white-space:nowrap;
+        }
+        .vendor-orders__modal-backdrop{
+          position:fixed;
+          inset:0;
+          z-index:50;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:24px;
+          background:rgba(17, 24, 39, .42);
+        }
+        .vendor-orders__modal{
+          width:min(520px, 100%);
+          border-radius:18px;
+          background:#fff;
+          box-shadow:0 24px 60px rgba(15, 23, 42, .24);
+          padding:24px;
+        }
+        .vendor-orders__modal-header{
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:16px;
+          margin-bottom:18px;
+        }
+        .vendor-orders__modal-eyebrow{
+          color:#6b7280;
+          font-size:13px;
+          font-weight:700;
+        }
+        .vendor-orders__modal h3{
+          margin:4px 0 0;
+          font-size:24px;
+          line-height:1.25;
+        }
+        .vendor-orders__modal-close{
+          width:40px;
+          height:40px;
+          border:1px solid #d1d5db;
+          border-radius:12px;
+          background:#fff;
+          color:#111827;
+          font-size:24px;
+          font-weight:700;
+          line-height:1;
+          cursor:pointer;
+        }
+        .vendor-orders__modal-lines{
+          display:grid;
+          gap:8px;
+          border:1px solid #e5e7eb;
+          border-radius:14px;
+          padding:16px;
+          color:#111827;
+          font-size:16px;
+          line-height:1.6;
         }
         @media (max-width: 900px){
           .vendor-orders__action-form{
@@ -321,7 +402,18 @@ export default function VendorOrdersPage() {
                       <td>{order.createdAtLabel}</td>
                       <td className="vendor-table__name">{order.shopifyOrderNumber}</td>
                       <td>{order.customerName}</td>
-                      <td>{order.shippingAddressLabel}</td>
+                      <td className="vendor-orders__address-cell">
+                        <button
+                          type="button"
+                          className="vendor-orders__address-button"
+                          onClick={() => setSelectedAddressOrder(order)}
+                        >
+                          配送先を見る
+                        </button>
+                        <div className="vendor-orders__address-summary">
+                          {order.shippingAddressSummary}
+                        </div>
+                      </td>
                       <td>{order.totalLabel}</td>
                       <td>
                         <span className={badgeClassName(order.financialStatusTone)}>
@@ -403,6 +495,46 @@ export default function VendorOrdersPage() {
           </div>
         )}
       </section>
+      {selectedAddressOrder ? (
+        <div
+          className="vendor-orders__modal-backdrop"
+          role="presentation"
+          onClick={() => setSelectedAddressOrder(null)}
+        >
+          <div
+            className="vendor-orders__modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vendor-orders-address-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="vendor-orders__modal-header">
+              <div>
+                <div className="vendor-orders__modal-eyebrow">
+                  {selectedAddressOrder.shopifyOrderNumber}
+                </div>
+                <h3 id="vendor-orders-address-title">配送先</h3>
+              </div>
+              <button
+                type="button"
+                className="vendor-orders__modal-close"
+                aria-label="閉じる"
+                onClick={() => setSelectedAddressOrder(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="vendor-orders__modal-lines">
+              {(selectedAddressOrder.shippingAddressLines?.length
+                ? selectedAddressOrder.shippingAddressLines
+                : ["未設定"]
+              ).map((line, index) => (
+                <div key={`${line}-${index}`}>{line}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </VendorManagementShell>
   );
 }

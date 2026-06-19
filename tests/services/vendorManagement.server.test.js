@@ -519,6 +519,8 @@ test.skip("getVendorOrdersPageData returns mapped orders when read_draft_orders 
       customerName: "Taro Yamada",
       email: "taro@example.com",
       shippingAddressLabel: "未設定",
+      shippingAddressLines: [],
+      shippingAddressSummary: "未設定",
       totalAmount: 8400,
       totalCurrencyCode: "JPY",
       totalLabel: "￥8,400",
@@ -627,6 +629,7 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
   assert.equal(result.orders[0].financialStatus, "PAID");
   assert.equal(result.orders[0].fulfillmentStatus, "UNFULFILLED");
   assert.equal(result.orders[0].shippingCountryCode, "JP");
+  assert.equal(result.orders[0].shippingAddressSummary, "未設定");
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 
