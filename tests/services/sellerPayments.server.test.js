@@ -1405,6 +1405,132 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   );
 });
 
+test("processShopifyOrderPaidSettlement prefers Shopify variant mapping over product mapping", async () => {
+  const state = {
+    ledgerEntries: [],
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const makeVendorStore = ({ storeId, sellerId, handle }) => ({
+    id: storeId,
+    storeName: handle,
+    seller: null,
+    vendorAuth: {
+      id: `vendor_${sellerId}`,
+      handle,
+      storeName: handle,
+      seller: {
+        id: sellerId,
+        status: "active",
+        stripeAccount: null,
+      },
+    },
+  });
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `le_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+    product: {
+      async findMany({ where }) {
+        assertShopifyProductLookupWhere(where, {
+          shopDomain: "b30ize-1a.myshopify.com",
+          productIds: ["gid://shopify/Product/911", "911"],
+          variantIds: ["gid://shopify/ProductVariant/912", "912"],
+        });
+
+        return [
+          {
+            id: "product_from_product_id",
+            name: "Product ID Store Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopifyVariantId: null,
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_product",
+            vendorStore: makeVendorStore({
+              storeId: "store_product",
+              sellerId: "seller_product",
+              handle: "Product Store",
+            }),
+          },
+          {
+            id: "product_from_variant_id",
+            name: "Variant Store Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/999",
+            shopifyVariantId: "gid://shopify/ProductVariant/912",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_variant",
+            vendorStore: makeVendorStore({
+              storeId: "store_variant",
+              sellerId: "seller_variant",
+              handle: "Variant Store",
+            }),
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1102,
+        admin_graphql_api_id: "gid://shopify/Order/1102",
+        name: "#1102",
+        order_number: 1102,
+        currency: "JPY",
+        financial_status: "paid",
+        processed_at: "2026-06-19T09:30:00Z",
+        total_price: "1000",
+        subtotal_price: "1000",
+        total_discounts: "0",
+        total_tax: "0",
+        line_items: [
+          {
+            id: 502,
+            product_id: 911,
+            variant_id: 912,
+            title: "Variant Store Product",
+            sku: "VARIANT-1",
+            price: "1000",
+            quantity: 1,
+          },
+        ],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sellerId, "seller_variant");
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_variant");
+
+  const sellerOrder = Array.from(state.sellerOrders.values())[0];
+  assert.equal(sellerOrder.sellerId, "seller_variant");
+  assert.equal(sellerOrder.vendorStoreId, "store_variant");
+
+  const line = Array.from(state.sellerOrderLines.values())[0];
+  assert.equal(line.productId, "product_from_variant_id");
+  assert.equal(line.shopifyVariantId, "gid://shopify/ProductVariant/912");
+});
+
 test("backfillSellerOrderShadowChecks creates a shadow check from an existing ledger and skips the second run", async () => {
   const ledgerEntry = {
     id: "le_backfill_1",
