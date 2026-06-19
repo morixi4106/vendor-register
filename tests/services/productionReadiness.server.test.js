@@ -316,7 +316,7 @@ test("getProductionReadiness blocks partially enabled multi-seller settlement fl
 
   assert.equal(result.canGoLive, false);
   assert.equal(check.status, "fail");
-  assert.match(check.detail, /Missing: refund, cancelled/);
+  assert.match(check.detail, /Missing: refund, cancelled, dispute/);
 });
 
 test("getProductionReadiness warns when all multi-seller settlement flags are enabled", async () => {
@@ -330,6 +330,7 @@ test("getProductionReadiness warns when all multi-seller settlement flags are en
       MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
       MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: "true",
       MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED: "true",
     },
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));

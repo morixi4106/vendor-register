@@ -42,6 +42,10 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
     key: "MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED",
     label: "cancelled",
   },
+  {
+    key: "MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED",
+    label: "dispute",
+  },
 ];
 
 const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
@@ -362,8 +366,8 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: !multiSellerSettlementFlags.anyEnabled
         ? "No action is needed unless running controlled multi-seller backend tests."
         : multiSellerSettlementFlags.allEnabled
-          ? "Keep storefront multi-seller checkout disabled until dispute allocation, SellerOrder reads, and seller-specific fulfillment are complete."
-          : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled together only for controlled backend tests.",
+          ? "Keep storefront multi-seller checkout disabled until SellerOrder reads and seller-specific fulfillment are complete."
+          : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled/dispute together only for controlled backend tests.",
     }),
   );
 
