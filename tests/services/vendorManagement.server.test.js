@@ -772,6 +772,76 @@ test("getVendorOrdersPageData can read mapped orders from seller orders behind f
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 
+test("getVendorOrdersPageData falls back to ledger when SellerOrder read fails", async () => {
+  let ledgerQueryCount = 0;
+  const result = await getVendorOrdersPageData(
+    {
+      storeId: "store_1",
+    },
+    {
+      listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      useSellerOrderRead: true,
+      prismaClient: {
+        sellerOrder: {
+          findMany: async () => {
+            throw new Error("SELLER_ORDER_TABLE_UNAVAILABLE");
+          },
+        },
+        ledgerEntry: {
+          findMany: async (query) => {
+            ledgerQueryCount += 1;
+            if (query.where.entryType === "refund") {
+              return [];
+            }
+
+            return [
+              {
+                id: "ledger_1",
+                entryType: "shopify_order_paid",
+                stripeObjectId: "gid://shopify/Order/1001",
+                amount: 8400,
+                currencyCode: "jpy",
+                metadataJson: { shopifyOrderName: "#1001" },
+                occurredAt: new Date("2026-04-29T08:35:00Z"),
+                createdAt: new Date("2026-04-29T08:36:00Z"),
+              },
+            ];
+          },
+        },
+      },
+      shopifyGraphQLWithOfflineSessionImpl: async () => ({
+        data: {
+          nodes: [
+            {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              createdAt: "2026-04-29T08:35:00Z",
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              customer: { displayName: "Taro Yamada" },
+              shippingAddress: null,
+              currentTotalPriceSet: {
+                shopMoney: {
+                  amount: "8400",
+                  currencyCode: "JPY",
+                },
+              },
+              fulfillments: [],
+            },
+          ],
+        },
+      }),
+    },
+  );
+
+  assert.equal(result.accessState.status, "ready");
+  assert.equal(result.queryString, "ledger:shopify_order_paid");
+  assert.equal(result.orders.length, 1);
+  assert.equal(result.orders[0].shopifyOrderNumber, "#1001");
+  assert.equal(ledgerQueryCount, 2);
+});
+
 test("getVendorOrdersPageData marks fully refunded ledger orders as not shippable", async () => {
   const result = await getVendorOrdersPageData(
     {

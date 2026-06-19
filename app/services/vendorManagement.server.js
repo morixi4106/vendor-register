@@ -2257,12 +2257,32 @@ export async function getVendorOrdersPageData(
     };
   }
 
+  if (useSellerOrderRead && prismaClient?.sellerOrder?.findMany) {
+    try {
+      const result = await listVendorShopifyOrdersFromSellerOrders(
+        {
+          storeId,
+          shopDomain: accessState.shopDomain,
+        },
+        {
+          prismaClient,
+          shopifyGraphQLWithOfflineSessionImpl,
+        },
+      );
+
+      return {
+        accessState,
+        orders: result.orders,
+        queryString: result.queryString,
+        pageSize: VENDOR_DRAFT_ORDERS_PAGE_SIZE,
+      };
+    } catch (error) {
+      console.error("vendor seller orders list error:", error);
+    }
+  }
+
   try {
-    const listVendorOrdersImpl =
-      useSellerOrderRead && prismaClient?.sellerOrder?.findMany
-        ? listVendorShopifyOrdersFromSellerOrders
-        : listVendorShopifyOrdersFromLedger;
-    const result = await listVendorOrdersImpl(
+    const result = await listVendorShopifyOrdersFromLedger(
       {
         storeId,
         shopDomain: accessState.shopDomain,
