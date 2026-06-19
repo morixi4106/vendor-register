@@ -49,6 +49,7 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
 ];
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG =
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED";
+const SELLER_ORDER_SHADOW_WRITE_FLAG = "SELLER_ORDER_SHADOW_WRITE_ENABLED";
 const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
   ...MULTI_SELLER_SETTLEMENT_FLAGS,
   {
@@ -288,6 +289,10 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const multiSellerSettlementFlags = inspectMultiSellerSettlementFlags(env);
   const multiSellerStorefrontCheckout =
     inspectMultiSellerStorefrontCheckoutFlag(env);
+  const sellerOrderShadowWriteEnabled = isEnabledEnvFlag(
+    env,
+    SELLER_ORDER_SHADOW_WRITE_FLAG,
+  );
   const {
     paymentProvider,
     sellerPayoutProvider,
@@ -395,6 +400,31 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
         : multiSellerSettlementFlags.allEnabled
           ? "Keep storefront multi-seller checkout disabled until ready; enable MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED only with VENDOR_ORDERS_USE_SELLER_ORDERS and seller-specific fulfillment verified."
           : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled/dispute together only for controlled backend tests.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "seller_order_shadow_write",
+      category: "app",
+      status: sellerOrderShadowWriteEnabled
+        ? "pass"
+        : multiSellerStorefrontCheckout.enabled
+          ? "fail"
+          : multiSellerSettlementFlags.anyEnabled
+            ? "warning"
+            : "manual",
+      title: "SellerOrder shadow write",
+      detail: sellerOrderShadowWriteEnabled
+        ? "SELLER_ORDER_SHADOW_WRITE_ENABLED is enabled. New paid orders will create SellerOrder verification records."
+        : "SELLER_ORDER_SHADOW_WRITE_ENABLED is disabled. New paid orders will not accumulate SellerOrder verification records.",
+      action: sellerOrderShadowWriteEnabled
+        ? "Review /app/seller-order-shadow after test orders or backfill runs."
+        : multiSellerStorefrontCheckout.enabled
+          ? "Disable MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED, or set SELLER_ORDER_SHADOW_WRITE_ENABLED=true and verify SellerOrder checks before opening this path."
+          : multiSellerSettlementFlags.anyEnabled
+            ? "Set SELLER_ORDER_SHADOW_WRITE_ENABLED=true while running controlled multi-seller backend tests."
+            : "Set SELLER_ORDER_SHADOW_WRITE_ENABLED=true when collecting SellerOrder validation data.",
     }),
   );
 

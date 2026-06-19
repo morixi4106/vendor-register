@@ -376,6 +376,7 @@ test("getProductionReadiness warns when storefront multi-seller checkout is full
       MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
       MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED: "true",
       VENDOR_ORDERS_USE_SELLER_ORDERS: "true",
+      SELLER_ORDER_SHADOW_WRITE_ENABLED: "true",
     },
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
