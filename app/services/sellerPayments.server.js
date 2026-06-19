@@ -2978,6 +2978,154 @@ function getShopifyRefundLineAmount(refundLineItem, currencyCode) {
   return Math.max(0, unitAmount * quantity);
 }
 
+function getShopifyRefundLineItemIdCandidates(refundLineItem) {
+  const lineItem = refundLineItem?.line_item || refundLineItem;
+
+  return uniqueValues([
+    normalizeShopifyGid("LineItem", refundLineItem?.line_item_id),
+    normalizeShopifyGid("LineItem", refundLineItem?.admin_graphql_api_id),
+    normalizeShopifyGid("LineItem", lineItem?.id),
+    normalizeShopifyGid("LineItem", lineItem?.admin_graphql_api_id),
+    normalizeText(refundLineItem?.line_item_id),
+    normalizeText(refundLineItem?.id),
+    normalizeText(lineItem?.id),
+  ]);
+}
+
+function getSellerOrderPaymentStatusAfterRefund({
+  paidAmount,
+  refundAmount,
+  fallback = "paid",
+}) {
+  const normalizedPaidAmount = clampInteger(paidAmount);
+  const normalizedRefundAmount = clampInteger(refundAmount);
+
+  if (normalizedPaidAmount > 0 && normalizedRefundAmount >= normalizedPaidAmount) {
+    return "refunded";
+  }
+
+  if (normalizedRefundAmount > 0) {
+    return "partially_refunded";
+  }
+
+  return fallback || "paid";
+}
+
+async function updateSellerOrderShadowForRefund(
+  {
+    shopDomain,
+    shopifyOrderId,
+    sellerId,
+    matchedLines,
+    settlementAmount,
+  },
+  { prismaClient = prisma } = {},
+) {
+  if (
+    !prismaClient?.sellerOrder?.findFirst ||
+    !prismaClient?.sellerOrder?.update ||
+    !prismaClient?.sellerOrderLine?.findMany ||
+    !prismaClient?.sellerOrderLine?.update
+  ) {
+    return { ok: true, skipped: true, reason: "shadow_models_unavailable" };
+  }
+
+  const sellerOrder = await prismaClient.sellerOrder.findFirst({
+    where: {
+      shopifyOrderId,
+      sellerId,
+      marketplaceOrder: {
+        shopDomain,
+      },
+    },
+    select: {
+      id: true,
+      sellerRefundAmount: true,
+      sellerPayableAmount: true,
+      sellerNetAmount: true,
+      paymentStatus: true,
+    },
+  });
+
+  if (!sellerOrder?.id) {
+    return { ok: true, skipped: true, reason: "seller_order_not_found" };
+  }
+
+  const lineIdCandidates = uniqueValues(
+    (Array.isArray(matchedLines) ? matchedLines : []).flatMap(
+      ({ refundLineItem }) => getShopifyRefundLineItemIdCandidates(refundLineItem),
+    ),
+  );
+  const sellerOrderLines =
+    lineIdCandidates.length > 0
+      ? await prismaClient.sellerOrderLine.findMany({
+          where: {
+            sellerOrderId: sellerOrder.id,
+            shopifyLineItemId: {
+              in: lineIdCandidates,
+            },
+          },
+          select: {
+            id: true,
+            shopifyLineItemId: true,
+            refundedQuantity: true,
+          },
+        })
+      : [];
+  const sellerOrderLineByShopifyLineItemId = new Map(
+    sellerOrderLines.map((line) => [line.shopifyLineItemId, line]),
+  );
+  let updatedLineCount = 0;
+
+  for (const { refundLineItem } of Array.isArray(matchedLines) ? matchedLines : []) {
+    const matchedLine = getShopifyRefundLineItemIdCandidates(refundLineItem)
+      .map((candidate) => sellerOrderLineByShopifyLineItemId.get(candidate))
+      .find(Boolean);
+
+    if (!matchedLine?.id) {
+      continue;
+    }
+
+    const refundQuantity = toPositiveInteger(refundLineItem?.quantity) || 0;
+    await prismaClient.sellerOrderLine.update({
+      where: {
+        id: matchedLine.id,
+      },
+      data: {
+        refundedQuantity:
+          clampInteger(matchedLine.refundedQuantity) + refundQuantity,
+      },
+    });
+    updatedLineCount += 1;
+  }
+
+  const nextRefundAmount =
+    clampInteger(sellerOrder.sellerRefundAmount) + clampInteger(settlementAmount);
+  const paidAmount =
+    clampInteger(sellerOrder.sellerPayableAmount) ||
+    clampInteger(sellerOrder.sellerNetAmount);
+  const updatedSellerOrder = await prismaClient.sellerOrder.update({
+    where: {
+      id: sellerOrder.id,
+    },
+    data: {
+      sellerRefundAmount: nextRefundAmount,
+      paymentStatus: getSellerOrderPaymentStatusAfterRefund({
+        paidAmount,
+        refundAmount: nextRefundAmount,
+        fallback: sellerOrder.paymentStatus,
+      }),
+    },
+  });
+
+  return {
+    ok: true,
+    sellerOrder: updatedSellerOrder,
+    updatedLineCount,
+    refundAmount: nextRefundAmount,
+  };
+}
+
 async function findShopifyOrderLedgerEntries(shopifyOrderId, prismaClient) {
   if (!shopifyOrderId) {
     return [];
@@ -4711,6 +4859,16 @@ export async function processShopifyRefundSettlement(
           { prismaClient: tx, now: occurredAt },
         )
       : null;
+    const sellerOrderShadowRefund = await updateSellerOrderShadowForRefund(
+      {
+        shopDomain,
+        shopifyOrderId,
+        sellerId: seller.id,
+        matchedLines,
+        settlementAmount,
+      },
+      { prismaClient: tx },
+    );
 
     return {
       ok: true,
@@ -4722,6 +4880,7 @@ export async function processShopifyRefundSettlement(
       matchedLineCount: matchedLines.length,
       unmatchedProductIds: unmatchedProductIds.filter(Boolean),
       salesCreditReversal,
+      sellerOrderShadowRefund,
     };
   });
 }

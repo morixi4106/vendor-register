@@ -2301,6 +2301,18 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
 test("processShopifyRefundSettlement records a seller refund debit ledger entry", async () => {
   const state = {
     ledgerEntries: [],
+    sellerOrder: {
+      id: "seller_order_1",
+      sellerRefundAmount: 0,
+      sellerPayableAmount: 99,
+      sellerNetAmount: 99,
+      paymentStatus: "paid",
+    },
+    sellerOrderLine: {
+      id: "seller_order_line_1",
+      shopifyLineItemId: "gid://shopify/LineItem/501",
+      refundedQuantity: 0,
+    },
   };
   const fakePrisma = {
     ledgerEntry: {
@@ -2344,6 +2356,46 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
             amount: 99,
           },
         ];
+      },
+    },
+    sellerOrder: {
+      async findFirst({ where }) {
+        assert.equal(where.shopDomain, undefined);
+        assert.equal(where.shopifyOrderId, "gid://shopify/Order/1001");
+        assert.equal(where.sellerId, "seller_1");
+        assert.deepEqual(where.marketplaceOrder, {
+          shopDomain: "b30ize-1a.myshopify.com",
+        });
+        return state.sellerOrder;
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, {
+          id: "seller_order_1",
+        });
+        state.sellerOrder = {
+          ...state.sellerOrder,
+          ...data,
+        };
+        return state.sellerOrder;
+      },
+    },
+    sellerOrderLine: {
+      async findMany({ where }) {
+        assert.deepEqual(where.sellerOrderId, "seller_order_1");
+        assert.ok(
+          where.shopifyLineItemId.in.includes("gid://shopify/LineItem/501"),
+        );
+        return [state.sellerOrderLine];
+      },
+      async update({ where, data }) {
+        assert.deepEqual(where, {
+          id: "seller_order_line_1",
+        });
+        state.sellerOrderLine = {
+          ...state.sellerOrderLine,
+          ...data,
+        };
+        return state.sellerOrderLine;
       },
     },
     product: {
@@ -2439,6 +2491,10 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
   );
   assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 99);
+  assert.equal(state.sellerOrder.sellerRefundAmount, 99);
+  assert.equal(state.sellerOrder.paymentStatus, "refunded");
+  assert.equal(state.sellerOrderLine.refundedQuantity, 1);
+  assert.equal(result.sellerOrderShadowRefund.updatedLineCount, 1);
 });
 
 test("processShopifyRefundSettlement reverses sales credit on full discounted refunds", async () => {
