@@ -3829,6 +3829,7 @@ export async function backfillSellerOrderShadowChecks(
     const existingShadowCheck =
       await prismaClient.sellerOrderShadowCheck.findFirst({
         where: {
+          shopDomain,
           shopifyOrderId,
         },
         orderBy: {

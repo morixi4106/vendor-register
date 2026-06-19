@@ -79,6 +79,10 @@ function createSellerOrderShadowFakeModels(state) {
       async findFirst({ where }) {
         return (
           state.sellerOrderShadowChecks.find((check) => {
+            if (where?.shopDomain && check.shopDomain !== where.shopDomain) {
+              return false;
+            }
+
             if (where?.shopifyOrderId && check.shopifyOrderId !== where.shopifyOrderId) {
               return false;
             }
@@ -1403,7 +1407,15 @@ test("backfillSellerOrderShadowChecks creates a shadow check from an existing le
     marketplaceOrders: new Map(),
     sellerOrders: new Map(),
     sellerOrderLines: new Map(),
-    sellerOrderShadowChecks: [],
+    sellerOrderShadowChecks: [
+      {
+        id: "sosc_other_shop",
+        shopDomain: "other-shop.myshopify.com",
+        shopifyOrderId: "gid://shopify/Order/1301",
+        status: "matched",
+        checkedAt: new Date("2026-06-20T08:00:00Z"),
+      },
+    ],
   };
   const fakePrisma = {
     ...createSellerOrderShadowFakeModels(state),
@@ -1470,14 +1482,16 @@ test("backfillSellerOrderShadowChecks creates a shadow check from an existing le
   assert.equal(state.marketplaceOrders.size, 1);
   assert.equal(state.sellerOrders.size, 1);
   assert.equal(state.sellerOrderLines.size, 1);
-  assert.equal(state.sellerOrderShadowChecks.length, 1);
+  assert.equal(state.sellerOrderShadowChecks.length, 2);
   const line = Array.from(state.sellerOrderLines.values())[0];
   assert.equal(line.quantity, 2);
   assert.equal(line.netAmount, 1900);
-  assert.equal(state.sellerOrderShadowChecks[0].status, "matched");
-  assert.equal(state.sellerOrderShadowChecks[0].legacyLedgerAmount, 1900);
+  const createdCheck = state.sellerOrderShadowChecks[1];
+  assert.equal(createdCheck.status, "matched");
+  assert.equal(createdCheck.shopDomain, "b30ize-1a.myshopify.com");
+  assert.equal(createdCheck.legacyLedgerAmount, 1900);
   assert.equal(
-    state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
+    createdCheck.sellerOrderCalculatedAmount,
     1900,
   );
 });
