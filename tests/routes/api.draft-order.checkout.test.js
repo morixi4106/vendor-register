@@ -22,6 +22,77 @@ const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskRateBps: 10000,
 };
 
+const MULTI_SELLER_CHECKOUT_ENV = {
+  MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: 'true',
+  MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: 'true',
+  MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: 'true',
+  MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: 'true',
+  MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED: 'true',
+  VENDOR_ORDERS_USE_SELLER_ORDERS: 'true',
+};
+
+function createVendorStoreRelation({
+  id,
+  handle,
+  storeName,
+  sellerId,
+  country = 'JP',
+  category = 'Wine',
+}) {
+  return {
+    id,
+    storeName,
+    ownerName: `${storeName} Owner`,
+    country,
+    category,
+    note: null,
+    vendorAuth: {
+      id: `vendor_${id}`,
+      handle,
+      storeName,
+      managementEmail: `${handle}@example.com`,
+      status: 'active',
+      seller: {
+        id: sellerId,
+        status: 'active',
+        euSellerStatus: 'DISABLED',
+      },
+    },
+    seller: {
+      id: sellerId,
+      status: 'active',
+      euSellerStatus: 'DISABLED',
+    },
+  };
+}
+
+function createMultiSellerProducts() {
+  const [first, pending, other] = createProducts();
+
+  return [
+    {
+      ...first,
+      vendorStore: createVendorStoreRelation({
+        id: 'store_1',
+        handle: 'amber-cellar',
+        storeName: 'Amber Cellar',
+        sellerId: 'seller_target',
+      }),
+    },
+    pending,
+    {
+      ...other,
+      shopDomain: 'shop-a.myshopify.com',
+      vendorStore: createVendorStoreRelation({
+        id: 'store_2',
+        handle: 'blue-cellar',
+        storeName: 'Blue Cellar',
+        sellerId: 'seller_other',
+      }),
+    },
+  ];
+}
+
 function createProducts() {
   return [
     {
@@ -1073,6 +1144,112 @@ test('api.draft-order.checkout rejects items from another vendor store', async (
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
   assert.deepEqual(payload.errors, [INVALID_SELECTION_MESSAGE]);
+});
+
+test('api.draft-order.checkout allows multi-seller products when all storefront flags are enabled', async () => {
+  let receivedPayload = null;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: MULTI_SELLER_CHECKOUT_ENV,
+    prismaClient: createFakePrisma({
+      products: createMultiSellerProducts(),
+    }),
+    draftOrderCheckoutImpl: async (payload) => {
+      receivedPayload = payload;
+
+      return {
+        ok: true,
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        },
+        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+      };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        items: [
+          { productId: 'prod_1', quantity: 1 },
+          { productId: 'prod_other', quantity: 1 },
+        ],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.invoiceUrl, 'https://shop-a.myshopify.com/invoices/1');
+  assert.deepEqual(receivedPayload.tags, ['vendor-storefront', 'multi-seller']);
+  assert.deepEqual(receivedPayload.customAttributes, [
+    { key: 'seller_of_record', value: 'marketplace_seller' },
+    { key: 'marketplace_order_mode', value: 'multi_seller' },
+    { key: 'seller_count', value: '2' },
+  ]);
+  assert.deepEqual(
+    receivedPayload.orderLike.lines.map((line) => ({
+      lineId: line.lineId,
+      vendor: line.vendor,
+      directShipGroup: line.directShipGroup,
+    })),
+    [
+      {
+        lineId: 'prod_1',
+        vendor: 'Amber Cellar',
+        directShipGroup: 'store_1',
+      },
+      {
+        lineId: 'prod_other',
+        vendor: 'Blue Cellar',
+        directShipGroup: 'store_2',
+      },
+    ],
+  );
+});
+
+test('api.draft-order.checkout rejects sales credit on multi-seller checkout', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: MULTI_SELLER_CHECKOUT_ENV,
+    prismaClient: createFakePrisma({
+      products: createMultiSellerProducts(),
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createValidBody({
+        items: [
+          { productId: 'prod_1', quantity: 1 },
+          { productId: 'prod_other', quantity: 1 },
+        ],
+        useSalesCredit: true,
+        salesCreditAmount: 1000,
+        salesCreditIdempotencyKey: 'multi_seller_sales_credit_1',
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.equal(payload.errors.length, 1);
 });
 
 test('api.draft-order.checkout rejects unapproved products', async () => {

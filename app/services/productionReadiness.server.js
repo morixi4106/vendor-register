@@ -366,7 +366,7 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: !multiSellerSettlementFlags.anyEnabled
         ? "No action is needed unless running controlled multi-seller backend tests."
         : multiSellerSettlementFlags.allEnabled
-          ? "Keep storefront multi-seller checkout disabled until SellerOrder reads and seller-specific fulfillment are complete."
+          ? "Keep storefront multi-seller checkout disabled until ready; enable MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED only with VENDOR_ORDERS_USE_SELLER_ORDERS and seller-specific fulfillment verified."
           : "Disable all multi-seller settlement flags, or enable paid/refund/cancelled/dispute together only for controlled backend tests.",
     }),
   );
