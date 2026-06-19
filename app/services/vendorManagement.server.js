@@ -754,36 +754,160 @@ function formatShippingAddress(address) {
   return parts.length > 0 ? parts.join(" ") : "未設定";
 }
 
+const JAPAN_PROVINCE_LABELS = new Map(
+  [
+    ["hokkaido", "北海道"],
+    ["aomori", "青森県"],
+    ["iwate", "岩手県"],
+    ["miyagi", "宮城県"],
+    ["akita", "秋田県"],
+    ["yamagata", "山形県"],
+    ["fukushima", "福島県"],
+    ["ibaraki", "茨城県"],
+    ["tochigi", "栃木県"],
+    ["gunma", "群馬県"],
+    ["saitama", "埼玉県"],
+    ["chiba", "千葉県"],
+    ["tokyo", "東京都"],
+    ["tōkyō", "東京都"],
+    ["kanagawa", "神奈川県"],
+    ["niigata", "新潟県"],
+    ["toyama", "富山県"],
+    ["ishikawa", "石川県"],
+    ["fukui", "福井県"],
+    ["yamanashi", "山梨県"],
+    ["nagano", "長野県"],
+    ["gifu", "岐阜県"],
+    ["shizuoka", "静岡県"],
+    ["aichi", "愛知県"],
+    ["mie", "三重県"],
+    ["shiga", "滋賀県"],
+    ["kyoto", "京都府"],
+    ["ōsaka", "大阪府"],
+    ["osaka", "大阪府"],
+    ["hyogo", "兵庫県"],
+    ["hyōgo", "兵庫県"],
+    ["nara", "奈良県"],
+    ["wakayama", "和歌山県"],
+    ["tottori", "鳥取県"],
+    ["shimane", "島根県"],
+    ["okayama", "岡山県"],
+    ["hiroshima", "広島県"],
+    ["yamaguchi", "山口県"],
+    ["tokushima", "徳島県"],
+    ["kagawa", "香川県"],
+    ["ehime", "愛媛県"],
+    ["kochi", "高知県"],
+    ["kōchi", "高知県"],
+    ["fukuoka", "福岡県"],
+    ["saga", "佐賀県"],
+    ["nagasaki", "長崎県"],
+    ["kumamoto", "熊本県"],
+    ["oita", "大分県"],
+    ["ōita", "大分県"],
+    ["miyazaki", "宮崎県"],
+    ["kagoshima", "鹿児島県"],
+    ["okinawa", "沖縄県"],
+  ].flatMap(([key, label]) => [
+    [key, label],
+    [label.toLowerCase(), label],
+  ]),
+);
+
+function compactSpaces(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function getShippingCountryLabel(address) {
+  const countryCode = String(address?.countryCodeV2 || "").trim().toUpperCase();
+  const country = compactSpaces(address?.country);
+
+  if (countryCode === "JP" || ["Japan", "日本"].includes(country)) {
+    return "日本";
+  }
+
+  return country || countryCode || "";
+}
+
+function getShippingProvinceLabel(address) {
+  const countryCode = String(address?.countryCodeV2 || "").trim().toUpperCase();
+  const province = compactSpaces(address?.province);
+
+  if (countryCode === "JP" || getShippingCountryLabel(address) === "日本") {
+    return JAPAN_PROVINCE_LABELS.get(province.toLowerCase()) || province;
+  }
+
+  return province;
+}
+
+function formatRecipientName(address) {
+  const name = compactSpaces(address?.name);
+  if (!name) return "";
+
+  return getShippingCountryLabel(address) === "日本" ? `${name} 様` : name;
+}
+
 function formatShippingAddressLines(address) {
   if (!address) return [];
 
+  const country = getShippingCountryLabel(address);
+  const province = getShippingProvinceLabel(address);
+  const city = compactSpaces(address.city);
+  const zip = compactSpaces(address.zip);
+  const address1 = compactSpaces(address.address1);
+  const address2 = compactSpaces(address.address2);
+  const recipientName = formatRecipientName(address);
+
+  if (country === "日本") {
+    return [
+      zip ? `〒${zip}` : "",
+      [province, city].filter(Boolean).join(""),
+      [address1, address2].filter(Boolean).join(" "),
+      recipientName,
+    ].filter(Boolean);
+  }
+
   return [
-    address.name,
-    address.zip,
-    [address.country, address.province, address.city]
-      .map((part) => String(part || "").trim())
-      .filter(Boolean)
-      .join(" "),
-    address.address1,
-    address.address2,
-  ]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean);
+    recipientName,
+    [address1, address2].filter(Boolean).join(" "),
+    [city, province, zip].filter(Boolean).join(" "),
+    country,
+  ].filter(Boolean);
 }
 
 function formatShippingAddressSummary(address) {
   if (!address) return "未設定";
 
-  const cityParts = [address.province, address.city]
-    .map((part) => String(part || "").trim())
+  const cityParts = [getShippingProvinceLabel(address), address.city]
+    .map(compactSpaces)
     .filter(Boolean);
 
   if (cityParts.length > 0) {
-    return cityParts.join(" ");
+    return getShippingCountryLabel(address) === "日本"
+      ? cityParts.join("")
+      : cityParts.join(" ");
   }
 
-  const fallback = String(address.country || "").trim();
+  const fallback = getShippingCountryLabel(address);
   return fallback || "未設定";
+}
+
+function formatShippingAddressRows(address) {
+  if (!address) return [];
+
+  const rows = [
+    ["宛名", formatRecipientName(address)],
+    ["郵便番号", compactSpaces(address.zip)],
+    ["国/地域", getShippingCountryLabel(address)],
+    ["都道府県", getShippingProvinceLabel(address)],
+    ["市区町村", compactSpaces(address.city)],
+    ["住所1", compactSpaces(address.address1)],
+    ["住所2", compactSpaces(address.address2)],
+  ];
+
+  return rows
+    .filter(([, value]) => Boolean(value))
+    .map(([label, value]) => ({ label, value }));
 }
 
 function summarizeTrackingInfo(fulfillments = []) {
@@ -1020,6 +1144,7 @@ function serializeVendorOrderRow(orderRecord) {
     email: order?.email || "未設定",
     shippingAddressLabel: formatShippingAddress(order?.shippingAddress),
     shippingAddressLines: formatShippingAddressLines(order?.shippingAddress),
+    shippingAddressRows: formatShippingAddressRows(order?.shippingAddress),
     shippingAddressSummary: formatShippingAddressSummary(order?.shippingAddress),
     shippingCountryCode: order?.shippingAddress?.countryCodeV2 || null,
     totalAmount: Number(shopMoney?.amount || 0),

@@ -520,6 +520,7 @@ test.skip("getVendorOrdersPageData returns mapped orders when read_draft_orders 
       email: "taro@example.com",
       shippingAddressLabel: "未設定",
       shippingAddressLines: [],
+      shippingAddressRows: [],
       shippingAddressSummary: "未設定",
       totalAmount: 8400,
       totalCurrencyCode: "JPY",
@@ -589,6 +590,13 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
                   displayName: "Taro Yamada",
                 },
                 shippingAddress: {
+                  name: "Taro Yamada",
+                  zip: "100-0001",
+                  country: "Japan",
+                  province: "Tōkyō",
+                  city: "千代田区",
+                  address1: "千代田",
+                  address2: "1-1-1",
                   countryCodeV2: "JP",
                 },
                 currentTotalPriceSet: {
@@ -629,7 +637,22 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
   assert.equal(result.orders[0].financialStatus, "PAID");
   assert.equal(result.orders[0].fulfillmentStatus, "UNFULFILLED");
   assert.equal(result.orders[0].shippingCountryCode, "JP");
-  assert.equal(result.orders[0].shippingAddressSummary, "未設定");
+  assert.equal(result.orders[0].shippingAddressSummary, "東京都千代田区");
+  assert.deepEqual(result.orders[0].shippingAddressLines, [
+    "〒100-0001",
+    "東京都千代田区",
+    "千代田 1-1-1",
+    "Taro Yamada 様",
+  ]);
+  assert.deepEqual(result.orders[0].shippingAddressRows, [
+    { label: "宛名", value: "Taro Yamada 様" },
+    { label: "郵便番号", value: "100-0001" },
+    { label: "国/地域", value: "日本" },
+    { label: "都道府県", value: "東京都" },
+    { label: "市区町村", value: "千代田区" },
+    { label: "住所1", value: "千代田" },
+    { label: "住所2", value: "1-1-1" },
+  ]);
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 

@@ -304,6 +304,12 @@ export default function VendorOrdersPage() {
           line-height:1;
           cursor:pointer;
         }
+        .vendor-orders__modal-print-title{
+          margin:0 0 8px;
+          color:#4b5563;
+          font-size:13px;
+          font-weight:700;
+        }
         .vendor-orders__modal-lines{
           display:grid;
           gap:8px;
@@ -313,6 +319,34 @@ export default function VendorOrdersPage() {
           color:#111827;
           font-size:16px;
           line-height:1.6;
+        }
+        .vendor-orders__modal-details{
+          display:grid;
+          gap:0;
+          margin-top:16px;
+          border:1px solid #e5e7eb;
+          border-radius:14px;
+          overflow:hidden;
+        }
+        .vendor-orders__modal-detail-row{
+          display:grid;
+          grid-template-columns:120px minmax(0, 1fr);
+          gap:12px;
+          padding:11px 14px;
+          border-top:1px solid #e5e7eb;
+          line-height:1.5;
+        }
+        .vendor-orders__modal-detail-row:first-child{
+          border-top:none;
+        }
+        .vendor-orders__modal-detail-label{
+          color:#6b7280;
+          font-size:13px;
+          font-weight:700;
+        }
+        .vendor-orders__modal-detail-value{
+          color:#111827;
+          overflow-wrap:anywhere;
         }
         @media (max-width: 900px){
           .vendor-orders__action-form{
@@ -524,6 +558,7 @@ export default function VendorOrdersPage() {
                 ×
               </button>
             </div>
+            <div className="vendor-orders__modal-print-title">配送用</div>
             <div className="vendor-orders__modal-lines">
               {(selectedAddressOrder.shippingAddressLines?.length
                 ? selectedAddressOrder.shippingAddressLines
@@ -532,6 +567,23 @@ export default function VendorOrdersPage() {
                 <div key={`${line}-${index}`}>{line}</div>
               ))}
             </div>
+            {selectedAddressOrder.shippingAddressRows?.length ? (
+              <div className="vendor-orders__modal-details">
+                {selectedAddressOrder.shippingAddressRows.map((row) => (
+                  <div
+                    className="vendor-orders__modal-detail-row"
+                    key={row.label}
+                  >
+                    <div className="vendor-orders__modal-detail-label">
+                      {row.label}
+                    </div>
+                    <div className="vendor-orders__modal-detail-value">
+                      {row.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
