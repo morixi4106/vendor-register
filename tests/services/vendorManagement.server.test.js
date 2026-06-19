@@ -772,6 +772,81 @@ test("getVendorOrdersPageData can read mapped orders from seller orders behind f
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 
+test("getVendorOrdersPageData marks fully refunded SellerOrder rows as not shippable", async () => {
+  let ledgerQueryCount = 0;
+  const result = await getVendorOrdersPageData(
+    {
+      storeId: "store_1",
+    },
+    {
+      listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+      listGrantedAppAccessScopesImpl: async () => [READ_ORDERS_SCOPE],
+      useSellerOrderRead: true,
+      prismaClient: {
+        sellerOrder: {
+          findMany: async () => [
+            {
+              id: "seller_order_1",
+              shopifyOrderId: "gid://shopify/Order/1001",
+              shopifyOrderName: "#1001",
+              sellerRefundAmount: 8400,
+              sellerNetAmount: 8400,
+              sellerPayableAmount: 8400,
+              currencyCode: "jpy",
+              paymentStatus: "refunded",
+              fulfillmentStatus: "unfulfilled",
+              createdAt: new Date("2026-04-29T08:35:00Z"),
+              updatedAt: new Date("2026-04-29T08:36:00Z"),
+              shipments: [],
+            },
+          ],
+        },
+        ledgerEntry: {
+          findMany: async () => {
+            ledgerQueryCount += 1;
+            return [];
+          },
+        },
+      },
+      shopifyGraphQLWithOfflineSessionImpl: async () => ({
+        data: {
+          nodes: [
+            {
+              id: "gid://shopify/Order/1001",
+              name: "#1001",
+              createdAt: "2026-04-29T08:35:00Z",
+              email: "taro@example.com",
+              displayFinancialStatus: "PAID",
+              displayFulfillmentStatus: "UNFULFILLED",
+              customer: {
+                displayName: "Taro Yamada",
+              },
+              shippingAddress: null,
+              currentTotalPriceSet: {
+                shopMoney: {
+                  amount: "8400",
+                  currencyCode: "JPY",
+                },
+              },
+              fulfillments: [],
+            },
+          ],
+        },
+      }),
+    },
+  );
+
+  assert.equal(ledgerQueryCount, 0);
+  assert.equal(result.accessState.status, "ready");
+  assert.equal(result.queryString, "seller_order:shadow");
+  assert.equal(result.orders.length, 1);
+  assert.equal(result.orders[0].financialStatus, "REFUNDED");
+  assert.equal(result.orders[0].ledgerPaidAmount, 8400);
+  assert.equal(result.orders[0].ledgerRefundAmount, 8400);
+  assert.equal(result.orders[0].ledgerNetAmount, 0);
+  assert.equal(result.orders[0].canRegisterShipment, false);
+});
+
 test("getVendorOrdersPageData falls back to ledger when SellerOrder read fails", async () => {
   let ledgerQueryCount = 0;
   const result = await getVendorOrdersPageData(
