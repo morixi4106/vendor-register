@@ -211,6 +211,7 @@ test('carrier shipping rates blocks EU checkout when the current product EU stat
             {
               id: 'prod_1',
               shopifyProductId: 'gid://shopify/Product/9044842447011',
+              shopifyVariantId: 'gid://shopify/ProductVariant/111222333',
               approvalStatus: 'approved',
               productEuStatus: 'REJECTED_HIGH_RISK',
               countryPolicy: null,
@@ -258,9 +259,17 @@ test('carrier shipping rates blocks EU checkout when the current product EU stat
 
   assert.deepEqual(await response.json(), { rates: [] });
   assert.equal(quoteCallCount, 0);
-  assert.deepEqual(productQuery.where.shopifyProductId.in, [
-    '9044842447011',
-    'gid://shopify/Product/9044842447011',
+  assert.deepEqual(productQuery.where.OR, [
+    {
+      shopifyProductId: {
+        in: ['9044842447011', 'gid://shopify/Product/9044842447011'],
+      },
+    },
+    {
+      shopifyVariantId: {
+        in: ['111222333', 'gid://shopify/ProductVariant/111222333'],
+      },
+    },
   ]);
   assert.equal(
     listShippingDiagnosticEvents({ limit: 10 }).some(
@@ -294,6 +303,7 @@ test('validateCarrierEuDeliveryPolicy allows EU delivery only for approved selle
             {
               id: 'prod_1',
               shopifyProductId: 'gid://shopify/Product/9044842447011',
+              shopifyVariantId: 'gid://shopify/ProductVariant/111222333',
               approvalStatus: 'approved',
               productEuStatus: 'APPROVED_LOW_RISK',
               countryPolicy: {

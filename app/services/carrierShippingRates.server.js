@@ -137,6 +137,24 @@ function normalizeShopifyProductGid(value) {
   return normalized;
 }
 
+function normalizeShopifyVariantGid(value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith('gid://shopify/ProductVariant/')) {
+    return normalized;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return `gid://shopify/ProductVariant/${normalized}`;
+  }
+
+  return normalized;
+}
+
 function getCarrierProductIdCandidates(lines) {
   const candidates = new Set();
 
@@ -156,19 +174,42 @@ function getCarrierProductIdCandidates(lines) {
   return Array.from(candidates);
 }
 
+function getCarrierVariantIdCandidates(lines) {
+  const candidates = new Set();
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const variantId = normalizeText(line?.variantId || line?.variant_id);
+    const variantGid = normalizeShopifyVariantGid(variantId);
+
+    if (variantId) {
+      candidates.add(variantId);
+    }
+
+    if (variantGid) {
+      candidates.add(variantGid);
+    }
+  }
+
+  return Array.from(candidates);
+}
+
 function getCarrierProductReferences(lines) {
   return (Array.isArray(lines) ? lines : [])
     .map((line) => {
       const productId = normalizeText(line?.productId);
       const productGid = normalizeShopifyProductGid(productId);
+      const variantId = normalizeText(line?.variantId || line?.variant_id);
+      const variantGid = normalizeShopifyVariantGid(variantId);
 
-      if (!productId && !productGid) {
+      if (!productId && !productGid && !variantId && !variantGid) {
         return null;
       }
 
       return {
         productId,
         productGid,
+        variantId,
+        variantGid,
       };
     })
     .filter(Boolean);
@@ -176,11 +217,15 @@ function getCarrierProductReferences(lines) {
 
 function productMatchesCarrierReference(product, reference) {
   const shopifyProductId = normalizeText(product?.shopifyProductId);
+  const shopifyVariantId = normalizeText(product?.shopifyVariantId);
 
   return Boolean(
-    shopifyProductId &&
+    (shopifyProductId &&
       (shopifyProductId === reference.productId ||
-        shopifyProductId === reference.productGid),
+        shopifyProductId === reference.productGid)) ||
+      (shopifyVariantId &&
+        (shopifyVariantId === reference.variantId ||
+          shopifyVariantId === reference.variantGid)),
   );
 }
 
@@ -205,6 +250,7 @@ export async function validateCarrierEuDeliveryPolicy({
     ? quoteRequest.orderLike.lines
     : [];
   const productIdCandidates = getCarrierProductIdCandidates(lines);
+  const variantIdCandidates = getCarrierVariantIdCandidates(lines);
   const productReferences = getCarrierProductReferences(lines);
 
   if (productReferences.length === 0) {
@@ -217,15 +263,32 @@ export async function validateCarrierEuDeliveryPolicy({
     };
   }
 
-  const products = await prismaClient.product.findMany({
-    where: {
+  const productWhereClauses = [];
+
+  if (productIdCandidates.length > 0) {
+    productWhereClauses.push({
       shopifyProductId: {
         in: productIdCandidates,
       },
+    });
+  }
+
+  if (variantIdCandidates.length > 0) {
+    productWhereClauses.push({
+      shopifyVariantId: {
+        in: variantIdCandidates,
+      },
+    });
+  }
+
+  const products = await prismaClient.product.findMany({
+    where: {
+      OR: productWhereClauses,
     },
     select: {
       id: true,
       shopifyProductId: true,
+      shopifyVariantId: true,
       productEuStatus: true,
       approvalStatus: true,
       countryPolicy: true,
@@ -261,6 +324,7 @@ export async function validateCarrierEuDeliveryPolicy({
       checked: true,
       productId: missingReference.productId,
       shopifyProductId: missingReference.productGid,
+      shopifyVariantId: missingReference.variantGid,
       productCount: products.length,
     };
   }
@@ -281,6 +345,7 @@ export async function validateCarrierEuDeliveryPolicy({
         countryCode,
         productId: blocker.productId,
         shopifyProductId: blocker.shopifyProductId,
+        shopifyVariantId: blocker.shopifyVariantId || null,
         sellerEuStatus: blocker.sellerEuStatus || null,
         productEuStatus: blocker.productEuStatus || null,
         productCount: products.length,
