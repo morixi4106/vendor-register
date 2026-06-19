@@ -3666,6 +3666,9 @@ function buildSyntheticShopifyLineItemFromLedgerLine({
   index,
 }) {
   const lineAmount = clampInteger(line?.amount);
+  const quantity = toPositiveInteger(line?.quantity) || 1;
+  const unitAmount = quantity > 0 ? Math.ceil(lineAmount / quantity) : lineAmount;
+  const discountAmount = Math.max(0, unitAmount * quantity - lineAmount);
   const shopifyLineItemId =
     normalizeShopifyGid("LineItem", line?.shopifyLineItemId) ||
     normalizeText(line?.shopifyLineItemId) ||
@@ -3677,14 +3680,17 @@ function buildSyntheticShopifyLineItemFromLedgerLine({
     product_id: normalizeText(line?.shopifyProductId || product?.shopifyProductId),
     title: normalizeText(line?.localProductName || product?.name),
     sku: normalizeText(line?.sku),
-    price: decimalAmountFromMinorUnits(lineAmount, currencyCode),
-    quantity: 1,
-    discount_allocations: [],
+    price: decimalAmountFromMinorUnits(unitAmount, currencyCode),
+    quantity,
+    discount_allocations:
+      discountAmount > 0
+        ? [{ amount: decimalAmountFromMinorUnits(discountAmount, currencyCode) }]
+        : [],
     tax_lines: [],
     properties: [
       {
-        name: "backfill_original_quantity",
-        value: String(toPositiveInteger(line?.quantity) || 0),
+        name: "backfill_ledger_line_amount",
+        value: String(lineAmount),
       },
     ],
   };
@@ -3744,7 +3750,7 @@ async function createSellerOrderShadowBackfillFailureCheck(
 }
 
 export async function backfillSellerOrderShadowChecks(
-  { days = 30, limit = 100, now = new Date() } = {},
+  { days = 30, limit = 100, retryFailed = false, now = new Date() } = {},
   { prismaClient = prisma } = {},
 ) {
   if (
@@ -3769,6 +3775,7 @@ export async function backfillSellerOrderShadowChecks(
     300,
   );
   const normalizedDays = Math.min(Math.max(clampInteger(days, 30), 1), 365);
+  const shouldRetryFailed = normalizeBooleanInput(retryFailed);
   const since = subtractDays(now, normalizedDays);
   const ledgerEntries = await prismaClient.ledgerEntry.findMany({
     where: {
@@ -3829,7 +3836,13 @@ export async function backfillSellerOrderShadowChecks(
         },
       });
 
-    if (existingShadowCheck) {
+    if (
+      existingShadowCheck &&
+      !(
+        shouldRetryFailed &&
+        existingShadowCheck.status === SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED
+      )
+    ) {
       skippedExisting += 1;
       results.push({
         ok: true,
@@ -4060,6 +4073,7 @@ export async function backfillSellerOrderShadowChecks(
     ok: true,
     days: normalizedDays,
     limit: normalizedLimit,
+    retryFailed: shouldRetryFailed,
     scanned: ledgerEntries.length,
     created,
     skippedExisting,
