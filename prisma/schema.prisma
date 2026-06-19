@@ -219,7 +219,7 @@ model SellerOrder {
   marketplaceOrder MarketplaceOrder  @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
   lines            SellerOrderLine[]
 
-  @@unique([shopifyOrderId, sellerId])
+  @@unique([marketplaceOrderId, sellerId])
   @@index([sellerId, createdAt])
   @@index([vendorStoreId, createdAt])
   @@index([marketplaceOrderId])
@@ -263,6 +263,7 @@ model SellerOrderShadowCheck {
   shopifyOrderId              String
   shopifyOrderName            String?
   status                      String
+  currencyCode                String   @default("jpy")
   legacyLedgerAmount          Int?
   sellerOrderCalculatedAmount Int?
   legacySellerIdsJson         Json?

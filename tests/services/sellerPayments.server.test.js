@@ -52,7 +52,7 @@ function createSellerOrderShadowFakeModels(state) {
     },
     sellerOrder: {
       async upsert({ where, create, update }) {
-        const key = `${where.shopifyOrderId_sellerId.shopifyOrderId}:${where.shopifyOrderId_sellerId.sellerId}`;
+        const key = `${where.marketplaceOrderId_sellerId.marketplaceOrderId}:${where.marketplaceOrderId_sellerId.sellerId}`;
         const existing = state.sellerOrders.get(key);
         const record = existing
           ? { ...existing, ...update }
@@ -1322,7 +1322,10 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
         ],
       },
     },
-    { prismaClient: fakePrisma },
+    {
+      prismaClient: fakePrisma,
+      env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+    },
   );
 
   assert.equal(result.ok, true);
@@ -1349,6 +1352,7 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   assert.equal(line.netAmount, 1900);
 
   assert.equal(state.sellerOrderShadowChecks[0].status, "matched");
+  assert.equal(state.sellerOrderShadowChecks[0].currencyCode, "jpy");
   assert.equal(state.sellerOrderShadowChecks[0].legacyLedgerAmount, 1900);
   assert.equal(
     state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
@@ -2018,7 +2022,10 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
         ],
       },
     },
-    { prismaClient: fakePrisma },
+    {
+      prismaClient: fakePrisma,
+      env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+    },
   );
 
   assert.equal(result.ok, false);
@@ -2032,6 +2039,7 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
     state.sellerOrderShadowChecks[0].status,
     "multi_seller_detected",
   );
+  assert.equal(state.sellerOrderShadowChecks[0].currencyCode, "jpy");
   assert.deepEqual(state.sellerOrderShadowChecks[0].sellerOrderSellerIdsJson, [
     "seller_1",
     "seller_2",

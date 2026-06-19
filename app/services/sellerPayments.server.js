@@ -517,9 +517,7 @@ function getWisePayoutConfig(env = process.env) {
 }
 
 function isSellerOrderShadowWriteEnabled(env = process.env) {
-  return !["0", "false", "no", "off"].includes(
-    normalizeLowercase(env.SELLER_ORDER_SHADOW_WRITE_ENABLED) || "",
-  );
+  return normalizeLowercase(env.SELLER_ORDER_SHADOW_WRITE_ENABLED) === "true";
 }
 
 function hasSellerOrderShadowModels(prismaClient) {
@@ -3402,6 +3400,7 @@ async function createSellerOrderShadowFailureCheck(
     shopDomain,
     shopifyOrderId,
     shopifyOrderName,
+    currencyCode = DEFAULT_ORDER_CURRENCY,
     error,
   },
 ) {
@@ -3416,6 +3415,7 @@ async function createSellerOrderShadowFailureCheck(
         shopifyOrderId,
         shopifyOrderName,
         status: SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED,
+        currencyCode: normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
         errorMessage:
           normalizeText(error?.message) || "seller_order_shadow_failed",
       },
@@ -3450,16 +3450,18 @@ async function recordShopifyOrderSellerOrderShadow(
   }
 
   try {
+    const normalizedCurrencyCode =
+      normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
     const marketplaceData = buildMarketplaceOrderSnapshot({
       payload,
       shopDomain,
       shopifyOrderId,
       shopifyOrderName,
-      currencyCode,
+      currencyCode: normalizedCurrencyCode,
     });
     const sellerBuckets = buildSellerOrderShadowBuckets({
       matchedLines,
-      currencyCode,
+      currencyCode: normalizedCurrencyCode,
       salesCreditOffset,
     });
     const calculatedAmount = sellerBuckets.reduce(
@@ -3497,7 +3499,7 @@ async function recordShopifyOrderSellerOrderShadow(
           shippingQuotedAmount: 0,
           shippingChargedAmount: 0,
           shippingAllocationMethod: "not_allocated",
-          currencyCode,
+          currencyCode: normalizedCurrencyCode,
           paymentStatus: "paid",
           fulfillmentStatus: "unfulfilled",
           settlementStatus: "shadow",
@@ -3513,8 +3515,8 @@ async function recordShopifyOrderSellerOrderShadow(
         };
         const sellerOrder = await prismaClient.sellerOrder.upsert({
           where: {
-            shopifyOrderId_sellerId: {
-              shopifyOrderId,
+            marketplaceOrderId_sellerId: {
+              marketplaceOrderId: marketplaceOrder.id,
               sellerId: bucket.sellerId,
             },
           },
@@ -3554,6 +3556,7 @@ async function recordShopifyOrderSellerOrderShadow(
         shopifyOrderId,
         shopifyOrderName,
         status,
+        currencyCode: normalizedCurrencyCode,
         legacyLedgerAmount: ledgerEntry?.amount ?? null,
         sellerOrderCalculatedAmount: calculatedAmount,
         legacySellerIdsJson: ledgerEntry?.sellerId ? [ledgerEntry.sellerId] : [],
@@ -3584,6 +3587,7 @@ async function recordShopifyOrderSellerOrderShadow(
       shopDomain,
       shopifyOrderId,
       shopifyOrderName,
+      currencyCode,
       error,
     });
 
@@ -3597,7 +3601,11 @@ async function recordShopifyOrderSellerOrderShadow(
 
 export async function processShopifyOrderPaidSettlement(
   { payload, shop },
-  { prismaClient = prisma, shopifyGraphQLWithOfflineSessionImpl = null } = {},
+  {
+    prismaClient = prisma,
+    shopifyGraphQLWithOfflineSessionImpl = null,
+    env = process.env,
+  } = {},
 ) {
   const shopDomain = normalizeLowercase(
     shop || payload?.shop_domain || payload?.shop,
@@ -3791,7 +3799,7 @@ export async function processShopifyOrderPaidSettlement(
         multiSellerDetected: true,
         writeSellerOrders: false,
       },
-      { prismaClient },
+      { prismaClient, env },
     );
 
     return {
@@ -3946,7 +3954,7 @@ export async function processShopifyOrderPaidSettlement(
         ledgerEntry,
         salesCreditOffset,
       },
-      { prismaClient: tx },
+      { prismaClient: tx, env },
     );
 
     return {

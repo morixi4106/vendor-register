@@ -11,12 +11,9 @@ const STATUS_LABELS = {
   matched: "一致",
   amount_mismatch: "金額差分",
   seller_mismatch: "出店者差分",
-  line_count_mismatch: "明細差分",
-  unmatched_product: "商品未紐付け",
-  inactive_seller: "出店者停止",
   multi_seller_detected: "複数出店者",
+  shadow_written: "Shadow作成",
   failed: "失敗",
-  skipped: "スキップ",
 };
 
 export const loader = async ({ request }) => {
@@ -33,42 +30,59 @@ export const loader = async ({ request }) => {
       limit,
       summary: [],
       checks: [],
+      errorMessage:
+        "SellerOrder検証テーブルはまだ利用できません。migration適用後に表示されます。",
     });
   }
 
-  const where = status === "all" ? {} : { status };
-  const [checks, groupedSummary] = await Promise.all([
-    prisma.sellerOrderShadowCheck.findMany({
-      where,
-      orderBy: { checkedAt: "desc" },
-      take: limit,
-      include: {
-        marketplaceOrder: {
-          select: {
-            shopifyOrderName: true,
+  try {
+    const where = status === "all" ? {} : { status };
+    const [checks, groupedSummary] = await Promise.all([
+      prisma.sellerOrderShadowCheck.findMany({
+        where,
+        orderBy: { checkedAt: "desc" },
+        take: limit,
+        include: {
+          marketplaceOrder: {
+            select: {
+              shopifyOrderName: true,
+            },
           },
         },
-      },
-    }),
-    prisma.sellerOrderShadowCheck.groupBy({
-      by: ["status"],
-      _count: { _all: true },
-    }),
-  ]);
+      }),
+      prisma.sellerOrderShadowCheck.groupBy({
+        by: ["status"],
+        _count: { _all: true },
+      }),
+    ]);
 
-  return json({
-    available: true,
-    status,
-    limit,
-    summary: groupedSummary
-      .map((row) => ({
-        status: row.status,
-        label: getStatusLabel(row.status),
-        count: row._count?._all || 0,
-      }))
-      .sort((a, b) => getStatusSort(a.status) - getStatusSort(b.status)),
-    checks: checks.map(serializeShadowCheck),
-  });
+    return json({
+      available: true,
+      status,
+      limit,
+      summary: groupedSummary
+        .map((row) => ({
+          status: row.status,
+          label: getStatusLabel(row.status),
+          count: row._count?._all || 0,
+        }))
+        .sort((a, b) => getStatusSort(a.status) - getStatusSort(b.status)),
+      checks: checks.map(serializeShadowCheck),
+    });
+  } catch (error) {
+    console.error("seller order shadow page load error:", error);
+    return json({
+      available: false,
+      status,
+      limit,
+      summary: [],
+      checks: [],
+      errorMessage:
+        error?.code === "P2021"
+          ? "SellerOrder検証テーブルはまだ作成されていません。"
+          : "SellerOrder検証結果を読み込めませんでした。",
+    });
+  }
 };
 
 function clampLimit(rawValue) {
@@ -85,8 +99,8 @@ function getStatusLabel(status) {
 
 function getStatusSort(status) {
   if (status === "matched") return 1;
-  if (status === "multi_seller_detected") return 2;
-  if (status === "skipped") return 3;
+  if (status === "shadow_written") return 2;
+  if (status === "multi_seller_detected") return 3;
   if (status === "failed") return 90;
   return 50;
 }
@@ -102,7 +116,7 @@ function serializeShadowCheck(check) {
       check.shopifyOrderName || check.marketplaceOrder?.shopifyOrderName || "",
     legacyLedgerAmount: check.legacyLedgerAmount,
     sellerOrderCalculatedAmount: check.sellerOrderCalculatedAmount,
-    currencyCode: check.currencyCode,
+    currencyCode: check.currencyCode || "jpy",
     legacySellerIds: safeJsonArray(check.legacySellerIdsJson),
     sellerOrderSellerIds: safeJsonArray(check.sellerOrderSellerIdsJson),
     differences: safeJsonObject(check.differencesJson),
@@ -152,7 +166,8 @@ function StatusBadge({ status, children }) {
 }
 
 export default function SellerOrderShadowPage() {
-  const { available, status, limit, summary, checks } = useLoaderData();
+  const { available, status, limit, summary, checks, errorMessage } =
+    useLoaderData();
   const navigation = useNavigation();
   const isLoading = navigation.state !== "idle";
 
@@ -283,17 +298,15 @@ export default function SellerOrderShadowPage() {
           border-color:#a7f3d0;
           color:#047857;
         }
-        .shadow-admin__badge--multi_seller_detected{
+        .shadow-admin__badge--multi_seller_detected,
+        .shadow-admin__badge--shadow_written{
           background:#eff6ff;
           border-color:#bfdbfe;
           color:#1d4ed8;
         }
         .shadow-admin__badge--failed,
         .shadow-admin__badge--amount_mismatch,
-        .shadow-admin__badge--seller_mismatch,
-        .shadow-admin__badge--line_count_mismatch,
-        .shadow-admin__badge--unmatched_product,
-        .shadow-admin__badge--inactive_seller{
+        .shadow-admin__badge--seller_mismatch{
           background:#fef2f2;
           border-color:#fecaca;
           color:#b91c1c;
@@ -361,7 +374,8 @@ export default function SellerOrderShadowPage() {
       {!available ? (
         <section className="shadow-admin__card">
           <div className="shadow-admin__empty">
-            SellerOrder検証テーブルはまだ利用できません。migration適用後に表示されます。
+            {errorMessage ||
+              "SellerOrder検証テーブルはまだ利用できません。migration適用後に表示されます。"}
           </div>
         </section>
       ) : (
