@@ -693,6 +693,7 @@ async function createShopifyProductFromDbProduct(product) {
 
   return {
     shopifyProductId: createdProduct.id,
+    shopifyVariantId: createdVariant.id,
     shopDomain,
   };
 }
@@ -1248,6 +1249,7 @@ export const action = async ({ request }) => {
           select: {
             approvalStatus: true,
             shopifyProductId: true,
+            shopifyVariantId: true,
           },
         });
 
@@ -1282,6 +1284,7 @@ export const action = async ({ request }) => {
         data: {
           approvalStatus: "approved",
           shopifyProductId: result.shopifyProductId,
+          shopifyVariantId: result.shopifyVariantId,
           shopDomain: result.shopDomain,
         },
       });

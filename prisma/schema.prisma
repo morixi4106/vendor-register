@@ -59,6 +59,7 @@ model Product {
   vendorStoreId                   String
   approvalStatus                  String    @default("pending")
   shopifyProductId                String?
+  shopifyVariantId                String?
   shopDomain                      String?
   calculatedPrice                 Int?
   usedFxRate                      Float?
@@ -87,7 +88,9 @@ model Product {
   countryPolicy  ProductCountryPolicy?
 
   @@unique([shopDomain, shopifyProductId])
+  @@unique([shopDomain, shopifyVariantId])
   @@index([shopifyProductId])
+  @@index([shopifyVariantId])
   @@index([productEuStatus, updatedAt])
 }
 

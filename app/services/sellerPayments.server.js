@@ -2587,6 +2587,29 @@ function getShopifyLineProductIdCandidates(lineItem) {
   ]);
 }
 
+function getShopifyLineVariantIdCandidates(lineItem) {
+  const normalizedVariantId = normalizeShopifyVariantId(lineItem);
+
+  return uniqueValues([
+    normalizedVariantId,
+    normalizedVariantId?.replace("gid://shopify/ProductVariant/", ""),
+    normalizeShopifyGid("ProductVariant", lineItem?.variant_id),
+    normalizeShopifyGid("ProductVariant", lineItem?.variant?.id),
+    normalizeShopifyGid(
+      "ProductVariant",
+      lineItem?.variant?.admin_graphql_api_id,
+    ),
+    normalizeText(lineItem?.variant_id),
+  ]);
+}
+
+function getShopifyLineProductMatchCandidates(lineItem) {
+  return uniqueValues([
+    ...getShopifyLineVariantIdCandidates(lineItem),
+    ...getShopifyLineProductIdCandidates(lineItem),
+  ]);
+}
+
 function getLineDiscountAmount(lineItem, currencyCode) {
   const discountAllocations = Array.isArray(lineItem?.discount_allocations)
     ? lineItem.discount_allocations
@@ -2966,6 +2989,22 @@ function getShopifyRefundLineProductIdCandidates(refundLineItem) {
     normalizeShopifyGid("Product", lineItem?.product?.admin_graphql_api_id),
     normalizeText(refundLineItem?.product_id),
     normalizeText(lineItem?.product_id),
+  ]);
+}
+
+function getShopifyRefundLineVariantIdCandidates(refundLineItem) {
+  const lineItem = refundLineItem?.line_item || refundLineItem;
+
+  return uniqueValues([
+    ...getShopifyLineVariantIdCandidates(refundLineItem),
+    ...getShopifyLineVariantIdCandidates(lineItem),
+  ]);
+}
+
+function getShopifyRefundLineProductMatchCandidates(refundLineItem) {
+  return uniqueValues([
+    ...getShopifyRefundLineVariantIdCandidates(refundLineItem),
+    ...getShopifyRefundLineProductIdCandidates(refundLineItem),
   ]);
 }
 
@@ -3471,6 +3510,8 @@ function buildProductCandidateMap(products, shopDomain) {
 
   for (const product of sortedProducts) {
     for (const candidate of uniqueValues([
+      product?.shopifyVariantId,
+      product?.shopifyVariantId?.replace("gid://shopify/ProductVariant/", ""),
       product?.shopifyProductId,
       product?.shopifyProductId?.replace("gid://shopify/Product/", ""),
     ])) {
@@ -4060,6 +4101,7 @@ function buildSyntheticShopifyLineItemFromLedgerLine({
     id: shopifyLineItemId,
     admin_graphql_api_id: shopifyLineItemId,
     product_id: normalizeText(line?.shopifyProductId || product?.shopifyProductId),
+    variant_id: normalizeText(line?.shopifyVariantId || product?.shopifyVariantId),
     title: normalizeText(line?.localProductName || product?.name),
     sku: normalizeText(line?.sku),
     price: decimalAmountFromMinorUnits(unitAmount, currencyCode),
@@ -4272,6 +4314,12 @@ export async function backfillSellerOrderShadowChecks(
         normalizeShopifyGid("Product", line?.shopifyProductId),
       ]),
     );
+    const shopifyVariantIds = uniqueValues(
+      ledgerLineItems.flatMap((line) => [
+        line?.shopifyVariantId,
+        normalizeShopifyGid("ProductVariant", line?.shopifyVariantId),
+      ]),
+    );
     const productWhereClauses = [];
 
     if (localProductIds.length > 0) {
@@ -4290,6 +4338,14 @@ export async function backfillSellerOrderShadowChecks(
       });
     }
 
+    if (shopifyVariantIds.length > 0) {
+      productWhereClauses.push({
+        shopifyVariantId: {
+          in: shopifyVariantIds,
+        },
+      });
+    }
+
     const products =
       productWhereClauses.length > 0
         ? await prismaClient.product.findMany({
@@ -4301,6 +4357,7 @@ export async function backfillSellerOrderShadowChecks(
               name: true,
               approvalStatus: true,
               shopifyProductId: true,
+              shopifyVariantId: true,
               shopDomain: true,
               vendorStoreId: true,
               vendorStore: {
@@ -4344,6 +4401,10 @@ export async function backfillSellerOrderShadowChecks(
     ledgerLineItems.forEach((line, index) => {
       const product =
         productsByLocalId.get(normalizeText(line?.localProductId)) ||
+        productMap.get(normalizeText(line?.shopifyVariantId)) ||
+        productMap.get(
+          normalizeShopifyGid("ProductVariant", line?.shopifyVariantId),
+        ) ||
         productMap.get(normalizeText(line?.shopifyProductId)) ||
         productMap.get(normalizeShopifyGid("Product", line?.shopifyProductId));
 
@@ -4547,11 +4608,31 @@ export async function processShopifyOrderPaidSettlement(
     return response;
   }
 
+  const variantIdCandidates = uniqueValues(
+    lineItems.flatMap(getShopifyLineVariantIdCandidates),
+  );
   const productIdCandidates = uniqueValues(
     lineItems.flatMap(getShopifyLineProductIdCandidates),
   );
+  const productReferenceClauses = [];
 
-  if (productIdCandidates.length === 0) {
+  if (variantIdCandidates.length > 0) {
+    productReferenceClauses.push({
+      shopifyVariantId: {
+        in: variantIdCandidates,
+      },
+    });
+  }
+
+  if (productIdCandidates.length > 0) {
+    productReferenceClauses.push({
+      shopifyProductId: {
+        in: productIdCandidates,
+      },
+    });
+  }
+
+  if (productReferenceClauses.length === 0) {
     return {
       ok: false,
       reason: "shopify_order_products_missing",
@@ -4560,15 +4641,19 @@ export async function processShopifyOrderPaidSettlement(
 
   const products = await prismaClient.product.findMany({
     where: {
-      shopifyProductId: {
-        in: productIdCandidates,
-      },
-      OR: [
+      AND: [
         {
-          shopDomain,
+          OR: productReferenceClauses,
         },
         {
-          shopDomain: null,
+          OR: [
+            {
+              shopDomain,
+            },
+            {
+              shopDomain: null,
+            },
+          ],
         },
       ],
     },
@@ -4577,6 +4662,7 @@ export async function processShopifyOrderPaidSettlement(
       name: true,
       approvalStatus: true,
       shopifyProductId: true,
+      shopifyVariantId: true,
       shopDomain: true,
       vendorStoreId: true,
       vendorStore: {
@@ -4614,7 +4700,7 @@ export async function processShopifyOrderPaidSettlement(
   const unmatchedProductIds = [];
 
   for (const lineItem of lineItems) {
-    const candidates = getShopifyLineProductIdCandidates(lineItem);
+    const candidates = getShopifyLineProductMatchCandidates(lineItem);
     const product = candidates
       .map((candidate) => productMap.get(candidate))
       .find(Boolean);
@@ -5024,11 +5110,31 @@ export async function processShopifyRefundSettlement(
     };
   }
 
+  const variantIdCandidates = uniqueValues(
+    refundLineItems.flatMap(getShopifyRefundLineVariantIdCandidates),
+  );
   const productIdCandidates = uniqueValues(
     refundLineItems.flatMap(getShopifyRefundLineProductIdCandidates),
   );
+  const productReferenceClauses = [];
 
-  if (productIdCandidates.length === 0) {
+  if (variantIdCandidates.length > 0) {
+    productReferenceClauses.push({
+      shopifyVariantId: {
+        in: variantIdCandidates,
+      },
+    });
+  }
+
+  if (productIdCandidates.length > 0) {
+    productReferenceClauses.push({
+      shopifyProductId: {
+        in: productIdCandidates,
+      },
+    });
+  }
+
+  if (productReferenceClauses.length === 0) {
     return {
       ok: false,
       reason: "shopify_refund_products_missing",
@@ -5037,15 +5143,19 @@ export async function processShopifyRefundSettlement(
 
   const products = await prismaClient.product.findMany({
     where: {
-      shopifyProductId: {
-        in: productIdCandidates,
-      },
-      OR: [
+      AND: [
         {
-          shopDomain,
+          OR: productReferenceClauses,
         },
         {
-          shopDomain: null,
+          OR: [
+            {
+              shopDomain,
+            },
+            {
+              shopDomain: null,
+            },
+          ],
         },
       ],
     },
@@ -5054,6 +5164,7 @@ export async function processShopifyRefundSettlement(
       name: true,
       approvalStatus: true,
       shopifyProductId: true,
+      shopifyVariantId: true,
       shopDomain: true,
       vendorStoreId: true,
       vendorStore: {
@@ -5091,7 +5202,7 @@ export async function processShopifyRefundSettlement(
   const unmatchedProductIds = [];
 
   for (const refundLineItem of refundLineItems) {
-    const candidates = getShopifyRefundLineProductIdCandidates(refundLineItem);
+    const candidates = getShopifyRefundLineProductMatchCandidates(refundLineItem);
     const product = candidates
       .map((candidate) => productMap.get(candidate))
       .find(Boolean);

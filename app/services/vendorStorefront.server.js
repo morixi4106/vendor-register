@@ -1627,6 +1627,7 @@ async function buildServerTrustedCheckoutPayload({
       url: true,
       vendorStoreId: true,
       shopifyProductId: true,
+      shopifyVariantId: true,
       shopDomain: true,
       productEuStatus: true,
       countryPolicy: true,

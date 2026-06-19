@@ -37,6 +37,36 @@ const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskRateBps: 10000,
 };
 
+function assertShopifyProductLookupWhere(
+  where,
+  { shopDomain, productIds = [], variantIds = [] },
+) {
+  const referenceClauses = where?.AND?.[0]?.OR || [];
+  const productClause = referenceClauses.find(
+    (clause) => clause.shopifyProductId,
+  );
+  const variantClause = referenceClauses.find(
+    (clause) => clause.shopifyVariantId,
+  );
+
+  if (productIds.length > 0) {
+    assert.deepEqual(productClause?.shopifyProductId?.in, productIds);
+  } else {
+    assert.equal(productClause, undefined);
+  }
+
+  if (variantIds.length > 0) {
+    assert.deepEqual(variantClause?.shopifyVariantId?.in, variantIds);
+  } else {
+    assert.equal(variantClause, undefined);
+  }
+
+  assert.deepEqual(where?.AND?.[1]?.OR, [
+    { shopDomain },
+    { shopDomain: null },
+  ]);
+}
+
 function createSellerOrderShadowFakeModels(state) {
   return {
     marketplaceOrder: {
@@ -1166,20 +1196,18 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
     },
     product: {
       async findMany({ where }) {
-        assert.deepEqual(where.shopifyProductId.in, [
-          "gid://shopify/Product/911",
-          "911",
-        ]);
-        assert.deepEqual(where.OR, [
-          { shopDomain: "b30ize-1a.myshopify.com" },
-          { shopDomain: null },
-        ]);
+        assertShopifyProductLookupWhere(where, {
+          shopDomain: "b30ize-1a.myshopify.com",
+          productIds: ["gid://shopify/Product/911", "911"],
+          variantIds: ["gid://shopify/ProductVariant/912", "912"],
+        });
         return [
           {
             id: "product_1",
             name: "Test Product",
             approvalStatus: "approved",
             shopifyProductId: "gid://shopify/Product/911",
+            shopifyVariantId: "gid://shopify/ProductVariant/912",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStoreId: "store_1",
             vendorStore: {
@@ -1219,6 +1247,7 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
           {
             id: 501,
             product_id: 911,
+            variant_id: 912,
             price: "26948.00",
             quantity: 1,
             discount_allocations: [
@@ -1632,14 +1661,10 @@ test("processShopifyOrderPaidSettlement reads Shopify transaction risk when the 
     },
     product: {
       async findMany({ where }) {
-        assert.deepEqual(where.shopifyProductId.in, [
-          "gid://shopify/Product/912",
-          "912",
-        ]);
-        assert.deepEqual(where.OR, [
-          { shopDomain: "b30ize-1a.myshopify.com" },
-          { shopDomain: null },
-        ]);
+        assertShopifyProductLookupWhere(where, {
+          shopDomain: "b30ize-1a.myshopify.com",
+          productIds: ["gid://shopify/Product/912", "912"],
+        });
         return [
           {
             id: "product_1",
@@ -2506,20 +2531,18 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
     },
     product: {
       async findMany({ where }) {
-        assert.deepEqual(where.shopifyProductId.in, [
-          "gid://shopify/Product/911",
-          "911",
-        ]);
-        assert.deepEqual(where.OR, [
-          { shopDomain: "b30ize-1a.myshopify.com" },
-          { shopDomain: null },
-        ]);
+        assertShopifyProductLookupWhere(where, {
+          shopDomain: "b30ize-1a.myshopify.com",
+          productIds: ["gid://shopify/Product/911", "911"],
+          variantIds: ["gid://shopify/ProductVariant/912", "912"],
+        });
         return [
           {
             id: "product_1",
             name: "Test Product",
             approvalStatus: "approved",
             shopifyProductId: "gid://shopify/Product/911",
+            shopifyVariantId: "gid://shopify/ProductVariant/912",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStoreId: "store_1",
             vendorStore: {
@@ -2568,6 +2591,7 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
             line_item: {
               id: 501,
               product_id: 911,
+              variant_id: 912,
             },
           },
         ],
