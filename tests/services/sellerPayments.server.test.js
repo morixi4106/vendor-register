@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   approvePayoutRun,
+  backfillSellerOrderShadowChecks,
   calculateSellerPayoutableLedgerBalance,
   calculateSellerSalesCreditAvailability,
   authorizeSalesCreditOffset,
@@ -75,6 +76,17 @@ function createSellerOrderShadowFakeModels(state) {
       },
     },
     sellerOrderShadowCheck: {
+      async findFirst({ where }) {
+        return (
+          state.sellerOrderShadowChecks.find((check) => {
+            if (where?.shopifyOrderId && check.shopifyOrderId !== where.shopifyOrderId) {
+              return false;
+            }
+
+            return true;
+          }) || null
+        );
+      },
       async create({ data }) {
         const record = {
           id: `sosc_${state.sellerOrderShadowChecks.length + 1}`,
@@ -1358,6 +1370,184 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
     state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
     1900,
   );
+});
+
+test("backfillSellerOrderShadowChecks creates a shadow check from an existing ledger and skips the second run", async () => {
+  const ledgerEntry = {
+    id: "le_backfill_1",
+    sellerId: "seller_1",
+    entryType: "shopify_order_paid",
+    stripeObjectId: "gid://shopify/Order/1301",
+    amount: 1900,
+    currencyCode: "jpy",
+    direction: "credit",
+    occurredAt: new Date("2026-06-20T09:00:00Z"),
+    metadataJson: {
+      shopDomain: "b30ize-1a.myshopify.com",
+      shopifyOrderId: "gid://shopify/Order/1301",
+      shopifyOrderName: "#1301",
+      shopifyOrderNumericId: "1301",
+      lineItems: [
+        {
+          shopifyLineItemId: "601",
+          shopifyProductId: "gid://shopify/Product/911",
+          localProductId: "product_1",
+          localProductName: "Shadow Product",
+          quantity: 2,
+          amount: 1900,
+        },
+      ],
+    },
+  };
+  const state = {
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findMany() {
+        return [ledgerEntry];
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_1",
+            name: "Shadow Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Shadow Store",
+              seller: null,
+              vendorAuth: {
+                id: "vendor_1",
+                handle: "shadow-store",
+                storeName: "Shadow Store",
+                seller: {
+                  id: "seller_1",
+                  status: "active",
+                  stripeAccount: null,
+                },
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const firstResult = await backfillSellerOrderShadowChecks(
+    {
+      days: 30,
+      limit: 10,
+      now: new Date("2026-06-20T12:00:00Z"),
+    },
+    { prismaClient: fakePrisma },
+  );
+  const secondResult = await backfillSellerOrderShadowChecks(
+    {
+      days: 30,
+      limit: 10,
+      now: new Date("2026-06-20T12:00:00Z"),
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(firstResult.scanned, 1);
+  assert.equal(firstResult.created, 1);
+  assert.equal(firstResult.failed, 0);
+  assert.equal(secondResult.ok, true);
+  assert.equal(secondResult.created, 0);
+  assert.equal(secondResult.skippedExisting, 1);
+  assert.equal(state.marketplaceOrders.size, 1);
+  assert.equal(state.sellerOrders.size, 1);
+  assert.equal(state.sellerOrderLines.size, 1);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+  assert.equal(state.sellerOrderShadowChecks[0].status, "matched");
+  assert.equal(state.sellerOrderShadowChecks[0].legacyLedgerAmount, 1900);
+  assert.equal(
+    state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
+    1900,
+  );
+});
+
+test("backfillSellerOrderShadowChecks records a failed check when products cannot be matched", async () => {
+  const ledgerEntry = {
+    id: "le_backfill_missing_product",
+    sellerId: "seller_1",
+    entryType: "shopify_order_paid",
+    stripeObjectId: "gid://shopify/Order/1302",
+    amount: 1900,
+    currencyCode: "jpy",
+    direction: "credit",
+    occurredAt: new Date("2026-06-20T09:00:00Z"),
+    metadataJson: {
+      shopDomain: "b30ize-1a.myshopify.com",
+      shopifyOrderId: "gid://shopify/Order/1302",
+      shopifyOrderName: "#1302",
+      lineItems: [
+        {
+          shopifyLineItemId: "602",
+          shopifyProductId: "gid://shopify/Product/999",
+          localProductId: "missing_product",
+          localProductName: "Missing Product",
+          quantity: 1,
+          amount: 1900,
+        },
+      ],
+    },
+  };
+  const state = {
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findMany() {
+        return [ledgerEntry];
+      },
+    },
+    product: {
+      async findMany() {
+        return [];
+      },
+    },
+  };
+
+  const result = await backfillSellerOrderShadowChecks(
+    {
+      days: 30,
+      limit: 10,
+      now: new Date("2026-06-20T12:00:00Z"),
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.scanned, 1);
+  assert.equal(result.created, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(state.marketplaceOrders.size, 0);
+  assert.equal(state.sellerOrders.size, 0);
+  assert.equal(state.sellerOrderLines.size, 0);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+  assert.equal(state.sellerOrderShadowChecks[0].status, "failed");
+  assert.equal(
+    state.sellerOrderShadowChecks[0].errorMessage,
+    "backfill_no_matching_products",
+  );
+  assert.equal(state.sellerOrderShadowChecks[0].legacyLedgerAmount, 1900);
 });
 
 test("processShopifyOrderPaidSettlement reads Shopify transaction risk when the webhook payload is incomplete", async () => {
