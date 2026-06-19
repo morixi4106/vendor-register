@@ -3294,6 +3294,86 @@ test("processShopifyOrderCancelledSettlement only reverses the remaining unpaid 
   assert.equal(state.ledgerEntries[0].amount, 600);
 });
 
+test("processShopifyOrderCancelledSettlement can process multi-seller cancellations behind a flag", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async findMany() {
+        return [
+          {
+            id: "ledger_paid_1",
+            sellerId: "seller_1",
+            sellerStripeAccountId: "ssa_1",
+            stripeAccountId: "acct_1",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1004",
+            amount: 1000,
+          },
+          {
+            id: "ledger_paid_2",
+            sellerId: "seller_2",
+            sellerStripeAccountId: "ssa_2",
+            stripeAccountId: "acct_2",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/1004",
+            amount: 2000,
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: `ledger_cancelled_${state.ledgerEntries.length}`,
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await processShopifyOrderCancelledSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1004,
+        admin_graphql_api_id: "gid://shopify/Order/1004",
+        name: "#1004",
+        currency: "JPY",
+        cancel_reason: "customer",
+        cancelled_at: "2026-05-16T12:00:00Z",
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.multiSeller, true);
+  assert.deepEqual(result.sellerIds, ["seller_1", "seller_2"]);
+  assert.equal(result.amount, 3000);
+  assert.equal(state.ledgerEntries.length, 2);
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].amount, 1000);
+  assert.equal(state.ledgerEntries[1].sellerId, "seller_2");
+  assert.equal(state.ledgerEntries[1].amount, 2000);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.multiSellerCancelledSettlement,
+    true,
+  );
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.multiSellerCancelledSettlement,
+    true,
+  );
+});
+
 test("processShopifyDisputeSettlement holds seller payout balance and marks seller review", async () => {
   const state = {
     seller: {

@@ -534,6 +534,13 @@ function isMultiSellerShopifyRefundSettlementEnabled(env = process.env) {
   );
 }
 
+function isMultiSellerShopifyCancelledSettlementEnabled(env = process.env) {
+  return (
+    normalizeLowercase(env.MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED) ===
+    "true"
+  );
+}
+
 function hasSellerOrderShadowModels(prismaClient) {
   return Boolean(
     prismaClient?.marketplaceOrder?.upsert &&
@@ -5368,7 +5375,7 @@ export async function processShopifyRefundSettlement(
 
 export async function processShopifyOrderCancelledSettlement(
   { payload, shop },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   const shopDomain = normalizeLowercase(
     shop || payload?.shop_domain || payload?.shop,
@@ -5380,6 +5387,8 @@ export async function processShopifyOrderCancelledSettlement(
   const currencyCode =
     normalizeLowercase(payload?.currency || payload?.presentment_currency) ||
     DEFAULT_ORDER_CURRENCY;
+  const multiSellerCancelledSettlementEnabled =
+    isMultiSellerShopifyCancelledSettlementEnabled(env);
 
   if (!shopDomain || !shopifyOrderId) {
     return {
@@ -5395,7 +5404,7 @@ export async function processShopifyOrderCancelledSettlement(
     },
   });
 
-  if (existingCancellationEntry) {
+  if (existingCancellationEntry && !multiSellerCancelledSettlementEnabled) {
     return {
       ok: true,
       duplicate: true,
@@ -5421,11 +5430,147 @@ export async function processShopifyOrderCancelledSettlement(
     };
   }
 
-  if (sellerIds.length > 1) {
+  if (sellerIds.length > 1 && !multiSellerCancelledSettlementEnabled) {
     return {
       ok: false,
       reason: "multi_seller_shopify_cancelled_order_unsupported",
       sellerIds,
+    };
+  }
+
+  if (sellerIds.length > 1) {
+    const existingCancellationEntries = orderLedgerEntries.filter(
+      (entry) =>
+        entry?.entryType === "shopify_order_cancelled" &&
+        entry?.stripeObjectId === shopifyOrderId,
+    );
+
+    if (
+      existingCancellationEntries.length > 0 ||
+      existingCancellationEntry?.stripeObjectId === shopifyOrderId
+    ) {
+      return {
+        ok: true,
+        duplicate: true,
+        multiSeller: true,
+        ledgerEntries:
+          existingCancellationEntries.length > 0
+            ? existingCancellationEntries
+            : [existingCancellationEntry],
+      };
+    }
+
+    const salesCreditOffset = getSalesCreditOffsetFromPaidEntries(paidEntries);
+
+    if (salesCreditOffset?.offsetId) {
+      return {
+        ok: false,
+        reason: "multi_seller_sales_credit_cancelled_order_unsupported",
+        sellerIds,
+      };
+    }
+
+    const occurredAt = payload?.cancelled_at
+      ? new Date(payload.cancelled_at)
+      : payload?.updated_at
+        ? new Date(payload.updated_at)
+        : new Date();
+
+    return runInTransaction(prismaClient, async (tx) => {
+      const ledgerEntries = [];
+      const sellerOrderShadowCancellations = [];
+      let settlementAmount = 0;
+
+      for (const sellerId of sellerIds) {
+        const orderLedgerSummary = summarizeShopifyOrderLedgerEntries(
+          orderLedgerEntries,
+          sellerId,
+        );
+        const sellerSettlementAmount = orderLedgerSummary.remainingAmount;
+
+        if (sellerSettlementAmount <= 0) {
+          continue;
+        }
+
+        const paidEntry = paidEntries.find(
+          (entry) => entry?.sellerId === sellerId,
+        );
+        const ledgerEntry = await createLedgerEntry(
+          {
+            sellerId,
+            sellerStripeAccountId: paidEntry?.sellerStripeAccountId || null,
+            stripeAccountId: paidEntry?.stripeAccountId || null,
+            entryType: "shopify_order_cancelled",
+            stripeObjectId: shopifyOrderId,
+            amount: sellerSettlementAmount,
+            currencyCode,
+            direction: "debit",
+            description: "Shopify order cancelled",
+            metadataJson: {
+              shopDomain,
+              shopifyOrderId,
+              shopifyOrderName,
+              shopifyOrderNumericId: normalizeText(payload?.id),
+              cancelReason: normalizeText(payload?.cancel_reason),
+              cancelledAt: normalizeText(payload?.cancelled_at),
+              settlementMode: "shopify_cancelled_order_to_monthly_settlement",
+              multiSellerCancelledSettlement: true,
+              paidAmount: orderLedgerSummary.paidAmount,
+              reversedAmountBeforeCancellation:
+                orderLedgerSummary.reversedAmount,
+            },
+            occurredAt,
+          },
+          { prismaClient: tx },
+        );
+        const sellerOrderShadowCancellation =
+          await updateSellerOrderShadowForCancellation(
+            {
+              shopDomain,
+              shopifyOrderId,
+              sellerId,
+              settlementAmount: sellerSettlementAmount,
+            },
+            { prismaClient: tx },
+          );
+
+        ledgerEntries.push(ledgerEntry);
+        sellerOrderShadowCancellations.push({
+          sellerId,
+          ...sellerOrderShadowCancellation,
+        });
+        settlementAmount += sellerSettlementAmount;
+      }
+
+      if (ledgerEntries.length === 0) {
+        return {
+          ok: true,
+          reason: "shopify_cancelled_order_already_reversed",
+          multiSeller: true,
+          sellerIds,
+          amount: 0,
+          currencyCode,
+        };
+      }
+
+      return {
+        ok: true,
+        duplicate: false,
+        multiSeller: true,
+        ledgerEntries,
+        sellerIds,
+        amount: settlementAmount,
+        currencyCode,
+        sellerOrderShadowCancellations,
+      };
+    });
+  }
+
+  if (existingCancellationEntry) {
+    return {
+      ok: true,
+      duplicate: true,
+      ledgerEntry: existingCancellationEntry,
     };
   }
 
