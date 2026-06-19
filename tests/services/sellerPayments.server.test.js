@@ -2133,6 +2133,100 @@ test("processShopifyOrderPaidSettlement is idempotent by Shopify order id", asyn
   });
 });
 
+test("processShopifyOrderPaidSettlement retries a missing shadow write for duplicate paid orders", async () => {
+  const existingLedgerEntry = {
+    id: "ledger_existing_shadow_retry",
+    sellerId: "seller_1",
+    entryType: "shopify_order_paid",
+    stripeObjectId: "gid://shopify/Order/1001",
+    amount: 900,
+    currencyCode: "jpy",
+  };
+  const state = {
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  let productLookups = 0;
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst() {
+        return existingLedgerEntry;
+      },
+      async create() {
+        throw new Error(
+          "duplicate order should not create another ledger entry",
+        );
+      },
+    },
+    product: {
+      async findMany() {
+        productLookups += 1;
+        return [
+          {
+            id: "product_1",
+            name: "Duplicate Shadow Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/911",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_1",
+            vendorStore: {
+              id: "store_1",
+              storeName: "Shadow Store",
+              seller: {
+                id: "seller_1",
+                status: "active",
+                stripeAccount: null,
+              },
+              vendorAuth: null,
+            },
+          },
+        ];
+      },
+    },
+  };
+  const order = {
+    shop: "b30ize-1a.myshopify.com",
+    payload: {
+      id: 1001,
+      admin_graphql_api_id: "gid://shopify/Order/1001",
+      name: "#1001",
+      currency: "JPY",
+      line_items: [
+        {
+          id: 501,
+          product_id: 911,
+          price: "900",
+          quantity: 1,
+        },
+      ],
+    },
+  };
+
+  const firstResult = await processShopifyOrderPaidSettlement(order, {
+    prismaClient: fakePrisma,
+    env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+  });
+  const secondResult = await processShopifyOrderPaidSettlement(order, {
+    prismaClient: fakePrisma,
+    env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+  });
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(firstResult.duplicate, true);
+  assert.equal(firstResult.sellerOrderShadow.status, "matched");
+  assert.equal(secondResult.ok, true);
+  assert.equal(secondResult.duplicate, true);
+  assert.equal(secondResult.sellerOrderShadow, undefined);
+  assert.equal(productLookups, 1);
+  assert.equal(state.marketplaceOrders.size, 1);
+  assert.equal(state.sellerOrders.size, 1);
+  assert.equal(state.sellerOrderLines.size, 1);
+  assert.equal(state.sellerOrderShadowChecks.length, 1);
+});
+
 test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", async () => {
   const state = {
     ledgerEntries: [],

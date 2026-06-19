@@ -4022,6 +4022,248 @@ async function recordShopifyOrderSellerOrderShadow(
   }
 }
 
+async function findLatestSellerOrderShadowCheck(
+  { prismaClient, shopDomain, shopifyOrderId },
+) {
+  if (!prismaClient?.sellerOrderShadowCheck?.findFirst) {
+    return null;
+  }
+
+  return prismaClient.sellerOrderShadowCheck.findFirst({
+    where: {
+      shopDomain,
+      shopifyOrderId,
+    },
+    orderBy: {
+      checkedAt: "desc",
+    },
+  });
+}
+
+async function recordMissingShopifyOrderSellerOrderShadowForDuplicate(
+  {
+    payload,
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    currencyCode,
+    ledgerEntry,
+    salesCreditOffset = null,
+  },
+  { prismaClient = prisma, env = process.env } = {},
+) {
+  if (!isSellerOrderShadowWriteEnabled(env)) {
+    return { ok: true, skipped: true, reason: "shadow_write_disabled" };
+  }
+
+  if (
+    !hasSellerOrderShadowModels(prismaClient) ||
+    !prismaClient?.sellerOrderShadowCheck?.findFirst ||
+    !prismaClient?.product?.findMany
+  ) {
+    return { ok: true, skipped: true, reason: "shadow_models_unavailable" };
+  }
+
+  try {
+    const existingShadowCheck = await findLatestSellerOrderShadowCheck({
+      prismaClient,
+      shopDomain,
+      shopifyOrderId,
+    });
+
+    if (
+      existingShadowCheck &&
+      existingShadowCheck.status !== SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED
+    ) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "shadow_check_exists",
+        shadowCheck: existingShadowCheck,
+      };
+    }
+
+    const lineItems = Array.isArray(payload?.line_items)
+      ? payload.line_items
+      : [];
+    const variantIdCandidates = uniqueValues(
+      lineItems.flatMap(getShopifyLineVariantIdCandidates),
+    );
+    const productIdCandidates = uniqueValues(
+      lineItems.flatMap(getShopifyLineProductIdCandidates),
+    );
+    const productReferenceClauses = [];
+
+    if (variantIdCandidates.length > 0) {
+      productReferenceClauses.push({
+        shopifyVariantId: {
+          in: variantIdCandidates,
+        },
+      });
+    }
+
+    if (productIdCandidates.length > 0) {
+      productReferenceClauses.push({
+        shopifyProductId: {
+          in: productIdCandidates,
+        },
+      });
+    }
+
+    if (productReferenceClauses.length === 0) {
+      return { ok: true, skipped: true, reason: "shadow_product_ids_missing" };
+    }
+
+    const products = await prismaClient.product.findMany({
+      where: {
+        AND: [
+          {
+            OR: productReferenceClauses,
+          },
+          {
+            OR: [
+              {
+                shopDomain,
+              },
+              {
+                shopDomain: null,
+              },
+            ],
+          },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        approvalStatus: true,
+        shopifyProductId: true,
+        shopifyVariantId: true,
+        shopDomain: true,
+        vendorStoreId: true,
+        vendorStore: {
+          select: {
+            id: true,
+            storeName: true,
+            seller: {
+              select: {
+                id: true,
+                status: true,
+                stripeAccount: true,
+              },
+            },
+            vendorAuth: {
+              select: {
+                id: true,
+                handle: true,
+                storeName: true,
+                seller: {
+                  select: {
+                    id: true,
+                    status: true,
+                    stripeAccount: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const productMap = buildProductCandidateMap(products, shopDomain);
+    const matchedLines = [];
+
+    for (const lineItem of lineItems) {
+      const candidates = getShopifyLineProductMatchCandidates(lineItem);
+      const product = candidates
+        .map((candidate) => productMap.get(candidate))
+        .find(Boolean);
+
+      if (!product) {
+        continue;
+      }
+
+      matchedLines.push({
+        lineItem,
+        product,
+        amount: getShopifyLineNetAmount(lineItem, currencyCode),
+      });
+    }
+
+    if (matchedLines.length === 0) {
+      const shadowCheck = await createSellerOrderShadowFailureCheck({
+        prismaClient,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        error: new Error("duplicate_shadow_no_matching_products"),
+      });
+
+      return {
+        ok: false,
+        reason: "duplicate_shadow_no_matching_products",
+        shadowCheck,
+      };
+    }
+
+    const sellerIds = uniqueValues(
+      matchedLines.map(({ product }) => getProductSeller(product)?.id),
+    );
+
+    if (sellerIds.length === 0) {
+      const shadowCheck = await createSellerOrderShadowFailureCheck({
+        prismaClient,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        error: new Error("duplicate_shadow_seller_missing"),
+      });
+
+      return {
+        ok: false,
+        reason: "duplicate_shadow_seller_missing",
+        shadowCheck,
+      };
+    }
+
+    const multiSellerDetected = sellerIds.length > 1;
+
+    return recordShopifyOrderSellerOrderShadow(
+      {
+        payload,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        matchedLines,
+        ledgerEntry,
+        salesCreditOffset,
+        multiSellerDetected,
+        writeSellerOrders: !multiSellerDetected,
+      },
+      { prismaClient, env },
+    );
+  } catch (error) {
+    console.error("duplicate seller order shadow retry error:", error);
+    const shadowCheck = await createSellerOrderShadowFailureCheck({
+      prismaClient,
+      shopDomain,
+      shopifyOrderId,
+      shopifyOrderName,
+      currencyCode,
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "duplicate_shadow_retry_failed",
+      errorMessage: normalizeText(error?.message),
+      shadowCheck,
+    };
+  }
+}
+
 function getLedgerMetadataJson(ledgerEntry) {
   return isPlainObject(ledgerEntry?.metadataJson)
     ? ledgerEntry.metadataJson
@@ -4603,6 +4845,24 @@ export async function processShopifyOrderPaidSettlement(
 
     if (salesCreditCapture) {
       response.salesCreditCapture = salesCreditCapture;
+    }
+
+    const sellerOrderShadow =
+      await recordMissingShopifyOrderSellerOrderShadowForDuplicate(
+        {
+          payload,
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          currencyCode,
+          ledgerEntry: existingLedgerEntry,
+          salesCreditOffset,
+        },
+        { prismaClient, env },
+      );
+
+    if (!sellerOrderShadow?.skipped) {
+      response.sellerOrderShadow = sellerOrderShadow;
     }
 
     return response;
