@@ -685,6 +685,18 @@ test("getVendorOrdersPageData can read mapped orders from seller orders behind f
                 fulfillmentStatus: "unfulfilled",
                 createdAt: new Date("2026-04-29T08:35:00Z"),
                 updatedAt: new Date("2026-04-29T08:36:00Z"),
+                shipments: [
+                  {
+                    id: "seller_shipment_1",
+                    shopifyFulfillmentId: "gid://shopify/Fulfillment/7001",
+                    trackingNumber: "JP123456789",
+                    trackingCompany: "Japan Post",
+                    trackingUrl: "https://example.com/track/JP123456789",
+                    status: "registered",
+                    shippedAt: new Date("2026-04-29T09:00:00Z"),
+                    createdAt: new Date("2026-04-29T09:00:00Z"),
+                  },
+                ],
               },
             ];
           },
@@ -752,6 +764,11 @@ test("getVendorOrdersPageData can read mapped orders from seller orders behind f
   assert.equal(result.orders[0].ledgerPaidAmount, 8400);
   assert.equal(result.orders[0].ledgerRefundAmount, 0);
   assert.equal(result.orders[0].ledgerNetAmount, 8400);
+  assert.equal(result.orders[0].trackingLabel, "Japan Post: JP123456789");
+  assert.equal(
+    result.orders[0].trackingUrl,
+    "https://example.com/track/JP123456789",
+  );
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 

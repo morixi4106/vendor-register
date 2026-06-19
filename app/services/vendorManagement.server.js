@@ -976,6 +976,31 @@ function summarizeTrackingInfo(fulfillments = []) {
 }
 
 function summarizeSellerOrderTrackingInfo(sellerOrder) {
+  const shipmentTrackingItems = [];
+
+  for (const shipment of Array.isArray(sellerOrder?.shipments)
+    ? sellerOrder.shipments
+    : []) {
+    const number = String(shipment?.trackingNumber || "").trim();
+    if (!number) continue;
+
+    shipmentTrackingItems.push({
+      company: String(shipment?.trackingCompany || "").trim(),
+      number,
+      url: String(shipment?.trackingUrl || "").trim(),
+    });
+  }
+
+  if (shipmentTrackingItems.length > 0) {
+    return {
+      trackingLabel: shipmentTrackingItems
+        .map((item) => (item.company ? `${item.company}: ${item.number}` : item.number))
+        .join(", "),
+      trackingUrl:
+        shipmentTrackingItems.find((item) => item.url)?.url || null,
+    };
+  }
+
   const metadata =
     sellerOrder?.metadataJson &&
     typeof sellerOrder.metadataJson === "object" &&
@@ -2034,6 +2059,22 @@ export async function listVendorShopifyOrderSellerOrderReferences(
       metadataJson: true,
       createdAt: true,
       updatedAt: true,
+      shipments: {
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 5,
+        select: {
+          id: true,
+          shopifyFulfillmentId: true,
+          trackingNumber: true,
+          trackingCompany: true,
+          trackingUrl: true,
+          status: true,
+          shippedAt: true,
+          createdAt: true,
+        },
+      },
     },
   });
 
