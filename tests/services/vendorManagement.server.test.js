@@ -978,6 +978,7 @@ test("createVendorOrderFulfillment limits SellerOrder shipments to matching line
   const calls = [];
   const lineUpdates = [];
   let sellerOrderUpdate = null;
+  let sellerShipmentCreate = null;
 
   const result = await createVendorOrderFulfillment({
     storeId: "store_1",
@@ -1030,6 +1031,12 @@ test("createVendorOrderFulfillment limits SellerOrder shipments to matching line
         update: async (query) => {
           lineUpdates.push(query);
           return query.data;
+        },
+      },
+      sellerShipment: {
+        create: async (query) => {
+          sellerShipmentCreate = query;
+          return { id: "seller_shipment_1" };
         },
       },
     },
@@ -1127,9 +1134,37 @@ test("createVendorOrderFulfillment limits SellerOrder shipments to matching line
   ]);
   assert.equal(sellerOrderUpdate.where.id, "seller_order_1");
   assert.equal(sellerOrderUpdate.data.fulfillmentStatus, "fulfilled");
+  assert.deepEqual(sellerShipmentCreate.data, {
+    sellerOrderId: "seller_order_1",
+    shopifyFulfillmentId: "gid://shopify/Fulfillment/7001",
+    trackingNumber: "JP123456789",
+    trackingCompany: "Japan Post",
+    trackingUrl: null,
+    status: "registered",
+    shippedAt: sellerShipmentCreate.data.shippedAt,
+    metadataJson: {
+      source: "vendor_portal",
+    },
+    lines: {
+      create: [
+        {
+          sellerOrderLineId: "seller_order_line_1",
+          shopifyLineItemId: "gid://shopify/LineItem/line-1",
+          shopifyFulfillmentOrderId: "gid://shopify/FulfillmentOrder/9001",
+          shopifyFulfillmentOrderLineItemId:
+            "gid://shopify/FulfillmentOrderLineItem/fo-line-1",
+          quantity: 2,
+        },
+      ],
+    },
+  });
   assert.equal(
     sellerOrderUpdate.data.metadataJson.lastShipment.fulfillmentId,
     "gid://shopify/Fulfillment/7001",
+  );
+  assert.equal(
+    sellerOrderUpdate.data.metadataJson.lastShipment.sellerShipmentId,
+    "seller_shipment_1",
   );
   assert.equal(
     sellerOrderUpdate.data.metadataJson.lastShipment.trackingNumber,

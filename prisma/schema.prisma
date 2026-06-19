@@ -221,6 +221,7 @@ model SellerOrder {
 
   marketplaceOrder MarketplaceOrder  @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
   lines            SellerOrderLine[]
+  shipments        SellerShipment[]
 
   @@unique([marketplaceOrderId, sellerId])
   @@index([sellerId, createdAt])
@@ -252,11 +253,54 @@ model SellerOrderLine {
   updatedAt          DateTime @updatedAt
 
   sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  shipmentLines SellerShipmentLine[]
 
   @@unique([sellerOrderId, shopifyLineItemId])
   @@index([shopifyLineItemId])
   @@index([productId])
   @@map("seller_order_lines")
+}
+
+model SellerShipment {
+  id                   String   @id @default(cuid())
+  sellerOrderId        String
+  shopifyFulfillmentId String?
+  trackingNumber       String?
+  trackingCompany      String?
+  trackingUrl          String?
+  status               String   @default("registered")
+  shippedAt            DateTime?
+  metadataJson         Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  sellerOrder SellerOrder          @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  lines       SellerShipmentLine[]
+
+  @@index([sellerOrderId, createdAt])
+  @@index([shopifyFulfillmentId])
+  @@index([trackingNumber])
+  @@map("seller_shipments")
+}
+
+model SellerShipmentLine {
+  id                                  String   @id @default(cuid())
+  sellerShipmentId                    String
+  sellerOrderLineId                   String
+  shopifyLineItemId                   String?
+  shopifyFulfillmentOrderId           String
+  shopifyFulfillmentOrderLineItemId   String
+  quantity                            Int      @default(0)
+  createdAt                           DateTime @default(now())
+
+  sellerShipment SellerShipment  @relation(fields: [sellerShipmentId], references: [id], onDelete: Cascade)
+  sellerOrderLine SellerOrderLine @relation(fields: [sellerOrderLineId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerShipmentId, shopifyFulfillmentOrderLineItemId])
+  @@index([sellerOrderLineId])
+  @@index([shopifyLineItemId])
+  @@index([shopifyFulfillmentOrderId])
+  @@map("seller_shipment_lines")
 }
 
 model SellerOrderShadowCheck {

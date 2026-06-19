@@ -1587,6 +1587,16 @@ async function markSellerOrderShipmentRegistered({
   }
 
   const fulfilledByShopifyLineItemId = new Map();
+  const sellerLineByShopifyLineItemId = new Map();
+  const sellerShipmentLines = [];
+
+  for (const line of Array.isArray(sellerOrder.lines) ? sellerOrder.lines : []) {
+    const shopifyLineItemId = String(line?.shopifyLineItemId || "").trim();
+    if (shopifyLineItemId) {
+      sellerLineByShopifyLineItemId.set(shopifyLineItemId, line);
+    }
+  }
+
   for (const group of Array.isArray(sellerFulfillmentGroups)
     ? sellerFulfillmentGroups
     : []) {
@@ -1596,6 +1606,20 @@ async function markSellerOrderShipmentRegistered({
         (fulfilledByShopifyLineItemId.get(line.shopifyLineItemId) || 0) +
           line.quantity,
       );
+
+      const sellerOrderLine = sellerLineByShopifyLineItemId.get(
+        line.shopifyLineItemId,
+      );
+
+      if (sellerOrderLine?.id && line?.id && group?.fulfillmentOrderId) {
+        sellerShipmentLines.push({
+          sellerOrderLineId: sellerOrderLine.id,
+          shopifyLineItemId: line.shopifyLineItemId || null,
+          shopifyFulfillmentOrderId: group.fulfillmentOrderId,
+          shopifyFulfillmentOrderLineItemId: line.id,
+          quantity: toFulfillmentQuantity(line.quantity),
+        });
+      }
     }
   }
 
@@ -1621,6 +1645,35 @@ async function markSellerOrderShipmentRegistered({
 
   if (fulfilledLineCount === 0) return;
 
+  const shippedAt = new Date();
+  let sellerShipment = null;
+
+  if (
+    prismaClient?.sellerShipment?.create &&
+    sellerShipmentLines.length > 0
+  ) {
+    sellerShipment = await prismaClient.sellerShipment.create({
+      data: {
+        sellerOrderId: sellerOrder.id,
+        shopifyFulfillmentId: fulfillmentId || null,
+        trackingNumber: shipment.trackingNumber || null,
+        trackingCompany: shipment.trackingCompany || null,
+        trackingUrl: shipment.trackingUrl || null,
+        status: "registered",
+        shippedAt,
+        metadataJson: {
+          source: "vendor_portal",
+        },
+        lines: {
+          create: sellerShipmentLines,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
   const existingMetadata =
     sellerOrder.metadataJson &&
     typeof sellerOrder.metadataJson === "object" &&
@@ -1638,10 +1691,11 @@ async function markSellerOrderShipmentRegistered({
         ...existingMetadata,
         lastShipment: {
           fulfillmentId: fulfillmentId || null,
+          sellerShipmentId: sellerShipment?.id || null,
           trackingNumber: shipment.trackingNumber,
           trackingCompany: shipment.trackingCompany || null,
           trackingUrl: shipment.trackingUrl || null,
-          shippedAt: new Date().toISOString(),
+          shippedAt: shippedAt.toISOString(),
         },
       },
     },
