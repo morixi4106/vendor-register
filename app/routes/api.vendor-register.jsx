@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 
 import prisma from "../db.server.js";
+import { vendorRegistrationTargetCookie } from "../services/vendorManagement.server.js";
 import { ensureSellerForVendor } from "../services/sellerPayments.server.js";
 
 const RESERVED_VENDOR_HANDLES = new Set([
@@ -45,6 +46,20 @@ async function generateUniqueHandle(storeName) {
 
     count += 1;
   }
+}
+
+async function registrationSuccessResponse(vendorId) {
+  const normalizedVendorId = String(vendorId || "").trim();
+  const headers = new Headers();
+
+  if (normalizedVendorId) {
+    headers.append(
+      "Set-Cookie",
+      await vendorRegistrationTargetCookie.serialize(normalizedVendorId),
+    );
+  }
+
+  return json({ ok: true, vendorId: normalizedVendorId || null }, { headers });
 }
 
 export const loader = async () => {
@@ -92,6 +107,8 @@ export const action = async ({ request }) => {
   });
 
   if (existingStore) {
+    let vendorId = existingStore.vendorAuth?.id || null;
+
     if (!existingStore.vendorAuth) {
       const handle = await generateUniqueHandle(existingStore.storeName);
 
@@ -104,6 +121,8 @@ export const action = async ({ request }) => {
           status: "active",
         },
       });
+
+      vendorId = vendor.id;
 
       await ensureSellerForVendor(vendor.id, {
         prismaClient: prisma,
@@ -120,10 +139,11 @@ export const action = async ({ request }) => {
       });
     }
 
-    return json({ ok: true });
+    return registrationSuccessResponse(vendorId);
   }
 
   const handle = await generateUniqueHandle(storeName);
+  let vendorId = null;
 
   await prisma.$transaction(async (tx) => {
     const vendorStore = await tx.vendorStore.create({
@@ -150,6 +170,8 @@ export const action = async ({ request }) => {
       },
     });
 
+    vendorId = vendor.id;
+
     const seller = await tx.seller.create({
       data: {
         vendorId: vendor.id,
@@ -169,5 +191,5 @@ export const action = async ({ request }) => {
     });
   });
 
-  return json({ ok: true });
+  return registrationSuccessResponse(vendorId);
 };

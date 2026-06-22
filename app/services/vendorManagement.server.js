@@ -92,6 +92,17 @@ export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   maxAge: 60 * 60 * 8,
 });
 
+export const vendorRegistrationTargetCookie = createCookie(
+  "vendor_registration_target",
+  {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 30,
+  },
+);
+
 export function sanitizeVendorReturnTo(value, fallback = "/vendor/dashboard") {
   const returnTo = String(value || "").trim();
 
