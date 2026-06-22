@@ -434,6 +434,11 @@ export default function VendorStoresPage() {
                           store.vendorAuth.id,
                         )}&returnTo=${encodeURIComponent("/vendor/dashboard")}`
                       : null;
+                    const vendorOrdersVerifyUrl = store.vendorAuth?.id
+                      ? `/vendor/verify?vendorId=${encodeURIComponent(
+                          store.vendorAuth.id,
+                        )}&returnTo=${encodeURIComponent("/vendor/orders")}`
+                      : null;
 
                     return (
                       <tr key={store.id}>
@@ -481,6 +486,28 @@ export default function VendorStoresPage() {
                                 }}
                               >
                                 店舗ダッシュボード
+                              </Link>
+                            ) : null}
+                            {vendorOrdersVerifyUrl ? (
+                              <Link
+                                to={vendorOrdersVerifyUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  minHeight: "36px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  padding: "0 12px",
+                                  borderRadius: "999px",
+                                  border: "1px solid #d1d5db",
+                                  color: "#111827",
+                                  textDecoration: "none",
+                                  fontWeight: "700",
+                                  fontSize: "13px",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                注文管理
                               </Link>
                             ) : null}
                           <Form
