@@ -69,8 +69,25 @@ export default function Register() {
       }
 
       alert("保存成功");
-      window.top.location.href =
-        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84";
+      const vendorId = String(data?.vendorId || "").trim();
+
+      if (vendorId) {
+        try {
+          window.localStorage.setItem("vendor_registration_target", vendorId);
+        } catch (_) {
+          // Continue even if browser storage is unavailable.
+        }
+      }
+
+      const termsUrl = new URL(
+        "https://oja-immanuel-bacchus.myshopify.com/pages/%E5%BA%97%E8%88%97%E5%90%91%E3%81%91%E5%88%A9%E7%94%A8%E8%A6%8F%E7%B4%84"
+      );
+
+      if (vendorId) {
+        termsUrl.searchParams.set("vendorId", vendorId);
+      }
+
+      window.top.location.href = termsUrl.toString();
     } catch (err) {
       console.error(err);
       alert("通信エラーが発生しました。");
