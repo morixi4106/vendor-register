@@ -17,10 +17,11 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const returnTo = getVendorReturnTo(request, DEFAULT_RETURN_TO);
   const targetVendorId = String(url.searchParams.get("vendorId") || "").trim();
+  const forceVerify = url.searchParams.get("force") === "1";
   const cookieHeader = request.headers.get("Cookie");
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
-  if (sessionToken) {
+  if (sessionToken && !forceVerify) {
     const session = await prisma.vendorAdminSession.findUnique({
       where: { sessionToken },
       include: { vendor: true },
