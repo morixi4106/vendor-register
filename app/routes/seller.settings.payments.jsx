@@ -11,7 +11,12 @@ export const loader = async ({ request }) => {
   const { vendor } = await requireVendorContext(request);
   const pageData = await getSellerPaymentsPageData({ vendorId: vendor.id });
 
-  return json(pageData);
+  return json({
+    ...pageData,
+    vendor: {
+      id: vendor.id,
+    },
+  });
 };
 
 export default function SellerPaymentsSettingsPage() {

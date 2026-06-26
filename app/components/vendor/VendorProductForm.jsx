@@ -1,4 +1,5 @@
 import { Form, Link } from "@remix-run/react";
+import { useVendorScopedPath } from "./vendorNavigation";
 import {
   PRODUCT_CATEGORY_OPTIONS,
   normalizeProductCategory,
@@ -22,6 +23,7 @@ export default function VendorProductForm({
   backTo = "/vendor/dashboard",
   backLabel = "ダッシュボードへ戻る",
 }) {
+  const scopedBackTo = useVendorScopedPath(backTo);
   const selectedCategory =
     normalizeProductCategory(initialValues.category) || initialValues.category || "";
   const regulatorySelfCertified = Boolean(
@@ -195,7 +197,7 @@ export default function VendorProductForm({
                 {isSubmitting ? submittingLabel : submitLabel}
               </button>
 
-              <Link className="vendor-shell__button" to={backTo}>
+              <Link className="vendor-shell__button" to={scopedBackTo}>
                 {backLabel}
               </Link>
             </div>

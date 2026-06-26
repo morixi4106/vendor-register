@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
 import { useEffect, useMemo, useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import { useVendorScopedPath } from "../components/vendor/vendorNavigation";
 
 function InventoryQuantityInput({ onChange, product, value }) {
   const adjustValue = (delta) => {
@@ -142,6 +143,7 @@ export const action = async ({ request }) => {
 export default function VendorInventoryPage() {
   const actionData = useActionData();
   const { store, products, stats } = useLoaderData();
+  const productsPath = useVendorScopedPath("/vendor/products");
   const initialInventoryValues = useMemo(
     () =>
       Object.fromEntries(
@@ -215,7 +217,7 @@ export default function VendorInventoryPage() {
         </div>
 
         <div className="vendor-actions-row" style={{ marginTop: "16px" }}>
-          <Link className="vendor-shell__button" to="/vendor/products">
+          <Link className="vendor-shell__button" to={productsPath}>
             商品管理を開く
           </Link>
         </div>

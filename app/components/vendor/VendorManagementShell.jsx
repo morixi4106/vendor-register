@@ -1,6 +1,11 @@
-import { Link } from "@remix-run/react";
+import { Link, useLocation, useNavigate } from "@remix-run/react";
+import { useEffect, useMemo } from "react";
 import VendorPageHeader from "./VendorPageHeader";
 import VendorSidebar from "./VendorSidebar";
+import {
+  appendVendorIdToPath,
+  useVendorIdFromMatches,
+} from "./vendorNavigation";
 
 const DEFAULT_ACTIONS = (
   <>
@@ -13,6 +18,28 @@ const DEFAULT_ACTIONS = (
   </>
 );
 
+function ScopedDefaultActions({ vendorId }) {
+  if (!vendorId) {
+    return DEFAULT_ACTIONS;
+  }
+
+  return (
+    <>
+      <Link
+        className="vendor-shell__button"
+        to={appendVendorIdToPath("/vendor/products/new", vendorId)}
+      >
+        譁ｰ隕丞膚蜩∫匳骭ｲ
+      </Link>
+      <Link
+        className="vendor-shell__button vendor-shell__button--primary"
+        to={appendVendorIdToPath("/vendor/reports/monthly", vendorId)}
+      >
+        譛域ｬ｡PDF蜃ｺ蜉・      </Link>
+    </>
+  );
+}
+
 export default function VendorManagementShell({
   activeItem,
   storeName,
@@ -21,6 +48,25 @@ export default function VendorManagementShell({
   actions = null,
   children,
 }) {
+  const vendorId = useVendorIdFromMatches();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const scopedActions = useMemo(
+    () => actions || <ScopedDefaultActions vendorId={vendorId} />,
+    [actions, vendorId],
+  );
+
+  useEffect(() => {
+    if (!vendorId) return;
+
+    const current = `${location.pathname}${location.search}${location.hash}`;
+    const scoped = appendVendorIdToPath(current, vendorId);
+
+    if (scoped !== current) {
+      navigate(scoped, { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate, vendorId]);
+
   return (
     <div className="vendor-shell">
       <style>{`
@@ -564,11 +610,11 @@ export default function VendorManagementShell({
         title={title}
         storeName={storeName}
         search={search}
-        actions={actions || DEFAULT_ACTIONS}
+        actions={scopedActions}
       />
 
       <div className="vendor-shell__layout">
-        <VendorSidebar activeItem={activeItem} />
+        <VendorSidebar activeItem={activeItem} vendorId={vendorId} />
         <main className="vendor-shell__main">{children}</main>
       </div>
     </div>

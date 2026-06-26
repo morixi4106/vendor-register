@@ -7,6 +7,7 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import { useVendorScopedPath } from "../components/vendor/vendorNavigation";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -44,7 +45,11 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { requireVendorContext, updateVendorSettings } = await import(
+  const {
+    appendVendorIdToPath,
+    requireVendorContext,
+    updateVendorSettings,
+  } = await import(
     "../services/vendorManagement.server"
   );
   const { vendor, store } = await requireVendorContext(request);
@@ -110,13 +115,14 @@ export const action = async ({ request }) => {
     );
   }
 
-  return redirect("/vendor/settings?saved=1");
+  return redirect(appendVendorIdToPath("/vendor/settings?saved=1", vendor.id));
 };
 
 export default function VendorSettingsPage() {
   const actionData = useActionData();
   const navigation = useNavigation();
   const { vendor, store, saved } = useLoaderData();
+  const monthlyReportPath = useVendorScopedPath("/vendor/reports/monthly");
   const isSaving =
     navigation.state !== "idle" && navigation.formMethod?.toLowerCase() === "post";
   const fieldErrors = actionData?.fieldErrors || {};
@@ -304,7 +310,7 @@ export default function VendorSettingsPage() {
           <div className="vendor-actions-row">
             <Link
               className="vendor-shell__button"
-              to="/vendor/reports/monthly"
+              to={monthlyReportPath}
             >
               月次PDF出力へ
             </Link>

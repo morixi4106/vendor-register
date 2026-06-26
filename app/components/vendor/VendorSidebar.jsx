@@ -1,4 +1,5 @@
 import { NavLink } from "@remix-run/react";
+import { appendVendorIdToPath } from "./vendorNavigation";
 
 const NAV_ITEMS = [
   {
@@ -19,14 +20,14 @@ const NAV_ITEMS = [
   },
 ];
 
-export default function VendorSidebar({ activeItem }) {
+export default function VendorSidebar({ activeItem, vendorId = "" }) {
   return (
     <aside className="vendor-shell__sidebar">
       <nav className="vendor-shell__nav" aria-label="店舗管理ナビゲーション">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.key}
-            to={item.to}
+            to={appendVendorIdToPath(item.to, vendorId)}
             end={item.end}
             className={({ isActive }) =>
               `vendor-shell__nav-link${

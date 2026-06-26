@@ -2,6 +2,10 @@ import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import {
+  useVendorIdFromMatches,
+  useVendorScopedPath,
+} from "../components/vendor/vendorNavigation";
 import { listShippingCarriersForCountry } from "../utils/shippingCarriers";
 
 function createOrdersPageContent(accessState, orderCount) {
@@ -153,6 +157,8 @@ export default function VendorOrdersPage() {
   const { store, ordersAccess, orders } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
+  const vendorId = useVendorIdFromMatches();
+  const ordersActionPath = useVendorScopedPath("/vendor/orders");
   const [selectedAddressOrder, setSelectedAddressOrder] = useState(null);
   const pageContent = createOrdersPageContent(ordersAccess, orders.length);
   const isReady = ordersAccess.status === "ready";
@@ -470,8 +476,15 @@ export default function VendorOrdersPage() {
                       </td>
                       <td>
                         {order.canRegisterShipment ? (
-                          <Form method="post" className="vendor-orders__action-form">
+                          <Form
+                            method="post"
+                            action={ordersActionPath}
+                            className="vendor-orders__action-form"
+                          >
                             <input type="hidden" name="intent" value="register-shipment" />
+                            {vendorId ? (
+                              <input type="hidden" name="vendorId" value={vendorId} />
+                            ) : null}
                             <input type="hidden" name="orderId" value={order.orderId} />
                             {order.sellerOrderId ? (
                               <input

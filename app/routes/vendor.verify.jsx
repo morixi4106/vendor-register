@@ -4,10 +4,13 @@ import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
 import prisma from "../db.server";
 import {
+  appendVendorIdToPath,
+  createVendorAdminSessionCookieHeaders,
   getVendorReturnTo,
   isConfiguredAdminEmail,
   sanitizeVendorReturnTo,
   vendorAdminSessionCookie,
+  vendorAdminSessionsCookie,
 } from "../services/vendorManagement.server";
 
 const DEFAULT_RETURN_TO = "/vendor/dashboard";
@@ -15,11 +18,19 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
-  const returnTo = getVendorReturnTo(request, DEFAULT_RETURN_TO);
   const targetVendorId = String(url.searchParams.get("vendorId") || "").trim();
+  const returnTo = appendVendorIdToPath(
+    getVendorReturnTo(request, DEFAULT_RETURN_TO),
+    targetVendorId,
+  );
   const forceVerify = url.searchParams.get("force") === "1";
   const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
+  const currentSessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
+  const sessionMap =
+    (await vendorAdminSessionsCookie.parse(cookieHeader))?.sessions || {};
+  const sessionToken = targetVendorId
+    ? String(sessionMap[targetVendorId] || currentSessionToken || "")
+    : currentSessionToken;
 
   if (sessionToken && !forceVerify) {
     const session = await prisma.vendorAdminSession.findUnique({
@@ -42,14 +53,18 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
-  const returnTo = sanitizeVendorReturnTo(
+  const formVendorId = String(formData.get("vendorId") || "").trim();
+  const returnTo = appendVendorIdToPath(
+    sanitizeVendorReturnTo(
     formData.get("returnTo") || new URL(request.url).searchParams.get("returnTo"),
     DEFAULT_RETURN_TO
+    ),
+    formVendorId,
   );
 
   if (intent === "send-code") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
-    const targetVendorId = String(formData.get("vendorId") || "").trim();
+    const targetVendorId = formVendorId;
     const isAdminEmail = isConfiguredAdminEmail(email);
 
     if (!email) {
@@ -161,7 +176,7 @@ export const action = async ({ request }) => {
 
   if (intent === "verify-code") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
-    const vendorId = String(formData.get("vendorId") || "").trim();
+    const vendorId = formVendorId;
     const code = String(formData.get("code") || "").trim();
     const isAdminEmail = isConfiguredAdminEmail(email);
 
@@ -243,9 +258,10 @@ export const action = async ({ request }) => {
     });
 
     return redirect(returnTo, {
-      headers: {
-        "Set-Cookie": await vendorAdminSessionCookie.serialize(sessionToken),
-      },
+      headers: await createVendorAdminSessionCookieHeaders(request, {
+        vendorId,
+        sessionToken,
+      }),
     });
   }
 

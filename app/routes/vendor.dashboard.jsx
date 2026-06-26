@@ -2,6 +2,11 @@ import { json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import {
+  appendVendorIdToPath,
+  useVendorIdFromMatches,
+  useVendorScopedPath,
+} from "../components/vendor/vendorNavigation";
 
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
@@ -86,10 +91,14 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { deleteVendorProductForStore, requireVendorContext } = await import(
+  const {
+    appendVendorIdToPath,
+    deleteVendorProductForStore,
+    requireVendorContext,
+  } = await import(
     "../services/vendorManagement.server"
   );
-  const { store } = await requireVendorContext(request);
+  const { vendor, store } = await requireVendorContext(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
@@ -116,7 +125,7 @@ export const action = async ({ request }) => {
     );
   }
 
-  return redirect("/vendor/dashboard");
+  return redirect(appendVendorIdToPath("/vendor/dashboard", vendor.id));
 };
 
 function formatChartMoney(amount, currencyCode = "JPY") {
@@ -315,6 +324,10 @@ export default function VendorDashboard() {
     useLoaderData();
 
   const [query, setQuery] = useState("");
+  const vendorId = useVendorIdFromMatches();
+  const ordersPath = useVendorScopedPath("/vendor/orders");
+  const productsPath = useVendorScopedPath("/vendor/products");
+  const monthlyReportPath = useVendorScopedPath("/vendor/reports/monthly");
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -512,7 +525,7 @@ export default function VendorDashboard() {
           </div>
 
           <div className="vendor-actions-row" style={{ marginTop: "16px" }}>
-            <Link className="vendor-shell__button" to="/vendor/orders">
+            <Link className="vendor-shell__button" to={ordersPath}>
               注文管理ページを開く
             </Link>
           </div>
@@ -554,7 +567,7 @@ export default function VendorDashboard() {
           <div className="vendor-actions-row" style={{ marginTop: "16px" }}>
             <Link
               className="vendor-shell__button vendor-shell__button--primary"
-              to="/vendor/reports/monthly"
+              to={monthlyReportPath}
             >
               月次PDF出力ページへ
             </Link>
@@ -580,7 +593,7 @@ export default function VendorDashboard() {
           </div>
 
           <div className="vendor-actions-row">
-            <Link className="vendor-shell__button" to="/vendor/products">
+            <Link className="vendor-shell__button" to={productsPath}>
               商品管理ページを開く
             </Link>
           </div>
@@ -645,7 +658,13 @@ export default function VendorDashboard() {
                     <td>{product.trackingLabel}</td>
                     <td>
                       <div className="vendor-table-actions">
-                        <Link className="vendor-shell__button" to={`/vendor/products/${product.id}/edit`}>
+                        <Link
+                          className="vendor-shell__button"
+                          to={appendVendorIdToPath(
+                            `/vendor/products/${product.id}/edit`,
+                            vendorId,
+                          )}
+                        >
                           編集
                         </Link>
 

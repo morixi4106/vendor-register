@@ -1,9 +1,13 @@
-import { createCookie, json, redirect } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { Resend } from "resend";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
+import {
+  appendVendorIdToPath,
+  requireVendorContext,
+} from "../services/vendorManagement.server";
 import { normalizeProductCategory } from "../utils/productCategories";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
@@ -37,14 +41,6 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 function isCheckedInput(value) {
   return value === "on" || value === "true" || value === true;
 }
-
-const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
-  httpOnly: true,
-  sameSite: "lax",
-  path: "/",
-  secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 60 * 8,
-});
 
 async function uploadImageToCloudinary(file) {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -82,47 +78,17 @@ async function uploadImageToCloudinary(file) {
   return data.secure_url || null;
 }
 
-async function getVendorSessionOrRedirect(request) {
-  const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
-
-  if (!sessionToken) {
-    throw redirect("/vendor/verify");
-  }
-
-  const vendorSession = await prisma.vendorAdminSession.findUnique({
-    where: { sessionToken },
-    include: {
-      vendor: {
-        include: {
-          vendorStore: true,
-        },
-      },
-    },
-  });
-
-  if (!vendorSession || vendorSession.expiresAt < new Date()) {
-    throw redirect("/vendor/verify", {
-      headers: {
-        "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
-          maxAge: 0,
-        }),
-      },
-    });
-  }
-
-  return vendorSession;
-}
-
 export const loader = async ({ request }) => {
-  const vendorSession = await getVendorSessionOrRedirect(request);
-  const store = vendorSession.vendor?.vendorStore;
+  const { vendor, store } = await requireVendorContext(request);
 
   if (!store) {
     throw new Response(COPY.storeNotFound, { status: 404 });
   }
 
   return json({
+    vendor: {
+      id: vendor.id,
+    },
     store: {
       id: store.id,
       storeName: store.storeName,
@@ -131,8 +97,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const vendorSession = await getVendorSessionOrRedirect(request);
-  const store = vendorSession.vendor?.vendorStore;
+  const { vendor, store } = await requireVendorContext(request);
 
   if (!store) {
     return json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
@@ -248,7 +213,7 @@ ${adminUrl}`,
     return json({ ok: false, error: COPY.registerFailed }, { status: 500 });
   }
 
-  return redirect("/vendor/products");
+  return redirect(appendVendorIdToPath("/vendor/products", vendor.id));
 };
 
 export default function VendorProductsNew() {

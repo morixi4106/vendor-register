@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import { useVendorIdFromMatches } from "../components/vendor/vendorNavigation";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 
@@ -115,6 +116,7 @@ export const loader = async ({ request }) => {
 export default function VendorMonthlyReportPage() {
   const { vendor, store, month, monthLabel, generatedAtLabel, monthNotice, loadError, report } =
     useLoaderData();
+  const vendorId = useVendorIdFromMatches();
 
   return (
     <VendorManagementShell
@@ -213,6 +215,7 @@ export default function VendorMonthlyReportPage() {
           </div>
 
           <Form method="get" className="vendor-shell__search-form vendor-report__controls">
+            {vendorId ? <input type="hidden" name="vendorId" value={vendorId} /> : null}
             <input
               className="vendor-shell__month-input"
               type="month"

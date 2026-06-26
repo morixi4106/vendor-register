@@ -1,8 +1,12 @@
-import { createCookie, json, redirect } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
+import {
+  appendVendorIdToPath,
+  requireVendorContext,
+} from "../services/vendorManagement.server";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { normalizeProductCategory } from "../utils/productCategories";
@@ -42,14 +46,6 @@ const COPY = {
 function isCheckedInput(value) {
   return value === "on" || value === "true" || value === true;
 }
-
-const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
-  httpOnly: true,
-  sameSite: "lax",
-  path: "/",
-  secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 60 * 8,
-});
 
 function isReconnectableShopifyError(message = "") {
   return (
@@ -105,41 +101,8 @@ async function uploadImageToCloudinary(file) {
   return data.secure_url || null;
 }
 
-async function getVendorSession(request) {
-  const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
-
-  if (!sessionToken) {
-    throw redirect("/vendor/verify");
-  }
-
-  const vendorSession = await prisma.vendorAdminSession.findUnique({
-    where: { sessionToken },
-    include: {
-      vendor: {
-        include: {
-          vendorStore: true,
-        },
-      },
-    },
-  });
-
-  if (!vendorSession || vendorSession.expiresAt < new Date()) {
-    throw redirect("/vendor/verify", {
-      headers: {
-        "Set-Cookie": await vendorAdminSessionCookie.serialize("", {
-          maxAge: 0,
-        }),
-      },
-    });
-  }
-
-  return vendorSession;
-}
-
 export const loader = async ({ request, params }) => {
-  const vendorSession = await getVendorSession(request);
-  const store = vendorSession.vendor?.vendorStore;
+  const { vendor, store } = await requireVendorContext(request);
 
   if (!store) {
     throw new Response(COPY.storeNotFound, { status: 404 });
@@ -160,6 +123,9 @@ export const loader = async ({ request, params }) => {
   }
 
   return json({
+    vendor: {
+      id: vendor.id,
+    },
     product,
     store: {
       id: store.id,
@@ -170,8 +136,7 @@ export const loader = async ({ request, params }) => {
 
 export const action = async ({ request, params }) => {
   try {
-    const vendorSession = await getVendorSession(request);
-    const store = vendorSession.vendor?.vendorStore;
+    const { vendor, store } = await requireVendorContext(request);
 
     if (!store) {
       return json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
@@ -382,7 +347,7 @@ export const action = async ({ request, params }) => {
       });
     }
 
-    return redirect("/vendor/products");
+    return redirect(appendVendorIdToPath("/vendor/products", vendor.id));
   } catch (error) {
     console.error("vendor product edit error:", error);
     const message = error instanceof Error ? error.message : "";

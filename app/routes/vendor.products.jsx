@@ -8,6 +8,11 @@ import {
   useOutlet,
 } from "@remix-run/react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
+import {
+  appendVendorIdToPath,
+  useVendorIdFromMatches,
+  useVendorScopedPath,
+} from "../components/vendor/vendorNavigation";
 
 function badgeClass(label) {
   const dangerLabels = ["要確認", "差し戻し", "停止中", "制限あり"];
@@ -64,10 +69,14 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { deleteVendorProductForStore, requireVendorContext } = await import(
+  const {
+    appendVendorIdToPath,
+    deleteVendorProductForStore,
+    requireVendorContext,
+  } = await import(
     "../services/vendorManagement.server"
   );
-  const { store } = await requireVendorContext(request);
+  const { vendor, store } = await requireVendorContext(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
@@ -95,13 +104,17 @@ export const action = async ({ request }) => {
   }
 
   const url = new URL(request.url);
-  return redirect(`/vendor/products${url.search}`);
+  return redirect(
+    appendVendorIdToPath(`/vendor/products${url.search}`, vendor.id),
+  );
 };
 
 export default function VendorProductsPage() {
   const outlet = useOutlet();
   const actionData = useActionData();
   const { store, filters, products, stats, statusOptions } = useLoaderData();
+  const vendorId = useVendorIdFromMatches();
+  const productsPath = useVendorScopedPath("/vendor/products");
   const hasFilters = Boolean(
     filters.name || filters.sku || filters.tracking || filters.status !== "all"
   );
@@ -113,6 +126,7 @@ export default function VendorProductsPage() {
   const search = (
     <div style={{ display: "grid", gap: "0.5rem" }}>
       <Form method="get" className="vendor-shell__search-form">
+        {vendorId ? <input type="hidden" name="vendorId" value={vendorId} /> : null}
         <input
           aria-label="商品名"
           defaultValue={filters.name}
@@ -145,7 +159,7 @@ export default function VendorProductsPage() {
           検索
         </button>
         {hasFilters ? (
-          <Link className="vendor-shell__button" to="/vendor/products">
+          <Link className="vendor-shell__button" to={productsPath}>
             クリア
           </Link>
         ) : null}
@@ -273,7 +287,10 @@ export default function VendorProductsPage() {
                       <div className="vendor-table-actions">
                         <Link
                           className="vendor-shell__button"
-                          to={`/vendor/products/${product.id}/edit`}
+                          to={appendVendorIdToPath(
+                            `/vendor/products/${product.id}/edit`,
+                            vendorId,
+                          )}
                         >
                           編集
                         </Link>
