@@ -29,13 +29,14 @@ function ScopedDefaultActions({ vendorId }) {
         className="vendor-shell__button"
         to={appendVendorIdToPath("/vendor/products/new", vendorId)}
       >
-        譁ｰ隕丞膚蜩∫匳骭ｲ
+        新規商品登録
       </Link>
       <Link
         className="vendor-shell__button vendor-shell__button--primary"
         to={appendVendorIdToPath("/vendor/reports/monthly", vendorId)}
       >
-        譛域ｬ｡PDF蜃ｺ蜉・      </Link>
+        月次PDF出力
+      </Link>
     </>
   );
 }
