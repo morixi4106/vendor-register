@@ -16,9 +16,11 @@ import {
 } from '../utils/deliveryEligibility.js';
 
 const CARRIER_SERVICE_NAME = 'Shipping V2';
-const CARRIER_SERVICE_DISPLAY_NAME = '地域別配送';
+// Keep carrier labels ASCII-encoded in source to avoid mojibake in deploy/log pipelines.
+const CARRIER_SERVICE_DISPLAY_NAME = '\u5730\u57df\u5225\u914d\u9001';
 const CARRIER_SERVICE_CODE = 'shipping_v2';
-const CARRIER_SERVICE_DESCRIPTION = '配送先に基づく送料';
+const CARRIER_SERVICE_DESCRIPTION =
+  '\u914d\u9001\u5148\u306b\u57fa\u3065\u304f\u9001\u6599';
 const DEFAULT_ADMIN_API_VERSION = '2025-01';
 
 const CARRIER_SERVICES_QUERY = `#graphql
