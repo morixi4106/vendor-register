@@ -25,6 +25,7 @@ import {
   processShopifyOrderPaidSettlement,
   processShopifyRefundSettlement,
   releaseSalesCreditOffset,
+  repairSellerNegativeLedgerBalance,
   reverseSalesCreditOffsetForRefund,
   resetSellerStripeAccountForRecreate,
   SALES_CREDIT_PAYMENT_RISK_CLASSES,
@@ -4259,6 +4260,83 @@ test("calculateSellerPayoutableLedgerBalance treats platform fees and paid payou
   ]);
 
   assert.equal(balance, 9900);
+});
+
+test("calculateSellerPayoutableLedgerBalance applies ledger adjustments", () => {
+  const balance = calculateSellerPayoutableLedgerBalance([
+    { entryType: "refund", amount: 130 },
+    { entryType: "ledger_adjustment", amount: 130 },
+  ]);
+
+  assert.equal(balance, 0);
+});
+
+test("repairSellerNegativeLedgerBalance creates a credit adjustment", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(fakePrisma);
+    },
+    seller: {
+      async findUnique({ where }) {
+        assert.equal(where.id, "seller_1");
+        return {
+          id: "seller_1",
+          stripeAccount: {
+            id: "ssa_1",
+            stripeAccountId: "acct_1",
+          },
+          vendor: {
+            id: "vendor_1",
+          },
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany({ where }) {
+        assert.equal(where.sellerId, "seller_1");
+        assert.equal(where.currencyCode, "jpy");
+        return [{ entryType: "refund", amount: 130 }];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: "ledger_adjustment_1",
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await repairSellerNegativeLedgerBalance(
+    {
+      sellerId: "seller_1",
+      currencyCode: "jpy",
+      repairedBy: "admin-test",
+    },
+    {
+      prismaClient: fakePrisma,
+      now: new Date("2026-06-29T00:00:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.repaired, true);
+  assert.equal(result.amount, 130);
+  assert.equal(result.previousPayoutableLedgerBalance, -130);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "ledger_adjustment");
+  assert.equal(state.ledgerEntries[0].direction, "credit");
+  assert.equal(state.ledgerEntries[0].amount, 130);
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_1");
+  assert.equal(state.ledgerEntries[0].sellerStripeAccountId, "ssa_1");
+  assert.equal(state.ledgerEntries[0].stripeAccountId, "acct_1");
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.previousPayoutableLedgerBalance,
+    -130,
+  );
 });
 
 const VERIFIED_PAYOUT_SELLER_FIELDS = {

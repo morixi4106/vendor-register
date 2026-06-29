@@ -19,11 +19,13 @@ export const loader = async ({ request }) => {
     getSellerPayoutableLedgerBalance,
     listAdminSellerRows,
     listPayoutRuns,
+    listSellerLedgerRepairCandidates,
   } = await import("../services/sellerPayments.server.js");
 
-  const [sellerRows, payoutRuns] = await Promise.all([
+  const [sellerRows, payoutRuns, repairCandidates] = await Promise.all([
     listAdminSellerRows(),
     listPayoutRuns(),
+    listSellerLedgerRepairCandidates({ currencyCode: DEFAULT_CURRENCY }),
   ]);
 
   const sellers = await Promise.all(
@@ -42,15 +44,64 @@ export const loader = async ({ request }) => {
   return json({
     sellers,
     payoutRuns,
+    repairCandidates,
   });
 };
 
 export const action = async ({ request }) => {
   await authenticate.admin(request);
-  const { createPayoutRun } =
-    await import("../services/sellerPayments.server.js");
 
   const formData = await request.formData();
+  const intent = String(formData.get("intent") || "create_payout");
+
+  if (intent === "repair_negative_balance") {
+    const confirm = String(formData.get("confirm") || "");
+    if (confirm !== "repair_negative_balance") {
+      return json(
+        {
+          ok: false,
+          intent,
+          reason: "confirmation_required",
+          message: "台帳補正の確認値が不足しています。画面を更新してもう一度実行してください。",
+        },
+        { status: 400 },
+      );
+    }
+
+    const { repairSellerNegativeLedgerBalance } = await import(
+      "../services/sellerPayments.server.js"
+    );
+    const result = await repairSellerNegativeLedgerBalance({
+      sellerId: String(formData.get("sellerId") || ""),
+      currencyCode: String(formData.get("currencyCode") || DEFAULT_CURRENCY),
+      repairedBy: "admin",
+    });
+
+    if (!result.ok) {
+      return json(
+        {
+          ok: false,
+          intent,
+          reason: result.reason,
+          message: repairLedgerErrorMessage(result),
+        },
+        { status: 400 },
+      );
+    }
+
+    return json({
+      ok: true,
+      intent,
+      repaired: result.repaired,
+      message: result.repaired
+        ? `${formatMoney(result.amount, result.currencyCode)} の補正台帳を追加しました。`
+        : "補正対象のマイナス残高はありません。",
+    });
+  }
+
+  const { createPayoutRun } = await import(
+    "../services/sellerPayments.server.js"
+  );
   const result = await createPayoutRun({
     sellerId: String(formData.get("sellerId") || ""),
     amount: formData.get("amount"),
@@ -62,6 +113,7 @@ export const action = async ({ request }) => {
     return json(
       {
         ok: false,
+        intent,
         reason: result.reason,
         message: createPayoutRunErrorMessage(result),
       },
@@ -73,12 +125,19 @@ export const action = async ({ request }) => {
 };
 
 export default function AdminPayoutRunsPage() {
-  const { sellers, payoutRuns } = useLoaderData();
+  const { sellers, payoutRuns, repairCandidates } = useLoaderData();
   const actionData = useActionData();
   const location = useLocation();
   const navigation = useNavigation();
+  const currentIntent = String(navigation.formData?.get("intent") || "");
   const isCreating =
-    navigation.formData?.has("sellerId") && navigation.state !== "idle";
+    currentIntent !== "repair_negative_balance" &&
+    navigation.formData?.has("sellerId") &&
+    navigation.state !== "idle";
+  const repairingSellerId =
+    currentIntent === "repair_negative_balance" && navigation.state !== "idle"
+      ? String(navigation.formData?.get("sellerId") || "")
+      : "";
   const isDetailRoute = location.pathname.startsWith("/app/payout-runs/");
 
   if (isDetailRoute) {
@@ -141,18 +200,28 @@ export default function AdminPayoutRunsPage() {
           font-size:14px;
           font-weight:700;
           cursor:pointer;
+          white-space:nowrap;
         }
         .payout-admin__button:disabled{
           cursor:not-allowed;
           opacity:0.6;
         }
+        .payout-admin__button--secondary{
+          border-color:#d1d5db;
+          background:#fff;
+          color:#111827;
+        }
         .payout-admin__notice{
           margin:0 0 16px;
           padding:12px 14px;
           border-radius:10px;
+          background:#eff6ff;
+          color:#1d4ed8;
+          font-weight:700;
+        }
+        .payout-admin__notice--error{
           background:#fef2f2;
           color:#b91c1c;
-          font-weight:700;
         }
         .payout-admin__balance-grid{
           display:grid;
@@ -178,13 +247,41 @@ export default function AdminPayoutRunsPage() {
           font-size:22px;
           font-weight:800;
         }
+        .payout-admin__balance-amount--negative{
+          color:#b91c1c;
+        }
         .payout-admin__balance-status{
           margin:0;
           color:#6b7280;
           font-size:13px;
         }
+        .payout-admin__repair-list{
+          display:grid;
+          gap:12px;
+        }
+        .payout-admin__repair-row{
+          display:grid;
+          grid-template-columns:1.3fr 1fr 1fr auto;
+          gap:12px;
+          align-items:center;
+          border:1px solid #fee2e2;
+          background:#fff7f7;
+          border-radius:12px;
+          padding:14px;
+        }
+        .payout-admin__repair-name{
+          margin:0;
+          color:#111827;
+          font-weight:800;
+        }
+        .payout-admin__repair-meta{
+          margin:4px 0 0;
+          color:#6b7280;
+          font-size:13px;
+        }
         @media (max-width: 900px){
-          .payout-admin__form{
+          .payout-admin__form,
+          .payout-admin__repair-row{
             grid-template-columns:1fr;
           }
         }
@@ -198,10 +295,17 @@ export default function AdminPayoutRunsPage() {
           </p>
 
           {actionData?.message ? (
-            <p className="payout-admin__notice">{actionData.message}</p>
+            <p
+              className={`payout-admin__notice ${
+                actionData.ok ? "" : "payout-admin__notice--error"
+              }`}
+            >
+              {actionData.message}
+            </p>
           ) : null}
 
           <Form method="post" className="payout-admin__form">
+            <input type="hidden" name="intent" value="create_payout" />
             <div className="payout-admin__field">
               <label htmlFor="sellerId">出店者</label>
               <select
@@ -213,7 +317,7 @@ export default function AdminPayoutRunsPage() {
                 <option value="">出店者を選択</option>
                 {sellers.map((seller) => (
                   <option key={seller.sellerId} value={seller.sellerId}>
-                    {seller.vendorStoreName} / 台帳残高:{" "}
+                    {seller.vendorStoreName} / 台帳残高{" "}
                     {formatMoney(
                       seller.payoutableLedgerBalance,
                       seller.payoutableLedgerCurrencyCode,
@@ -265,15 +369,20 @@ export default function AdminPayoutRunsPage() {
                   <p className="payout-admin__balance-label">
                     {seller.vendorStoreName}
                   </p>
-                  <p className="payout-admin__balance-amount">
+                  <p
+                    className={`payout-admin__balance-amount ${
+                      seller.payoutableLedgerBalance < 0
+                        ? "payout-admin__balance-amount--negative"
+                        : ""
+                    }`}
+                  >
                     {formatMoney(
                       seller.payoutableLedgerBalance,
                       seller.payoutableLedgerCurrencyCode,
                     )}
                   </p>
                   <p className="payout-admin__balance-status">
-                    状態:{" "}
-                    {seller.sellerStatusLabel || seller.sellerStatus || "-"}
+                    状態: {seller.sellerStatusLabel || seller.sellerStatus || "-"}
                   </p>
                   <p className="payout-admin__balance-status">
                     初回精算確認:{" "}
@@ -285,6 +394,82 @@ export default function AdminPayoutRunsPage() {
               ))}
             </div>
           ) : null}
+        </section>
+
+        <section className="payout-admin__card">
+          <h2 className="payout-admin__title">台帳補正</h2>
+          <p className="payout-admin__subtitle">
+            マイナス残高の出店者に補正台帳を追加します。既存の売上・返金履歴は削除しません。
+          </p>
+          {repairCandidates.length === 0 ? (
+            <p style={{ margin: 0, color: "#6b7280" }}>
+              補正が必要なマイナス残高はありません。
+            </p>
+          ) : (
+            <div className="payout-admin__repair-list">
+              {repairCandidates.map((candidate) => (
+                <div
+                  className="payout-admin__repair-row"
+                  key={candidate.sellerId}
+                >
+                  <div>
+                    <p className="payout-admin__repair-name">
+                      {candidate.vendorStoreName}
+                    </p>
+                    <p className="payout-admin__repair-meta">
+                      理由: マイナス残高の補正
+                    </p>
+                  </div>
+                  <div>
+                    <p className="payout-admin__balance-label">現在の残高</p>
+                    <p className="payout-admin__balance-amount payout-admin__balance-amount--negative">
+                      {formatMoney(
+                        candidate.payoutableLedgerBalance,
+                        candidate.currencyCode,
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="payout-admin__balance-label">追加する補正</p>
+                    <p className="payout-admin__balance-amount">
+                      {formatMoney(candidate.repairAmount, candidate.currencyCode)}
+                    </p>
+                  </div>
+                  <Form method="post">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="repair_negative_balance"
+                    />
+                    <input
+                      type="hidden"
+                      name="sellerId"
+                      value={candidate.sellerId}
+                    />
+                    <input
+                      type="hidden"
+                      name="currencyCode"
+                      value={candidate.currencyCode}
+                    />
+                    <input
+                      type="hidden"
+                      name="confirm"
+                      value="repair_negative_balance"
+                    />
+                    <button
+                      type="submit"
+                      className="payout-admin__button"
+                      disabled={repairingSellerId === candidate.sellerId}
+                    >
+                      {repairingSellerId === candidate.sellerId
+                        ? "補正中..."
+                        : "補正する"}
+                    </button>
+                  </Form>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="payout-admin__card">
@@ -366,6 +551,15 @@ function createPayoutRunErrorMessage(result) {
       }`;
     default:
       return "出金予定の作成に失敗しました。";
+  }
+}
+
+function repairLedgerErrorMessage(result) {
+  switch (result.reason) {
+    case "seller_not_found":
+      return "出店者が見つかりません。";
+    default:
+      return "台帳補正に失敗しました。";
   }
 }
 

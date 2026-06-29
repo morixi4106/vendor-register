@@ -91,6 +91,7 @@ export const LEDGER_ENTRY_TYPES = [
   "dispute_closed",
   "dispute_funds_withdrawn",
   "dispute_funds_reinstated",
+  "ledger_adjustment",
   "payout_created",
   "payout_paid",
   "payout_failed",
@@ -7303,6 +7304,7 @@ const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
   refund: -1,
   dispute_created: -1,
   dispute_funds_reinstated: 1,
+  ledger_adjustment: 1,
   payout_paid: -1,
   sales_credit_offset_captured: -1,
   sales_credit_offset_refund_reversal: 1,
@@ -7310,6 +7312,7 @@ const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
 
 const SELLER_SALES_CREDIT_ENTRY_SIGNS = {
   ...SELLER_PAYOUT_LEDGER_ENTRY_SIGNS,
+  ledger_adjustment: 0,
 };
 
 const IMMEDIATE_MATURE_SALES_CREDIT_ENTRY_TYPES = new Set([
@@ -8111,6 +8114,171 @@ export async function getSellerPayoutableLedgerBalance(
   });
 
   return calculateSellerPayoutableLedgerBalance(entries);
+}
+
+export async function listSellerLedgerRepairCandidates(
+  { currencyCode = DEFAULT_ORDER_CURRENCY } = {},
+  { prismaClient = prisma } = {},
+) {
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+  const payoutEntryTypes = Object.keys(SELLER_PAYOUT_LEDGER_ENTRY_SIGNS);
+  const sellers = await prismaClient.seller.findMany({
+    orderBy: [{ createdAt: "desc" }],
+    include: {
+      vendor: {
+        include: {
+          vendorStore: true,
+        },
+      },
+      ledgerEntries: {
+        where: {
+          currencyCode: normalizedCurrency,
+          entryType: {
+            in: payoutEntryTypes,
+          },
+        },
+        select: {
+          id: true,
+          entryType: true,
+          amount: true,
+          currencyCode: true,
+          stripeObjectId: true,
+          metadataJson: true,
+          occurredAt: true,
+          createdAt: true,
+        },
+        orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+      },
+    },
+  });
+
+  return sellers
+    .map((seller) => {
+      const payoutableLedgerBalance = calculateSellerPayoutableLedgerBalance(
+        seller.ledgerEntries,
+      );
+
+      if (payoutableLedgerBalance >= 0) {
+        return null;
+      }
+
+      return {
+        sellerId: seller.id,
+        sellerStatus: seller.status,
+        vendorStoreName:
+          seller.vendor?.vendorStore?.storeName ||
+          seller.vendor?.storeName ||
+          "-",
+        currencyCode: normalizedCurrency,
+        payoutableLedgerBalance,
+        repairAmount: Math.abs(payoutableLedgerBalance),
+        reason: "negative_payoutable_ledger_balance",
+        latestLedgerEntry: seller.ledgerEntries[0] || null,
+      };
+    })
+    .filter(Boolean);
+}
+
+export async function repairSellerNegativeLedgerBalance(
+  {
+    sellerId,
+    currencyCode = DEFAULT_ORDER_CURRENCY,
+    repairedBy = "admin",
+    reason = "negative_payoutable_ledger_balance",
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedSellerId = normalizeText(sellerId);
+  const normalizedCurrency =
+    normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
+
+  if (!normalizedSellerId) {
+    return {
+      ok: false,
+      reason: "seller_not_found",
+    };
+  }
+
+  return runInTransaction(prismaClient, async (tx) => {
+    const seller = await tx.seller.findUnique({
+      where: { id: normalizedSellerId },
+      include: {
+        vendor: true,
+        stripeAccount: true,
+      },
+    });
+
+    if (!seller) {
+      return {
+        ok: false,
+        reason: "seller_not_found",
+      };
+    }
+
+    const entries = await tx.ledgerEntry.findMany({
+      where: {
+        sellerId: normalizedSellerId,
+        currencyCode: normalizedCurrency,
+        entryType: {
+          in: Object.keys(SELLER_PAYOUT_LEDGER_ENTRY_SIGNS),
+        },
+      },
+      select: {
+        entryType: true,
+        amount: true,
+      },
+    });
+    const payoutableLedgerBalance =
+      calculateSellerPayoutableLedgerBalance(entries);
+
+    if (payoutableLedgerBalance >= 0) {
+      return {
+        ok: true,
+        repaired: false,
+        reason: "no_negative_balance",
+        sellerId: normalizedSellerId,
+        amount: 0,
+        currencyCode: normalizedCurrency,
+        payoutableLedgerBalance,
+      };
+    }
+
+    const repairAmount = Math.abs(payoutableLedgerBalance);
+    const ledgerEntry = await createLedgerEntry(
+      {
+        sellerId: normalizedSellerId,
+        sellerStripeAccountId: seller.stripeAccount?.id || null,
+        stripeAccountId: seller.stripeAccount?.stripeAccountId || null,
+        entryType: "ledger_adjustment",
+        stripeObjectId: `ledger-repair:${normalizedSellerId}:${normalizedCurrency}:${now.getTime()}`,
+        amount: repairAmount,
+        currencyCode: normalizedCurrency,
+        direction: "credit",
+        description: "Admin ledger repair",
+        metadataJson: {
+          repairReason: normalizeText(reason),
+          repairedBy: normalizeText(repairedBy),
+          previousPayoutableLedgerBalance: payoutableLedgerBalance,
+          repairAmount,
+          repairScope: "negative_payoutable_balance",
+        },
+        occurredAt: now,
+      },
+      { prismaClient: tx },
+    );
+
+    return {
+      ok: true,
+      repaired: true,
+      ledgerEntry,
+      sellerId: normalizedSellerId,
+      amount: repairAmount,
+      currencyCode: normalizedCurrency,
+      previousPayoutableLedgerBalance: payoutableLedgerBalance,
+      nextPayoutableLedgerBalance: 0,
+    };
+  });
 }
 
 async function assertPayoutEligibleSeller(
