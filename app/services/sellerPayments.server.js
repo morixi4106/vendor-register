@@ -3429,7 +3429,7 @@ function capShopifyOrderReversalAmount(requestedAmount, orderLedgerSummary) {
   const normalizedAmount = clampInteger(requestedAmount);
 
   if (!orderLedgerSummary?.hasPaidEntry) {
-    return normalizedAmount;
+    return 0;
   }
 
   return Math.min(normalizedAmount, orderLedgerSummary.remainingAmount);
