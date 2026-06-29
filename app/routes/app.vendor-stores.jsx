@@ -64,6 +64,21 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
   const id = String(formData.get("id") || "");
 
+  if (intent === "set_test_store") {
+    if (!id) {
+      return json({ ok: false, message: "店舗IDがありません。" }, { status: 400 });
+    }
+
+    await prisma.vendorStore.update({
+      where: { id },
+      data: {
+        isTestStore: String(formData.get("isTestStore") || "") === "true",
+      },
+    });
+
+    return redirect("/app/vendor-stores");
+  }
+
   if (intent !== "delete") {
     return json({ ok: false, message: "不正な操作です。" }, { status: 400 });
   }
@@ -158,6 +173,10 @@ export default function VendorStoresPage() {
 
   const deletingId =
     navigation.formData?.get("intent") === "delete"
+      ? String(navigation.formData?.get("id") || "")
+      : "";
+  const togglingTestStoreId =
+    navigation.formData?.get("intent") === "set_test_store"
       ? String(navigation.formData?.get("id") || "")
       : "";
 
@@ -422,6 +441,7 @@ export default function VendorStoresPage() {
                     <th style={thStyle}>国</th>
                     <th style={thStyle}>カテゴリ</th>
                     <th style={thStyle}>年齢確認</th>
+                    <th style={thStyle}>環境</th>
                     <th style={thStyle}>登録日時</th>
                     <th style={thStyle}>操作</th>
                   </tr>
@@ -461,6 +481,27 @@ export default function VendorStoresPage() {
                         <td style={tdStyle}>{store.country}</td>
                         <td style={tdStyle}>{store.category}</td>
                         <td style={tdStyle}>{store.ageCheck}</td>
+                        <td style={tdStyle}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              minHeight: "28px",
+                              padding: "0 10px",
+                              borderRadius: "999px",
+                              border: store.isTestStore
+                                ? "1px solid #fbbf24"
+                                : "1px solid #a7f3d0",
+                              background: store.isTestStore ? "#fffbeb" : "#ecfdf5",
+                              color: store.isTestStore ? "#92400e" : "#047857",
+                              fontWeight: "700",
+                              fontSize: "12px",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {store.isTestStore ? "テスト" : "本番"}
+                          </span>
+                        </td>
                         <td style={tdStyle}>
                           {new Date(store.createdAt).toLocaleString("ja-JP")}
                         </td>
@@ -510,6 +551,45 @@ export default function VendorStoresPage() {
                                 注文管理
                               </Link>
                             ) : null}
+                          <Form method="post">
+                            <input
+                              type="hidden"
+                              name="intent"
+                              value="set_test_store"
+                            />
+                            <input type="hidden" name="id" value={store.id} />
+                            <input
+                              type="hidden"
+                              name="isTestStore"
+                              value={store.isTestStore ? "false" : "true"}
+                            />
+                            <button
+                              type="submit"
+                              disabled={togglingTestStoreId === store.id}
+                              style={{
+                                minHeight: "36px",
+                                padding: "0 12px",
+                                borderRadius: "999px",
+                                border: "1px solid #d1d5db",
+                                background: "#fff",
+                                color: "#111827",
+                                fontWeight: "700",
+                                fontSize: "13px",
+                                cursor:
+                                  togglingTestStoreId === store.id
+                                    ? "not-allowed"
+                                    : "pointer",
+                                opacity: togglingTestStoreId === store.id ? 0.7 : 1,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {togglingTestStoreId === store.id
+                                ? "更新中..."
+                                : store.isTestStore
+                                  ? "本番にする"
+                                  : "テストにする"}
+                            </button>
+                          </Form>
                           <Form
                             method="post"
                             onSubmit={(event) => {

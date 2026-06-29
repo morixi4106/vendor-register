@@ -185,6 +185,19 @@ export default function AdminPayoutRunDetailPage() {
           color:#b91c1c;
           font-weight:700;
         }
+        .payout-detail__test-badge{
+          display:inline-flex;
+          align-items:center;
+          min-height:22px;
+          padding:0 8px;
+          border-radius:999px;
+          border:1px solid #fbbf24;
+          background:#fffbeb;
+          color:#92400e;
+          font-size:12px;
+          font-weight:800;
+          vertical-align:middle;
+        }
       `}</style>
 
       <div className="payout-detail__page">
@@ -200,7 +213,14 @@ export default function AdminPayoutRunDetailPage() {
             <div>
               <h1 className="payout-detail__title">{payoutRun.id}</h1>
               <p className="payout-detail__subtitle">
-                {payoutRun.sellerStoreName} /{" "}
+                {payoutRun.sellerStoreName}
+                {payoutRun.sellerIsTestStore ? (
+                  <>
+                    {" "}
+                    <span className="payout-detail__test-badge">テスト</span>
+                  </>
+                ) : null}{" "}
+                /{" "}
                 {formatMoney(payoutRun.amount, payoutRun.currencyCode)} /{" "}
                 {payoutRun.statusLabel}
               </p>

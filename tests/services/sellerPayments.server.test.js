@@ -5050,6 +5050,49 @@ test("createPayoutRun requires first payout verification before settlement", asy
   assert.equal(ledgerReadCalled, false);
 });
 
+test("createPayoutRun refuses test stores before settlement", async () => {
+  let ledgerReadCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: {
+            id: "vendor_1",
+            vendorStore: {
+              id: "store_1",
+              isTestStore: true,
+            },
+          },
+          stripeAccount: null,
+          payoutRecipient: null,
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        ledgerReadCalled = true;
+        return [];
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "seller_1",
+      amount: 1000,
+      currencyCode: "JPY",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "test_store_payout_disabled");
+  assert.equal(ledgerReadCalled, false);
+});
+
 test("createPayoutRun refuses amounts above the seller payoutable ledger balance", async () => {
   let payoutRunCreateCalled = false;
   const fakePrisma = {

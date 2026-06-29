@@ -992,6 +992,7 @@ function serializeSellerSummary(vendor) {
     vendorStoreId: vendor.vendorStoreId,
     vendorHandle: vendor.handle,
     vendorStoreName: vendor.storeName,
+    isTestStore: Boolean(vendor.vendorStore?.isTestStore),
     managementEmail: vendor.managementEmail,
     sellerId: seller?.id || null,
     sellerStatus: seller?.status || null,
@@ -1205,6 +1206,7 @@ export async function getAdminSellerDetail(
       address: seller.vendor.vendorStore.address,
       country: seller.vendor.vendorStore.country,
       category: seller.vendor.vendorStore.category,
+      isTestStore: Boolean(seller.vendor.vendorStore.isTestStore),
     },
     stripeAccount: serializeStripeAccountSummary(seller.stripeAccount),
     payoutRecipient: serializePayoutRecipientSummary(seller.payoutRecipient),
@@ -7244,7 +7246,11 @@ export async function listPayoutRuns({ prismaClient = prisma } = {}) {
     include: {
       seller: {
         include: {
-          vendor: true,
+          vendor: {
+            include: {
+              vendorStore: true,
+            },
+          },
         },
       },
     },
@@ -7255,6 +7261,7 @@ export async function listPayoutRuns({ prismaClient = prisma } = {}) {
     statusLabel: createPayoutRunStatusLabel(run.status),
     transferMethodLabel: createPayoutTransferMethodLabel(run.transferMethod),
     sellerStoreName: run.seller?.vendor?.storeName || "-",
+    sellerIsTestStore: Boolean(run.seller?.vendor?.vendorStore?.isTestStore),
   }));
 }
 
@@ -7267,7 +7274,11 @@ export async function getPayoutRunDetail(
     include: {
       seller: {
         include: {
-          vendor: true,
+          vendor: {
+            include: {
+              vendorStore: true,
+            },
+          },
           stripeAccount: true,
           payoutRecipient: true,
         },
@@ -7290,6 +7301,7 @@ export async function getPayoutRunDetail(
       payoutRun.transferMethod,
     ),
     sellerStoreName: payoutRun.seller.vendor.storeName,
+    sellerIsTestStore: Boolean(payoutRun.seller.vendor.vendorStore?.isTestStore),
     stripeAccount: serializeStripeAccountSummary(
       payoutRun.seller.stripeAccount,
     ),
@@ -8212,6 +8224,7 @@ function buildSellerOrderReversalOverageRepairCandidates(seller, currencyCode) {
           seller.vendor?.vendorStore?.storeName ||
           seller.vendor?.storeName ||
           "-",
+        isTestStore: Boolean(seller.vendor?.vendorStore?.isTestStore),
         currencyCode,
         repairScope: LEDGER_REPAIR_SCOPE_SHOPIFY_ORDER_REVERSAL_OVERAGE,
         repairAmount,
@@ -8292,6 +8305,7 @@ export async function listSellerLedgerRepairCandidates(
           seller.vendor?.vendorStore?.storeName ||
           seller.vendor?.storeName ||
           "-",
+        isTestStore: Boolean(seller.vendor?.vendorStore?.isTestStore),
         currencyCode: normalizedCurrency,
         repairScope: LEDGER_REPAIR_SCOPE_NEGATIVE_PAYOUTABLE_BALANCE,
         payoutableLedgerBalance: remainingNegativeBalance,
@@ -8483,7 +8497,11 @@ async function assertPayoutEligibleSeller(
   const seller = await prismaClient.seller.findUnique({
     where: { id: sellerId },
     include: {
-      vendor: true,
+      vendor: {
+        include: {
+          vendorStore: true,
+        },
+      },
       stripeAccount: true,
       payoutRecipient: true,
     },
@@ -8507,6 +8525,13 @@ async function assertPayoutEligibleSeller(
     return {
       ok: false,
       reason: "seller_not_active",
+    };
+  }
+
+  if (seller.vendor.vendorStore?.isTestStore === true) {
+    return {
+      ok: false,
+      reason: "test_store_payout_disabled",
     };
   }
 

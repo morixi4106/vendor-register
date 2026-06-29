@@ -283,6 +283,19 @@ export default function AdminPayoutRunsPage() {
           font-size:13px;
           word-break:break-all;
         }
+        .payout-admin__test-badge{
+          display:inline-flex;
+          align-items:center;
+          min-height:22px;
+          padding:0 8px;
+          border-radius:999px;
+          border:1px solid #fbbf24;
+          background:#fffbeb;
+          color:#92400e;
+          font-size:12px;
+          font-weight:800;
+          vertical-align:middle;
+        }
         @media (max-width: 900px){
           .payout-admin__form,
           .payout-admin__repair-row{
@@ -321,6 +334,7 @@ export default function AdminPayoutRunsPage() {
                 <option value="">出店者を選択</option>
                 {sellers.map((seller) => (
                   <option key={seller.sellerId} value={seller.sellerId}>
+                    {seller.isTestStore ? "[テスト] " : ""}
                     {seller.vendorStoreName} / 台帳残高{" "}
                     {formatMoney(
                       seller.payoutableLedgerBalance,
@@ -372,6 +386,12 @@ export default function AdminPayoutRunsPage() {
                 >
                   <p className="payout-admin__balance-label">
                     {seller.vendorStoreName}
+                    {seller.isTestStore ? (
+                      <>
+                        {" "}
+                        <span className="payout-admin__test-badge">テスト</span>
+                      </>
+                    ) : null}
                   </p>
                   <p
                     className={`payout-admin__balance-amount ${
@@ -419,6 +439,12 @@ export default function AdminPayoutRunsPage() {
                   <div>
                     <p className="payout-admin__repair-name">
                       {candidate.vendorStoreName}
+                      {candidate.isTestStore ? (
+                        <>
+                          {" "}
+                          <span className="payout-admin__test-badge">テスト</span>
+                        </>
+                      ) : null}
                     </p>
                     <p className="payout-admin__repair-meta">
                       理由: {repairReasonLabel(candidate.reason)}
@@ -585,6 +611,8 @@ function createPayoutRunErrorMessage(result) {
       return "この出店者は制限中または禁止中のため、出金対象外です。";
     case "seller_not_found":
       return "出店者が見つかりません。";
+    case "test_store_payout_disabled":
+      return "テスト店舗のため、出金予定は作成できません。本番店舗に切り替えてから作成してください。";
     case "wise_recipient_missing":
       return "Wise受取先が未登録または有効ではないため、出金予定を作成できません。";
     case "seller_verification_required":
