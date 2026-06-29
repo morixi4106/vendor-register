@@ -75,6 +75,9 @@ export const action = async ({ request }) => {
       sellerId: String(formData.get("sellerId") || ""),
       currencyCode: String(formData.get("currencyCode") || DEFAULT_CURRENCY),
       repairedBy: "admin",
+      repairScope: String(formData.get("repairScope") || ""),
+      shopifyOrderId: String(formData.get("shopifyOrderId") || ""),
+      reason: String(formData.get("repairReason") || ""),
     });
 
     if (!result.ok) {
@@ -278,6 +281,7 @@ export default function AdminPayoutRunsPage() {
           margin:4px 0 0;
           color:#6b7280;
           font-size:13px;
+          word-break:break-all;
         }
         @media (max-width: 900px){
           .payout-admin__form,
@@ -399,11 +403,11 @@ export default function AdminPayoutRunsPage() {
         <section className="payout-admin__card">
           <h2 className="payout-admin__title">台帳補正</h2>
           <p className="payout-admin__subtitle">
-            マイナス残高の出店者に補正台帳を追加します。既存の売上・返金履歴は削除しません。
+            注文単位の過剰な返金・取消、またはマイナス残高に補正台帳を追加します。既存の売上・返金履歴は削除しません。
           </p>
           {repairCandidates.length === 0 ? (
             <p style={{ margin: 0, color: "#6b7280" }}>
-              補正が必要なマイナス残高はありません。
+              補正が必要な台帳不整合はありません。
             </p>
           ) : (
             <div className="payout-admin__repair-list">
@@ -417,14 +421,37 @@ export default function AdminPayoutRunsPage() {
                       {candidate.vendorStoreName}
                     </p>
                     <p className="payout-admin__repair-meta">
-                      理由: マイナス残高の補正
+                      理由: {repairReasonLabel(candidate.reason)}
                     </p>
+                    {candidate.shopifyOrderName || candidate.shopifyOrderId ? (
+                      <p className="payout-admin__repair-meta">
+                        注文: {candidate.shopifyOrderName || candidate.shopifyOrderId}
+                      </p>
+                    ) : null}
+                    {candidate.paidAmount != null ||
+                    candidate.reversedAmount != null ? (
+                      <p className="payout-admin__repair-meta">
+                        売上 {formatMoney(candidate.paidAmount, candidate.currencyCode)}
+                        {" / "}
+                        返金・取消{" "}
+                        {formatMoney(
+                          candidate.reversedAmount,
+                          candidate.currencyCode,
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                   <div>
-                    <p className="payout-admin__balance-label">現在の残高</p>
+                    <p className="payout-admin__balance-label">
+                      {candidate.payoutableLedgerBalance == null
+                        ? "過剰マイナス"
+                        : "現在の残高"}
+                    </p>
                     <p className="payout-admin__balance-amount payout-admin__balance-amount--negative">
                       {formatMoney(
-                        candidate.payoutableLedgerBalance,
+                        candidate.payoutableLedgerBalance == null
+                          ? -candidate.repairAmount
+                          : candidate.payoutableLedgerBalance,
                         candidate.currencyCode,
                       )}
                     </p>
@@ -450,6 +477,21 @@ export default function AdminPayoutRunsPage() {
                       type="hidden"
                       name="currencyCode"
                       value={candidate.currencyCode}
+                    />
+                    <input
+                      type="hidden"
+                      name="repairScope"
+                      value={candidate.repairScope || ""}
+                    />
+                    <input
+                      type="hidden"
+                      name="repairReason"
+                      value={candidate.reason || ""}
+                    />
+                    <input
+                      type="hidden"
+                      name="shopifyOrderId"
+                      value={candidate.shopifyOrderId || ""}
                     />
                     <input
                       type="hidden"
@@ -558,8 +600,21 @@ function repairLedgerErrorMessage(result) {
   switch (result.reason) {
     case "seller_not_found":
       return "出店者が見つかりません。";
+    case "shopify_order_id_missing":
+      return "補正対象の注文IDが見つかりません。";
     default:
       return "台帳補正に失敗しました。";
+  }
+}
+
+function repairReasonLabel(reason) {
+  switch (reason) {
+    case "shopify_order_reversal_overage":
+      return "注文単位で返金・取消が売上を超えています";
+    case "negative_payoutable_ledger_balance":
+      return "出店者の出金可能残高がマイナスです";
+    default:
+      return reason || "台帳不整合";
   }
 }
 

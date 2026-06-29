@@ -19,6 +19,7 @@ import {
   executeWisePayoutRun,
   handleStripeWebhook,
   inferShopifyOrderSalesCreditPaymentRisk,
+  listSellerLedgerRepairCandidates,
   markPayoutRunManuallyPaid,
   processShopifyDisputeSettlement,
   processShopifyOrderCancelledSettlement,
@@ -4336,6 +4337,157 @@ test("repairSellerNegativeLedgerBalance creates a credit adjustment", async () =
   assert.equal(
     state.ledgerEntries[0].metadataJson.previousPayoutableLedgerBalance,
     -130,
+  );
+});
+
+test("listSellerLedgerRepairCandidates detects order reversal overage even when seller balance is positive", async () => {
+  const fakePrisma = {
+    seller: {
+      async findMany() {
+        return [
+          {
+            id: "seller_1",
+            status: "pending",
+            vendor: {
+              storeName: "Store 1",
+              vendorStore: {
+                storeName: "Store 1",
+              },
+            },
+            ledgerEntries: [
+              {
+                id: "ledger_paid_other",
+                sellerId: "seller_1",
+                entryType: "shopify_order_paid",
+                stripeObjectId: "gid://shopify/Order/2000",
+                amount: 1000,
+                currencyCode: "jpy",
+                metadataJson: {
+                  shopifyOrderId: "gid://shopify/Order/2000",
+                  shopifyOrderName: "#2000",
+                },
+                occurredAt: new Date("2026-06-29T00:00:00.000Z"),
+                createdAt: new Date("2026-06-29T00:00:00.000Z"),
+              },
+              {
+                id: "ledger_refund_orphan",
+                sellerId: "seller_1",
+                entryType: "refund",
+                stripeObjectId: "gid://shopify/Refund/3000",
+                amount: 130,
+                currencyCode: "jpy",
+                metadataJson: {
+                  shopifyOrderId: "gid://shopify/Order/1000",
+                  shopifyOrderName: "#1000",
+                },
+                occurredAt: new Date("2026-06-29T00:00:00.000Z"),
+                createdAt: new Date("2026-06-29T00:00:00.000Z"),
+              },
+            ],
+          },
+        ];
+      },
+    },
+  };
+
+  const candidates = await listSellerLedgerRepairCandidates(
+    { currencyCode: "jpy" },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].reason, "shopify_order_reversal_overage");
+  assert.equal(candidates[0].shopifyOrderId, "gid://shopify/Order/1000");
+  assert.equal(candidates[0].repairAmount, 130);
+  assert.equal(candidates[0].paidAmount, 0);
+  assert.equal(candidates[0].reversedAmount, 130);
+});
+
+test("repairSellerNegativeLedgerBalance repairs a Shopify order reversal overage", async () => {
+  const state = {
+    ledgerEntries: [],
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(fakePrisma);
+    },
+    seller: {
+      async findUnique({ where }) {
+        assert.equal(where.id, "seller_1");
+        return {
+          id: "seller_1",
+          stripeAccount: null,
+          vendor: {
+            id: "vendor_1",
+          },
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany({ where }) {
+        assert.equal(where.sellerId, "seller_1");
+        assert.equal(where.currencyCode, "jpy");
+        return [
+          {
+            id: "ledger_paid_other",
+            entryType: "shopify_order_paid",
+            stripeObjectId: "gid://shopify/Order/2000",
+            amount: 1000,
+            metadataJson: {
+              shopifyOrderId: "gid://shopify/Order/2000",
+            },
+          },
+          {
+            id: "ledger_refund_orphan",
+            entryType: "refund",
+            stripeObjectId: "gid://shopify/Refund/3000",
+            amount: 130,
+            metadataJson: {
+              shopifyOrderId: "gid://shopify/Order/1000",
+              shopifyOrderName: "#1000",
+            },
+          },
+        ];
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return {
+          id: "ledger_adjustment_2",
+          ...data,
+        };
+      },
+    },
+  };
+
+  const result = await repairSellerNegativeLedgerBalance(
+    {
+      sellerId: "seller_1",
+      currencyCode: "jpy",
+      repairedBy: "admin-test",
+      repairScope: "shopify_order_reversal_overage",
+      shopifyOrderId: "gid://shopify/Order/1000",
+    },
+    {
+      prismaClient: fakePrisma,
+      now: new Date("2026-06-29T00:00:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.repaired, true);
+  assert.equal(result.amount, 130);
+  assert.equal(result.previousPayoutableLedgerBalance, 870);
+  assert.equal(result.nextPayoutableLedgerBalance, 1000);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].entryType, "ledger_adjustment");
+  assert.equal(state.ledgerEntries[0].amount, 130);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.repairScope,
+    "shopify_order_reversal_overage",
+  );
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.shopifyOrderId,
+    "gid://shopify/Order/1000",
   );
 });
 
