@@ -194,6 +194,17 @@ function normalizeLowercase(value) {
   return normalized ? normalized.toLowerCase() : null;
 }
 
+const SHOPIFY_ORDER_SETTLEMENT_SELLER_STATUSES = new Set([
+  "pending",
+  "active",
+]);
+
+function canSellerReceiveShopifyOrderSettlement(seller) {
+  return SHOPIFY_ORDER_SETTLEMENT_SELLER_STATUSES.has(
+    normalizeLowercase(seller?.status),
+  );
+}
+
 function normalizeUppercase(value) {
   const normalized = normalizeText(value);
   return normalized ? normalized.toUpperCase() : null;
@@ -5051,7 +5062,7 @@ export async function processShopifyOrderPaidSettlement(
 
     const sellerBuckets = buildShopifyOrderPaidSettlementBuckets(matchedLines);
     const inactiveSeller = sellerBuckets.find(
-      (bucket) => bucket?.seller?.status !== "active",
+      (bucket) => !canSellerReceiveShopifyOrderSettlement(bucket?.seller),
     );
 
     if (inactiveSeller) {
@@ -5170,7 +5181,7 @@ export async function processShopifyOrderPaidSettlement(
 
   const seller = getProductSeller(matchedLines[0].product);
 
-  if (seller.status !== "active") {
+  if (!canSellerReceiveShopifyOrderSettlement(seller)) {
     return {
       ok: false,
       reason: "seller_not_active",

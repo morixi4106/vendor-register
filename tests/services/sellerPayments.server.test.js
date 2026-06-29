@@ -2153,7 +2153,7 @@ test("processShopifyOrderPaidSettlement refuses sales credit custom attribute mi
   assert.equal(state.ledgerEntries.length, 0);
 });
 
-test("processShopifyOrderPaidSettlement does not require a Stripe account in Shopify settlement mode", async () => {
+test("processShopifyOrderPaidSettlement allows a pending seller without a Stripe account in Shopify settlement mode", async () => {
   const state = {
     ledgerEntries: [],
   };
@@ -2184,7 +2184,7 @@ test("processShopifyOrderPaidSettlement does not require a Stripe account in Sho
                 handle: "vendor",
                 seller: {
                   id: "seller_1",
-                  status: "active",
+                  status: "pending",
                   stripeAccount: null,
                 },
               },
@@ -2208,6 +2208,7 @@ test("processShopifyOrderPaidSettlement does not require a Stripe account in Sho
   );
 
   assert.equal(result.ok, true);
+  assert.equal(result.sellerId, "seller_1");
   assert.equal(state.ledgerEntries[0].sellerStripeAccountId, null);
   assert.equal(state.ledgerEntries[0].stripeAccountId, null);
   assert.equal(
@@ -2543,7 +2544,7 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
   );
 });
 
-test("processShopifyOrderPaidSettlement can process multi-seller orders behind a flag", async () => {
+test("processShopifyOrderPaidSettlement can process active and pending multi-seller orders behind a flag", async () => {
   const state = {
     ledgerEntries: [],
     marketplaceOrders: new Map(),
@@ -2600,7 +2601,7 @@ test("processShopifyOrderPaidSettlement can process multi-seller orders behind a
                 handle: "vendor-2",
                 seller: {
                   id: "seller_2",
-                  status: "active",
+                  status: "pending",
                   stripeAccount: null,
                 },
               },
