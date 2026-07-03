@@ -1,6 +1,6 @@
 <style>
   .vendor-withdrawal-wrap {
-    max-width: 900px;
+    max-width: 980px;
     margin: 56px auto;
     padding: 0 20px 16px;
     color: #111827;
@@ -53,6 +53,17 @@
     text-decoration: none;
     font-weight: 800;
   }
+
+  .vendor-withdrawal-frame-wrap {
+    margin-top: 28px;
+  }
+
+  .vendor-withdrawal-frame {
+    width: 100%;
+    min-height: 980px;
+    border: 0;
+    display: block;
+  }
 </style>
 
 <section class="vendor-withdrawal-wrap">
@@ -75,8 +86,18 @@
       <li>一部商品のみ撤回する場合は、対象商品と数量を入力してください。</li>
       <li>カスタム品、衛生商品、消耗品など、一部商品は撤回対象外となる場合があります。</li>
     </ul>
-    <div class="vendor-withdrawal-actions">
-      <a href="/apps/vendors/withdrawal">撤回申請フォームを開く</a>
+    <div class="vendor-withdrawal-frame-wrap">
+      <iframe
+        class="vendor-withdrawal-frame"
+        src="/apps/vendors/withdrawal?embedded=1"
+        title="撤回申請フォーム"
+        loading="lazy"
+      ></iframe>
+      <noscript>
+        <div class="vendor-withdrawal-actions">
+          <a href="/apps/vendors/withdrawal">撤回申請フォームを開く</a>
+        </div>
+      </noscript>
     </div>
   </div>
 </section>

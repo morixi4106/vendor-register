@@ -7,9 +7,10 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const ref = String(url.searchParams.get("ref") || "").trim();
   const duplicate = url.searchParams.get("duplicate") === "1";
+  const embedded = url.searchParams.get("embedded") === "1";
 
   if (!ref) {
-    return json({ found: false, duplicate: false, ref: "" });
+    return json({ found: false, duplicate: false, embedded, ref: "" });
   }
 
   const withdrawalRequest = await prisma.withdrawalRequest.findUnique({
@@ -26,16 +27,18 @@ export const loader = async ({ request }) => {
   return json({
     found: Boolean(withdrawalRequest),
     duplicate,
+    embedded,
     ref,
     withdrawalRequest,
   });
 };
 
 export default function WithdrawalSuccessPage() {
-  const { found, duplicate, ref, withdrawalRequest } = useLoaderData();
+  const { found, duplicate, embedded, ref, withdrawalRequest } = useLoaderData();
+  const formHref = embedded ? "/apps/vendors/withdrawal?embedded=1" : "/apps/vendors/withdrawal";
 
   return (
-    <main className="withdrawal-success">
+    <main className={`withdrawal-success${embedded ? " withdrawal-success--embedded" : ""}`}>
       <style>{`
         .withdrawal-success{
           min-height:100vh;
@@ -54,6 +57,14 @@ export default function WithdrawalSuccessPage() {
           background:#fff;
           padding:32px;
           box-sizing:border-box;
+        }
+        .withdrawal-success--embedded{
+          min-height:auto;
+          padding:0;
+          background:transparent;
+        }
+        .withdrawal-success--embedded .withdrawal-success__card{
+          width:100%;
         }
         .withdrawal-success h1{
           margin:0 0 12px;
@@ -117,7 +128,7 @@ export default function WithdrawalSuccessPage() {
           商品状態によっては返金額が減額される場合があります。
         </p>
         <div className="withdrawal-success__actions">
-          <Link to="/apps/vendors/withdrawal">フォームへ戻る</Link>
+          <Link to={formHref}>フォームへ戻る</Link>
         </div>
       </section>
     </main>

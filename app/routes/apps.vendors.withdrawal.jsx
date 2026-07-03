@@ -43,6 +43,7 @@ const COUNTRY_OPTIONS = [
 export const loader = async ({ request }) => {
   return json({
     shopDomain: getShopDomainFromRequest(request),
+    embedded: isEmbeddedRequest(request),
   });
 };
 
@@ -67,6 +68,9 @@ export const action = async ({ request }) => {
 
   const successUrl = new URL("/apps/vendors/withdrawal/success", request.url);
   successUrl.searchParams.set("ref", result.withdrawalRequest.id);
+  if (isEmbeddedRequest(request, formData)) {
+    successUrl.searchParams.set("embedded", "1");
+  }
   if (result.duplicate) {
     successUrl.searchParams.set("duplicate", "1");
   }
@@ -75,7 +79,7 @@ export const action = async ({ request }) => {
 };
 
 export default function WithdrawalFormPage() {
-  const { shopDomain } = useLoaderData();
+  const { shopDomain, embedded } = useLoaderData();
   const actionData = useActionData();
   const [isConfirming, setIsConfirming] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
@@ -94,7 +98,7 @@ export default function WithdrawalFormPage() {
   }
 
   return (
-    <main className="withdrawal-page">
+    <main className={`withdrawal-page${embedded ? " withdrawal-page--embedded" : ""}`}>
       <style>{pageStyles}</style>
       <section className="withdrawal-card withdrawal-hero">
         <p className="withdrawal-eyebrow">EU right of withdrawal</p>
@@ -119,6 +123,7 @@ export default function WithdrawalFormPage() {
           <h2>申請内容を入力</h2>
           <Form method="post" className="withdrawal-form" onSubmit={handlePreview}>
             <input type="hidden" name="shopDomain" value={shopDomain || ""} />
+            {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
             <Field
               label="氏名"
               name="customerName"
@@ -236,6 +241,7 @@ export default function WithdrawalFormPage() {
             {Object.entries(snapshot).map(([key, value]) => (
               <input key={key} type="hidden" name={key} value={value || ""} />
             ))}
+            {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
             <button type="button" className="secondary" onClick={() => setIsConfirming(false)}>
               修正する
             </button>
@@ -245,6 +251,11 @@ export default function WithdrawalFormPage() {
       )}
     </main>
   );
+}
+
+function isEmbeddedRequest(request, formData = null) {
+  const url = new URL(request.url);
+  return url.searchParams.get("embedded") === "1" || formData?.get("embedded") === "1";
 }
 
 function Field({ label, name, type = "text", defaultValue, error, required, placeholder }) {
@@ -289,6 +300,18 @@ const pageStyles = `
     color:#111827;
     font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     padding:32px 16px 64px;
+  }
+  .withdrawal-page--embedded{
+    min-height:auto;
+    padding:0;
+    background:transparent;
+  }
+  .withdrawal-page--embedded .withdrawal-card,
+  .withdrawal-page--embedded .withdrawal-alert{
+    max-width:none;
+  }
+  .withdrawal-page--embedded .withdrawal-card:first-of-type{
+    margin-top:0;
   }
   .withdrawal-card{
     max-width:860px;

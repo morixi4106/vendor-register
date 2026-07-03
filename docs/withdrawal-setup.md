@@ -54,6 +54,14 @@ Create or update a Shopify page such as `/pages/withdrawal-form`, then paste:
 docs/withdrawal-entry-page.html
 ```
 
+The page embeds the app proxy form with a same-store relative URL:
+
+```html
+<iframe src="/apps/vendors/withdrawal?embedded=1"></iframe>
+```
+
+Do not link buyers directly to the Render app URL. Public links should use the Shopify store domain, either the fixed page or the app proxy path.
+
 Add links to that page from:
 
 - Footer
