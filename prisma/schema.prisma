@@ -253,7 +253,7 @@ model SellerOrderLine {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  sellerOrder   SellerOrder          @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
   shipmentLines SellerShipmentLine[]
 
   @@unique([sellerOrderId, shopifyLineItemId])
@@ -263,17 +263,17 @@ model SellerOrderLine {
 }
 
 model SellerShipment {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   sellerOrderId        String
   shopifyFulfillmentId String?
   trackingNumber       String?
   trackingCompany      String?
   trackingUrl          String?
-  status               String   @default("registered")
+  status               String    @default("registered")
   shippedAt            DateTime?
   metadataJson         Json?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   sellerOrder SellerOrder          @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
   lines       SellerShipmentLine[]
@@ -285,16 +285,16 @@ model SellerShipment {
 }
 
 model SellerShipmentLine {
-  id                                  String   @id @default(cuid())
-  sellerShipmentId                    String
-  sellerOrderLineId                   String
-  shopifyLineItemId                   String?
-  shopifyFulfillmentOrderId           String
-  shopifyFulfillmentOrderLineItemId   String
-  quantity                            Int      @default(0)
-  createdAt                           DateTime @default(now())
+  id                                String   @id @default(cuid())
+  sellerShipmentId                  String
+  sellerOrderLineId                 String
+  shopifyLineItemId                 String?
+  shopifyFulfillmentOrderId         String
+  shopifyFulfillmentOrderLineItemId String
+  quantity                          Int      @default(0)
+  createdAt                         DateTime @default(now())
 
-  sellerShipment SellerShipment  @relation(fields: [sellerShipmentId], references: [id], onDelete: Cascade)
+  sellerShipment  SellerShipment  @relation(fields: [sellerShipmentId], references: [id], onDelete: Cascade)
   sellerOrderLine SellerOrderLine @relation(fields: [sellerOrderLineId], references: [id], onDelete: Cascade)
 
   @@unique([sellerShipmentId, shopifyFulfillmentOrderLineItemId])
@@ -624,6 +624,96 @@ model BuyerWarningAcceptance {
   @@index([orderId])
   @@index([shippingCountry, acceptedAt])
   @@map("buyer_warning_acceptances")
+}
+
+model WithdrawalRequest {
+  id                         String    @id @default(cuid())
+  shopDomain                 String?
+  marketplaceOrderId         String?
+  shopifyOrderId             String?
+  shopifyOrderName           String?
+  shopifyOrderNumber         String?
+  customerName               String
+  customerEmail              String
+  customerPhone              String?
+  countryCode                String?
+  countryLabel               String?
+  receivedDate               DateTime?
+  withdrawalScope            String    @default("FULL")
+  itemCondition              String?
+  reason                     String?
+  status                     String    @default("REQUESTED")
+  eligibilityStatus          String    @default("PENDING_REVIEW")
+  deadlineAt                 DateTime?
+  deadlineSource             String?
+  selectedLineItemsJson      Json?
+  submittedPayloadJson       Json
+  orderSnapshotJson          Json?
+  eligibilityJson            Json?
+  durableMediumEmailJson     Json?
+  confirmationSentAt         DateTime?
+  confirmationEmailMessageId String?
+  decisionSentAt             DateTime?
+  completedAt                DateTime?
+  rejectedAt                 DateTime?
+  rejectionReason            String?
+  adminNotes                 String?
+  source                     String    @default("app_proxy")
+  ipAddress                  String?
+  userAgent                  String?
+  idempotencyKey             String    @unique
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  statusHistory WithdrawalRequestStatusHistory[]
+  emailLogs     WithdrawalEmailLog[]
+
+  @@index([shopDomain, shopifyOrderId])
+  @@index([shopDomain, shopifyOrderName])
+  @@index([customerEmail, createdAt])
+  @@index([status, createdAt])
+  @@index([eligibilityStatus, createdAt])
+  @@map("withdrawal_requests")
+}
+
+model WithdrawalRequestStatusHistory {
+  id                  String   @id @default(cuid())
+  withdrawalRequestId String
+  fromStatus          String?
+  toStatus            String
+  changedBy           String?
+  reason              String?
+  metadataJson        Json?
+  createdAt           DateTime @default(now())
+
+  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalRequestId, createdAt])
+  @@index([toStatus, createdAt])
+  @@map("withdrawal_request_status_history")
+}
+
+model WithdrawalEmailLog {
+  id                  String    @id @default(cuid())
+  withdrawalRequestId String
+  emailType           String
+  toEmail             String
+  fromEmail           String?
+  subject             String
+  bodyText            String?
+  bodyHtml            String?
+  provider            String    @default("resend")
+  providerMessageId   String?
+  status              String    @default("sent")
+  errorMessage        String?
+  sentAt              DateTime?
+  createdAt           DateTime  @default(now())
+
+  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalRequestId, createdAt])
+  @@index([emailType, createdAt])
+  @@map("withdrawal_email_logs")
 }
 
 model WiseTransferEvent {

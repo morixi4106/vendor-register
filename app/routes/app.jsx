@@ -43,6 +43,10 @@ export default function App() {
           SellerOrder検証
         </Link>
 
+        <Link to="/app/withdrawals">
+          撤回申請
+        </Link>
+
         <Link to="/app/carrier-service">
           配送サービス
         </Link>
