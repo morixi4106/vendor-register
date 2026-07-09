@@ -7,6 +7,7 @@ import {
   sendWithdrawalAcknowledgementEmail,
   sendWithdrawalStatusEmail,
   updateWithdrawalRefundDecision,
+  updateWithdrawalReturnInfo,
   updateWithdrawalStatus,
 } from "../services/withdrawals.server.js";
 import {
@@ -81,6 +82,24 @@ export const action = async ({ request, params }) => {
     });
 
     return redirect(`/app/withdrawals/${params.id}`);
+  }
+
+  if (intent === "update_return_info") {
+    const result = await updateWithdrawalReturnInfo({
+      id: params.id,
+      formData,
+      changedBy: "admin",
+    });
+
+    return json(
+      {
+        ok: result.ok,
+        message: result.ok
+          ? "返送情報を保存しました。"
+          : `返送情報を保存できませんでした: ${result.error || "unknown"}`,
+      },
+      { status: result.status || 200 },
+    );
   }
 
   if (intent === "update_refund_decision") {
@@ -246,8 +265,98 @@ export default function WithdrawalDetailPage() {
         </div>
 
         <div className="withdrawal-detail__card">
+          <h2>返送確認</h2>
+          <DescriptionList rows={withdrawalRequest.returnInfoRows} />
+          {withdrawalRequest.returnWarnings.length > 0 ? (
+            <WarningList items={withdrawalRequest.returnWarnings} />
+          ) : null}
+          <Form method="post" className="withdrawal-detail__form withdrawal-detail__form--spaced">
+            <input type="hidden" name="intent" value="update_return_info" />
+            <label>
+              <span>返送状況</span>
+              <select
+                name="returnRequirementStatus"
+                defaultValue={withdrawalRequest.returnRequirementStatus}
+              >
+                <option value="UNDECIDED">未判断</option>
+                <option value="NOT_REQUIRED">返送不要</option>
+                <option value="REQUIRED">返送が必要</option>
+                <option value="WAITING">返送待ち</option>
+                <option value="IN_TRANSIT">返送中</option>
+                <option value="RECEIVED">返送到着済み</option>
+                <option value="CONDITION_CHECKED">商品状態確認済み</option>
+              </select>
+            </label>
+            <div className="withdrawal-detail__amount-grid">
+              <label>
+                <span>配送会社</span>
+                <input
+                  name="returnTrackingCompany"
+                  defaultValue={withdrawalRequest.returnTrackingCompany}
+                />
+              </label>
+              <label>
+                <span>追跡番号</span>
+                <input
+                  name="returnTrackingNumber"
+                  defaultValue={withdrawalRequest.returnTrackingNumber}
+                />
+              </label>
+              <label>
+                <span>追跡URL</span>
+                <input
+                  name="returnTrackingUrl"
+                  defaultValue={withdrawalRequest.returnTrackingUrl}
+                />
+              </label>
+              <label>
+                <span>返送到着日</span>
+                <input
+                  type="date"
+                  name="returnReceivedAt"
+                  defaultValue={withdrawalRequest.returnReceivedAtInput}
+                />
+              </label>
+            </div>
+            <label>
+              <span>商品状態</span>
+              <select
+                name="returnConditionStatus"
+                defaultValue={withdrawalRequest.returnConditionStatus}
+              >
+                <option value="UNDECIDED">未判断</option>
+                <option value="NOT_APPLICABLE">確認不要</option>
+                <option value="UNUSED_OK">未使用・問題なし</option>
+                <option value="OPENED_OK">開封/確認程度</option>
+                <option value="USED_REVIEW">使用感あり</option>
+                <option value="DIRTY_REVIEW">汚れあり</option>
+                <option value="DAMAGED_REVIEW">破損あり</option>
+                <option value="EXEMPT_REVIEW">対象外の可能性あり</option>
+              </select>
+            </label>
+            <label>
+              <span>商品状態メモ</span>
+              <textarea
+                name="returnConditionNotes"
+                rows="3"
+                defaultValue={withdrawalRequest.returnConditionNotes}
+              />
+            </label>
+            <p className="withdrawal-detail__hint">
+              返送証明・到着日・商品状態を記録します。ここで保存してもShopifyへの返金は実行されません。
+            </p>
+            <button type="submit" disabled={isSubmitting}>
+              返送情報を保存
+            </button>
+          </Form>
+        </div>
+
+        <div className="withdrawal-detail__card">
           <h2>返金判断</h2>
           <DescriptionList rows={withdrawalRequest.refundDecisionRows} />
+          {withdrawalRequest.refundWarnings.length > 0 ? (
+            <WarningList items={withdrawalRequest.refundWarnings} />
+          ) : null}
           <Form method="post" className="withdrawal-detail__form withdrawal-detail__form--spaced">
             <input type="hidden" name="intent" value="update_refund_decision" />
             <label>
@@ -476,6 +585,19 @@ function DescriptionList({ rows }) {
   );
 }
 
+function WarningList({ items }) {
+  return (
+    <div className="withdrawal-detail__warnings">
+      <strong>確認が必要です</strong>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function TimelineCard({ title, rows }) {
   return (
     <section className="withdrawal-detail__card">
@@ -555,7 +677,24 @@ function serializeWithdrawalRequest(request) {
     submittedPayloadJson: request.submittedPayloadJson || {},
     orderSnapshotJson: request.orderSnapshotJson || {},
     orderSummaryRows,
+    returnInfoRows: buildReturnInfoRows(request),
+    returnWarnings: buildWithdrawalReturnWarnings(request),
+    returnRequirementStatus: request.returnRequirementStatus || "UNDECIDED",
+    returnRequirementLabel: getReturnRequirementLabel(
+      request.returnRequirementStatus,
+    ),
+    returnTrackingCompany: request.returnTrackingCompany || "",
+    returnTrackingNumber: request.returnTrackingNumber || "",
+    returnTrackingUrl: request.returnTrackingUrl || "",
+    returnReceivedAtInput: formatDateInput(request.returnReceivedAt),
+    returnReceivedAtLabel: formatDate(request.returnReceivedAt),
+    returnConditionStatus: request.returnConditionStatus || "UNDECIDED",
+    returnConditionLabel: getReturnConditionLabel(request.returnConditionStatus),
+    returnConditionNotes: request.returnConditionNotes || "",
+    returnInfoUpdatedAtLabel: formatDate(request.returnInfoUpdatedAt),
+    returnInfoUpdatedBy: request.returnInfoUpdatedBy || "-",
     refundDecisionRows: buildRefundDecisionRows(request, refundCurrencyCode),
+    refundWarnings: buildWithdrawalRefundWarnings(request),
     refundDecisionStatus: request.refundDecisionStatus || "UNDECIDED",
     refundDecisionLabel: getRefundDecisionLabel(request.refundDecisionStatus),
     refundItemAmountInput: formatInputAmount(request.refundItemAmount),
@@ -797,6 +936,120 @@ function buildOrderSummaryRows(request) {
   ];
 }
 
+function buildReturnInfoRows(request) {
+  return [
+    ["返送状況", getReturnRequirementLabel(request.returnRequirementStatus)],
+    ["配送会社", request.returnTrackingCompany || "-"],
+    ["追跡番号", request.returnTrackingNumber || "-"],
+    ["追跡URL", request.returnTrackingUrl || "-"],
+    ["返送到着日", formatDate(request.returnReceivedAt)],
+    ["商品状態", getReturnConditionLabel(request.returnConditionStatus)],
+    ["商品状態メモ", request.returnConditionNotes || "-"],
+    ["更新者", request.returnInfoUpdatedBy || "-"],
+    ["更新日時", formatDate(request.returnInfoUpdatedAt)],
+  ];
+}
+
+function buildWithdrawalReturnWarnings(request) {
+  const warnings = [];
+  const returnRequirementStatus = String(
+    request.returnRequirementStatus || "UNDECIDED",
+  ).toUpperCase();
+  const returnConditionStatus = String(
+    request.returnConditionStatus || "UNDECIDED",
+  ).toUpperCase();
+
+  if (
+    [
+      WITHDRAWAL_STATUSES.RETURN_REQUESTED,
+      WITHDRAWAL_STATUSES.RETURN_RECEIVED,
+      WITHDRAWAL_STATUSES.REFUND_PENDING,
+    ].includes(request.status) &&
+    returnRequirementStatus === "UNDECIDED"
+  ) {
+    warnings.push("返送が必要か未判断です。返金判断の前に返送要否を確認してください。");
+  }
+
+  if (
+    ["RECEIVED", "CONDITION_CHECKED"].includes(returnRequirementStatus) &&
+    !request.returnReceivedAt
+  ) {
+    warnings.push("返送到着済みですが、到着日が未入力です。");
+  }
+
+  if (
+    returnRequirementStatus === "CONDITION_CHECKED" &&
+    returnConditionStatus === "UNDECIDED"
+  ) {
+    warnings.push("商品状態確認済みですが、商品状態が未判断です。");
+  }
+
+  if (
+    ["USED_REVIEW", "DIRTY_REVIEW", "DAMAGED_REVIEW", "EXEMPT_REVIEW"].includes(
+      returnConditionStatus,
+    ) &&
+    !request.returnConditionNotes
+  ) {
+    warnings.push("減額や対象外判断につながる状態です。商品状態メモに理由を残してください。");
+  }
+
+  return warnings;
+}
+
+function buildWithdrawalRefundWarnings(request) {
+  const warnings = [];
+  const refundDecisionStatus = String(
+    request.refundDecisionStatus || "UNDECIDED",
+  ).toUpperCase();
+  const returnRequirementStatus = String(
+    request.returnRequirementStatus || "UNDECIDED",
+  ).toUpperCase();
+  const returnConditionStatus = String(
+    request.returnConditionStatus || "UNDECIDED",
+  ).toUpperCase();
+  const snapshot =
+    request.orderSnapshotJson && typeof request.orderSnapshotJson === "object"
+      ? request.orderSnapshotJson
+      : null;
+  const orderTotal = Number(snapshot?.totalAmount);
+
+  if (
+    ["FULL_REFUND", "PARTIAL_REFUND"].includes(refundDecisionStatus) &&
+    ["REQUIRED", "WAITING", "IN_TRANSIT"].includes(returnRequirementStatus)
+  ) {
+    warnings.push("返送確認前に返金判断が入っています。返送証明または到着確認を確認してください。");
+  }
+
+  if (
+    refundDecisionStatus === "FULL_REFUND" &&
+    ["USED_REVIEW", "DIRTY_REVIEW", "DAMAGED_REVIEW", "EXEMPT_REVIEW"].includes(
+      returnConditionStatus,
+    )
+  ) {
+    warnings.push("商品状態が要確認なのに全額返金になっています。減額要否を確認してください。");
+  }
+
+  if (Number(request.refundDeductionAmount || 0) > 0 && !request.refundDecisionReason) {
+    warnings.push("減額があるため、返金判断理由を残してください。");
+  }
+
+  if (
+    request.refundInitialShippingAmount === null ||
+    request.refundInitialShippingAmount === undefined
+  ) {
+    warnings.push("通常配送分の初回送料を返金対象として確認してください。");
+  }
+
+  if (
+    Number.isFinite(orderTotal) &&
+    Number(request.refundTotalAmount || 0) > orderTotal
+  ) {
+    warnings.push("返金予定額が注文合計を超えています。");
+  }
+
+  return warnings;
+}
+
 function buildRefundDecisionRows(request, currencyCode) {
   return [
     ["判断", getRefundDecisionLabel(request.refundDecisionStatus)],
@@ -821,6 +1074,35 @@ function getOrderCurrencyCode(request) {
       : null;
 
   return snapshot?.currencyCode || null;
+}
+
+function getReturnRequirementLabel(status) {
+  const labels = {
+    UNDECIDED: "未判断",
+    NOT_REQUIRED: "返送不要",
+    REQUIRED: "返送が必要",
+    WAITING: "返送待ち",
+    IN_TRANSIT: "返送中",
+    RECEIVED: "返送到着済み",
+    CONDITION_CHECKED: "商品状態確認済み",
+  };
+
+  return labels[String(status || "UNDECIDED").toUpperCase()] || String(status || "-");
+}
+
+function getReturnConditionLabel(status) {
+  const labels = {
+    UNDECIDED: "未判断",
+    NOT_APPLICABLE: "確認不要",
+    UNUSED_OK: "未使用・問題なし",
+    OPENED_OK: "開封/確認程度",
+    USED_REVIEW: "使用感あり",
+    DIRTY_REVIEW: "汚れあり",
+    DAMAGED_REVIEW: "破損あり",
+    EXEMPT_REVIEW: "対象外の可能性あり",
+  };
+
+  return labels[String(status || "UNDECIDED").toUpperCase()] || String(status || "-");
 }
 
 function getRefundDecisionLabel(status) {
@@ -860,6 +1142,13 @@ function formatAmount(amount, currencyCode) {
   return currency
     ? `${numeric.toLocaleString("ja-JP")} ${currency}`
     : numeric.toLocaleString("ja-JP");
+}
+
+function formatDateInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDate(value) {
@@ -1075,6 +1364,23 @@ const detailStyles = `
     background:#fffbeb;
     color:#92400e;
     line-height:1.7;
+  }
+  .withdrawal-detail__warnings{
+    margin:14px 0;
+    padding:14px 16px;
+    border:1px solid #fbbf24;
+    border-radius:14px;
+    background:#fffbeb;
+    color:#92400e;
+    line-height:1.7;
+  }
+  .withdrawal-detail__warnings strong{
+    display:block;
+    margin-bottom:6px;
+  }
+  .withdrawal-detail__warnings ul{
+    margin:0;
+    padding-left:20px;
   }
   .withdrawal-detail__pre{
     max-height:360px;

@@ -654,6 +654,16 @@ model WithdrawalRequest {
   confirmationSentAt          DateTime?
   confirmationEmailMessageId  String?
   decisionSentAt              DateTime?
+  returnRequirementStatus     String    @default("UNDECIDED")
+  returnTrackingCompany       String?
+  returnTrackingNumber        String?
+  returnTrackingUrl           String?
+  returnReceivedAt            DateTime?
+  returnConditionStatus       String    @default("UNDECIDED")
+  returnConditionNotes        String?
+  returnProofJson             Json?
+  returnInfoUpdatedAt         DateTime?
+  returnInfoUpdatedBy         String?
   refundDecisionStatus        String    @default("UNDECIDED")
   refundItemAmount            Int?
   refundInitialShippingAmount Int?
@@ -684,6 +694,7 @@ model WithdrawalRequest {
   @@index([customerEmail, createdAt])
   @@index([status, createdAt])
   @@index([eligibilityStatus, createdAt])
+  @@index([returnRequirementStatus, createdAt])
   @@index([refundDecisionStatus, createdAt])
   @@map("withdrawal_requests")
 }

@@ -6,8 +6,10 @@ import {
   createWithdrawalRequestFromForm,
   evaluateWithdrawalEligibility,
   normalizeWithdrawalRefundDecisionFormData,
+  normalizeWithdrawalReturnInfoFormData,
   normalizeWithdrawalFormData,
   updateWithdrawalRefundDecision,
+  updateWithdrawalReturnInfo,
 } from '../../app/services/withdrawals.server.js';
 import { WITHDRAWAL_ELIGIBILITY_STATUSES } from '../../app/utils/withdrawalStatus.js';
 
@@ -269,6 +271,46 @@ test('normalizeWithdrawalRefundDecisionFormData rejects invalid amounts', () => 
   assert.equal(normalized.errors.refundItemAmount, 'invalid_amount');
 });
 
+test('normalizeWithdrawalReturnInfoFormData keeps return tracking and condition fields', () => {
+  const normalized = normalizeWithdrawalReturnInfoFormData(
+    createFormData([
+      ['returnRequirementStatus', 'received'],
+      ['returnTrackingCompany', 'Japan Post'],
+      ['returnTrackingNumber', ' TEST123456789JP '],
+      ['returnTrackingUrl', ' https://track.example.com/TEST123456789JP '],
+      ['returnReceivedAt', '2026-07-09'],
+      ['returnConditionStatus', 'dirty_review'],
+      ['returnConditionNotes', 'small stain near sleeve'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, true);
+  assert.equal(normalized.values.returnRequirementStatus, 'RECEIVED');
+  assert.equal(normalized.values.returnTrackingCompany, 'Japan Post');
+  assert.equal(normalized.values.returnTrackingNumber, 'TEST123456789JP');
+  assert.equal(normalized.values.returnConditionStatus, 'DIRTY_REVIEW');
+  assert.equal(normalized.values.returnProofJson.trackingNumber, 'TEST123456789JP');
+});
+
+test('normalizeWithdrawalReturnInfoFormData rejects invalid return statuses', () => {
+  const normalized = normalizeWithdrawalReturnInfoFormData(
+    createFormData([
+      ['returnRequirementStatus', 'lost'],
+      ['returnConditionStatus', 'unknown'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, false);
+  assert.equal(
+    normalized.errors.returnRequirementStatus,
+    'invalid_return_requirement_status',
+  );
+  assert.equal(
+    normalized.errors.returnConditionStatus,
+    'invalid_return_condition_status',
+  );
+});
+
 test('evaluateWithdrawalEligibility accepts matching EU requests within fourteen days', () => {
   const result = evaluateWithdrawalEligibility({
     values: {
@@ -431,6 +473,42 @@ test('updateWithdrawalRefundDecision stores admin refund judgement and history',
     assert.equal(
       prismaClient._state.statusHistory[1].reason,
       'refund_decision_updated',
+    );
+  });
+});
+
+test('updateWithdrawalReturnInfo stores return proof and history', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    const result = await updateWithdrawalReturnInfo({
+      id: created.withdrawalRequest.id,
+      formData: createFormData([
+        ['returnRequirementStatus', 'CONDITION_CHECKED'],
+        ['returnTrackingCompany', 'Japan Post'],
+        ['returnTrackingNumber', 'TEST123456789JP'],
+        ['returnTrackingUrl', 'https://track.example.com/TEST123456789JP'],
+        ['returnReceivedAt', '2026-07-09'],
+        ['returnConditionStatus', 'DAMAGED_REVIEW'],
+        ['returnConditionNotes', 'box damaged'],
+      ]),
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.withdrawalRequest.returnRequirementStatus, 'CONDITION_CHECKED');
+    assert.equal(result.withdrawalRequest.returnConditionStatus, 'DAMAGED_REVIEW');
+    assert.equal(result.withdrawalRequest.returnProofJson.trackingNumber, 'TEST123456789JP');
+    assert.equal(prismaClient._state.statusHistory.length, 2);
+    assert.equal(
+      prismaClient._state.statusHistory[1].reason,
+      'return_info_updated',
     );
   });
 });
