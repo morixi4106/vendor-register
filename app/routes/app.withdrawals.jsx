@@ -14,6 +14,15 @@ import {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 300;
+const CLOSED_STATUSES = [
+  WITHDRAWAL_STATUSES.REFUNDED,
+  WITHDRAWAL_STATUSES.CANCELLED,
+  WITHDRAWAL_STATUSES.REJECTED,
+  WITHDRAWAL_STATUSES.EXPIRED,
+];
+const OPEN_STATUSES = Object.values(WITHDRAWAL_STATUSES).filter(
+  (status) => !CLOSED_STATUSES.includes(status),
+);
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -24,12 +33,19 @@ export const loader = async ({ request }) => {
     url.searchParams.get("eligibilityStatus") || "all",
   );
   const search = String(url.searchParams.get("search") || "").trim();
+  const queue = String(url.searchParams.get("queue") || "all");
   const limit = clampLimit(url.searchParams.get("limit"));
 
   const where = {};
 
   if (status !== "all") where.status = status;
   if (eligibilityStatus !== "all") where.eligibilityStatus = eligibilityStatus;
+  if (queue === "open" && status === "all") {
+    where.status = { in: OPEN_STATUSES };
+  }
+  if (queue === "email_failed") {
+    where.emailLogs = { some: { status: "failed" } };
+  }
   if (search) {
     where.OR = [
       { shopifyOrderName: { contains: search, mode: "insensitive" } },
@@ -41,7 +57,7 @@ export const loader = async ({ request }) => {
   }
 
   try {
-    const [requests, summary] = await Promise.all([
+    const [requests, summary, totalCount, openCount, emailFailedCount] = await Promise.all([
       prisma.withdrawalRequest.findMany({
         where,
         orderBy: { createdAt: "desc" },
@@ -57,6 +73,17 @@ export const loader = async ({ request }) => {
         by: ["status"],
         _count: { _all: true },
       }),
+      prisma.withdrawalRequest.count(),
+      prisma.withdrawalRequest.count({
+        where: {
+          status: { in: OPEN_STATUSES },
+        },
+      }),
+      prisma.withdrawalRequest.count({
+        where: {
+          emailLogs: { some: { status: "failed" } },
+        },
+      }),
     ]);
 
     return json({
@@ -64,7 +91,13 @@ export const loader = async ({ request }) => {
       status,
       eligibilityStatus,
       search,
+      queue,
       limit,
+      dashboardCounts: {
+        total: totalCount,
+        open: openCount,
+        emailFailed: emailFailedCount,
+      },
       summary: summary.map((row) => ({
         status: row.status,
         label: getWithdrawalStatusLabel(row.status),
@@ -79,7 +112,13 @@ export const loader = async ({ request }) => {
       status,
       eligibilityStatus,
       search,
+      queue,
       limit,
+      dashboardCounts: {
+        total: 0,
+        open: 0,
+        emailFailed: 0,
+      },
       summary: [],
       requests: [],
       errorMessage:
@@ -96,7 +135,9 @@ export default function WithdrawalsPage() {
     status,
     eligibilityStatus,
     search,
+    queue,
     limit,
+    dashboardCounts,
     summary,
     requests,
     errorMessage,
@@ -116,6 +157,7 @@ export default function WithdrawalsPage() {
             </p>
           </div>
           <Form method="get" className="withdrawals-admin__filters">
+            <input type="hidden" name="queue" value={queue} />
             <label>
               <span>状態</span>
               <select name="status" defaultValue={status}>
@@ -159,6 +201,33 @@ export default function WithdrawalsPage() {
         </section>
       ) : (
         <>
+          <section className="withdrawals-admin__quick-links">
+            <QuickFilterLink
+              label="すべて"
+              count={dashboardCounts.total}
+              active={queue === "all"}
+              to={buildListUrl({ queue: "all", status: "all", eligibilityStatus, search, limit })}
+            />
+            <QuickFilterLink
+              label="未完了"
+              count={dashboardCounts.open}
+              active={queue === "open"}
+              to={buildListUrl({ queue: "open", status: "all", eligibilityStatus, search, limit })}
+            />
+            <QuickFilterLink
+              label="メール失敗"
+              count={dashboardCounts.emailFailed}
+              active={queue === "email_failed"}
+              to={buildListUrl({
+                queue: "email_failed",
+                status: "all",
+                eligibilityStatus,
+                search,
+                limit,
+              })}
+            />
+          </section>
+
           <section className="withdrawals-admin__card withdrawals-admin__summary">
             {summary.length === 0 ? (
               <div className="withdrawals-admin__empty">まだ申請はありません。</div>
@@ -183,6 +252,7 @@ export default function WithdrawalsPage() {
                     <th>国</th>
                     <th>状態</th>
                     <th>判定</th>
+                    <th>期限</th>
                     <th>受付メール</th>
                     <th>詳細</th>
                   </tr>
@@ -190,7 +260,7 @@ export default function WithdrawalsPage() {
                 <tbody>
                   {requests.length === 0 ? (
                     <tr>
-                      <td colSpan="8">
+                      <td colSpan="9">
                         <div className="withdrawals-admin__empty">
                           条件に合う申請はありません。
                         </div>
@@ -219,6 +289,7 @@ export default function WithdrawalsPage() {
                             {request.eligibilityLabel}
                           </Badge>
                         </td>
+                        <td>{request.deadlineAtLabel}</td>
                         <td>{request.latestEmailStatusLabel}</td>
                         <td>
                           <Link className="withdrawals-admin__link" to={`/app/withdrawals/${request.id}`}>
@@ -255,6 +326,7 @@ function serializeWithdrawalRequest(request) {
     eligibilityStatus: request.eligibilityStatus,
     eligibilityLabel: getWithdrawalEligibilityLabel(request.eligibilityStatus),
     eligibilityTone: getWithdrawalEligibilityTone(request.eligibilityStatus),
+    deadlineAtLabel: formatDate(request.deadlineAt),
     latestEmailStatusLabel: latestEmail
       ? latestEmail.status === "sent"
         ? "送信済み"
@@ -264,8 +336,36 @@ function serializeWithdrawalRequest(request) {
   };
 }
 
+function QuickFilterLink({ label, count, active, to }) {
+  return (
+    <Link
+      className={`withdrawals-admin__quick-link ${
+        active ? "withdrawals-admin__quick-link--active" : ""
+      }`}
+      to={to}
+    >
+      <span>{label}</span>
+      <strong>{count}</strong>
+    </Link>
+  );
+}
+
 function Badge({ tone, children }) {
   return <span className={`withdrawals-admin__badge withdrawals-admin__badge--${tone}`}>{children}</span>;
+}
+
+function buildListUrl({ queue, status, eligibilityStatus, search, limit }) {
+  const params = new URLSearchParams();
+  if (queue && queue !== "all") params.set("queue", queue);
+  if (status && status !== "all") params.set("status", status);
+  if (eligibilityStatus && eligibilityStatus !== "all") {
+    params.set("eligibilityStatus", eligibilityStatus);
+  }
+  if (search) params.set("search", search);
+  if (limit && Number(limit) !== DEFAULT_LIMIT) params.set("limit", String(limit));
+
+  const query = params.toString();
+  return query ? `/app/withdrawals?${query}` : "/app/withdrawals";
 }
 
 function clampLimit(rawValue) {
@@ -303,6 +403,32 @@ const adminStyles = `
     border:1px solid #e5e7eb;
     border-radius:16px;
     padding:22px;
+  }
+  .withdrawals-admin__quick-links{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+    gap:12px;
+  }
+  .withdrawals-admin__quick-link{
+    display:grid;
+    gap:8px;
+    border:1px solid #e5e7eb;
+    border-radius:16px;
+    padding:18px;
+    background:#fff;
+    color:#111827;
+    text-decoration:none;
+  }
+  .withdrawals-admin__quick-link--active{
+    border-color:#111827;
+    box-shadow:inset 0 0 0 1px #111827;
+  }
+  .withdrawals-admin__quick-link span{
+    color:#4b5563;
+    font-weight:800;
+  }
+  .withdrawals-admin__quick-link strong{
+    font-size:30px;
   }
   .withdrawals-admin__header{
     display:flex;

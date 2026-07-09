@@ -836,10 +836,13 @@ function buildAcknowledgementEmail(withdrawalRequest) {
 function buildStatusEmail(withdrawalRequest) {
   const statusLabel = getWithdrawalStatusLabel(withdrawalRequest.status);
   const subject = `撤回申請の状況: ${statusLabel}`;
+  const statusMessage = getStatusCustomerMessage(withdrawalRequest.status);
   const bodyLines = [
     `${withdrawalRequest.customerName} 様`,
     "",
     `撤回申請の状況が「${statusLabel}」に更新されました。`,
+    statusMessage,
+    "",
     `受付番号: ${withdrawalRequest.id}`,
     `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
     "",
@@ -853,6 +856,35 @@ function buildStatusEmail(withdrawalRequest) {
     .join("")}</div>`;
 
   return { subject, text, html };
+}
+
+function getStatusCustomerMessage(status) {
+  switch (status) {
+    case WITHDRAWAL_STATUSES.UNDER_REVIEW:
+      return "注文内容、返送状況、商品状態を確認しています。確認が終わり次第、次の手続きをご案内します。";
+    case WITHDRAWAL_STATUSES.APPROVED:
+      return "撤回申請を確認しました。返送や返金に必要な手続きがある場合は、続けてご案内します。";
+    case WITHDRAWAL_STATUSES.RETURN_REQUESTED:
+      return "商品の返送または返送証明の確認が必要です。返送方法についての案内をご確認ください。";
+    case WITHDRAWAL_STATUSES.RETURN_RECEIVED:
+      return "返送品または返送証明を確認しました。商品状態を確認したうえで返金手続きへ進みます。";
+    case WITHDRAWAL_STATUSES.REFUND_PENDING:
+      return "返金手続きの準備中です。返金額と処理状況を確認しています。";
+    case WITHDRAWAL_STATUSES.REFUNDED:
+      return "返金処理が完了しました。反映時期は決済方法やカード会社により異なる場合があります。";
+    case WITHDRAWAL_STATUSES.CANCELLED:
+      return "対象注文のキャンセル処理が完了しました。";
+    case WITHDRAWAL_STATUSES.REJECTED:
+      return "確認の結果、今回の申請は撤回対象外として処理されました。詳細は別途ご案内内容をご確認ください。";
+    case WITHDRAWAL_STATUSES.EXPIRED:
+      return "確認の結果、申請期限を過ぎている可能性があるため、期限切れとして処理されました。";
+    case WITHDRAWAL_STATUSES.ERROR:
+      return "確認が必要な状態です。内容を確認のうえ、必要に応じてご連絡します。";
+    case WITHDRAWAL_STATUSES.ACKNOWLEDGED:
+    case WITHDRAWAL_STATUSES.REQUESTED:
+    default:
+      return "申請内容を確認しています。確認が終わり次第、次の手続きをご案内します。";
+  }
 }
 
 function formatDateTime(value) {

@@ -194,6 +194,8 @@ test('vendor.$handle buildDraftOrderCheckoutInputFromStorefrontForm creates a se
           quantity: 2,
           amountAfterItemDiscountBeforeOrderCoupon: 8400,
           requiresShipping: true,
+          vendor: 'Amber Cellar',
+          directShipGroup: 'store_1',
         },
       ],
     },
