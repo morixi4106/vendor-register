@@ -1,6 +1,6 @@
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   createWithdrawalRequestFromForm,
@@ -101,6 +101,44 @@ export default function WithdrawalFormPage() {
 
   const countryOptions = useMemo(() => COUNTRY_OPTIONS, []);
 
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return undefined;
+
+    let resizeObserver = null;
+    let timeoutId = null;
+
+    function postFrameHeight() {
+      const height = Math.max(
+        document.documentElement?.scrollHeight || 0,
+        document.body?.scrollHeight || 0,
+      );
+
+      window.parent?.postMessage(
+        {
+          type: "vendorWithdrawalFrameHeight",
+          height,
+        },
+        "*",
+      );
+    }
+
+    postFrameHeight();
+    timeoutId = window.setTimeout(postFrameHeight, 150);
+
+    if (typeof ResizeObserver !== "undefined" && document.body) {
+      resizeObserver = new ResizeObserver(postFrameHeight);
+      resizeObserver.observe(document.body);
+    }
+
+    window.addEventListener("resize", postFrameHeight);
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener("resize", postFrameHeight);
+    };
+  }, [embedded, isConfirming, actionData]);
+
   function handlePreview(event) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -114,7 +152,6 @@ export default function WithdrawalFormPage() {
     <main className={`withdrawal-page${embedded ? " withdrawal-page--embedded" : ""}`}>
       <style>{pageStyles}</style>
       <section className="withdrawal-card withdrawal-hero">
-        <p className="withdrawal-eyebrow">EU right of withdrawal</p>
         <h1>撤回申請フォーム</h1>
         <p>
           EUのお客様がオンライン購入に関する撤回権を行使するためのフォームです。
@@ -344,14 +381,6 @@ const pageStyles = `
   .withdrawal-subtle{
     color:#4b5563;
     line-height:1.8;
-  }
-  .withdrawal-eyebrow{
-    margin:0 0 8px;
-    color:#6b7280;
-    font-weight:800;
-    font-size:13px;
-    letter-spacing:.04em;
-    text-transform:uppercase;
   }
   .withdrawal-note{
     display:grid;

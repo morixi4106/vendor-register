@@ -16,9 +16,10 @@
 
   .vendor-withdrawal-frame {
     width: 100%;
-    min-height: 980px;
+    height: 980px;
     border: 0;
     display: block;
+    overflow: hidden;
   }
 
   .vendor-withdrawal-fallback {
@@ -40,6 +41,7 @@
     src="/apps/vendors/withdrawal?embedded=1"
     title="撤回申請フォーム"
     loading="lazy"
+    scrolling="no"
   ></iframe>
   <noscript>
     <p class="vendor-withdrawal-fallback">
@@ -55,8 +57,49 @@
     var frame = document.getElementById("vendor-withdrawal-frame");
     if (!frame) return;
 
+    var minFrameHeight = 900;
+
+    function setFrameHeight(height) {
+      var nextHeight = Number(height);
+      if (!Number.isFinite(nextHeight) || nextHeight <= 0) return;
+      frame.style.height = Math.ceil(Math.max(nextHeight, minFrameHeight)) + "px";
+    }
+
+    function measureFrameHeight() {
+      try {
+        var doc = frame.contentDocument || frame.contentWindow.document;
+        if (!doc) return;
+
+        setFrameHeight(
+          Math.max(
+            doc.documentElement ? doc.documentElement.scrollHeight : 0,
+            doc.body ? doc.body.scrollHeight : 0
+          )
+        );
+      } catch (error) {
+        // The app proxy normally shares this origin. If a theme/browser blocks
+        // direct measurement, the iframe still keeps a usable fallback height.
+      }
+    }
+
+    window.addEventListener("message", function (event) {
+      if (event.source !== frame.contentWindow) return;
+      if (!event.data || event.data.type !== "vendorWithdrawalFrameHeight") return;
+      setFrameHeight(event.data.height);
+    });
+
+    frame.addEventListener("load", function () {
+      measureFrameHeight();
+      window.setTimeout(measureFrameHeight, 150);
+      window.setTimeout(measureFrameHeight, 600);
+    });
+
     var sourceParams = new URLSearchParams(window.location.search);
-    if (!sourceParams.toString()) return;
+    if (!sourceParams.toString()) {
+      window.setTimeout(measureFrameHeight, 300);
+      window.setTimeout(measureFrameHeight, 1000);
+      return;
+    }
 
     var frameUrl = new URL("/apps/vendors/withdrawal", window.location.origin);
     frameUrl.searchParams.set("embedded", "1");
