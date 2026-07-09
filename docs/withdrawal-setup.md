@@ -69,6 +69,16 @@ Add links to that page from:
 - Order confirmation emails
 - Any EU-facing help page
 
+## Storefront Password
+
+If the Shopify storefront password page is enabled, public visitors will see the password page instead of the fixed page or app proxy form.
+
+Before publishing the withdrawal flow for buyers, confirm that:
+
+- `/pages/withdrawal-form` opens on the storefront domain.
+- `/apps/vendors/withdrawal?embedded=1` returns the embedded form, not the Shopify password page.
+- Public links use the storefront domain, not the Render app domain.
+
 ## Initial Operating Rule
 
 The MVP intentionally does not auto-refund.
