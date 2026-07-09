@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
+import { useEffect } from "react";
 
 import prisma from "../db.server.js";
 
@@ -36,6 +37,21 @@ export const loader = async ({ request }) => {
 export default function WithdrawalSuccessPage() {
   const { found, duplicate, embedded, ref, withdrawalRequest } = useLoaderData();
   const formHref = embedded ? "/apps/vendors/withdrawal?embedded=1" : "/apps/vendors/withdrawal";
+
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      window.parent?.postMessage(
+        {
+          type: "vendorWithdrawalScrollIntoView",
+        },
+        "*",
+      );
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [embedded]);
 
   return (
     <main className={`withdrawal-success${embedded ? " withdrawal-success--embedded" : ""}`}>

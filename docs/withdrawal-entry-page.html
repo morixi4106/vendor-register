@@ -82,10 +82,27 @@
       }
     }
 
+    function scrollFrameIntoView() {
+      var rect = frame.getBoundingClientRect();
+      var targetTop = window.pageYOffset + rect.top - 24;
+
+      window.scrollTo({
+        top: Math.max(targetTop, 0),
+        behavior: "smooth",
+      });
+    }
+
     window.addEventListener("message", function (event) {
       if (event.source !== frame.contentWindow) return;
-      if (!event.data || event.data.type !== "vendorWithdrawalFrameHeight") return;
-      setFrameHeight(event.data.height);
+      if (!event.data) return;
+
+      if (event.data.type === "vendorWithdrawalFrameHeight") {
+        setFrameHeight(event.data.height);
+      }
+
+      if (event.data.type === "vendorWithdrawalScrollIntoView") {
+        scrollFrameIntoView();
+      }
     });
 
     frame.addEventListener("load", function () {

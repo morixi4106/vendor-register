@@ -139,6 +139,22 @@ export default function WithdrawalFormPage() {
     };
   }, [embedded, isConfirming, actionData]);
 
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return undefined;
+    if (!isConfirming && !actionData) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      window.parent?.postMessage(
+        {
+          type: "vendorWithdrawalScrollIntoView",
+        },
+        "*",
+      );
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [embedded, isConfirming, actionData]);
+
   function handlePreview(event) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
