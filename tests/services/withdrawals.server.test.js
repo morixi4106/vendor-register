@@ -7,10 +7,12 @@ import {
   evaluateWithdrawalEligibility,
   ensureWithdrawalReturnProofToken,
   findWithdrawalReturnProofRequest,
+  normalizeWithdrawalCompletionFormData,
   normalizeWithdrawalRefundDecisionFormData,
   normalizeWithdrawalReturnInfoFormData,
   normalizeWithdrawalFormData,
   submitWithdrawalReturnProof,
+  updateWithdrawalCompletionRecord,
   updateWithdrawalRefundDecision,
   updateWithdrawalReturnInfo,
 } from '../../app/services/withdrawals.server.js';
@@ -281,6 +283,41 @@ test('normalizeWithdrawalRefundDecisionFormData rejects invalid amounts', () => 
   assert.equal(normalized.errors.refundItemAmount, 'invalid_amount');
 });
 
+test('normalizeWithdrawalCompletionFormData keeps completion result fields', () => {
+  const normalized = normalizeWithdrawalCompletionFormData(
+    createFormData([
+      ['completionStatus', 'refunded'],
+      ['completionAction', 'Refunded from Shopify admin'],
+      ['completionRefundedAmount', '1,049'],
+      ['completionRefundedShipping', '870'],
+      ['completionCurrencyCode', 'jpy'],
+      ['completionShopifyRefundId', 'gid://shopify/Refund/1'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, true);
+  assert.equal(normalized.values.completionStatus, 'REFUNDED');
+  assert.equal(normalized.values.completionRefundedAmount, 1049);
+  assert.equal(normalized.values.completionRefundedShipping, 870);
+  assert.equal(normalized.values.completionCurrencyCode, 'JPY');
+  assert.equal(
+    normalized.values.completionShopifyRefundId,
+    'gid://shopify/Refund/1',
+  );
+});
+
+test('normalizeWithdrawalCompletionFormData requires amount for refund completion', () => {
+  const normalized = normalizeWithdrawalCompletionFormData(
+    createFormData([['completionStatus', 'REFUNDED']]),
+  );
+
+  assert.equal(normalized.ok, false);
+  assert.equal(
+    normalized.errors.completionRefundedAmount,
+    'required_for_refunded_completion',
+  );
+});
+
 test('normalizeWithdrawalReturnInfoFormData keeps return tracking and condition fields', () => {
   const normalized = normalizeWithdrawalReturnInfoFormData(
     createFormData([
@@ -483,6 +520,43 @@ test('updateWithdrawalRefundDecision stores admin refund judgement and history',
     assert.equal(
       prismaClient._state.statusHistory[1].reason,
       'refund_decision_updated',
+    );
+  });
+});
+
+test('updateWithdrawalCompletionRecord closes a refunded request and records history', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    const result = await updateWithdrawalCompletionRecord({
+      id: created.withdrawalRequest.id,
+      formData: createFormData([
+        ['completionStatus', 'REFUNDED'],
+        ['completionAction', 'Refunded manually'],
+        ['completionRefundedAmount', '1049'],
+        ['completionRefundedShipping', '870'],
+        ['completionCurrencyCode', 'JPY'],
+      ]),
+      changedBy: 'admin@example.com',
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.withdrawalRequest.status, 'REFUNDED');
+    assert.equal(result.withdrawalRequest.completionStatus, 'REFUNDED');
+    assert.equal(result.withdrawalRequest.completionRefundedAmount, 1049);
+    assert.equal(result.withdrawalRequest.completionRecordedBy, 'admin@example.com');
+    assert.ok(result.withdrawalRequest.completedAt instanceof Date);
+    assert.equal(prismaClient._state.statusHistory.length, 2);
+    assert.equal(
+      prismaClient._state.statusHistory[1].reason,
+      'completion_recorded',
     );
   });
 });

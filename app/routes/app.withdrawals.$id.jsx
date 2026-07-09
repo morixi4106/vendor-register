@@ -5,8 +5,10 @@ import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
 import {
   sendWithdrawalAcknowledgementEmail,
+  sendWithdrawalCompletionEmail,
   sendWithdrawalReturnInstructionsEmail,
   sendWithdrawalStatusEmail,
+  updateWithdrawalCompletionRecord,
   updateWithdrawalRefundDecision,
   updateWithdrawalReturnInfo,
   updateWithdrawalStatus,
@@ -129,6 +131,34 @@ export const action = async ({ request, params }) => {
       message: result.ok
         ? "返金判断を保存しました。Shopifyへの返金は自動実行していません。"
         : `返金判断を保存できませんでした: ${result.error || "unknown"}`,
+    }, { status: result.status || 200 });
+  }
+
+  if (intent === "update_completion_record") {
+    const result = await updateWithdrawalCompletionRecord({
+      id: params.id,
+      formData,
+      changedBy: "admin",
+    });
+
+    return json({
+      ok: result.ok,
+      message: result.ok
+        ? "完了記録を保存しました。Shopifyへの返金やキャンセルは自動実行していません。"
+        : `完了記録を保存できませんでした: ${result.error || "unknown"}`,
+    }, { status: result.status || 200 });
+  }
+
+  if (intent === "send_completion_email") {
+    const result = await sendWithdrawalCompletionEmail({
+      withdrawalRequestId: params.id,
+    });
+
+    return json({
+      ok: result.ok,
+      message: result.ok
+        ? "完了通知メールを送信しました。"
+        : `完了通知メールを送信できませんでした: ${result.error || "unknown"}`,
     }, { status: result.status || 200 });
   }
 
@@ -533,6 +563,98 @@ export default function WithdrawalDetailPage() {
             </Form>
           </div>
 
+          <div className="withdrawal-detail__completion">
+            <h3>完了記録</h3>
+            <DescriptionList rows={withdrawalRequest.completionRows} />
+            <Form method="post" className="withdrawal-detail__form withdrawal-detail__form--spaced">
+              <input type="hidden" name="intent" value="update_completion_record" />
+              <label>
+                <span>処理結果</span>
+                <select
+                  name="completionStatus"
+                  defaultValue={withdrawalRequest.completionStatus}
+                >
+                  <option value="UNDECIDED">未記録</option>
+                  <option value="REFUNDED">返金済み</option>
+                  <option value="PARTIALLY_REFUNDED">一部返金済み</option>
+                  <option value="CANCELLED">キャンセル済み</option>
+                  <option value="NO_REFUND_CLOSED">返金なしで完了</option>
+                  <option value="REJECTED_CLOSED">対象外として完了</option>
+                  <option value="MANUAL_CLOSED">手動完了</option>
+                </select>
+              </label>
+              <label>
+                <span>処理内容</span>
+                <input
+                  name="completionAction"
+                  defaultValue={withdrawalRequest.completionAction}
+                  placeholder="例: Shopify管理画面で返金済み"
+                />
+              </label>
+              <div className="withdrawal-detail__amount-grid">
+                <label>
+                  <span>返金処理額</span>
+                  <input
+                    name="completionRefundedAmount"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    defaultValue={withdrawalRequest.completionRefundedAmountInput}
+                  />
+                </label>
+                <label>
+                  <span>初回送料の返金額</span>
+                  <input
+                    name="completionRefundedShipping"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    defaultValue={withdrawalRequest.completionRefundedShippingInput}
+                  />
+                </label>
+                <label>
+                  <span>通貨</span>
+                  <input
+                    name="completionCurrencyCode"
+                    defaultValue={withdrawalRequest.completionCurrencyCode}
+                  />
+                </label>
+              </div>
+              <label>
+                <span>Shopify返金ID</span>
+                <input
+                  name="completionShopifyRefundId"
+                  defaultValue={withdrawalRequest.completionShopifyRefundId}
+                />
+              </label>
+              <label>
+                <span>ShopifyキャンセルID</span>
+                <input
+                  name="completionShopifyCancelId"
+                  defaultValue={withdrawalRequest.completionShopifyCancelId}
+                />
+              </label>
+              <label>
+                <span>完了メモ</span>
+                <textarea
+                  name="completionNotes"
+                  rows="3"
+                  defaultValue={withdrawalRequest.completionNotes}
+                />
+              </label>
+              <p className="withdrawal-detail__hint">
+                ここで保存してもShopifyへの返金・キャンセルは自動実行されません。実処理後の記録として使います。
+              </p>
+              <button type="submit" disabled={isSubmitting}>
+                完了記録を保存
+              </button>
+            </Form>
+            <Form method="post" className="withdrawal-detail__inline-form">
+              <input type="hidden" name="intent" value="send_completion_email" />
+              <button type="submit" disabled={isSubmitting}>
+                完了通知メール送信
+              </button>
+            </Form>
+          </div>
+
           <div className="withdrawal-detail__guard">
             <strong>Shopify自動処理</strong>
             <p>
@@ -673,6 +795,8 @@ function serializeWithdrawalRequest(request) {
   const orderSummaryRows = buildOrderSummaryRows(request);
   const refundCurrencyCode =
     request.refundCurrencyCode || getOrderCurrencyCode(request) || "JPY";
+  const completionCurrencyCode =
+    request.completionCurrencyCode || refundCurrencyCode || "JPY";
 
   return {
     id: request.id,
@@ -741,6 +865,24 @@ function serializeWithdrawalRequest(request) {
     refundDecisionNotes: request.refundDecisionNotes || "",
     refundDecisionUpdatedAtLabel: formatDate(request.refundDecisionUpdatedAt),
     refundDecisionUpdatedBy: request.refundDecisionUpdatedBy || "-",
+    completionRows: buildCompletionRows(request, completionCurrencyCode),
+    completionStatus: request.completionStatus || "UNDECIDED",
+    completionStatusLabel: getCompletionStatusLabel(request.completionStatus),
+    completionAction: request.completionAction || "",
+    completionShopifyRefundId: request.completionShopifyRefundId || "",
+    completionShopifyCancelId: request.completionShopifyCancelId || "",
+    completionRefundedAmountInput: formatInputAmount(
+      request.completionRefundedAmount,
+    ),
+    completionRefundedShippingInput: formatInputAmount(
+      request.completionRefundedShipping,
+    ),
+    completionCurrencyCode,
+    completionNotes: request.completionNotes || "",
+    completionRecordedAtLabel: formatDate(request.completionRecordedAt),
+    completionRecordedBy: request.completionRecordedBy || "-",
+    completionNotifiedAtLabel: formatDate(request.completionNotifiedAt),
+    completionEmailMessageId: request.completionEmailMessageId || "-",
     nextAction: buildNextAction(request),
     quickActions: buildQuickActions(request.status),
     adminNotes: request.adminNotes || "",
@@ -1093,6 +1235,23 @@ function buildRefundDecisionRows(request, currencyCode) {
   ];
 }
 
+function buildCompletionRows(request, currencyCode) {
+  return [
+    ["処理結果", getCompletionStatusLabel(request.completionStatus)],
+    ["処理内容", request.completionAction || "-"],
+    ["返金処理額", formatAmount(request.completionRefundedAmount, currencyCode)],
+    [
+      "初回送料の返金額",
+      formatAmount(request.completionRefundedShipping, currencyCode),
+    ],
+    ["Shopify返金ID", request.completionShopifyRefundId || "-"],
+    ["ShopifyキャンセルID", request.completionShopifyCancelId || "-"],
+    ["記録者", request.completionRecordedBy || "-"],
+    ["記録日時", formatDate(request.completionRecordedAt)],
+    ["完了通知", formatDate(request.completionNotifiedAt)],
+  ];
+}
+
 function getOrderCurrencyCode(request) {
   const snapshot =
     request.orderSnapshotJson && typeof request.orderSnapshotJson === "object"
@@ -1152,6 +1311,20 @@ function getReturnShippingPayerLabel(value) {
   };
 
   return labels[String(value || "UNDECIDED").toUpperCase()] || String(value || "-");
+}
+
+function getCompletionStatusLabel(status) {
+  const labels = {
+    UNDECIDED: "未記録",
+    REFUNDED: "返金済み",
+    PARTIALLY_REFUNDED: "一部返金済み",
+    CANCELLED: "キャンセル済み",
+    NO_REFUND_CLOSED: "返金なしで完了",
+    REJECTED_CLOSED: "対象外として完了",
+    MANUAL_CLOSED: "手動完了",
+  };
+
+  return labels[String(status || "UNDECIDED").toUpperCase()] || String(status || "-");
 }
 
 function formatInputAmount(amount) {

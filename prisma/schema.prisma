@@ -678,6 +678,18 @@ model WithdrawalRequest {
   refundDecisionNotes         String?
   refundDecisionUpdatedAt     DateTime?
   refundDecisionUpdatedBy     String?
+  completionStatus            String    @default("UNDECIDED")
+  completionAction            String?
+  completionShopifyRefundId   String?
+  completionShopifyCancelId   String?
+  completionRefundedAmount    Int?
+  completionRefundedShipping  Int?
+  completionCurrencyCode      String?
+  completionNotes             String?
+  completionRecordedAt        DateTime?
+  completionRecordedBy        String?
+  completionNotifiedAt        DateTime?
+  completionEmailMessageId    String?
   completedAt                 DateTime?
   rejectedAt                  DateTime?
   rejectionReason             String?
@@ -700,6 +712,7 @@ model WithdrawalRequest {
   @@index([returnRequirementStatus, createdAt])
   @@index([returnProofTokenHash])
   @@index([refundDecisionStatus, createdAt])
+  @@index([completionStatus, createdAt])
   @@map("withdrawal_requests")
 }
 

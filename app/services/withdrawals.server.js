@@ -36,6 +36,15 @@ const REFUND_DECISION_STATUSES = new Set([
   "NO_REFUND",
   "RETURN_PENDING",
 ]);
+const COMPLETION_STATUSES = new Set([
+  "UNDECIDED",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+  "CANCELLED",
+  "NO_REFUND_CLOSED",
+  "REJECTED_CLOSED",
+  "MANUAL_CLOSED",
+]);
 const RETURN_SHIPPING_PAYERS = new Set([
   "UNDECIDED",
   "CUSTOMER",
@@ -1021,6 +1030,174 @@ export async function updateWithdrawalRefundDecision({
   return { ok: true, withdrawalRequest: updated };
 }
 
+export function normalizeWithdrawalCompletionFormData(formData) {
+  const completionStatus = String(
+    formData.get("completionStatus") || "UNDECIDED",
+  )
+    .trim()
+    .toUpperCase();
+  const completionAction = normalizeText(formData.get("completionAction"));
+  const completionShopifyRefundId = normalizeText(
+    formData.get("completionShopifyRefundId"),
+  );
+  const completionShopifyCancelId = normalizeText(
+    formData.get("completionShopifyCancelId"),
+  );
+  const completionRefundedAmount = parseOptionalNonNegativeInteger(
+    formData.get("completionRefundedAmount"),
+  );
+  const completionRefundedShipping = parseOptionalNonNegativeInteger(
+    formData.get("completionRefundedShipping"),
+  );
+  const completionCurrencyCode = normalizeCurrencyCode(
+    formData.get("completionCurrencyCode"),
+  );
+  const completionNotes = normalizeText(formData.get("completionNotes"));
+  const errors = {};
+
+  if (!COMPLETION_STATUSES.has(completionStatus)) {
+    errors.completionStatus = "invalid_completion_status";
+  }
+
+  if (completionRefundedAmount.invalid) {
+    errors.completionRefundedAmount = "invalid_amount";
+  }
+
+  if (completionRefundedShipping.invalid) {
+    errors.completionRefundedShipping = "invalid_amount";
+  }
+
+  if (
+    ["REFUNDED", "PARTIALLY_REFUNDED"].includes(completionStatus) &&
+    completionRefundedAmount.value === null
+  ) {
+    errors.completionRefundedAmount = "required_for_refunded_completion";
+  }
+
+  return {
+    ok: Object.keys(errors).length === 0,
+    errors,
+    values: {
+      completionStatus,
+      completionAction,
+      completionShopifyRefundId,
+      completionShopifyCancelId,
+      completionRefundedAmount:
+        ["NO_REFUND_CLOSED", "REJECTED_CLOSED"].includes(completionStatus) &&
+        completionRefundedAmount.value === null
+          ? 0
+          : completionRefundedAmount.value,
+      completionRefundedShipping: completionRefundedShipping.value,
+      completionCurrencyCode,
+      completionNotes,
+    },
+  };
+}
+
+export async function updateWithdrawalCompletionRecord({
+  id,
+  formData,
+  changedBy = "admin",
+  prismaClient = prisma,
+} = {}) {
+  const normalized = normalizeWithdrawalCompletionFormData(formData);
+
+  if (!normalized.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: "invalid_completion_record",
+      errors: normalized.errors,
+    };
+  }
+
+  const current = await prismaClient.withdrawalRequest.findUnique({
+    where: { id },
+  });
+
+  if (!current) {
+    return { ok: false, status: 404, error: "not_found" };
+  }
+
+  const values = normalized.values;
+  const now = new Date();
+  const nextStatus = mapCompletionStatusToWithdrawalStatus(
+    values.completionStatus,
+    current.status,
+  );
+  const shouldMarkCompleted = values.completionStatus !== "UNDECIDED";
+  const updated = await prismaClient.$transaction(async (tx) => {
+    const next = await tx.withdrawalRequest.update({
+      where: { id },
+      data: {
+        ...values,
+        status: nextStatus,
+        completedAt: shouldMarkCompleted ? current.completedAt || now : null,
+        completionRecordedAt: shouldMarkCompleted ? now : null,
+        completionRecordedBy: shouldMarkCompleted ? changedBy : null,
+      },
+    });
+
+    await tx.withdrawalRequestStatusHistory.create({
+      data: {
+        withdrawalRequestId: id,
+        fromStatus: current.status,
+        toStatus: nextStatus,
+        changedBy,
+        reason: "completion_recorded",
+        metadataJson: {
+          completion: values,
+        },
+      },
+    });
+
+    return next;
+  });
+
+  return { ok: true, withdrawalRequest: updated };
+}
+
+export async function sendWithdrawalCompletionEmail({
+  withdrawalRequestId,
+  prismaClient = prisma,
+} = {}) {
+  const withdrawalRequest = await prismaClient.withdrawalRequest.findUnique({
+    where: { id: withdrawalRequestId },
+  });
+
+  if (!withdrawalRequest) {
+    return { ok: false, error: "withdrawal_request_not_found" };
+  }
+
+  if (!withdrawalRequest.completedAt) {
+    return { ok: false, error: "withdrawal_request_not_completed" };
+  }
+
+  const email = buildCompletionEmail(withdrawalRequest);
+  const result = await sendWithdrawalEmail({
+    prismaClient,
+    withdrawalRequest,
+    emailType: "completion",
+    subject: email.subject,
+    bodyText: email.text,
+    bodyHtml: email.html,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  await prismaClient.withdrawalRequest.update({
+    where: { id: withdrawalRequest.id },
+    data: {
+      completionNotifiedAt: result.sentAt,
+      completionEmailMessageId: result.providerMessageId,
+    },
+  });
+
+  return result;
+}
+
 export function buildWithdrawalIdempotencyKey({
   shopDomain,
   orderNumber,
@@ -1456,6 +1633,51 @@ function buildReturnInstructionsEmail({
   return { subject, text, html };
 }
 
+function buildCompletionEmail(withdrawalRequest) {
+  const supportEmail = getWithdrawalSupportEmail();
+  const statusLabel = getCompletionStatusLabel(withdrawalRequest.completionStatus);
+  const currencyCode =
+    withdrawalRequest.completionCurrencyCode ||
+    withdrawalRequest.refundCurrencyCode ||
+    getSnapshotCurrencyCode(withdrawalRequest) ||
+    "JPY";
+  const refundedAmount = formatMoneyText(
+    withdrawalRequest.completionRefundedAmount,
+    currencyCode,
+  );
+  const refundedShipping = formatMoneyText(
+    withdrawalRequest.completionRefundedShipping,
+    currencyCode,
+  );
+  const subject = "撤回申請の処理結果をお知らせします";
+  const bodyLines = [
+    `${withdrawalRequest.customerName} 様`,
+    "",
+    "撤回申請の確認が完了しました。処理結果をお知らせします。",
+    "",
+    `受付番号: ${withdrawalRequest.id}`,
+    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
+    `処理結果: ${statusLabel}`,
+    `返金処理額: ${refundedAmount}`,
+    `初回送料の返金額: ${refundedShipping}`,
+    withdrawalRequest.completionAction
+      ? `処理内容: ${withdrawalRequest.completionAction}`
+      : "",
+    withdrawalRequest.completionNotes
+      ? `補足: ${withdrawalRequest.completionNotes}`
+      : "",
+    "",
+    "返金の反映時期は、ご利用の決済方法やカード会社により異なる場合があります。",
+    supportEmail ? `お問い合わせ: ${supportEmail}` : "",
+  ].filter((line) => line !== "");
+  const text = bodyLines.join("\n");
+  const html = `<div style="font-family:system-ui,sans-serif;line-height:1.8;color:#111">${bodyLines
+    .map((line) => (line ? `<p>${escapeHtml(line)}</p>` : "<br>"))
+    .join("")}</div>`;
+
+  return { subject, text, html };
+}
+
 function buildStatusEmail(withdrawalRequest) {
   const statusLabel = getWithdrawalStatusLabel(withdrawalRequest.status);
   const subject = `撤回申請の状況: ${statusLabel}`;
@@ -1508,6 +1730,63 @@ function getStatusCustomerMessage(status) {
     default:
       return "申請内容を確認しています。確認が終わり次第、次の手続きをご案内します。";
   }
+}
+
+function mapCompletionStatusToWithdrawalStatus(completionStatus, currentStatus) {
+  switch (String(completionStatus || "UNDECIDED").toUpperCase()) {
+    case "REFUNDED":
+    case "PARTIALLY_REFUNDED":
+      return WITHDRAWAL_STATUSES.REFUNDED;
+    case "CANCELLED":
+      return WITHDRAWAL_STATUSES.CANCELLED;
+    case "NO_REFUND_CLOSED":
+    case "REJECTED_CLOSED":
+      return WITHDRAWAL_STATUSES.REJECTED;
+    case "MANUAL_CLOSED":
+    case "UNDECIDED":
+    default:
+      return currentStatus || WITHDRAWAL_STATUSES.UNDER_REVIEW;
+  }
+}
+
+function getCompletionStatusLabel(status) {
+  const labels = {
+    UNDECIDED: "未記録",
+    REFUNDED: "返金済み",
+    PARTIALLY_REFUNDED: "一部返金済み",
+    CANCELLED: "キャンセル済み",
+    NO_REFUND_CLOSED: "返金なしで完了",
+    REJECTED_CLOSED: "対象外として完了",
+    MANUAL_CLOSED: "手動完了",
+  };
+
+  return labels[String(status || "UNDECIDED").toUpperCase()] || String(status || "-");
+}
+
+function getSnapshotCurrencyCode(withdrawalRequest) {
+  const snapshot =
+    withdrawalRequest?.orderSnapshotJson &&
+    typeof withdrawalRequest.orderSnapshotJson === "object"
+      ? withdrawalRequest.orderSnapshotJson
+      : null;
+
+  return snapshot?.currencyCode || null;
+}
+
+function formatMoneyText(amount, currencyCode) {
+  if (amount === null || amount === undefined || amount === "") {
+    return "-";
+  }
+
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) {
+    return String(amount);
+  }
+
+  const currency = String(currencyCode || "").toUpperCase();
+  return currency
+    ? `${numeric.toLocaleString("ja-JP")} ${currency}`
+    : numeric.toLocaleString("ja-JP");
 }
 
 function formatDateTime(value) {
