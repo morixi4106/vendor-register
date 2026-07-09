@@ -1,61 +1,10 @@
 <style>
-  .vendor-withdrawal-wrap {
+  .vendor-withdrawal-embed {
+    width: 100%;
     max-width: 980px;
-    margin: 56px auto;
-    padding: 0 20px 16px;
-    color: #111827;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
-
-  .vendor-withdrawal-card {
-    border: 1px solid #e5e7eb;
-    border-radius: 18px;
-    padding: 32px;
-    background: #fff;
-  }
-
-  .vendor-withdrawal-card h1 {
-    margin: 0 0 14px;
-    font-size: 32px;
-    line-height: 1.25;
-  }
-
-  .vendor-withdrawal-card p,
-  .vendor-withdrawal-card li {
-    color: #4b5563;
-    line-height: 1.8;
-  }
-
-  .vendor-withdrawal-note {
-    margin: 22px 0;
-    padding: 16px;
-    border: 1px solid #fde68a;
-    border-radius: 14px;
-    background: #fffbeb;
-    color: #92400e;
-    line-height: 1.8;
-  }
-
-  .vendor-withdrawal-actions {
-    display: flex;
-    justify-content: flex-start;
-    margin-top: 24px;
-  }
-
-  .vendor-withdrawal-actions a {
-    min-height: 48px;
-    display: inline-flex;
-    align-items: center;
-    border-radius: 999px;
-    padding: 0 22px;
-    background: #111827;
-    color: #fff;
-    text-decoration: none;
-    font-weight: 800;
-  }
-
-  .vendor-withdrawal-frame-wrap {
-    margin-top: 28px;
+    margin: 24px auto 56px;
+    padding: 0 20px;
+    box-sizing: border-box;
   }
 
   .vendor-withdrawal-frame {
@@ -64,43 +13,34 @@
     border: 0;
     display: block;
   }
+
+  .vendor-withdrawal-fallback {
+    margin-top: 16px;
+    color: #4b5563;
+    line-height: 1.7;
+  }
+
+  .vendor-withdrawal-fallback a {
+    color: inherit;
+    font-weight: 700;
+  }
 </style>
 
-<section class="vendor-withdrawal-wrap">
-  <div class="vendor-withdrawal-card">
-    <h1>EUのお客様向け撤回申請</h1>
-    <p>
-      EUのお客様は、対象となるオンライン購入について、商品を受け取った日から14日以内であれば撤回申請を行える場合があります。
+<section class="vendor-withdrawal-embed">
+  <iframe
+    id="vendor-withdrawal-frame"
+    class="vendor-withdrawal-frame"
+    src="/apps/vendors/withdrawal?embedded=1"
+    title="撤回申請フォーム"
+    loading="lazy"
+  ></iframe>
+  <noscript>
+    <p class="vendor-withdrawal-fallback">
+      フォームが表示されない場合は
+      <a href="/apps/vendors/withdrawal">撤回申請フォームを開く</a>
+      から申請してください。
     </p>
-    <p>
-      申請後、注文内容・返送状況・商品状態を確認したうえで、キャンセルまたは返金手続きを進めます。
-    </p>
-    <div class="vendor-withdrawal-note">
-      撤回が認められる場合、商品代金および通常配送方法に相当する初回送料を返金対象として確認します。
-      通常配送より高い配送方法を選択された場合、その追加費用は返金対象外となる場合があります。
-      商品の返送にかかる送料は、当店が別途負担すると案内した場合、または法令により当店負担となる場合を除き、お客様負担となる場合があります。
-      商品の確認に必要な範囲を超えて使用・汚損・破損がある場合、返金額が減額されることがあります。
-    </div>
-    <ul>
-      <li>申請には注文番号と購入時のメールアドレスが必要です。</li>
-      <li>一部商品のみ撤回する場合は、対象商品と数量を入力してください。</li>
-      <li>カスタム品、衛生商品、消耗品など、一部商品は撤回対象外となる場合があります。</li>
-    </ul>
-    <div class="vendor-withdrawal-frame-wrap">
-      <iframe
-        id="vendor-withdrawal-frame"
-        class="vendor-withdrawal-frame"
-        src="/apps/vendors/withdrawal?embedded=1"
-        title="撤回申請フォーム"
-        loading="lazy"
-      ></iframe>
-      <noscript>
-        <div class="vendor-withdrawal-actions">
-          <a href="/apps/vendors/withdrawal">撤回申請フォームを開く</a>
-        </div>
-      </noscript>
-    </div>
-  </div>
+  </noscript>
 </section>
 
 <script>
