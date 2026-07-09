@@ -88,6 +88,7 @@
     </ul>
     <div class="vendor-withdrawal-frame-wrap">
       <iframe
+        id="vendor-withdrawal-frame"
         class="vendor-withdrawal-frame"
         src="/apps/vendors/withdrawal?embedded=1"
         title="撤回申請フォーム"
@@ -101,3 +102,23 @@
     </div>
   </div>
 </section>
+
+<script>
+  (function () {
+    var frame = document.getElementById("vendor-withdrawal-frame");
+    if (!frame) return;
+
+    var sourceParams = new URLSearchParams(window.location.search);
+    if (!sourceParams.toString()) return;
+
+    var frameUrl = new URL("/apps/vendors/withdrawal", window.location.origin);
+    frameUrl.searchParams.set("embedded", "1");
+
+    ["orderNumber", "order", "customerEmail", "email"].forEach(function (key) {
+      var value = sourceParams.get(key);
+      if (value) frameUrl.searchParams.set(key, value);
+    });
+
+    frame.src = frameUrl.pathname + frameUrl.search;
+  })();
+</script>

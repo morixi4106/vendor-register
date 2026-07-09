@@ -60,6 +60,8 @@ The page embeds the app proxy form with a same-store relative URL:
 <iframe src="/apps/vendors/withdrawal?embedded=1"></iframe>
 ```
 
+If the fixed page receives `orderNumber`, `order`, `customerEmail`, or `email` in the query string, the provided page snippet forwards those values into the embedded form.
+
 Do not link buyers directly to the Render app URL. Public links should use the Shopify store domain, either the fixed page or the app proxy path.
 
 Add links to that page from:

@@ -41,9 +41,19 @@ const COUNTRY_OPTIONS = [
 ];
 
 export const loader = async ({ request }) => {
+  const url = new URL(request.url);
+  const orderNumber =
+    url.searchParams.get("orderNumber") || url.searchParams.get("order") || "";
+  const customerEmail =
+    url.searchParams.get("customerEmail") || url.searchParams.get("email") || "";
+
   return json({
     shopDomain: getShopDomainFromRequest(request),
     embedded: isEmbeddedRequest(request),
+    initialValues: {
+      orderNumber,
+      customerEmail,
+    },
   });
 };
 
@@ -79,12 +89,15 @@ export const action = async ({ request }) => {
 };
 
 export default function WithdrawalFormPage() {
-  const { shopDomain, embedded } = useLoaderData();
+  const { shopDomain, embedded, initialValues } = useLoaderData();
   const actionData = useActionData();
   const [isConfirming, setIsConfirming] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const errors = actionData?.errors || {};
-  const values = actionData?.values || {};
+  const values = {
+    ...(initialValues || {}),
+    ...(actionData?.values || {}),
+  };
 
   const countryOptions = useMemo(() => COUNTRY_OPTIONS, []);
 
