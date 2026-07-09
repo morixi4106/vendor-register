@@ -627,43 +627,54 @@ model BuyerWarningAcceptance {
 }
 
 model WithdrawalRequest {
-  id                         String    @id @default(cuid())
-  shopDomain                 String?
-  marketplaceOrderId         String?
-  shopifyOrderId             String?
-  shopifyOrderName           String?
-  shopifyOrderNumber         String?
-  customerName               String
-  customerEmail              String
-  customerPhone              String?
-  countryCode                String?
-  countryLabel               String?
-  receivedDate               DateTime?
-  withdrawalScope            String    @default("FULL")
-  itemCondition              String?
-  reason                     String?
-  status                     String    @default("REQUESTED")
-  eligibilityStatus          String    @default("PENDING_REVIEW")
-  deadlineAt                 DateTime?
-  deadlineSource             String?
-  selectedLineItemsJson      Json?
-  submittedPayloadJson       Json
-  orderSnapshotJson          Json?
-  eligibilityJson            Json?
-  durableMediumEmailJson     Json?
-  confirmationSentAt         DateTime?
-  confirmationEmailMessageId String?
-  decisionSentAt             DateTime?
-  completedAt                DateTime?
-  rejectedAt                 DateTime?
-  rejectionReason            String?
-  adminNotes                 String?
-  source                     String    @default("app_proxy")
-  ipAddress                  String?
-  userAgent                  String?
-  idempotencyKey             String    @unique
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  id                          String    @id @default(cuid())
+  shopDomain                  String?
+  marketplaceOrderId          String?
+  shopifyOrderId              String?
+  shopifyOrderName            String?
+  shopifyOrderNumber          String?
+  customerName                String
+  customerEmail               String
+  customerPhone               String?
+  countryCode                 String?
+  countryLabel                String?
+  receivedDate                DateTime?
+  withdrawalScope             String    @default("FULL")
+  itemCondition               String?
+  reason                      String?
+  status                      String    @default("REQUESTED")
+  eligibilityStatus           String    @default("PENDING_REVIEW")
+  deadlineAt                  DateTime?
+  deadlineSource              String?
+  selectedLineItemsJson       Json?
+  submittedPayloadJson        Json
+  orderSnapshotJson           Json?
+  eligibilityJson             Json?
+  durableMediumEmailJson      Json?
+  confirmationSentAt          DateTime?
+  confirmationEmailMessageId  String?
+  decisionSentAt              DateTime?
+  refundDecisionStatus        String    @default("UNDECIDED")
+  refundItemAmount            Int?
+  refundInitialShippingAmount Int?
+  refundDeductionAmount       Int?
+  refundTotalAmount           Int?
+  refundCurrencyCode          String?
+  returnShippingPayer         String?
+  refundDecisionReason        String?
+  refundDecisionNotes         String?
+  refundDecisionUpdatedAt     DateTime?
+  refundDecisionUpdatedBy     String?
+  completedAt                 DateTime?
+  rejectedAt                  DateTime?
+  rejectionReason             String?
+  adminNotes                  String?
+  source                      String    @default("app_proxy")
+  ipAddress                   String?
+  userAgent                   String?
+  idempotencyKey              String    @unique
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   statusHistory WithdrawalRequestStatusHistory[]
   emailLogs     WithdrawalEmailLog[]
@@ -673,6 +684,7 @@ model WithdrawalRequest {
   @@index([customerEmail, createdAt])
   @@index([status, createdAt])
   @@index([eligibilityStatus, createdAt])
+  @@index([refundDecisionStatus, createdAt])
   @@map("withdrawal_requests")
 }
 

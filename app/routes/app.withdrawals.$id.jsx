@@ -6,6 +6,7 @@ import { authenticate } from "../shopify.server";
 import {
   sendWithdrawalAcknowledgementEmail,
   sendWithdrawalStatusEmail,
+  updateWithdrawalRefundDecision,
   updateWithdrawalStatus,
 } from "../services/withdrawals.server.js";
 import {
@@ -80,6 +81,21 @@ export const action = async ({ request, params }) => {
     });
 
     return redirect(`/app/withdrawals/${params.id}`);
+  }
+
+  if (intent === "update_refund_decision") {
+    const result = await updateWithdrawalRefundDecision({
+      id: params.id,
+      formData,
+      changedBy: "admin",
+    });
+
+    return json({
+      ok: result.ok,
+      message: result.ok
+        ? "返金判断を保存しました。Shopifyへの返金は自動実行していません。"
+        : `返金判断を保存できませんでした: ${result.error || "unknown"}`,
+    }, { status: result.status || 200 });
   }
 
   if (intent === "update_status") {
@@ -227,6 +243,97 @@ export default function WithdrawalDetailPage() {
         <div className="withdrawal-detail__card">
           <h2>注文照合</h2>
           <DescriptionList rows={withdrawalRequest.orderSummaryRows} />
+        </div>
+
+        <div className="withdrawal-detail__card">
+          <h2>返金判断</h2>
+          <DescriptionList rows={withdrawalRequest.refundDecisionRows} />
+          <Form method="post" className="withdrawal-detail__form withdrawal-detail__form--spaced">
+            <input type="hidden" name="intent" value="update_refund_decision" />
+            <label>
+              <span>判断</span>
+              <select
+                name="refundDecisionStatus"
+                defaultValue={withdrawalRequest.refundDecisionStatus}
+              >
+                <option value="UNDECIDED">未判断</option>
+                <option value="FULL_REFUND">全額返金</option>
+                <option value="PARTIAL_REFUND">一部返金</option>
+                <option value="NO_REFUND">返金なし</option>
+                <option value="RETURN_PENDING">返送待ち</option>
+              </select>
+            </label>
+            <div className="withdrawal-detail__amount-grid">
+              <label>
+                <span>商品代金</span>
+                <input
+                  name="refundItemAmount"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  defaultValue={withdrawalRequest.refundItemAmountInput}
+                />
+              </label>
+              <label>
+                <span>通常配送分の初回送料</span>
+                <input
+                  name="refundInitialShippingAmount"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  defaultValue={withdrawalRequest.refundInitialShippingAmountInput}
+                />
+              </label>
+              <label>
+                <span>減額</span>
+                <input
+                  name="refundDeductionAmount"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  defaultValue={withdrawalRequest.refundDeductionAmountInput}
+                />
+              </label>
+              <label>
+                <span>通貨</span>
+                <input
+                  name="refundCurrencyCode"
+                  defaultValue={withdrawalRequest.refundCurrencyCode}
+                />
+              </label>
+            </div>
+            <label>
+              <span>返送送料</span>
+              <select
+                name="returnShippingPayer"
+                defaultValue={withdrawalRequest.returnShippingPayer}
+              >
+                <option value="UNDECIDED">未判断</option>
+                <option value="CUSTOMER">お客様負担</option>
+                <option value="STORE">当店負担</option>
+                <option value="LEGAL_STORE">法令または案内により当店負担</option>
+              </select>
+            </label>
+            <label>
+              <span>判断理由</span>
+              <textarea
+                name="refundDecisionReason"
+                rows="2"
+                defaultValue={withdrawalRequest.refundDecisionReason}
+              />
+            </label>
+            <label>
+              <span>社内メモ</span>
+              <textarea
+                name="refundDecisionNotes"
+                rows="3"
+                defaultValue={withdrawalRequest.refundDecisionNotes}
+              />
+            </label>
+            <p className="withdrawal-detail__hint">
+              保存してもShopifyへの返金は実行されません。実返金前の判断メモとして使います。
+            </p>
+            <button type="submit" disabled={isSubmitting}>
+              返金判断を保存
+            </button>
+          </Form>
         </div>
 
         <div className="withdrawal-detail__card">
@@ -418,6 +525,8 @@ function Badge({ tone, children }) {
 
 function serializeWithdrawalRequest(request) {
   const orderSummaryRows = buildOrderSummaryRows(request);
+  const refundCurrencyCode =
+    request.refundCurrencyCode || getOrderCurrencyCode(request) || "JPY";
 
   return {
     id: request.id,
@@ -446,6 +555,27 @@ function serializeWithdrawalRequest(request) {
     submittedPayloadJson: request.submittedPayloadJson || {},
     orderSnapshotJson: request.orderSnapshotJson || {},
     orderSummaryRows,
+    refundDecisionRows: buildRefundDecisionRows(request, refundCurrencyCode),
+    refundDecisionStatus: request.refundDecisionStatus || "UNDECIDED",
+    refundDecisionLabel: getRefundDecisionLabel(request.refundDecisionStatus),
+    refundItemAmountInput: formatInputAmount(request.refundItemAmount),
+    refundInitialShippingAmountInput: formatInputAmount(
+      request.refundInitialShippingAmount,
+    ),
+    refundDeductionAmountInput: formatInputAmount(request.refundDeductionAmount),
+    refundTotalAmountLabel: formatAmount(
+      request.refundTotalAmount,
+      refundCurrencyCode,
+    ),
+    refundCurrencyCode,
+    returnShippingPayer: request.returnShippingPayer || "UNDECIDED",
+    returnShippingPayerLabel: getReturnShippingPayerLabel(
+      request.returnShippingPayer,
+    ),
+    refundDecisionReason: request.refundDecisionReason || "",
+    refundDecisionNotes: request.refundDecisionNotes || "",
+    refundDecisionUpdatedAtLabel: formatDate(request.refundDecisionUpdatedAt),
+    refundDecisionUpdatedBy: request.refundDecisionUpdatedBy || "-",
     nextAction: buildNextAction(request),
     quickActions: buildQuickActions(request.status),
     adminNotes: request.adminNotes || "",
@@ -667,6 +797,61 @@ function buildOrderSummaryRows(request) {
   ];
 }
 
+function buildRefundDecisionRows(request, currencyCode) {
+  return [
+    ["判断", getRefundDecisionLabel(request.refundDecisionStatus)],
+    ["商品代金", formatAmount(request.refundItemAmount, currencyCode)],
+    [
+      "通常配送分の初回送料",
+      formatAmount(request.refundInitialShippingAmount, currencyCode),
+    ],
+    ["減額", formatAmount(request.refundDeductionAmount, currencyCode)],
+    ["返金予定額", formatAmount(request.refundTotalAmount, currencyCode)],
+    ["返送送料", getReturnShippingPayerLabel(request.returnShippingPayer)],
+    ["判断理由", request.refundDecisionReason || "-"],
+    ["更新者", request.refundDecisionUpdatedBy || "-"],
+    ["更新日時", formatDate(request.refundDecisionUpdatedAt)],
+  ];
+}
+
+function getOrderCurrencyCode(request) {
+  const snapshot =
+    request.orderSnapshotJson && typeof request.orderSnapshotJson === "object"
+      ? request.orderSnapshotJson
+      : null;
+
+  return snapshot?.currencyCode || null;
+}
+
+function getRefundDecisionLabel(status) {
+  const labels = {
+    UNDECIDED: "未判断",
+    FULL_REFUND: "全額返金",
+    PARTIAL_REFUND: "一部返金",
+    NO_REFUND: "返金なし",
+    RETURN_PENDING: "返送待ち",
+  };
+
+  return labels[String(status || "UNDECIDED").toUpperCase()] || String(status || "-");
+}
+
+function getReturnShippingPayerLabel(value) {
+  const labels = {
+    UNDECIDED: "未判断",
+    CUSTOMER: "お客様負担",
+    STORE: "当店負担",
+    LEGAL_STORE: "法令または案内により当店負担",
+  };
+
+  return labels[String(value || "UNDECIDED").toUpperCase()] || String(value || "-");
+}
+
+function formatInputAmount(amount) {
+  if (amount === null || amount === undefined || amount === "") return "";
+  const numeric = Number(amount);
+  return Number.isFinite(numeric) ? String(numeric) : "";
+}
+
 function formatAmount(amount, currencyCode) {
   if (amount === null || amount === undefined || amount === "") return "-";
   const numeric = Number(amount);
@@ -825,6 +1010,7 @@ const detailStyles = `
     font-size:13px;
     font-weight:800;
   }
+  .withdrawal-detail__form input,
   .withdrawal-detail__form select,
   .withdrawal-detail__form textarea{
     width:100%;
@@ -833,6 +1019,20 @@ const detailStyles = `
     border-radius:12px;
     padding:12px;
     font:inherit;
+  }
+  .withdrawal-detail__form--spaced{
+    margin-top:16px;
+  }
+  .withdrawal-detail__amount-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+    gap:12px;
+  }
+  .withdrawal-detail__hint{
+    margin:0;
+    color:#6b7280;
+    font-size:13px;
+    line-height:1.7;
   }
   .withdrawal-detail__checkbox{
     display:flex !important;

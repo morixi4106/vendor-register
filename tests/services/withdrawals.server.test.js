@@ -5,7 +5,9 @@ import {
   buildWithdrawalIdempotencyKey,
   createWithdrawalRequestFromForm,
   evaluateWithdrawalEligibility,
+  normalizeWithdrawalRefundDecisionFormData,
   normalizeWithdrawalFormData,
+  updateWithdrawalRefundDecision,
 } from '../../app/services/withdrawals.server.js';
 import { WITHDRAWAL_ELIGIBILITY_STATUSES } from '../../app/utils/withdrawalStatus.js';
 
@@ -114,6 +116,23 @@ function createFakeWithdrawalPrisma({ marketplaceOrder = createMarketplaceOrder(
         state.withdrawalRequests.push(request);
         return request;
       },
+      async update({ where, data }) {
+        const index = state.withdrawalRequests.findIndex(
+          (item) => item.id === where.id,
+        );
+
+        if (index === -1) {
+          throw new Error('withdrawal_not_found');
+        }
+
+        state.withdrawalRequests[index] = {
+          ...state.withdrawalRequests[index],
+          ...data,
+          updatedAt: new Date(),
+        };
+
+        return state.withdrawalRequests[index];
+      },
     },
     withdrawalRequestStatusHistory: {
       async create({ data }) {
@@ -214,6 +233,40 @@ test('normalizeWithdrawalFormData requires selected items for partial withdrawal
 
   assert.equal(normalized.ok, false);
   assert.equal(Boolean(normalized.errors.itemText), true);
+});
+
+test('normalizeWithdrawalRefundDecisionFormData computes the planned refund total', () => {
+  const normalized = normalizeWithdrawalRefundDecisionFormData(
+    createFormData([
+      ['refundDecisionStatus', 'partial_refund'],
+      ['refundItemAmount', '1,000'],
+      ['refundInitialShippingAmount', '870'],
+      ['refundDeductionAmount', '300'],
+      ['refundCurrencyCode', 'jpy'],
+      ['returnShippingPayer', 'customer'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, true);
+  assert.equal(normalized.values.refundDecisionStatus, 'PARTIAL_REFUND');
+  assert.equal(normalized.values.refundItemAmount, 1000);
+  assert.equal(normalized.values.refundInitialShippingAmount, 870);
+  assert.equal(normalized.values.refundDeductionAmount, 300);
+  assert.equal(normalized.values.refundTotalAmount, 1570);
+  assert.equal(normalized.values.refundCurrencyCode, 'JPY');
+  assert.equal(normalized.values.returnShippingPayer, 'CUSTOMER');
+});
+
+test('normalizeWithdrawalRefundDecisionFormData rejects invalid amounts', () => {
+  const normalized = normalizeWithdrawalRefundDecisionFormData(
+    createFormData([
+      ['refundDecisionStatus', 'FULL_REFUND'],
+      ['refundItemAmount', '-1'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, false);
+  assert.equal(normalized.errors.refundItemAmount, 'invalid_amount');
 });
 
 test('evaluateWithdrawalEligibility accepts matching EU requests within fourteen days', () => {
@@ -342,5 +395,42 @@ test('createWithdrawalRequestFromForm returns duplicate without creating another
     assert.equal(prismaClient._state.withdrawalRequests.length, 1);
     assert.equal(prismaClient._state.statusHistory.length, 1);
     assert.equal(prismaClient._state.emailLogs.length, 2);
+  });
+});
+
+test('updateWithdrawalRefundDecision stores admin refund judgement and history', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    const result = await updateWithdrawalRefundDecision({
+      id: created.withdrawalRequest.id,
+      formData: createFormData([
+        ['refundDecisionStatus', 'PARTIAL_REFUND'],
+        ['refundItemAmount', '179'],
+        ['refundInitialShippingAmount', '870'],
+        ['refundDeductionAmount', '100'],
+        ['refundCurrencyCode', 'JPY'],
+        ['returnShippingPayer', 'CUSTOMER'],
+        ['refundDecisionReason', 'item condition checked'],
+      ]),
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.withdrawalRequest.refundDecisionStatus, 'PARTIAL_REFUND');
+    assert.equal(result.withdrawalRequest.refundTotalAmount, 949);
+    assert.equal(result.withdrawalRequest.returnShippingPayer, 'CUSTOMER');
+    assert.equal(result.withdrawalRequest.refundDecisionReason, 'item condition checked');
+    assert.equal(prismaClient._state.statusHistory.length, 2);
+    assert.equal(
+      prismaClient._state.statusHistory[1].reason,
+      'refund_decision_updated',
+    );
   });
 });
