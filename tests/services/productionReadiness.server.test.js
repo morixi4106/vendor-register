@@ -159,6 +159,44 @@ test("getProductionReadiness allows manual payout flow without seller Stripe acc
   );
 });
 
+test("getProductionReadiness warns when withdrawal email env is incomplete", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(checksById.get("withdrawal_resend_api_key").status, "warning");
+  assert.equal(checksById.get("withdrawal_from_email").status, "warning");
+  assert.equal(checksById.get("withdrawal_support_email").status, "warning");
+});
+
+test("getProductionReadiness passes configured withdrawal email env", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      RESEND_API_KEY: "re_test_123",
+      WITHDRAWAL_FROM_EMAIL: "Store Support <support@example.com>",
+      WITHDRAWAL_SUPPORT_EMAIL: "support@example.com",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(checksById.get("withdrawal_resend_api_key").status, "pass");
+  assert.equal(checksById.get("withdrawal_from_email").status, "pass");
+  assert.equal(checksById.get("withdrawal_support_email").status, "pass");
+});
+
 test("getProductionReadiness treats write grants as satisfying paired Shopify read scopes", async () => {
   const grantedScopeString = [
     "write_products",

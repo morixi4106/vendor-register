@@ -89,6 +89,23 @@ function normalizeText(value) {
   return normalized || null;
 }
 
+function extractEmailAddress(value) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const displayAddressMatch = normalized.match(/<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>/);
+  if (displayAddressMatch) {
+    return displayAddressMatch[1].toLowerCase();
+  }
+
+  return /^[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+$/.test(normalized)
+    ? normalized.toLowerCase()
+    : null;
+}
+
 function parseScopes(value) {
   const normalized = normalizeText(value);
 
@@ -195,6 +212,24 @@ function inspectMultiSellerStorefrontCheckoutFlag(env) {
   };
 }
 
+function inspectWithdrawalEmailEnvironment(env) {
+  const resendApiKey = normalizeText(env.RESEND_API_KEY);
+  const withdrawalFromEmail = normalizeText(env.WITHDRAWAL_FROM_EMAIL);
+  const fallbackFromEmail = normalizeText(env.MAIL_FROM || env.ADMIN_EMAIL);
+  const supportEmail = normalizeText(env.WITHDRAWAL_SUPPORT_EMAIL);
+
+  return {
+    hasResendApiKey: Boolean(resendApiKey),
+    resendApiKeyLooksValid: Boolean(resendApiKey && resendApiKey.startsWith("re_")),
+    withdrawalFromEmail,
+    fallbackFromEmail,
+    fromEmailAddress: extractEmailAddress(withdrawalFromEmail || fallbackFromEmail),
+    hasExplicitFromEmail: Boolean(withdrawalFromEmail),
+    supportEmail,
+    supportEmailAddress: extractEmailAddress(supportEmail),
+  };
+}
+
 function normalizeProvider(value, fallback) {
   return String(value || fallback)
     .trim()
@@ -290,6 +325,7 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const multiSellerSettlementFlags = inspectMultiSellerSettlementFlags(env);
   const multiSellerStorefrontCheckout =
     inspectMultiSellerStorefrontCheckoutFlag(env);
+  const withdrawalEmailEnv = inspectWithdrawalEmailEnvironment(env);
   const sellerOrderShadowWriteEnabled = isEnabledEnvFlag(
     env,
     SELLER_ORDER_SHADOW_WRITE_FLAG,
@@ -376,6 +412,61 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: stripeConnectProductionEnabled
         ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode."
         : "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_resend_api_key",
+      category: "app",
+      status: withdrawalEmailEnv.resendApiKeyLooksValid ? "pass" : "warning",
+      title: "Withdrawal request email API",
+      detail: withdrawalEmailEnv.hasResendApiKey
+        ? withdrawalEmailEnv.resendApiKeyLooksValid
+          ? "RESEND_API_KEY is configured for withdrawal request emails."
+          : "RESEND_API_KEY is set, but it does not look like a Resend re_... key."
+        : "RESEND_API_KEY is not set. Withdrawal requests can be stored, but acknowledgement emails will be skipped.",
+      action: withdrawalEmailEnv.resendApiKeyLooksValid
+        ? ""
+        : "Set RESEND_API_KEY in Render before relying on EU withdrawal acknowledgement emails.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_from_email",
+      category: "app",
+      status: withdrawalEmailEnv.fromEmailAddress
+        ? withdrawalEmailEnv.hasExplicitFromEmail
+          ? "pass"
+          : "warning"
+        : "warning",
+      title: "Withdrawal email sender",
+      detail: withdrawalEmailEnv.fromEmailAddress
+        ? withdrawalEmailEnv.hasExplicitFromEmail
+          ? `WITHDRAWAL_FROM_EMAIL is configured as ${withdrawalEmailEnv.fromEmailAddress}.`
+          : `Using fallback sender ${withdrawalEmailEnv.fromEmailAddress}.`
+        : "No valid withdrawal email sender was found.",
+      action: withdrawalEmailEnv.fromEmailAddress
+        ? withdrawalEmailEnv.hasExplicitFromEmail
+          ? ""
+          : "Set WITHDRAWAL_FROM_EMAIL explicitly, for example Store Support <support@example.com>."
+        : "Set WITHDRAWAL_FROM_EMAIL to a verified sender on the Resend domain.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_support_email",
+      category: "app",
+      status: withdrawalEmailEnv.supportEmailAddress ? "pass" : "warning",
+      title: "Withdrawal support email",
+      detail: withdrawalEmailEnv.supportEmailAddress
+        ? `WITHDRAWAL_SUPPORT_EMAIL is ${withdrawalEmailEnv.supportEmailAddress}.`
+        : "WITHDRAWAL_SUPPORT_EMAIL is not configured.",
+      action: withdrawalEmailEnv.supportEmailAddress
+        ? ""
+        : "Set WITHDRAWAL_SUPPORT_EMAIL so customer withdrawal emails include a clear support contact.",
     }),
   );
 
