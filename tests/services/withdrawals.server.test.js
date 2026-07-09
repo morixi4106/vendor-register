@@ -5,9 +5,12 @@ import {
   buildWithdrawalIdempotencyKey,
   createWithdrawalRequestFromForm,
   evaluateWithdrawalEligibility,
+  ensureWithdrawalReturnProofToken,
+  findWithdrawalReturnProofRequest,
   normalizeWithdrawalRefundDecisionFormData,
   normalizeWithdrawalReturnInfoFormData,
   normalizeWithdrawalFormData,
+  submitWithdrawalReturnProof,
   updateWithdrawalRefundDecision,
   updateWithdrawalReturnInfo,
 } from '../../app/services/withdrawals.server.js';
@@ -104,6 +107,13 @@ function createFakeWithdrawalPrisma({ marketplaceOrder = createMarketplaceOrder(
           where.id
             ? item.id === where.id
             : item.idempotencyKey === where.idempotencyKey,
+        );
+
+        return buildRequestWithRelations(request);
+      },
+      async findFirst({ where }) {
+        const request = state.withdrawalRequests.find((item) =>
+          Object.entries(where || {}).every(([key, value]) => item[key] === value),
         );
 
         return buildRequestWithRelations(request);
@@ -510,5 +520,100 @@ test('updateWithdrawalReturnInfo stores return proof and history', async () => {
       prismaClient._state.statusHistory[1].reason,
       'return_info_updated',
     );
+  });
+});
+
+test('return proof token lookup accepts only the generated token', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    const tokenResult = await ensureWithdrawalReturnProofToken({
+      withdrawalRequestId: created.withdrawalRequest.id,
+      request: new Request('https://example.com/app/withdrawals/withdrawal_1'),
+      prismaClient,
+    });
+
+    assert.equal(tokenResult.ok, true);
+    assert.equal(tokenResult.url.includes('/apps/vendors/withdrawal/return-proof'), true);
+    assert.equal(tokenResult.url.includes(tokenResult.token), true);
+    assert.notEqual(
+      prismaClient._state.withdrawalRequests[0].returnProofTokenHash,
+      tokenResult.token,
+    );
+
+    const validLookup = await findWithdrawalReturnProofRequest({
+      requestId: created.withdrawalRequest.id,
+      token: tokenResult.token,
+      prismaClient,
+    });
+    const invalidLookup = await findWithdrawalReturnProofRequest({
+      requestId: created.withdrawalRequest.id,
+      token: 'wrong-token',
+      prismaClient,
+    });
+
+    assert.equal(validLookup.ok, true);
+    assert.equal(validLookup.withdrawalRequest.id, created.withdrawalRequest.id);
+    assert.equal(invalidLookup.ok, false);
+    assert.equal(invalidLookup.error, 'invalid_return_proof_link');
+  });
+});
+
+test('submitWithdrawalReturnProof stores customer tracking proof and history', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+    const tokenResult = await ensureWithdrawalReturnProofToken({
+      withdrawalRequestId: created.withdrawalRequest.id,
+      request: new Request('https://example.com/app/withdrawals/withdrawal_1'),
+      prismaClient,
+    });
+
+    const invalid = await submitWithdrawalReturnProof({
+      requestId: created.withdrawalRequest.id,
+      token: tokenResult.token,
+      formData: createFormData([['returnTrackingCompany', 'Japan Post']]),
+      request: new Request('https://example.com/apps/vendors/withdrawal/return-proof'),
+      prismaClient,
+    });
+
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.errors.returnTrackingNumber, 'tracking_required');
+
+    const result = await submitWithdrawalReturnProof({
+      requestId: created.withdrawalRequest.id,
+      token: tokenResult.token,
+      formData: createFormData([
+        ['returnTrackingCompany', 'Japan Post'],
+        ['returnTrackingNumber', 'TEST123456789JP'],
+        ['returnTrackingUrl', 'https://track.example.com/TEST123456789JP'],
+        ['customerMemo', 'Shipped today'],
+      ]),
+      request: new Request('https://example.com/apps/vendors/withdrawal/return-proof', {
+        headers: {
+          'user-agent': 'node-test',
+        },
+      }),
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.withdrawalRequest.returnRequirementStatus, 'IN_TRANSIT');
+    assert.equal(result.withdrawalRequest.returnTrackingCompany, 'Japan Post');
+    assert.equal(result.withdrawalRequest.returnTrackingNumber, 'TEST123456789JP');
+    assert.equal(result.withdrawalRequest.returnProofSubmittedAt instanceof Date, true);
+    assert.equal(result.withdrawalRequest.returnProofJson.customerMemo, 'Shipped today');
+    assert.equal(prismaClient._state.statusHistory.at(-1).reason, 'return_proof_submitted');
   });
 });

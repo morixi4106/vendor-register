@@ -5,6 +5,7 @@ import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
 import {
   sendWithdrawalAcknowledgementEmail,
+  sendWithdrawalReturnInstructionsEmail,
   sendWithdrawalStatusEmail,
   updateWithdrawalRefundDecision,
   updateWithdrawalReturnInfo,
@@ -71,6 +72,20 @@ export const action = async ({ request, params }) => {
       message: result.ok
         ? "ステータス通知メールを送信しました。"
         : `ステータス通知メールを送信できませんでした: ${result.error || "unknown"}`,
+    });
+  }
+
+  if (intent === "send_return_instructions") {
+    const result = await sendWithdrawalReturnInstructionsEmail({
+      withdrawalRequestId: params.id,
+      request,
+    });
+
+    return json({
+      ok: result.ok,
+      message: result.ok
+        ? "返送証明提出リンクをメールで送信しました。"
+        : `返送案内メールを送信できませんでした: ${result.error || "unknown"}`,
     });
   }
 
@@ -509,6 +524,15 @@ export default function WithdrawalDetailPage() {
             </Form>
           </div>
 
+          <div className="withdrawal-detail__button-row">
+            <Form method="post">
+              <input type="hidden" name="intent" value="send_return_instructions" />
+              <button type="submit" disabled={isSubmitting}>
+                返送証明リンク送信
+              </button>
+            </Form>
+          </div>
+
           <div className="withdrawal-detail__guard">
             <strong>Shopify自動処理</strong>
             <p>
@@ -693,6 +717,8 @@ function serializeWithdrawalRequest(request) {
     returnConditionNotes: request.returnConditionNotes || "",
     returnInfoUpdatedAtLabel: formatDate(request.returnInfoUpdatedAt),
     returnInfoUpdatedBy: request.returnInfoUpdatedBy || "-",
+    returnProofSubmittedAtLabel: formatDate(request.returnProofSubmittedAt),
+    returnProofTokenExpiresAtLabel: formatDate(request.returnProofTokenExpiresAt),
     refundDecisionRows: buildRefundDecisionRows(request, refundCurrencyCode),
     refundWarnings: buildWithdrawalRefundWarnings(request),
     refundDecisionStatus: request.refundDecisionStatus || "UNDECIDED",

@@ -662,6 +662,9 @@ model WithdrawalRequest {
   returnConditionStatus       String    @default("UNDECIDED")
   returnConditionNotes        String?
   returnProofJson             Json?
+  returnProofTokenHash        String?
+  returnProofTokenExpiresAt   DateTime?
+  returnProofSubmittedAt      DateTime?
   returnInfoUpdatedAt         DateTime?
   returnInfoUpdatedBy         String?
   refundDecisionStatus        String    @default("UNDECIDED")
@@ -695,6 +698,7 @@ model WithdrawalRequest {
   @@index([status, createdAt])
   @@index([eligibilityStatus, createdAt])
   @@index([returnRequirementStatus, createdAt])
+  @@index([returnProofTokenHash])
   @@index([refundDecisionStatus, createdAt])
   @@map("withdrawal_requests")
 }

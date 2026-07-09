@@ -16,8 +16,19 @@ import {
 } from "../utils/withdrawalStatus.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const RETURN_PROOF_TOKEN_BYTES = 32;
+const RETURN_PROOF_TOKEN_TTL_DAYS = 45;
 const EMAIL_RATE_LIMIT_PER_HOUR = 5;
 const IP_RATE_LIMIT_PER_HOUR = 20;
+const RETURN_PROOF_OPEN_STATUSES = new Set([
+  WITHDRAWAL_STATUSES.REQUESTED,
+  WITHDRAWAL_STATUSES.ACKNOWLEDGED,
+  WITHDRAWAL_STATUSES.UNDER_REVIEW,
+  WITHDRAWAL_STATUSES.APPROVED,
+  WITHDRAWAL_STATUSES.RETURN_REQUESTED,
+  WITHDRAWAL_STATUSES.RETURN_RECEIVED,
+  WITHDRAWAL_STATUSES.REFUND_PENDING,
+]);
 const REFUND_DECISION_STATUSES = new Set([
   "UNDECIDED",
   "FULL_REFUND",
@@ -453,6 +464,219 @@ export async function sendWithdrawalStatusEmail({
   });
 }
 
+export async function ensureWithdrawalReturnProofToken({
+  withdrawalRequestId,
+  request = null,
+  prismaClient = prisma,
+} = {}) {
+  const withdrawalRequest = await prismaClient.withdrawalRequest.findUnique({
+    where: { id: withdrawalRequestId },
+  });
+
+  if (!withdrawalRequest) {
+    return { ok: false, status: 404, error: "withdrawal_request_not_found" };
+  }
+
+  const token = crypto.randomBytes(RETURN_PROOF_TOKEN_BYTES).toString("base64url");
+  const expiresAt = addDays(new Date(), RETURN_PROOF_TOKEN_TTL_DAYS);
+  const tokenHash = hashReturnProofToken(token);
+  const updated = await prismaClient.withdrawalRequest.update({
+    where: { id: withdrawalRequest.id },
+    data: {
+      returnProofTokenHash: tokenHash,
+      returnProofTokenExpiresAt: expiresAt,
+    },
+  });
+
+  return {
+    ok: true,
+    withdrawalRequest: updated,
+    token,
+    expiresAt,
+    url: buildReturnProofUrl({
+      request,
+      withdrawalRequestId: withdrawalRequest.id,
+      token,
+    }),
+  };
+}
+
+export async function findWithdrawalReturnProofRequest({
+  requestId,
+  token,
+  prismaClient = prisma,
+} = {}) {
+  const id = normalizeText(requestId);
+  const rawToken = normalizeText(token);
+
+  if (!id || !rawToken) {
+    return { ok: false, status: 404, error: "invalid_return_proof_link" };
+  }
+
+  const withdrawalRequest = await prismaClient.withdrawalRequest.findFirst({
+    where: {
+      id,
+      returnProofTokenHash: hashReturnProofToken(rawToken),
+    },
+  });
+
+  if (!withdrawalRequest) {
+    return { ok: false, status: 404, error: "invalid_return_proof_link" };
+  }
+
+  if (
+    withdrawalRequest.returnProofTokenExpiresAt &&
+    new Date(withdrawalRequest.returnProofTokenExpiresAt).getTime() < Date.now()
+  ) {
+    return {
+      ok: false,
+      status: 410,
+      error: "return_proof_link_expired",
+      withdrawalRequest,
+    };
+  }
+
+  if (!RETURN_PROOF_OPEN_STATUSES.has(withdrawalRequest.status)) {
+    return {
+      ok: false,
+      status: 410,
+      error: "withdrawal_request_closed",
+      withdrawalRequest,
+    };
+  }
+
+  return { ok: true, withdrawalRequest };
+}
+
+export async function submitWithdrawalReturnProof({
+  requestId,
+  token,
+  formData,
+  request = null,
+  prismaClient = prisma,
+} = {}) {
+  const lookup = await findWithdrawalReturnProofRequest({
+    requestId,
+    token,
+    prismaClient,
+  });
+
+  if (!lookup.ok) {
+    return lookup;
+  }
+
+  const current = lookup.withdrawalRequest;
+  const returnTrackingCompany = normalizeText(
+    formData.get("returnTrackingCompany"),
+  );
+  const returnTrackingNumber = normalizeText(
+    formData.get("returnTrackingNumber"),
+  );
+  const returnTrackingUrl = normalizeText(formData.get("returnTrackingUrl"));
+  const customerMemo = normalizeText(formData.get("customerMemo"));
+  const errors = {};
+
+  if (!returnTrackingNumber && !returnTrackingUrl) {
+    errors.returnTrackingNumber = "tracking_required";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: "invalid_return_proof",
+      errors,
+      withdrawalRequest: current,
+    };
+  }
+
+  const now = new Date();
+  const returnRequirementStatus = ["RECEIVED", "CONDITION_CHECKED"].includes(
+    String(current.returnRequirementStatus || "").toUpperCase(),
+  )
+    ? current.returnRequirementStatus
+    : "IN_TRANSIT";
+  const previousProof =
+    current.returnProofJson && typeof current.returnProofJson === "object"
+      ? current.returnProofJson
+      : {};
+  const returnProofJson = {
+    ...previousProof,
+    trackingCompany: returnTrackingCompany,
+    trackingNumber: returnTrackingNumber,
+    trackingUrl: returnTrackingUrl,
+    customerMemo,
+    submittedBy: "customer",
+    submittedAt: now.toISOString(),
+    ipAddress: getClientIp(request),
+    userAgent: request?.headers?.get("user-agent") || null,
+  };
+
+  const updated = await prismaClient.$transaction(async (tx) => {
+    const next = await tx.withdrawalRequest.update({
+      where: { id: current.id },
+      data: {
+        returnRequirementStatus,
+        returnTrackingCompany,
+        returnTrackingNumber,
+        returnTrackingUrl,
+        returnProofJson,
+        returnProofSubmittedAt: now,
+        returnInfoUpdatedAt: now,
+        returnInfoUpdatedBy: "customer",
+      },
+    });
+
+    await tx.withdrawalRequestStatusHistory.create({
+      data: {
+        withdrawalRequestId: current.id,
+        fromStatus: current.status,
+        toStatus: current.status,
+        changedBy: "customer",
+        reason: "return_proof_submitted",
+        metadataJson: {
+          returnProof: returnProofJson,
+        },
+      },
+    });
+
+    return next;
+  });
+
+  return { ok: true, withdrawalRequest: updated };
+}
+
+export async function sendWithdrawalReturnInstructionsEmail({
+  withdrawalRequestId,
+  request = null,
+  prismaClient = prisma,
+} = {}) {
+  const tokenResult = await ensureWithdrawalReturnProofToken({
+    withdrawalRequestId,
+    request,
+    prismaClient,
+  });
+
+  if (!tokenResult.ok) {
+    return tokenResult;
+  }
+
+  const email = buildReturnInstructionsEmail({
+    withdrawalRequest: tokenResult.withdrawalRequest,
+    returnProofUrl: tokenResult.url,
+    expiresAt: tokenResult.expiresAt,
+  });
+
+  return sendWithdrawalEmail({
+    prismaClient,
+    withdrawalRequest: tokenResult.withdrawalRequest,
+    emailType: "return_instructions",
+    subject: email.subject,
+    bodyText: email.text,
+    bodyHtml: email.html,
+  });
+}
+
 export async function updateWithdrawalStatus({
   id,
   toStatus,
@@ -504,6 +728,27 @@ export async function updateWithdrawalStatus({
     nextStatus === WITHDRAWAL_STATUSES.CANCELLED
   ) {
     data.completedAt = now;
+  }
+
+  if (
+    nextStatus === WITHDRAWAL_STATUSES.RETURN_REQUESTED &&
+    String(current.returnRequirementStatus || "UNDECIDED").toUpperCase() === "UNDECIDED"
+  ) {
+    data.returnRequirementStatus = "WAITING";
+    data.returnInfoUpdatedAt = now;
+    data.returnInfoUpdatedBy = changedBy;
+  }
+
+  if (
+    nextStatus === WITHDRAWAL_STATUSES.RETURN_RECEIVED &&
+    !["RECEIVED", "CONDITION_CHECKED"].includes(
+      String(current.returnRequirementStatus || "UNDECIDED").toUpperCase(),
+    )
+  ) {
+    data.returnRequirementStatus = "RECEIVED";
+    data.returnReceivedAt = current.returnReceivedAt || now;
+    data.returnInfoUpdatedAt = now;
+    data.returnInfoUpdatedBy = changedBy;
   }
 
   const updated = await prismaClient.$transaction(async (tx) => {
@@ -812,6 +1057,25 @@ export function getShopDomainFromRequest(request) {
       process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN ||
       process.env.SHOPIFY_SHOP,
   );
+}
+
+function hashReturnProofToken(token) {
+  return crypto
+    .createHash("sha256")
+    .update(String(token || ""))
+    .digest("hex");
+}
+
+function buildReturnProofUrl({ request, withdrawalRequestId, token }) {
+  const baseUrl =
+    process.env.APP_URL ||
+    (request?.url ? new URL(request.url).origin : "http://localhost:3000");
+  const url = new URL("/apps/vendors/withdrawal/return-proof", baseUrl);
+
+  url.searchParams.set("request", withdrawalRequestId);
+  url.searchParams.set("token", token);
+
+  return url.toString();
 }
 
 function normalizeText(value) {
@@ -1152,6 +1416,36 @@ function buildAcknowledgementEmail(withdrawalRequest) {
     "通常配送より高い配送方法を選択された場合、その追加費用は返金対象外となる場合があります。",
     "商品の返送にかかる送料は、当店が別途負担すると案内した場合、または法令により当店負担となる場合を除き、お客様負担となる場合があります。",
     "",
+    supportEmail ? `お問い合わせ: ${supportEmail}` : "",
+  ].filter((line) => line !== "");
+  const text = bodyLines.join("\n");
+  const html = `<div style="font-family:system-ui,sans-serif;line-height:1.8;color:#111">${bodyLines
+    .map((line) => (line ? `<p>${escapeHtml(line)}</p>` : "<br>"))
+    .join("")}</div>`;
+
+  return { subject, text, html };
+}
+
+function buildReturnInstructionsEmail({
+  withdrawalRequest,
+  returnProofUrl,
+  expiresAt,
+}) {
+  const supportEmail = getWithdrawalSupportEmail();
+  const subject = "返送証明の提出をお願いします";
+  const bodyLines = [
+    `${withdrawalRequest.customerName} 様`,
+    "",
+    "撤回申請の確認を進めるため、商品の返送後に追跡番号または追跡URLを提出してください。",
+    "以下のリンクから返送証明を提出できます。",
+    "",
+    `返送証明提出リンク: ${returnProofUrl}`,
+    `受付番号: ${withdrawalRequest.id}`,
+    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
+    `リンク有効期限: ${formatDateTime(expiresAt)}`,
+    "",
+    "返送証明の提出だけでは返金は自動実行されません。返送状況と商品状態を確認したうえで、キャンセルまたは返金手続きを進めます。",
+    "通常配送分の初回送料は返金対象として確認しますが、追加配送費用や返送送料はお客様負担となる場合があります。",
     supportEmail ? `お問い合わせ: ${supportEmail}` : "",
   ].filter((line) => line !== "");
   const text = bodyLines.join("\n");
