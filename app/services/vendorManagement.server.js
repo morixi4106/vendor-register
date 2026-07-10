@@ -467,10 +467,10 @@ export function getBadgeTone(label) {
 }
 
 export const PRODUCT_STATUS_FILTER_OPTIONS = [
-  { value: "all", label: "全て" },
+  { value: "all", label: "すべて" },
   { value: "pending", label: "申請中" },
   { value: "review", label: "確認中" },
-  { value: "approved", label: "承認済み（公開準備中）" },
+  { value: "approved", label: "承認済み・公開準備中" },
   { value: "linked", label: "公開済み" },
   { value: "rejected", label: "差し戻し" },
 ];
@@ -1988,7 +1988,7 @@ export async function createVendorOrderFulfillment({
       return {
         ok: false,
         status: 400,
-        error: "複数の発送元に分かれた注文は、管理者側で発送登録してください。",
+        error: "複数の発送元に分かれた注文です。管理者側で発送登録してください。",
       };
     }
 

@@ -98,62 +98,9 @@ export default function WithdrawalFormPage() {
     ...(initialValues || {}),
     ...(actionData?.values || {}),
   };
-
   const countryOptions = useMemo(() => COUNTRY_OPTIONS, []);
 
-  useEffect(() => {
-    if (!embedded || typeof window === "undefined") return undefined;
-
-    let resizeObserver = null;
-    let timeoutId = null;
-
-    function postFrameHeight() {
-      const height = Math.max(
-        document.documentElement?.scrollHeight || 0,
-        document.body?.scrollHeight || 0,
-      );
-
-      window.parent?.postMessage(
-        {
-          type: "vendorWithdrawalFrameHeight",
-          height,
-        },
-        "*",
-      );
-    }
-
-    postFrameHeight();
-    timeoutId = window.setTimeout(postFrameHeight, 150);
-
-    if (typeof ResizeObserver !== "undefined" && document.body) {
-      resizeObserver = new ResizeObserver(postFrameHeight);
-      resizeObserver.observe(document.body);
-    }
-
-    window.addEventListener("resize", postFrameHeight);
-
-    return () => {
-      if (timeoutId) window.clearTimeout(timeoutId);
-      if (resizeObserver) resizeObserver.disconnect();
-      window.removeEventListener("resize", postFrameHeight);
-    };
-  }, [embedded, isConfirming, actionData]);
-
-  useEffect(() => {
-    if (!embedded || typeof window === "undefined") return undefined;
-    if (!isConfirming && !actionData) return undefined;
-
-    const timeoutId = window.setTimeout(() => {
-      window.parent?.postMessage(
-        {
-          type: "vendorWithdrawalScrollIntoView",
-        },
-        "*",
-      );
-    }, 0);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [embedded, isConfirming, actionData]);
+  useEmbeddedFrameBehavior(embedded, [isConfirming, actionData]);
 
   function handlePreview(event) {
     event.preventDefault();
@@ -161,32 +108,41 @@ export default function WithdrawalFormPage() {
     const nextSnapshot = Object.fromEntries(formData.entries());
     setSnapshot(nextSnapshot);
     setIsConfirming(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    if (embedded && typeof window !== "undefined") {
+      window.parent?.postMessage({ type: "vendorWithdrawalScrollIntoView" }, "*");
+    } else if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
 
   return (
     <main className={`withdrawal-page${embedded ? " withdrawal-page--embedded" : ""}`}>
       <style>{pageStyles}</style>
-      <section className="withdrawal-card withdrawal-hero">
-        <h1>撤回申請フォーム</h1>
-        <p>
-          EUのお客様がオンライン購入に関する撤回権を行使するためのフォームです。
-          商品を受け取った日から14日以内の場合、理由を記載せずに申請できます。
-        </p>
-        <div className="withdrawal-note">
-          <strong>返金は自動実行されません。</strong>
-          <span>
-            申請受付後、注文内容・返送状況・商品状態を確認してから処理します。
-            通常配送分の初回送料は返金対象として確認しますが、追加配送費用や返送送料はお客様負担となる場合があります。
-          </span>
-        </div>
-      </section>
+
+      {!embedded ? (
+        <section className="withdrawal-card withdrawal-hero">
+          <h1>EUのお客様向け撤回申請</h1>
+          <p>
+            EUのお客様は、対象となるオンライン購入について、商品を受け取った日から14日以内であれば撤回申請を行える場合があります。
+          </p>
+          <p>
+            申請後、注文内容・返送状況・商品状態を確認したうえで、キャンセルまたは返金手続きを進めます。
+          </p>
+          <div className="withdrawal-note">
+            <strong>返金は自動実行されません。</strong>
+            <span>
+              撤回が認められる場合、商品代金および通常配送方法に相当する初回送料を返金対象として確認します。通常配送より高い配送方法を選択された場合、その追加費用は返金対象外となる場合があります。商品の返送にかかる送料は、当店が別途負担すると案内した場合、または法令により当店負担となる場合を除き、お客様負担となる場合があります。商品の確認に必要な範囲を超えて使用・汚損・破損がある場合、返金額が減額されることがあります。
+            </span>
+          </div>
+        </section>
+      ) : null}
 
       {errors.form ? <div className="withdrawal-alert">{errors.form}</div> : null}
 
       {!isConfirming ? (
         <section className="withdrawal-card">
-          <h2>申請内容を入力</h2>
+          {!embedded ? <h2>申請内容を入力</h2> : null}
           <Form method="post" className="withdrawal-form" onSubmit={handlePreview}>
             <input type="hidden" name="shopDomain" value={shopDomain || ""} />
             {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
@@ -324,6 +280,53 @@ function isEmbeddedRequest(request, formData = null) {
   return url.searchParams.get("embedded") === "1" || formData?.get("embedded") === "1";
 }
 
+function useEmbeddedFrameBehavior(embedded, dependencies) {
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return undefined;
+
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    let resizeObserver = null;
+    let timeoutId = null;
+
+    function postFrameHeight() {
+      const height = Math.max(
+        document.documentElement?.scrollHeight || 0,
+        document.body?.scrollHeight || 0,
+      );
+
+      window.parent?.postMessage(
+        {
+          type: "vendorWithdrawalFrameHeight",
+          height,
+        },
+        "*",
+      );
+    }
+
+    postFrameHeight();
+    timeoutId = window.setTimeout(postFrameHeight, 150);
+
+    if (typeof ResizeObserver !== "undefined" && document.body) {
+      resizeObserver = new ResizeObserver(postFrameHeight);
+      resizeObserver.observe(document.body);
+    }
+
+    window.addEventListener("resize", postFrameHeight);
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener("resize", postFrameHeight);
+    };
+  }, [embedded, ...dependencies]);
+}
+
 function Field({ label, name, type = "text", defaultValue, error, required, placeholder }) {
   const normalizedDefaultValue =
     type === "date" ? formatDateInputValue(defaultValue) : defaultValue || "";
@@ -371,6 +374,7 @@ const pageStyles = `
     min-height:auto;
     padding:0;
     background:transparent;
+    overflow:hidden;
   }
   .withdrawal-page--embedded .withdrawal-card,
   .withdrawal-page--embedded .withdrawal-alert{
@@ -500,6 +504,10 @@ const pageStyles = `
     overflow-wrap:anywhere;
   }
   @media (max-width:720px){
+    .withdrawal-card{
+      padding:22px;
+      border-radius:14px;
+    }
     .withdrawal-form,
     .withdrawal-confirm-list{
       grid-template-columns:1fr;

@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
+import { useEffect } from "react";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
@@ -11,6 +12,35 @@ export const loader = async ({ request }) => {
 
 export default function ReturnProofSuccessPage() {
   const { ref, embedded } = useLoaderData();
+  const formHref = embedded
+    ? "/apps/vendors/withdrawal?embedded=1"
+    : "/apps/vendors/withdrawal";
+
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return undefined;
+
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    function postFrameHeight() {
+      const height = Math.max(
+        document.documentElement?.scrollHeight || 0,
+        document.body?.scrollHeight || 0,
+      );
+      window.parent?.postMessage({ type: "vendorWithdrawalFrameHeight", height }, "*");
+    }
+
+    postFrameHeight();
+    const timeoutId = window.setTimeout(postFrameHeight, 150);
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      window.clearTimeout(timeoutId);
+    };
+  }, [embedded]);
 
   return (
     <main
@@ -20,7 +50,9 @@ export default function ReturnProofSuccessPage() {
     >
       <style>{pageStyles}</style>
       <section className="return-proof-success__card">
-        <p className="return-proof-success__eyebrow">EU RIGHT OF WITHDRAWAL</p>
+        {!embedded ? (
+          <p className="return-proof-success__eyebrow">EU RIGHT OF WITHDRAWAL</p>
+        ) : null}
         <h1>返送証明を受け付けました</h1>
         <p>
           提出内容を確認し、返送状況と商品状態を確認したうえで手続きを進めます。
@@ -30,7 +62,7 @@ export default function ReturnProofSuccessPage() {
           <span>受付番号: {ref || "-"}</span>
         </div>
         <div className="return-proof-success__actions">
-          <Link to="/apps/vendors/withdrawal">撤回申請フォームへ戻る</Link>
+          <Link to={formHref}>撤回申請フォームへ戻る</Link>
         </div>
       </section>
     </main>
@@ -51,6 +83,7 @@ const pageStyles = `
     min-height:auto;
     padding:0;
     background:transparent;
+    overflow:hidden;
   }
   .return-proof-success__card{
     width:min(680px,100%);
@@ -59,6 +92,9 @@ const pageStyles = `
     background:#fff;
     padding:34px;
     box-sizing:border-box;
+  }
+  .return-proof-success--embedded .return-proof-success__card{
+    width:100%;
   }
   .return-proof-success__eyebrow{
     margin:0 0 10px;

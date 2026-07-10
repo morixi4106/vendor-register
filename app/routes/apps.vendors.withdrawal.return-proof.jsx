@@ -84,7 +84,7 @@ export default function ReturnProofPage() {
   const values = actionData?.values || {};
   const errors = actionData?.errors || {};
 
-  useFrameHeight(embedded, actionData);
+  useEmbeddedFrameBehavior(embedded, [actionData]);
 
   return (
     <main
@@ -94,7 +94,7 @@ export default function ReturnProofPage() {
     >
       <style>{pageStyles}</style>
       <section className="return-proof-card">
-        <p className="return-proof-eyebrow">EU RIGHT OF WITHDRAWAL</p>
+        {!embedded ? <p className="return-proof-eyebrow">EU RIGHT OF WITHDRAWAL</p> : null}
         <h1>返送証明の提出</h1>
         {!ok ? (
           <div className="return-proof-alert">{getErrorMessage(error)}</div>
@@ -119,9 +119,7 @@ export default function ReturnProofPage() {
             <Form method="post" className="return-proof-form">
               <input type="hidden" name="requestId" value={requestId} />
               <input type="hidden" name="token" value={token} />
-              {embedded ? (
-                <input type="hidden" name="embedded" value="1" />
-              ) : null}
+              {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
               <label>
                 <span>配送会社</span>
                 <input
@@ -172,9 +170,7 @@ export default function ReturnProofPage() {
                 />
               </label>
               <div className="return-proof-note">
-                返送証明の提出だけでは返金は自動実行されません。
-                通常配送分の初回送料は返金対象として確認しますが、
-                追加配送費用や返送送料はお客様負担となる場合があります。
+                返送証明の提出だけでは返金は自動実行されません。通常配送分の初回送料は返金対象として確認しますが、追加配送費用や返送料はお客様負担となる場合があります。
               </div>
               <button type="submit" disabled={isSubmitting}>
                 {isSubmitting ? "送信中..." : "返送証明を提出する"}
@@ -227,9 +223,14 @@ function isEmbeddedRequest(request, formData = null) {
   );
 }
 
-function useFrameHeight(embedded, dependency) {
+function useEmbeddedFrameBehavior(embedded, dependencies) {
   useEffect(() => {
     if (!embedded || typeof window === "undefined") return undefined;
+
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
 
     function postFrameHeight() {
       const height = Math.max(
@@ -250,10 +251,12 @@ function useFrameHeight(embedded, dependency) {
     window.addEventListener("resize", postFrameHeight);
 
     return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
       window.clearTimeout(timeoutId);
       window.removeEventListener("resize", postFrameHeight);
     };
-  }, [embedded, dependency]);
+  }, [embedded, ...dependencies]);
 }
 
 const pageStyles = `
@@ -270,6 +273,7 @@ const pageStyles = `
     min-height:auto;
     padding:0;
     background:transparent;
+    overflow:hidden;
   }
   .return-proof-card{
     width:min(760px,100%);
@@ -278,6 +282,9 @@ const pageStyles = `
     background:#fff;
     padding:34px;
     box-sizing:border-box;
+  }
+  .return-proof-page--embedded .return-proof-card{
+    width:100%;
   }
   .return-proof-eyebrow{
     margin:0 0 10px;
