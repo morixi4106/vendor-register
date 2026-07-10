@@ -1457,9 +1457,12 @@ function hasValueReductionSignal(itemCondition) {
   const text = String(itemCondition || "").toLowerCase();
   return [
     "破損",
-    "汚",
+    "汚れ",
+    "汚損",
     "使用",
-    "開封済",
+    "使用済み",
+    "開封",
+    "開封済み",
     "damaged",
     "dirty",
     "used",
@@ -1575,23 +1578,27 @@ async function sendWithdrawalEmail({
 
 function buildAcknowledgementEmail(withdrawalRequest) {
   const supportEmail = getWithdrawalSupportEmail();
+  const customerName = withdrawalRequest.customerName || "お客様";
+  const orderName =
+    withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-";
+  const scopeLabel =
+    withdrawalRequest.withdrawalScope === "PARTIAL" ? "一部商品" : "注文全体";
   const subject = "撤回申請を受け付けました";
   const bodyLines = [
-    `${withdrawalRequest.customerName} 様`,
+    `${customerName} 様`,
     "",
-    "撤回申請を受け付けました。",
-    "内容を確認のうえ、今後の手続きをメールでご案内します。",
+    "撤回申請を受け付けました。申請内容を確認し、必要な手続きをメールでご案内します。",
     "",
     `受付番号: ${withdrawalRequest.id}`,
-    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
-    `撤回対象: ${withdrawalRequest.withdrawalScope === "PARTIAL" ? "一部商品" : "注文全体"}`,
+    `注文番号: ${orderName}`,
+    `撤回対象: ${scopeLabel}`,
     `受付日時: ${formatDateTime(new Date())}`,
     "",
-    "商品が発送済みの場合、返送または返送証明の確認後に返金処理を行う場合があります。",
-    "商品の確認に必要な範囲を超えて使用、汚損、破損された場合、返金額が減額される場合があります。",
+    "返金は自動実行されません。注文内容、返送状況、商品の状態を確認してから処理します。",
     "撤回が認められる場合、商品代金および通常配送方法に相当する初回送料を返金対象として確認します。",
     "通常配送より高い配送方法を選択された場合、その追加費用は返金対象外となる場合があります。",
     "商品の返送にかかる送料は、当店が別途負担すると案内した場合、または法令により当店負担となる場合を除き、お客様負担となる場合があります。",
+    "商品の確認に必要な範囲を超えて使用、汚損、破損がある場合、返金額が減額されることがあります。",
     "",
     supportEmail ? `お問い合わせ: ${supportEmail}` : "",
   ].filter((line) => line !== "");
@@ -1609,19 +1616,22 @@ function buildReturnInstructionsEmail({
   expiresAt,
 }) {
   const supportEmail = getWithdrawalSupportEmail();
+  const customerName = withdrawalRequest.customerName || "お客様";
+  const orderName =
+    withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-";
   const subject = "返送証明の提出をお願いします";
   const bodyLines = [
-    `${withdrawalRequest.customerName} 様`,
+    `${customerName} 様`,
     "",
     "撤回申請の確認を進めるため、商品の返送後に追跡番号または追跡URLを提出してください。",
     "以下のリンクから返送証明を提出できます。",
     "",
     `返送証明提出リンク: ${returnProofUrl}`,
     `受付番号: ${withdrawalRequest.id}`,
-    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
+    `注文番号: ${orderName}`,
     `リンク有効期限: ${formatDateTime(expiresAt)}`,
     "",
-    "返送証明の提出だけでは返金は自動実行されません。返送状況と商品状態を確認したうえで、キャンセルまたは返金手続きを進めます。",
+    "返送証明の提出だけでは返金は自動実行されません。返送状況と商品の状態を確認したうえで、キャンセルまたは返金手続きを進めます。",
     "通常配送分の初回送料は返金対象として確認しますが、追加配送費用や返送送料はお客様負担となる場合があります。",
     supportEmail ? `お問い合わせ: ${supportEmail}` : "",
   ].filter((line) => line !== "");
@@ -1635,6 +1645,9 @@ function buildReturnInstructionsEmail({
 
 function buildCompletionEmail(withdrawalRequest) {
   const supportEmail = getWithdrawalSupportEmail();
+  const customerName = withdrawalRequest.customerName || "お客様";
+  const orderName =
+    withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-";
   const statusLabel = getCompletionStatusLabel(withdrawalRequest.completionStatus);
   const currencyCode =
     withdrawalRequest.completionCurrencyCode ||
@@ -1651,12 +1664,12 @@ function buildCompletionEmail(withdrawalRequest) {
   );
   const subject = "撤回申請の処理結果をお知らせします";
   const bodyLines = [
-    `${withdrawalRequest.customerName} 様`,
+    `${customerName} 様`,
     "",
     "撤回申請の確認が完了しました。処理結果をお知らせします。",
     "",
     `受付番号: ${withdrawalRequest.id}`,
-    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
+    `注文番号: ${orderName}`,
     `処理結果: ${statusLabel}`,
     `返金処理額: ${refundedAmount}`,
     `初回送料の返金額: ${refundedShipping}`,
@@ -1679,17 +1692,20 @@ function buildCompletionEmail(withdrawalRequest) {
 }
 
 function buildStatusEmail(withdrawalRequest) {
+  const customerName = withdrawalRequest.customerName || "お客様";
+  const orderName =
+    withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-";
   const statusLabel = getWithdrawalStatusLabel(withdrawalRequest.status);
   const subject = `撤回申請の状況: ${statusLabel}`;
   const statusMessage = getStatusCustomerMessage(withdrawalRequest.status);
   const bodyLines = [
-    `${withdrawalRequest.customerName} 様`,
+    `${customerName} 様`,
     "",
     `撤回申請の状況が「${statusLabel}」に更新されました。`,
     statusMessage,
     "",
     `受付番号: ${withdrawalRequest.id}`,
-    `注文番号: ${withdrawalRequest.shopifyOrderName || withdrawalRequest.shopifyOrderNumber || "-"}`,
+    `注文番号: ${orderName}`,
     "",
     getWithdrawalSupportEmail()
       ? `お問い合わせ: ${getWithdrawalSupportEmail()}`
@@ -1706,7 +1722,7 @@ function buildStatusEmail(withdrawalRequest) {
 function getStatusCustomerMessage(status) {
   switch (status) {
     case WITHDRAWAL_STATUSES.UNDER_REVIEW:
-      return "注文内容、返送状況、商品状態を確認しています。確認が終わり次第、次の手続きをご案内します。";
+      return "注文内容、返送状況、商品の状態を確認しています。確認が終わり次第、次の手続きをご案内します。";
     case WITHDRAWAL_STATUSES.APPROVED:
       return "撤回申請を確認しました。返送や返金に必要な手続きがある場合は、続けてご案内します。";
     case WITHDRAWAL_STATUSES.RETURN_REQUESTED:
@@ -1724,7 +1740,7 @@ function getStatusCustomerMessage(status) {
     case WITHDRAWAL_STATUSES.EXPIRED:
       return "確認の結果、申請期限を過ぎている可能性があるため、期限切れとして処理されました。";
     case WITHDRAWAL_STATUSES.ERROR:
-      return "確認が必要な状態です。内容を確認のうえ、必要に応じてご連絡します。";
+      return "確認が必要な状態です。内容を確認し、必要に応じて連絡します。";
     case WITHDRAWAL_STATUSES.ACKNOWLEDGED:
     case WITHDRAWAL_STATUSES.REQUESTED:
     default:

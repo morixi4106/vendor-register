@@ -845,7 +845,7 @@ export const loader = async ({ params }) => {
       usedShopifyPricingInput = true;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "不明なエラーです";
+        error instanceof Error ? error.message : "Unknown error";
 
       rawShopifyError = message;
 
@@ -857,7 +857,7 @@ export const loader = async ({ params }) => {
     }
   }
 
-  // Shopify謗･邯壹′豁ｻ繧薙〒縺・※繧ゅ∽ｾ｡譬ｼ繝励Ξ繝薙Η繝ｼ縺ｯ蜿ｯ閭ｽ縺ｪ髯舌ｊ蜃ｺ縺・
+  // Keep the price preview available when Shopify reconnect data is unavailable.
   const previewResult = await calculateProductPriceResult(previewPricingInput, {
     settings: pricingSettings,
     shopDomain: previewPricingInput.shopDomain,
