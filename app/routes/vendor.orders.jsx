@@ -1,8 +1,15 @@
 import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
 import { useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
+  appendVendorIdToPath,
   useVendorIdFromMatches,
   useVendorScopedPath,
 } from "../components/vendor/vendorNavigation";
@@ -239,6 +246,7 @@ export default function VendorOrdersPage() {
                   <th>合計金額</th>
                   <th>支払い状態</th>
                   <th>配送状態</th>
+                  <th>撤回申請</th>
                   <th>追跡番号</th>
                   <th>発送登録</th>
                 </tr>
@@ -276,6 +284,12 @@ export default function VendorOrdersPage() {
                         <span className={badgeClassName(order.fulfillmentStatusTone)}>
                           {order.fulfillmentStatusLabel}
                         </span>
+                      </td>
+                      <td>
+                        <WithdrawalCell
+                          order={order}
+                          vendorId={vendorId}
+                        />
                       </td>
                       <td>
                         {order.trackingUrl ? (
@@ -319,6 +333,33 @@ export default function VendorOrdersPage() {
         />
       ) : null}
     </VendorManagementShell>
+  );
+}
+
+function WithdrawalCell({ order, vendorId }) {
+  const summary = order.withdrawalSummary || {};
+  const latest = summary.latest || order.withdrawals?.[0] || null;
+
+  if (!latest) {
+    return <span className="vendor-orders__muted">-</span>;
+  }
+
+  const href = appendVendorIdToPath(`/vendor/withdrawals/${latest.id}`, vendorId);
+
+  return (
+    <div className="vendor-orders__withdrawal-cell">
+      <Link
+        className={badgeClassName(latest.needsVendorAction ? "warning" : latest.statusTone)}
+        to={href}
+      >
+        {latest.needsVendorAction ? "要確認" : latest.statusLabel}
+      </Link>
+      <span className="vendor-orders__withdrawal-meta">
+        {summary.openCount > 1
+          ? `対応中 ${summary.openCount}件`
+          : latest.vendorActionLabel}
+      </span>
+    </div>
   );
 }
 
@@ -489,6 +530,20 @@ const pageStyles = `
     color:#6b7280;
     font-size:13px;
     line-height:1.6;
+  }
+  .vendor-orders__withdrawal-cell{
+    display:grid;
+    gap:6px;
+    min-width:120px;
+  }
+  .vendor-orders__withdrawal-cell a{
+    width:max-content;
+    text-decoration:none;
+  }
+  .vendor-orders__withdrawal-meta{
+    color:#6b7280;
+    font-size:12px;
+    line-height:1.5;
   }
   .vendor-orders__tracking-hint{
     grid-column:1 / -1;

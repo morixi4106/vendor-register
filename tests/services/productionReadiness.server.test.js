@@ -22,7 +22,24 @@ const REQUIRED_SCOPE_STRING = [
   "read_shopify_payments_disputes",
 ].join(",");
 
-function createFakePrisma({ sellerRows = [], sessions = null } = {}) {
+function createFakePrisma({
+  sellerRows = [],
+  sessions = null,
+  withdrawalCounts = {},
+} = {}) {
+  const withdrawalCountQueue = [
+    withdrawalCounts.openCount || 0,
+    withdrawalCounts.deadlineExpiredCount || 0,
+    withdrawalCounts.deadlineSoonCount || 0,
+    withdrawalCounts.refundDecisionMissingCount || 0,
+    withdrawalCounts.refundCompletionMismatchCount || 0,
+    withdrawalCounts.returnInstructionMissingCount || 0,
+    withdrawalCounts.vendorNotificationMissingCount || 0,
+    withdrawalCounts.completionNotificationMissingCount || 0,
+    withdrawalCounts.rejectedWithoutReasonCount || 0,
+    withdrawalCounts.shopifyExternalRecordMissingCount || 0,
+  ];
+
   return {
     session: {
       findMany: async () =>
@@ -36,6 +53,12 @@ function createFakePrisma({ sellerRows = [], sessions = null } = {}) {
     },
     seller: {
       findMany: async () => sellerRows,
+    },
+    withdrawalRequest: {
+      count: async () => withdrawalCountQueue.shift() || 0,
+    },
+    withdrawalEmailLog: {
+      count: async () => withdrawalCounts.emailFailedCount || 0,
     },
   };
 }
@@ -195,6 +218,46 @@ test("getProductionReadiness passes configured withdrawal email env", async () =
   assert.equal(checksById.get("withdrawal_resend_api_key").status, "pass");
   assert.equal(checksById.get("withdrawal_from_email").status, "pass");
   assert.equal(checksById.get("withdrawal_support_email").status, "pass");
+});
+
+test("getProductionReadiness reports withdrawal operation counts", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+      withdrawalCounts: {
+        openCount: 4,
+        deadlineExpiredCount: 1,
+        deadlineSoonCount: 2,
+        emailFailedCount: 1,
+        refundDecisionMissingCount: 1,
+        refundCompletionMismatchCount: 2,
+        returnInstructionMissingCount: 3,
+        vendorNotificationMissingCount: 4,
+        completionNotificationMissingCount: 4,
+        rejectedWithoutReasonCount: 5,
+        shopifyExternalRecordMissingCount: 6,
+      },
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      RESEND_API_KEY: "re_test_123",
+      WITHDRAWAL_FROM_EMAIL: "Store Support <support@example.com>",
+      WITHDRAWAL_SUPPORT_EMAIL: "support@example.com",
+    },
+  });
+  const checksById = new Map(result.checks.map((check) => [check.id, check]));
+
+  assert.equal(result.withdrawals.openCount, 4);
+  assert.equal(result.withdrawals.processingIssueCount, 25);
+  assert.equal(checksById.get("withdrawal_operations_available").status, "pass");
+  assert.equal(checksById.get("withdrawal_open_requests").status, "manual");
+  assert.equal(checksById.get("withdrawal_deadlines").status, "warning");
+  assert.equal(checksById.get("withdrawal_email_failures").status, "warning");
+  assert.equal(
+    checksById.get("withdrawal_processing_integrity").status,
+    "warning",
+  );
 });
 
 test("getProductionReadiness treats write grants as satisfying paired Shopify read scopes", async () => {

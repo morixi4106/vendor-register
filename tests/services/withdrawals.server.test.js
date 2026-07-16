@@ -6,11 +6,14 @@ import {
   createWithdrawalRequestFromForm,
   evaluateWithdrawalEligibility,
   ensureWithdrawalReturnProofToken,
+  findOrderForWithdrawal,
   findWithdrawalReturnProofRequest,
+  getWithdrawalShopifyLiveOrderStatus,
   normalizeWithdrawalCompletionFormData,
   normalizeWithdrawalRefundDecisionFormData,
   normalizeWithdrawalReturnInfoFormData,
   normalizeWithdrawalFormData,
+  sendWithdrawalVendorNotificationEmails,
   submitWithdrawalReturnProof,
   updateWithdrawalCompletionRecord,
   updateWithdrawalRefundDecision,
@@ -70,9 +73,15 @@ function createMarketplaceOrder(overrides = {}) {
   };
 }
 
-function createFakeWithdrawalPrisma({ marketplaceOrder = createMarketplaceOrder() } = {}) {
+function createFakeWithdrawalPrisma({
+  marketplaceOrder = createMarketplaceOrder(),
+  sellerOrders = [],
+  sellers = [],
+} = {}) {
   const state = {
     marketplaceOrder,
+    sellerOrders,
+    sellers,
     withdrawalRequests: [],
     statusHistory: [],
     emailLogs: [],
@@ -160,6 +169,13 @@ function createFakeWithdrawalPrisma({ marketplaceOrder = createMarketplaceOrder(
       },
     },
     withdrawalEmailLog: {
+      async findFirst({ where }) {
+        return (
+          state.emailLogs.find((log) =>
+            Object.entries(where || {}).every(([key, value]) => log[key] === value),
+          ) || null
+        );
+      },
       async create({ data }) {
         const log = {
           id: `email_log_${state.emailLogs.length + 1}`,
@@ -168,6 +184,44 @@ function createFakeWithdrawalPrisma({ marketplaceOrder = createMarketplaceOrder(
         };
         state.emailLogs.push(log);
         return log;
+      },
+    },
+    sellerOrder: {
+      async findMany({ where }) {
+        const conditions = Array.isArray(where?.OR) ? where.OR : [];
+
+        if (conditions.length === 0) {
+          return [];
+        }
+
+        return state.sellerOrders.filter((sellerOrder) =>
+          conditions.some((condition) =>
+            Object.entries(condition).every(
+              ([key, value]) => sellerOrder[key] === value,
+            ),
+          ),
+        );
+      },
+    },
+    seller: {
+      async findMany({ where }) {
+        const conditions = Array.isArray(where?.OR) ? where.OR : [];
+
+        if (conditions.length === 0) {
+          return [];
+        }
+
+        return state.sellers.filter((seller) =>
+          conditions.some((condition) =>
+            Object.entries(condition).every(([key, value]) => {
+              if (value && typeof value === 'object' && Array.isArray(value.in)) {
+                return value.in.includes(seller[key]);
+              }
+
+              return seller[key] === value;
+            }),
+          ),
+        );
       },
     },
     async $transaction(callback) {
@@ -283,6 +337,25 @@ test('normalizeWithdrawalRefundDecisionFormData rejects invalid amounts', () => 
   assert.equal(normalized.errors.refundItemAmount, 'invalid_amount');
 });
 
+test('normalizeWithdrawalRefundDecisionFormData parses decimal currencies as minor units', () => {
+  const normalized = normalizeWithdrawalRefundDecisionFormData(
+    createFormData([
+      ['refundDecisionStatus', 'PARTIAL_REFUND'],
+      ['refundItemAmount', '10.99'],
+      ['refundInitialShippingAmount', '2.50'],
+      ['refundDeductionAmount', '1.25'],
+      ['refundCurrencyCode', 'eur'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, true);
+  assert.equal(normalized.values.refundItemAmount, 1099);
+  assert.equal(normalized.values.refundInitialShippingAmount, 250);
+  assert.equal(normalized.values.refundDeductionAmount, 125);
+  assert.equal(normalized.values.refundTotalAmount, 1224);
+  assert.equal(normalized.values.refundCurrencyCode, 'EUR');
+});
+
 test('normalizeWithdrawalCompletionFormData keeps completion result fields', () => {
   const normalized = normalizeWithdrawalCompletionFormData(
     createFormData([
@@ -358,6 +431,19 @@ test('normalizeWithdrawalReturnInfoFormData rejects invalid return statuses', ()
   );
 });
 
+test('normalizeWithdrawalReturnInfoFormData rejects invalid tracking URLs', () => {
+  const normalized = normalizeWithdrawalReturnInfoFormData(
+    createFormData([
+      ['returnRequirementStatus', 'in_transit'],
+      ['returnConditionStatus', 'unused_ok'],
+      ['returnTrackingUrl', 'javascript:alert(1)'],
+    ]),
+  );
+
+  assert.equal(normalized.ok, false);
+  assert.equal(normalized.errors.returnTrackingUrl, 'invalid_return_tracking_url');
+});
+
 test('evaluateWithdrawalEligibility accepts matching EU requests within fourteen days', () => {
   const result = evaluateWithdrawalEligibility({
     values: {
@@ -411,6 +497,106 @@ test('evaluateWithdrawalEligibility flags non-EU, expired, and used-item review 
     valueReduction.status,
     WITHDRAWAL_ELIGIBILITY_STATUSES.VALUE_REDUCTION_REVIEW,
   );
+});
+
+test('evaluateWithdrawalEligibility does not expire requests from order date alone', () => {
+  const result = evaluateWithdrawalEligibility({
+    values: {
+      customerEmail: 'test@example.com',
+      countryCode: 'DE',
+      receivedDate: null,
+    },
+    orderSnapshot: {
+      buyerEmail: 'test@example.com',
+      createdAt: daysAgo(30),
+      processedAt: daysAgo(30),
+    },
+  });
+
+  assert.equal(result.status, WITHDRAWAL_ELIGIBILITY_STATUSES.DEADLINE_REVIEW);
+  assert.equal(result.deadlineAt, null);
+});
+
+test('evaluateWithdrawalEligibility flags exempt item candidates and already refunded orders for review', () => {
+  const exempt = evaluateWithdrawalEligibility({
+    values: {
+      customerEmail: 'test@example.com',
+      countryCode: 'DE',
+      receivedDate: new Date(daysAgo(2)),
+      itemText: 'custom made hygiene item',
+      itemCondition: '',
+    },
+    orderSnapshot: { buyerEmail: 'test@example.com', lineItems: [] },
+  });
+  const refunded = evaluateWithdrawalEligibility({
+    values: {
+      customerEmail: 'test@example.com',
+      countryCode: 'DE',
+      receivedDate: new Date(daysAgo(2)),
+      itemCondition: '',
+    },
+    orderSnapshot: {
+      buyerEmail: 'test@example.com',
+      financialStatus: 'REFUNDED',
+      totalRefundedAmount: 1000,
+    },
+  });
+
+  assert.equal(exempt.status, WITHDRAWAL_ELIGIBILITY_STATUSES.EXEMPTION_REVIEW);
+  assert.equal(refunded.status, WITHDRAWAL_ELIGIBILITY_STATUSES.PENDING_REVIEW);
+  assert.match(refunded.warnings.join(' '), /返金済み/);
+});
+
+test('findOrderForWithdrawal falls back to Shopify Admin lookup when local snapshot is missing', async () => {
+  const prismaClient = createFakeWithdrawalPrisma({ marketplaceOrder: null });
+  const result = await findOrderForWithdrawal({
+    prismaClient,
+    shopDomain: 'b30ize-1a.myshopify.com',
+    orderNumber: '#1010',
+    customerEmail: 'test@example.com',
+    shopifyGraphQLWithOfflineSessionImpl: async ({ variables }) => {
+      assert.match(variables.query, /#1010/);
+      return {
+        data: {
+          orders: {
+            nodes: [
+              {
+                id: 'gid://shopify/Order/1010',
+                name: '#1010',
+                email: 'test@example.com',
+                createdAt: new Date().toISOString(),
+                processedAt: new Date().toISOString(),
+                displayFinancialStatus: 'PAID',
+                displayFulfillmentStatus: 'FULFILLED',
+                currentTotalPriceSet: {
+                  shopMoney: { amount: '10.99', currencyCode: 'EUR' },
+                },
+                lineItems: {
+                  nodes: [
+                    {
+                      id: 'gid://shopify/LineItem/1',
+                      title: 'Test item',
+                      quantity: 2,
+                      discountedTotalSet: {
+                        shopMoney: { amount: '10.99', currencyCode: 'EUR' },
+                      },
+                    },
+                  ],
+                },
+                shippingAddress: {
+                  countryCodeV2: 'DE',
+                },
+              },
+            ],
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.source, 'shopify_admin');
+  assert.equal(result.orderSnapshot.totalAmount, 1099);
+  assert.equal(result.orderSnapshot.lineItems[0].quantity, 2);
 });
 
 test('buildWithdrawalIdempotencyKey normalizes repeated submissions', () => {
@@ -487,6 +673,120 @@ test('createWithdrawalRequestFromForm returns duplicate without creating another
   });
 });
 
+test('createWithdrawalRequestFromForm records vendor notification attempts for affected sellers', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma({
+      sellerOrders: [
+        {
+          id: 'seller_order_1',
+          marketplaceOrderId: 'marketplace_order_1',
+          shopifyOrderId: 'gid://shopify/Order/1010',
+          sellerId: 'seller_1',
+          vendorStoreId: 'store_1',
+          lines: [
+            {
+              id: 'line_1',
+              title: 'Test Product',
+              shopifyLineItemId: 'gid://shopify/LineItem/1',
+            },
+          ],
+        },
+      ],
+      sellers: [
+        {
+          id: 'seller_1',
+          vendorId: 'vendor_1',
+          vendorStoreId: 'store_1',
+          vendor: {
+            id: 'vendor_1',
+            storeName: 'Vendor Store',
+            managementEmail: 'vendor@example.com',
+          },
+          vendorStore: {
+            id: 'store_1',
+            storeName: 'Vendor Store',
+            email: 'store@example.com',
+          },
+        },
+      ],
+    });
+    const result = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+    const vendorLog = prismaClient._state.emailLogs.find(
+      (log) => log.emailType === 'vendor_notification',
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.vendorNotificationResult.failedCount, 1);
+    assert.equal(vendorLog.toEmail, 'vendor@example.com');
+    assert.match(vendorLog.bodyText, /Test Product/);
+  });
+});
+
+test('sendWithdrawalVendorNotificationEmails skips vendors already notified', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma({
+      sellerOrders: [
+        {
+          id: 'seller_order_1',
+          marketplaceOrderId: 'marketplace_order_1',
+          shopifyOrderId: 'gid://shopify/Order/1010',
+          sellerId: 'seller_1',
+          vendorStoreId: 'store_1',
+          lines: [],
+        },
+      ],
+      sellers: [
+        {
+          id: 'seller_1',
+          vendorId: 'vendor_1',
+          vendorStoreId: 'store_1',
+          vendor: {
+            id: 'vendor_1',
+            storeName: 'Vendor Store',
+            managementEmail: 'vendor@example.com',
+          },
+          vendorStore: {
+            id: 'store_1',
+            storeName: 'Vendor Store',
+            email: 'store@example.com',
+          },
+        },
+      ],
+    });
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    prismaClient._state.emailLogs = prismaClient._state.emailLogs.map((log) =>
+      log.emailType === 'vendor_notification'
+        ? { ...log, status: 'sent', sentAt: new Date() }
+        : log,
+    );
+
+    const result = await sendWithdrawalVendorNotificationEmails({
+      withdrawalRequestId: created.withdrawalRequest.id,
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skippedCount, 1);
+    assert.equal(
+      prismaClient._state.emailLogs.filter(
+        (log) => log.emailType === 'vendor_notification',
+      ).length,
+      1,
+    );
+  });
+});
+
 test('updateWithdrawalRefundDecision stores admin refund judgement and history', async () => {
   await withWithdrawalEmailEnvDisabled(async () => {
     const prismaClient = createFakeWithdrawalPrisma();
@@ -558,6 +858,37 @@ test('updateWithdrawalCompletionRecord closes a refunded request and records his
       prismaClient._state.statusHistory[1].reason,
       'completion_recorded',
     );
+  });
+});
+
+test('updateWithdrawalCompletionRecord does not reset a completed request to undecided', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma();
+    const created = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData: createValidWithdrawalForm(),
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    await updateWithdrawalCompletionRecord({
+      id: created.withdrawalRequest.id,
+      formData: createFormData([
+        ['completionStatus', 'REFUNDED'],
+        ['completionRefundedAmount', '1049'],
+        ['completionCurrencyCode', 'JPY'],
+      ]),
+      prismaClient,
+    });
+
+    const reset = await updateWithdrawalCompletionRecord({
+      id: created.withdrawalRequest.id,
+      formData: createFormData([['completionStatus', 'UNDECIDED']]),
+      prismaClient,
+    });
+
+    assert.equal(reset.ok, false);
+    assert.equal(reset.error, 'completion_reset_not_allowed');
   });
 });
 
@@ -690,4 +1021,78 @@ test('submitWithdrawalReturnProof stores customer tracking proof and history', a
     assert.equal(result.withdrawalRequest.returnProofJson.customerMemo, 'Shipped today');
     assert.equal(prismaClient._state.statusHistory.at(-1).reason, 'return_proof_submitted');
   });
+});
+
+test('getWithdrawalShopifyLiveOrderStatus returns normalized live Shopify order data', async () => {
+  const calls = [];
+  const result = await getWithdrawalShopifyLiveOrderStatus({
+    withdrawalRequest: {
+      shopDomain: 'b30ize-1a.myshopify.com',
+      shopifyOrderId: '6923324588195',
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async (input) => {
+      calls.push(input);
+      return {
+        shopDomain: input.shopDomain,
+        data: {
+          node: {
+            id: input.variables.id,
+            name: '#1010',
+            email: 'buyer@example.com',
+            createdAt: '2026-06-20T00:00:00Z',
+            processedAt: '2026-06-20T00:01:00Z',
+            cancelledAt: null,
+            cancelReason: null,
+            displayFinancialStatus: 'PAID',
+            displayFulfillmentStatus: 'UNFULFILLED',
+            totalPriceSet: {
+              shopMoney: { amount: '1114.00', currencyCode: 'JPY' },
+            },
+            currentTotalPriceSet: {
+              shopMoney: { amount: '1114.00', currencyCode: 'JPY' },
+            },
+            totalRefundedSet: {
+              shopMoney: { amount: '0.00', currencyCode: 'JPY' },
+            },
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].variables.id, 'gid://shopify/Order/6923324588195');
+  assert.equal(result.order.name, '#1010');
+  assert.equal(result.order.financialStatus, 'PAID');
+  assert.equal(result.order.totalAmount, 1114);
+  assert.equal(result.order.currencyCode, 'JPY');
+});
+
+test('getWithdrawalShopifyLiveOrderStatus safely reports missing order context', async () => {
+  const result = await getWithdrawalShopifyLiveOrderStatus({
+    withdrawalRequest: {
+      shopDomain: 'b30ize-1a.myshopify.com',
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async () => {
+      throw new Error('should not call Shopify');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'missing_shopify_order_id');
+});
+
+test('getWithdrawalShopifyLiveOrderStatus sanitizes Shopify read failures', async () => {
+  const result = await getWithdrawalShopifyLiveOrderStatus({
+    withdrawalRequest: {
+      shopDomain: 'b30ize-1a.myshopify.com',
+      shopifyOrderId: 'gid://shopify/Order/6923324588195',
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async () => {
+      throw new Error('Shopify GraphQL errors: [{"message":"Field does not exist"}]');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'shopify_graphql_error');
 });

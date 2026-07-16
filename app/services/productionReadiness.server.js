@@ -1,6 +1,10 @@
 import Stripe from "stripe";
 
 import prisma from "../db.server.js";
+import {
+  EU_PRODUCT_ALLOWED_STATUSES,
+  EU_SELLER_ALLOWED_STATUSES,
+} from "../utils/deliveryEligibility.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
 const STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES = new Set([
@@ -58,6 +62,17 @@ const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
     label: "seller order reads",
   },
 ];
+const WITHDRAWAL_OPEN_STATUSES = [
+  "REQUESTED",
+  "ACKNOWLEDGED",
+  "UNDER_REVIEW",
+  "APPROVED",
+  "RETURN_REQUESTED",
+  "RETURN_RECEIVED",
+  "REFUND_PENDING",
+  "ERROR",
+];
+const URGENT_WITHDRAWAL_DEADLINE_DAYS = 3;
 
 const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_products",
@@ -217,6 +232,8 @@ function inspectWithdrawalEmailEnvironment(env) {
   const withdrawalFromEmail = normalizeText(env.WITHDRAWAL_FROM_EMAIL);
   const fallbackFromEmail = normalizeText(env.MAIL_FROM || env.ADMIN_EMAIL);
   const supportEmail = normalizeText(env.WITHDRAWAL_SUPPORT_EMAIL);
+  const publicBaseUrl = normalizeText(env.WITHDRAWAL_PUBLIC_BASE_URL);
+  const returnAddress = normalizeText(env.WITHDRAWAL_RETURN_ADDRESS);
 
   return {
     hasResendApiKey: Boolean(resendApiKey),
@@ -227,7 +244,296 @@ function inspectWithdrawalEmailEnvironment(env) {
     hasExplicitFromEmail: Boolean(withdrawalFromEmail),
     supportEmail,
     supportEmailAddress: extractEmailAddress(supportEmail),
+    publicBaseUrl,
+    publicBaseUrlLooksValid: Boolean(publicBaseUrl && /^https?:\/\//i.test(publicBaseUrl)),
+    returnAddress,
   };
+}
+
+async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
+  if (!prismaClient.withdrawalRequest || !prismaClient.withdrawalEmailLog) {
+    return {
+      available: false,
+      openCount: 0,
+      deadlineExpiredCount: 0,
+      deadlineSoonCount: 0,
+      emailFailedCount: 0,
+      processingIssueCount: 0,
+      refundDecisionMissingCount: 0,
+      refundCompletionMismatchCount: 0,
+      returnInstructionMissingCount: 0,
+      vendorNotificationMissingCount: 0,
+      completionNotificationMissingCount: 0,
+      rejectedWithoutReasonCount: 0,
+      shopifyExternalRecordMissingCount: 0,
+      error: "withdrawal_tables_unavailable",
+    };
+  }
+
+  const now = new Date();
+  const soon = new Date(
+    now.getTime() + URGENT_WITHDRAWAL_DEADLINE_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  try {
+    const [
+      openCount,
+      deadlineExpiredCount,
+      deadlineSoonCount,
+      emailFailedCount,
+      refundDecisionMissingCount,
+      refundCompletionMismatchCount,
+      returnInstructionMissingCount,
+      vendorNotificationMissingCount,
+      completionNotificationMissingCount,
+      rejectedWithoutReasonCount,
+      shopifyExternalRecordMissingCount,
+    ] = await Promise.all([
+      prismaClient.withdrawalRequest.count({
+        where: { status: { in: WITHDRAWAL_OPEN_STATUSES } },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: { in: WITHDRAWAL_OPEN_STATUSES },
+          deadlineAt: { lt: now },
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: { in: WITHDRAWAL_OPEN_STATUSES },
+          deadlineAt: { gte: now, lte: soon },
+        },
+      }),
+      prismaClient.withdrawalEmailLog.count({
+        where: { status: "failed" },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: { in: ["APPROVED", "REFUND_PENDING"] },
+          refundDecisionStatus: "UNDECIDED",
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          OR: [
+            {
+              completionStatus: { in: ["REFUNDED", "PARTIALLY_REFUNDED"] },
+              completionRefundedAmount: null,
+            },
+            {
+              status: { in: ["REFUNDED", "CANCELLED"] },
+              completionStatus: "UNDECIDED",
+            },
+            {
+              completionStatus: { in: ["NO_REFUND_CLOSED", "REJECTED_CLOSED"] },
+              completionAction: null,
+              completionNotes: null,
+            },
+          ],
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: "RETURN_REQUESTED",
+          emailLogs: {
+            none: {
+              emailType: "return_instructions",
+              status: "sent",
+            },
+          },
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: {
+            notIn: ["REJECTED", "EXPIRED"],
+          },
+          emailLogs: {
+            none: {
+              emailType: "vendor_notification",
+              status: "sent",
+            },
+          },
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          completedAt: { not: null },
+          completionStatus: { not: "UNDECIDED" },
+          completionNotifiedAt: null,
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          status: "REJECTED",
+          rejectionReason: null,
+        },
+      }),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          OR: [
+            {
+              completionStatus: { in: ["REFUNDED", "PARTIALLY_REFUNDED"] },
+              completionShopifyRefundId: null,
+            },
+            {
+              completionStatus: "CANCELLED",
+              completionShopifyCancelId: null,
+            },
+          ],
+        },
+      }),
+    ]);
+    const processingIssueCount =
+      refundDecisionMissingCount +
+      refundCompletionMismatchCount +
+      returnInstructionMissingCount +
+      vendorNotificationMissingCount +
+      completionNotificationMissingCount +
+      rejectedWithoutReasonCount +
+      shopifyExternalRecordMissingCount;
+
+    return {
+      available: true,
+      openCount,
+      deadlineExpiredCount,
+      deadlineSoonCount,
+      emailFailedCount,
+      processingIssueCount,
+      refundDecisionMissingCount,
+      refundCompletionMismatchCount,
+      returnInstructionMissingCount,
+      vendorNotificationMissingCount,
+      completionNotificationMissingCount,
+      rejectedWithoutReasonCount,
+      shopifyExternalRecordMissingCount,
+      error: null,
+    };
+  } catch (error) {
+    console.error("withdrawal readiness inspect error:", error);
+    return {
+      available: false,
+      openCount: 0,
+      deadlineExpiredCount: 0,
+      deadlineSoonCount: 0,
+      emailFailedCount: 0,
+      processingIssueCount: 0,
+      refundDecisionMissingCount: 0,
+      refundCompletionMismatchCount: 0,
+      returnInstructionMissingCount: 0,
+      vendorNotificationMissingCount: 0,
+      completionNotificationMissingCount: 0,
+      rejectedWithoutReasonCount: 0,
+      shopifyExternalRecordMissingCount: 0,
+      error: error?.code || "withdrawal_readiness_failed",
+    };
+  }
+}
+
+async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
+  if (
+    !prismaClient?.withdrawalWorkflowPolicy?.findFirst ||
+    !prismaClient?.vendorStore?.findMany
+  ) {
+    return {
+      available: false,
+      activePolicy: null,
+      relevantStoreCount: 0,
+      missingAddressStores: [],
+      error: "direct_return_tables_unavailable",
+    };
+  }
+  try {
+    const [activePolicy, relevantStores] = await Promise.all([
+      prismaClient.withdrawalWorkflowPolicy.findFirst({
+        where: { active: true, directReturnEnabled: true },
+        orderBy: [{ version: "desc" }],
+      }),
+      prismaClient.vendorStore.findMany({
+        where: {
+          seller: { euSellerStatus: { in: [...EU_SELLER_ALLOWED_STATUSES] } },
+          products: {
+            some: {
+              OR: [
+                { productEuStatus: { in: [...EU_PRODUCT_ALLOWED_STATUSES] } },
+                { euSaleRequested: true },
+              ],
+            },
+          },
+        },
+        select: {
+          id: true,
+          storeName: true,
+          returnAddresses: {
+            where: { status: "ACTIVE" },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      }),
+    ]);
+    return {
+      available: true,
+      activePolicy,
+      relevantStoreCount: relevantStores.length,
+      missingAddressStores: relevantStores
+        .filter((store) => store.returnAddresses.length === 0)
+        .map((store) => ({ id: store.id, storeName: store.storeName })),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      activePolicy: null,
+      relevantStoreCount: 0,
+      missingAddressStores: [],
+      error: error?.code || "direct_return_readiness_failed",
+    };
+  }
+}
+
+function buildDirectReturnChecks({ directReturns }) {
+  if (!directReturns.available) {
+    return [
+      createCheck({
+        id: "withdrawal_direct_return_tables",
+        category: "app",
+        status: "warning",
+        title: "店舗別返送のデータベース",
+        detail: `店舗別返送の準備状況を取得できません: ${directReturns.error}.`,
+        action: "Prisma migrationを適用してから再確認してください。",
+      }),
+    ];
+  }
+  const missing = directReturns.missingAddressStores;
+  return [
+    createCheck({
+      id: "withdrawal_direct_return_policy",
+      category: "app",
+      status: directReturns.activePolicy ? "pass" : "warning",
+      title: "店舗別返送の運用方針",
+      detail: directReturns.activePolicy
+        ? `方針v${directReturns.activePolicy.version} / 規約版 ${directReturns.activePolicy.termsVersion} を新規申請に適用中です。`
+        : "店舗別返送V2の有効な方針はありません。既存のV1運用は継続します。",
+      action: directReturns.activePolicy
+        ? ""
+        : "/app/withdrawal-settings で契約形態と規約版を確認してから有効化してください。",
+    }),
+    createCheck({
+      id: "withdrawal_direct_return_addresses",
+      category: "app",
+      status: missing.length > 0 ? "warning" : "pass",
+      title: "EU販売店舗の返送先",
+      detail:
+        missing.length > 0
+          ? `${directReturns.relevantStoreCount}店舗中${missing.length}店舗に有効な返送先がありません: ${missing.map((store) => store.storeName).join("、")}`
+          : `${directReturns.relevantStoreCount}件のEU販売対象店舗に有効な返送先があります。`,
+      action:
+        missing.length > 0
+          ? "各店舗の「返送先設定」で、実際に返品を受領できる住所を確認して有効化してください。"
+          : "",
+    }),
+  ];
 }
 
 function normalizeProvider(value, fallback) {
@@ -467,6 +773,37 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: withdrawalEmailEnv.supportEmailAddress
         ? ""
         : "Set WITHDRAWAL_SUPPORT_EMAIL so customer withdrawal emails include a clear support contact.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_public_base_url",
+      category: "app",
+      status: withdrawalEmailEnv.publicBaseUrlLooksValid ? "pass" : "warning",
+      title: "Withdrawal public link domain",
+      detail: withdrawalEmailEnv.publicBaseUrl
+        ? withdrawalEmailEnv.publicBaseUrlLooksValid
+          ? `WITHDRAWAL_PUBLIC_BASE_URL is ${withdrawalEmailEnv.publicBaseUrl}.`
+          : "WITHDRAWAL_PUBLIC_BASE_URL is set, but it is not an http(s) URL."
+        : "WITHDRAWAL_PUBLIC_BASE_URL is not configured. Return proof links will fall back to APP_URL.",
+      action: withdrawalEmailEnv.publicBaseUrlLooksValid
+        ? ""
+        : "Set WITHDRAWAL_PUBLIC_BASE_URL to the storefront origin, for example https://oja-immanuel-bacchus.com.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_return_address_legacy",
+      category: "app",
+      status: "manual",
+      title: "旧申請用の共通返送先",
+      detail: withdrawalEmailEnv.returnAddress
+        ? "WITHDRAWAL_RETURN_ADDRESSはV1申請専用として設定されています。V2では使用しません。"
+        : "WITHDRAWAL_RETURN_ADDRESSは未設定です。V2では店舗別の返送先だけを使用します。",
+      action:
+        "未処理のV1申請に共通返送先が必要な場合だけ設定してください。V2のフォールバックには使用しません。",
     }),
   );
 
@@ -1029,6 +1366,112 @@ function buildSellerChecks({
   ];
 }
 
+function buildWithdrawalOperationChecks({ withdrawalOperations }) {
+  const checks = [];
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_operations_available",
+      category: "app",
+      status: withdrawalOperations.available ? "pass" : "warning",
+      title: "Withdrawal request operation data",
+      detail: withdrawalOperations.available
+        ? "Withdrawal request tables are available for operational readiness checks."
+        : `Withdrawal request operation data could not be loaded: ${withdrawalOperations.error}.`,
+      action: withdrawalOperations.available
+        ? ""
+        : "Apply Prisma migrations and reload this page before relying on withdrawal request counts.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_open_requests",
+      category: "app",
+      status:
+        withdrawalOperations.available && withdrawalOperations.openCount > 0
+          ? "manual"
+          : "pass",
+      title: "Open withdrawal requests",
+      detail: withdrawalOperations.available
+        ? `${withdrawalOperations.openCount} open withdrawal request(s) need normal operation review.`
+        : "Skipped because withdrawal request tables are unavailable.",
+      action:
+        withdrawalOperations.available && withdrawalOperations.openCount > 0
+          ? "Review /app/withdrawals and keep each request moving through return, refund, or closure."
+          : "",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_deadlines",
+      category: "app",
+      status:
+        withdrawalOperations.deadlineExpiredCount > 0
+          ? "warning"
+          : withdrawalOperations.deadlineSoonCount > 0
+            ? "manual"
+            : "pass",
+      title: "Withdrawal request deadlines",
+      detail: withdrawalOperations.available
+        ? `${withdrawalOperations.deadlineExpiredCount} expired, ${withdrawalOperations.deadlineSoonCount} due within ${URGENT_WITHDRAWAL_DEADLINE_DAYS} days.`
+        : "Skipped because withdrawal request tables are unavailable.",
+      action:
+        withdrawalOperations.deadlineExpiredCount > 0
+          ? "Open /app/withdrawals and handle expired withdrawal requests first."
+          : withdrawalOperations.deadlineSoonCount > 0
+            ? "Review requests approaching their deadline from /app/withdrawals."
+            : "",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_email_failures",
+      category: "app",
+      status:
+        withdrawalOperations.emailFailedCount > 0 ? "warning" : "pass",
+      title: "Withdrawal email failures",
+      detail: withdrawalOperations.available
+        ? `${withdrawalOperations.emailFailedCount} withdrawal email failure(s) are recorded.`
+        : "Skipped because withdrawal email logs are unavailable.",
+      action:
+        withdrawalOperations.emailFailedCount > 0
+          ? "Open /app/withdrawals, filter by email failures, and resend or confirm the customer address."
+          : "",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_processing_integrity",
+      category: "app",
+      status:
+        withdrawalOperations.processingIssueCount > 0 ? "warning" : "pass",
+      title: "Withdrawal processing integrity",
+      detail: withdrawalOperations.available
+        ? [
+            `${withdrawalOperations.processingIssueCount} processing issue(s) detected.`,
+            `refund decision missing: ${withdrawalOperations.refundDecisionMissingCount}`,
+            `completion mismatch: ${withdrawalOperations.refundCompletionMismatchCount}`,
+            `return instruction missing: ${withdrawalOperations.returnInstructionMissingCount}`,
+            `vendor notification missing: ${withdrawalOperations.vendorNotificationMissingCount}`,
+            `completion email missing: ${withdrawalOperations.completionNotificationMissingCount}`,
+            `rejected without reason: ${withdrawalOperations.rejectedWithoutReasonCount}`,
+            `Shopify external record missing: ${withdrawalOperations.shopifyExternalRecordMissingCount}`,
+          ].join(" ")
+        : "Skipped because withdrawal request tables are unavailable.",
+      action:
+        withdrawalOperations.processingIssueCount > 0
+          ? "Open /app/withdrawals and resolve the flagged request state before treating withdrawal operations as complete."
+          : "",
+    }),
+  );
+
+  return checks;
+}
+
 export async function getProductionReadiness({
   prismaClient = prisma,
   env = process.env,
@@ -1063,6 +1506,10 @@ export async function getProductionReadiness({
           reason: "stripe_connect_not_enabled",
         }),
   ]);
+  const withdrawalOperations = await inspectWithdrawalOperations({
+    prismaClient,
+  });
+  const directReturns = await inspectDirectReturnReadiness({ prismaClient });
 
   const connectedAccountProbe = stripeConnectProductionEnabled
     ? await probeConnectedAccounts({
@@ -1078,6 +1525,8 @@ export async function getProductionReadiness({
       env,
       operationEnv,
     }),
+    ...buildWithdrawalOperationChecks({ withdrawalOperations }),
+    ...buildDirectReturnChecks({ directReturns }),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
       sellerRows,
@@ -1128,6 +1577,7 @@ export async function getProductionReadiness({
       connectedAccountProbe,
       probeLimit: STRIPE_ACCOUNT_PROBE_LIMIT,
     },
+    withdrawals: { ...withdrawalOperations, directReturns },
     checks,
   };
 }

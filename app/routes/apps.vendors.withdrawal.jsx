@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createWithdrawalRequestFromForm,
-  getShopDomainFromRequest,
 } from "../services/withdrawals.server.js";
+import { authenticate } from "../shopify.server";
 
 const COUNTRY_OPTIONS = [
   ["AT", "Austria"],
@@ -41,6 +41,7 @@ const COUNTRY_OPTIONS = [
 ];
 
 export const loader = async ({ request }) => {
+  const shopDomain = await authenticateAppProxyShop(request);
   const url = new URL(request.url);
   const orderNumber =
     url.searchParams.get("orderNumber") || url.searchParams.get("order") || "";
@@ -48,7 +49,7 @@ export const loader = async ({ request }) => {
     url.searchParams.get("customerEmail") || url.searchParams.get("email") || "";
 
   return json({
-    shopDomain: getShopDomainFromRequest(request),
+    shopDomain,
     embedded: isEmbeddedRequest(request),
     initialValues: {
       orderNumber,
@@ -58,11 +59,12 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
+  const shopDomain = await authenticateAppProxyShop(request);
   const formData = await request.formData();
   const result = await createWithdrawalRequestFromForm({
     request,
     formData,
-    shopDomain: getShopDomainFromRequest(request),
+    shopDomain,
   });
 
   if (!result.ok) {
@@ -87,6 +89,16 @@ export const action = async ({ request }) => {
 
   return redirect(successUrl.pathname + successUrl.search);
 };
+
+async function authenticateAppProxyShop(request) {
+  const { session } = await authenticate.public.appProxy(request);
+
+  if (!session?.shop) {
+    throw new Response("Unauthorized", { status: 401 });
+  }
+
+  return session.shop;
+}
 
 export default function WithdrawalFormPage() {
   const { shopDomain, embedded, initialValues } = useLoaderData();

@@ -432,6 +432,11 @@ export default function VendorManagementShell({
           color:#047857;
           border-color:#a7f3d0;
         }
+        .vendor-shell__badge--info{
+          background:#eff6ff;
+          color:#1d4ed8;
+          border-color:#bfdbfe;
+        }
         .vendor-shell__badge--neutral{
           background:#f3f4f6;
           color:#374151;

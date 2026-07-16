@@ -11,12 +11,15 @@ import {
   getVendorVerifyRedirectPath,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
+  getVendorWithdrawalRequestDetail,
+  listVendorWithdrawalRequests,
   getConfiguredAdminEmails,
   isConfiguredAdminEmail,
   parseShipmentRegistrationInput,
   sanitizeVendorReturnTo,
   serializeVendorProduct,
   syncShopifyInventoryQuantity,
+  updateVendorWithdrawalReturnInfo,
   updateVendorProductInventory,
 } from "../../app/services/vendorManagement.server.js";
 
@@ -770,6 +773,220 @@ test("getVendorOrdersPageData can read mapped orders from seller orders behind f
     "https://example.com/track/JP123456789",
   );
   assert.equal(result.orders[0].canRegisterShipment, true);
+});
+
+test("listVendorWithdrawalRequests returns only requests linked to the vendor seller orders", async () => {
+  const sellerOrders = [
+    {
+      id: "seller_order_1",
+      marketplaceOrderId: "marketplace_order_1",
+      shopifyOrderId: "gid://shopify/Order/1001",
+      lines: [
+        {
+          id: "seller_line_1",
+          shopifyLineItemId: "gid://shopify/LineItem/line_1",
+          shopifyProductId: "gid://shopify/Product/1001",
+          shopifyVariantId: "gid://shopify/ProductVariant/2001",
+          productId: "product_1",
+          title: "Vendor product",
+          quantity: 1,
+        },
+      ],
+    },
+  ];
+  const withdrawalRequests = [
+    {
+      id: "withdrawal_1",
+      marketplaceOrderId: "marketplace_order_1",
+      shopifyOrderId: "gid://shopify/Order/1001",
+      shopifyOrderName: "#1001",
+      customerName: "Taro",
+      customerEmail: "taro@example.com",
+      withdrawalScope: "FULL",
+      status: "RETURN_REQUESTED",
+      eligibilityStatus: "ELIGIBLE",
+      returnRequirementStatus: "WAITING",
+      returnConditionStatus: "UNDECIDED",
+      submittedPayloadJson: {},
+      selectedLineItemsJson: {},
+      orderSnapshotJson: {},
+      createdAt: new Date("2026-07-10T00:00:00Z"),
+      updatedAt: new Date("2026-07-10T00:00:00Z"),
+    },
+    {
+      id: "withdrawal_other",
+      marketplaceOrderId: "marketplace_order_2",
+      shopifyOrderId: "gid://shopify/Order/2001",
+      customerName: "Other",
+      customerEmail: "other@example.com",
+      withdrawalScope: "FULL",
+      status: "REQUESTED",
+      eligibilityStatus: "ELIGIBLE",
+      returnRequirementStatus: "UNDECIDED",
+      returnConditionStatus: "UNDECIDED",
+      submittedPayloadJson: {},
+      selectedLineItemsJson: {},
+      orderSnapshotJson: {},
+      createdAt: new Date("2026-07-10T00:00:00Z"),
+      updatedAt: new Date("2026-07-10T00:00:00Z"),
+    },
+  ];
+  const prismaClient = {
+    sellerOrder: {
+      findMany: async (query) => {
+        assert.deepEqual(query.where, { vendorStoreId: "store_1" });
+        return sellerOrders;
+      },
+    },
+    withdrawalRequest: {
+      findMany: async (query) => {
+        assert.deepEqual(query.where.OR, [
+          { shopifyOrderId: { in: ["gid://shopify/Order/1001"] } },
+          { marketplaceOrderId: { in: ["marketplace_order_1"] } },
+        ]);
+        return withdrawalRequests;
+      },
+    },
+  };
+
+  const result = await listVendorWithdrawalRequests(
+    { storeId: "store_1" },
+    { prismaClient },
+  );
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, "withdrawal_1");
+  assert.equal(result[0].shopifyOrderName, "#1001");
+  assert.equal(result[0].statusLabel, "返送待ち");
+});
+
+test("updateVendorWithdrawalReturnInfo verifies vendor access and records return info", async () => {
+  const withdrawalRequest = {
+    id: "withdrawal_1",
+    marketplaceOrderId: "marketplace_order_1",
+    shopifyOrderId: "gid://shopify/Order/1001",
+    shopifyOrderName: "#1001",
+    customerName: "Taro",
+    customerEmail: "taro@example.com",
+    withdrawalScope: "PARTIAL",
+    status: "RETURN_REQUESTED",
+    eligibilityStatus: "ELIGIBLE",
+    returnRequirementStatus: "WAITING",
+    returnConditionStatus: "UNDECIDED",
+    submittedPayloadJson: {},
+    selectedLineItemsJson: {
+      selectedLineItems: ["gid://shopify/LineItem/line_1"],
+    },
+    orderSnapshotJson: {},
+    statusHistory: [],
+    emailLogs: [],
+    createdAt: new Date("2026-07-10T00:00:00Z"),
+    updatedAt: new Date("2026-07-10T00:00:00Z"),
+  };
+  const sellerOrders = [
+    {
+      id: "seller_order_1",
+      marketplaceOrderId: "marketplace_order_1",
+      shopifyOrderId: "gid://shopify/Order/1001",
+      sellerPayableAmount: 1000,
+      sellerRefundAmount: 0,
+      currencyCode: "jpy",
+      fulfillmentStatus: "fulfilled",
+      lines: [
+        {
+          id: "seller_line_1",
+          shopifyLineItemId: "gid://shopify/LineItem/line_1",
+          shopifyProductId: "gid://shopify/Product/1001",
+          shopifyVariantId: "gid://shopify/ProductVariant/2001",
+          productId: "product_1",
+          title: "Vendor product",
+          quantity: 1,
+          netAmount: 1000,
+          currencyCode: "jpy",
+        },
+        {
+          id: "seller_line_2",
+          shopifyLineItemId: "gid://shopify/LineItem/line_2",
+          shopifyProductId: "gid://shopify/Product/1002",
+          shopifyVariantId: "gid://shopify/ProductVariant/2002",
+          productId: "product_2",
+          title: "Unselected product",
+          quantity: 1,
+          netAmount: 500,
+          currencyCode: "jpy",
+        },
+      ],
+    },
+  ];
+  const statusHistory = [];
+  const prismaClient = {
+    withdrawalRequest: {
+      findUnique: async ({ include }) => {
+        if (include) {
+          return {
+            ...withdrawalRequest,
+            statusHistory,
+            emailLogs: [],
+          };
+        }
+
+        return withdrawalRequest;
+      },
+      update: async ({ data }) => {
+        Object.assign(withdrawalRequest, data);
+        return {
+          ...withdrawalRequest,
+        };
+      },
+    },
+    sellerOrder: {
+      findMany: async () => sellerOrders,
+    },
+    withdrawalRequestStatusHistory: {
+      create: async ({ data }) => {
+        statusHistory.push(data);
+        return data;
+      },
+    },
+    $transaction: async (callback) =>
+      callback({
+        withdrawalRequest: prismaClient.withdrawalRequest,
+        withdrawalRequestStatusHistory:
+          prismaClient.withdrawalRequestStatusHistory,
+      }),
+  };
+  const formData = new FormData();
+  formData.set("returnRequirementStatus", "CONDITION_CHECKED");
+  formData.set("returnConditionStatus", "UNUSED_OK");
+  formData.set("returnTrackingCompany", "Japan Post");
+  formData.set("returnTrackingNumber", "TEST123456789JP");
+  formData.set("returnReceivedAt", "2026-07-10");
+  formData.set("returnConditionNotes", "問題なし");
+
+  const detail = await getVendorWithdrawalRequestDetail(
+    { storeId: "store_1", withdrawalRequestId: "withdrawal_1" },
+    { prismaClient },
+  );
+  assert.equal(detail.withdrawalRequest.id, "withdrawal_1");
+  assert.equal(detail.sellerOrders[0].lines.length, 1);
+  assert.equal(detail.sellerOrders[0].lines[0].id, "seller_line_1");
+
+  const result = await updateVendorWithdrawalReturnInfo(
+    {
+      storeId: "store_1",
+      withdrawalRequestId: "withdrawal_1",
+      formData,
+    },
+    { prismaClient },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(withdrawalRequest.returnRequirementStatus, "CONDITION_CHECKED");
+  assert.equal(withdrawalRequest.returnConditionStatus, "UNUSED_OK");
+  assert.equal(withdrawalRequest.returnTrackingNumber, "TEST123456789JP");
+  assert.equal(withdrawalRequest.returnInfoUpdatedBy, "vendor:store_1");
+  assert.equal(statusHistory.at(-1).reason, "return_info_updated");
+  assert.equal(statusHistory.at(-1).changedBy, "vendor:store_1");
 });
 
 test("getVendorOrdersPageData marks fully refunded SellerOrder rows as not shippable", async () => {

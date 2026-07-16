@@ -42,9 +42,12 @@ model VendorStore {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  vendorAuth Vendor?
-  seller     Seller?
-  products   Product[]
+  vendorAuth             Vendor?
+  seller                 Seller?
+  products               Product[]
+  returnAddresses        VendorReturnAddress[]
+  withdrawalContracts    WithdrawalContract[]
+  withdrawalReturnGroups WithdrawalReturnGroup[]
 }
 
 model Product {
@@ -158,6 +161,7 @@ model Seller {
   ledgerEntries       LedgerEntry[]
   payoutRuns          PayoutRun[]
   salesCreditOffsets  SalesCreditOffset[]
+  withdrawalContracts WithdrawalContract[]
 
   @@index([status, createdAt])
   @@index([sellerVerificationStatus, updatedAt])
@@ -187,8 +191,11 @@ model MarketplaceOrder {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  sellerOrders SellerOrder[]
-  shadowChecks SellerOrderShadowCheck[]
+  sellerOrders            SellerOrder[]
+  shadowChecks            SellerOrderShadowCheck[]
+  withdrawalRequests      WithdrawalRequest[]
+  withdrawalLinePositions WithdrawalOrderLinePosition[]
+  withdrawalContracts     WithdrawalContract[]
 
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopifyOrderId])
@@ -220,9 +227,12 @@ model SellerOrder {
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 
-  marketplaceOrder MarketplaceOrder  @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
-  lines            SellerOrderLine[]
-  shipments        SellerShipment[]
+  marketplaceOrder         MarketplaceOrder          @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
+  lines                    SellerOrderLine[]
+  shipments                SellerShipment[]
+  withdrawalContracts      WithdrawalContract[]
+  withdrawalReturnGroups   WithdrawalReturnGroup[]
+  withdrawalRequestedLines WithdrawalRequestedLine[]
 
   @@unique([marketplaceOrderId, sellerId])
   @@index([sellerId, createdAt])
@@ -253,8 +263,9 @@ model SellerOrderLine {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  sellerOrder   SellerOrder          @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
-  shipmentLines SellerShipmentLine[]
+  sellerOrder              SellerOrder               @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  shipmentLines            SellerShipmentLine[]
+  withdrawalRequestedLines WithdrawalRequestedLine[]
 
   @@unique([sellerOrderId, shopifyLineItemId])
   @@index([shopifyLineItemId])
@@ -690,6 +701,15 @@ model WithdrawalRequest {
   completionRecordedBy        String?
   completionNotifiedAt        DateTime?
   completionEmailMessageId    String?
+  workflowVersion             Int       @default(1)
+  returnMode                  String    @default("LEGACY_SINGLE")
+  contractMode                String?
+  contractPolicyVersion       Int?
+  termsVersion                String?
+  progressStatus              String    @default("PENDING")
+  outcomeStatus               String    @default("UNDECIDED")
+  v2ActivatedAt               DateTime?
+  v2ReviewReason              String?
   completedAt                 DateTime?
   rejectedAt                  DateTime?
   rejectionReason             String?
@@ -701,8 +721,13 @@ model WithdrawalRequest {
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
-  statusHistory WithdrawalRequestStatusHistory[]
-  emailLogs     WithdrawalEmailLog[]
+  statusHistory          WithdrawalRequestStatusHistory[]
+  emailLogs              WithdrawalEmailLog[]
+  marketplaceOrder       MarketplaceOrder?                @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  contracts              WithdrawalContract[]
+  requestedLines         WithdrawalRequestedLine[]
+  actualRefundEvents     WithdrawalActualRefundEvent[]
+  withdrawalReturnGroups WithdrawalReturnGroup[]
 
   @@index([shopDomain, shopifyOrderId])
   @@index([shopDomain, shopifyOrderName])
@@ -736,6 +761,8 @@ model WithdrawalRequestStatusHistory {
 model WithdrawalEmailLog {
   id                  String    @id @default(cuid())
   withdrawalRequestId String
+  returnGroupId       String?
+  instructionId       String?
   emailType           String
   toEmail             String
   fromEmail           String?
@@ -749,11 +776,413 @@ model WithdrawalEmailLog {
   sentAt              DateTime?
   createdAt           DateTime  @default(now())
 
-  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+  withdrawalRequest WithdrawalRequest            @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+  returnGroup       WithdrawalReturnGroup?       @relation(fields: [returnGroupId], references: [id], onDelete: SetNull)
+  instruction       WithdrawalReturnInstruction? @relation(fields: [instructionId], references: [id], onDelete: SetNull)
 
   @@index([withdrawalRequestId, createdAt])
+  @@index([returnGroupId, createdAt])
+  @@index([instructionId])
   @@index([emailType, createdAt])
   @@map("withdrawal_email_logs")
+}
+
+model WithdrawalWorkflowPolicy {
+  id                  String    @id @default(cuid())
+  version             Int       @unique
+  contractMode        String
+  termsVersion        String
+  directReturnEnabled Boolean   @default(false)
+  active              Boolean   @default(false)
+  effectiveAt         DateTime?
+  activatedAt         DateTime?
+  activatedBy         String?
+  deactivatedAt       DateTime?
+  deactivatedBy       String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([active, effectiveAt])
+  @@map("withdrawal_workflow_policies")
+}
+
+model VendorReturnAddress {
+  id                         String    @id @default(cuid())
+  vendorStoreId              String
+  version                    Int
+  status                     String    @default("DRAFT")
+  recipientName              String
+  postalCode                 String
+  countryCode                String
+  countryLabel               String?
+  region                     String?
+  city                       String?
+  address1                   String
+  address2                   String?
+  phone                      String?
+  instructions               String?
+  canReceiveReturnsConfirmed Boolean   @default(false)
+  buyerDisclosureConfirmed   Boolean   @default(false)
+  legalRecipientConfirmed    Boolean   @default(false)
+  confirmedAt                DateTime?
+  confirmedBy                String?
+  activatedAt                DateTime?
+  activatedBy                String?
+  deactivatedAt              DateTime?
+  deactivatedBy              String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  vendorStore  VendorStore             @relation(fields: [vendorStoreId], references: [id], onDelete: Restrict)
+  returnGroups WithdrawalReturnGroup[]
+
+  @@unique([vendorStoreId, version])
+  @@index([vendorStoreId, status])
+  @@map("vendor_return_addresses")
+}
+
+model WithdrawalContract {
+  id                              String    @id @default(cuid())
+  withdrawalRequestId             String
+  marketplaceOrderId              String?
+  sellerOrderId                   String?
+  sellerId                        String?
+  vendorStoreId                   String?
+  contractKey                     String
+  contractMode                    String
+  contractPartyRole               String
+  contractPartyName               String
+  contractPartyId                 String?
+  sellerLegalRoleSnapshot         String?
+  refundResponsibilitySnapshot    String
+  termsVersion                    String
+  progressStatus                  String    @default("PENDING")
+  outcomeStatus                   String    @default("UNDECIDED")
+  lastPhysicalPossessionAt        DateTime?
+  withdrawalEligibilityDeadlineAt DateTime?
+  withdrawalExercisedAt           DateTime?
+  statutoryReturnDeadlineAt       DateTime?
+  initialShippingRefundStatus     String    @default("UNDECIDED")
+  initialShippingRefundAmount     Int       @default(0)
+  initialShippingRefundReason     String?
+  currencyCode                    String    @default("JPY")
+  itemRefundBaseAmount            Int       @default(0)
+  deductionAmount                 Int       @default(0)
+  itemRefundNetAmount             Int       @default(0)
+  plannedRefundAmount             Int       @default(0)
+  completedAt                     DateTime?
+  metadataJson                    Json?
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime  @updatedAt
+
+  withdrawalRequest       WithdrawalRequest                  @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  marketplaceOrder        MarketplaceOrder?                  @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  sellerOrder             SellerOrder?                       @relation(fields: [sellerOrderId], references: [id], onDelete: SetNull)
+  seller                  Seller?                            @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  vendorStore             VendorStore?                       @relation(fields: [vendorStoreId], references: [id], onDelete: SetNull)
+  requestedLines          WithdrawalRequestedLine[]
+  returnGroups            WithdrawalReturnGroup[]
+  actualRefundAllocations WithdrawalActualRefundAllocation[]
+
+  @@unique([withdrawalRequestId, contractKey])
+  @@index([marketplaceOrderId])
+  @@index([vendorStoreId, progressStatus])
+  @@index([sellerId, progressStatus])
+  @@map("withdrawal_contracts")
+}
+
+model WithdrawalOrderLinePosition {
+  id                 String   @id @default(cuid())
+  marketplaceOrderId String?
+  shopDomain         String
+  shopifyOrderId     String
+  shopifyLineItemId  String
+  purchasedQuantity  Int      @default(0)
+  refundedQuantity   Int      @default(0)
+  cancelledQuantity  Int      @default(0)
+  observedAt         DateTime @default(now())
+  sourceSnapshotJson Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  marketplaceOrder MarketplaceOrder?         @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  requestedLines   WithdrawalRequestedLine[]
+
+  @@unique([shopDomain, shopifyOrderId, shopifyLineItemId])
+  @@index([marketplaceOrderId])
+  @@map("withdrawal_order_line_positions")
+}
+
+model WithdrawalRequestedLine {
+  id                      String    @id @default(cuid())
+  withdrawalRequestId     String
+  withdrawalContractId    String?
+  orderLinePositionId     String
+  sellerOrderId           String?
+  sellerOrderLineId       String?
+  shopDomain              String
+  shopifyOrderId          String
+  shopifyLineItemId       String
+  shopifyProductId        String?
+  shopifyVariantId        String?
+  productId               String?
+  requestedQuantity       Int
+  reservedQuantity        Int       @default(0)
+  approvedQuantity        Int       @default(0)
+  releasedQuantity        Int       @default(0)
+  titleSnapshot           String
+  skuSnapshot             String?
+  unitAmountSnapshot      Int       @default(0)
+  subtotalAmountSnapshot  Int       @default(0)
+  discountAmountSnapshot  Int       @default(0)
+  taxAmountSnapshot       Int       @default(0)
+  paidAmountSnapshot      Int       @default(0)
+  currencyCode            String    @default("JPY")
+  mappingStatus           String    @default("PENDING")
+  mappingMethod           String?
+  candidateVendorStoreId  String?
+  confirmedVendorStoreId  String?
+  mappingConfirmedAt      DateTime?
+  mappingConfirmedBy      String?
+  returnDisposition       String    @default("RETURN_REQUIRED")
+  itemRefundBaseAmount    Int       @default(0)
+  deductionAmount         Int       @default(0)
+  deductionReason         String?
+  itemRefundNetAmount     Int       @default(0)
+  allocationRemainderRank Int?
+  freeTextNote            String?
+  metadataJson            Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  withdrawalRequest       WithdrawalRequest                  @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  withdrawalContract      WithdrawalContract?                @relation(fields: [withdrawalContractId], references: [id], onDelete: SetNull)
+  orderLinePosition       WithdrawalOrderLinePosition        @relation(fields: [orderLinePositionId], references: [id], onDelete: Restrict)
+  sellerOrder             SellerOrder?                       @relation(fields: [sellerOrderId], references: [id], onDelete: SetNull)
+  sellerOrderLine         SellerOrderLine?                   @relation(fields: [sellerOrderLineId], references: [id], onDelete: SetNull)
+  returnGroupLines        WithdrawalReturnGroupLine[]
+  actualRefundAllocations WithdrawalActualRefundAllocation[]
+
+  @@unique([withdrawalRequestId, shopDomain, shopifyOrderId, shopifyLineItemId])
+  @@index([orderLinePositionId, reservedQuantity])
+  @@index([confirmedVendorStoreId, mappingStatus])
+  @@index([withdrawalContractId])
+  @@map("withdrawal_requested_lines")
+}
+
+model WithdrawalReturnGroup {
+  id                          String    @id @default(cuid())
+  withdrawalRequestId         String
+  withdrawalContractId        String
+  vendorStoreId               String?
+  sellerOrderId               String?
+  returnAddressId             String?
+  groupKey                    String
+  mappingStatus               String    @default("PENDING")
+  routingStatus               String    @default("PENDING")
+  instructionStatus           String    @default("NOT_READY")
+  evidenceStatus              String    @default("NOT_SUBMITTED")
+  receiptStatus               String    @default("NOT_RECEIVED")
+  inspectionStatus            String    @default("NOT_INSPECTED")
+  refundDecisionStatus        String    @default("UNDECIDED")
+  refundReconciliationStatus  String    @default("NOT_RECONCILED")
+  progressStatus              String    @default("PENDING")
+  outcomeStatus               String    @default("UNDECIDED")
+  storeNameSnapshot           String?
+  sellerLegalRoleSnapshot     String?
+  instructionsSentAt          DateTime?
+  operationalReturnDeadlineAt DateTime?
+  statutoryReturnDeadlineAt   DateTime?
+  returnShippingPayer         String    @default("BUYER")
+  itemRefundBaseAmount        Int       @default(0)
+  deductionAmount             Int       @default(0)
+  itemRefundNetAmount         Int       @default(0)
+  plannedRefundAmount         Int       @default(0)
+  currencyCode                String    @default("JPY")
+  blockedReason               String?
+  completedAt                 DateTime?
+  metadataJson                Json?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  withdrawalRequest  WithdrawalRequest             @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  withdrawalContract WithdrawalContract            @relation(fields: [withdrawalContractId], references: [id], onDelete: Restrict)
+  vendorStore        VendorStore?                  @relation(fields: [vendorStoreId], references: [id], onDelete: SetNull)
+  sellerOrder        SellerOrder?                  @relation(fields: [sellerOrderId], references: [id], onDelete: SetNull)
+  returnAddress      VendorReturnAddress?          @relation(fields: [returnAddressId], references: [id], onDelete: SetNull)
+  lines              WithdrawalReturnGroupLine[]
+  instructions       WithdrawalReturnInstruction[]
+  shipments          WithdrawalReturnShipment[]
+  accessTokens       WithdrawalAccessToken[]
+  emailLogs          WithdrawalEmailLog[]
+
+  @@unique([withdrawalRequestId, groupKey])
+  @@index([vendorStoreId, progressStatus])
+  @@index([withdrawalContractId])
+  @@index([instructionStatus, blockedReason])
+  @@map("withdrawal_return_groups")
+}
+
+model WithdrawalReturnGroupLine {
+  id                 String   @id @default(cuid())
+  returnGroupId      String
+  requestedLineId    String
+  instructedQuantity Int      @default(0)
+  submittedQuantity  Int      @default(0)
+  receivedQuantity   Int      @default(0)
+  missingQuantity    Int      @default(0)
+  conditionStatus    String   @default("UNDECIDED")
+  conditionNotes     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  returnGroup   WithdrawalReturnGroup          @relation(fields: [returnGroupId], references: [id], onDelete: Restrict)
+  requestedLine WithdrawalRequestedLine        @relation(fields: [requestedLineId], references: [id], onDelete: Restrict)
+  shipmentLines WithdrawalReturnShipmentLine[]
+
+  @@unique([returnGroupId, requestedLineId])
+  @@index([requestedLineId])
+  @@map("withdrawal_return_group_lines")
+}
+
+model WithdrawalReturnInstruction {
+  id                      String    @id @default(cuid())
+  returnGroupId           String
+  version                 Int
+  status                  String    @default("DRAFT")
+  storeSnapshotJson       Json
+  addressSnapshotJson     Json
+  itemsSnapshotJson       Json
+  deadlineSnapshotJson    Json
+  returnCostSnapshotJson  Json
+  notesSnapshot           String?
+  templateVersion         String
+  sentAt                  DateTime?
+  sentBy                  String?
+  supersedesInstructionId String?
+  createdAt               DateTime  @default(now())
+
+  returnGroup           WithdrawalReturnGroup         @relation(fields: [returnGroupId], references: [id], onDelete: Restrict)
+  supersedesInstruction WithdrawalReturnInstruction?  @relation("WithdrawalInstructionSupersession", fields: [supersedesInstructionId], references: [id], onDelete: SetNull)
+  supersededBy          WithdrawalReturnInstruction[] @relation("WithdrawalInstructionSupersession")
+  emailLogs             WithdrawalEmailLog[]
+
+  @@unique([returnGroupId, version])
+  @@index([returnGroupId, status])
+  @@map("withdrawal_return_instructions")
+}
+
+model WithdrawalReturnShipment {
+  id                 String    @id @default(cuid())
+  returnGroupId      String
+  packageNumber      Int
+  trackingCompany    String?
+  trackingNumber     String?
+  trackingUrl        String?
+  customerMemo       String?
+  proofJson          Json?
+  submittedAt        DateTime?
+  evidenceAcceptedAt DateTime?
+  evidenceAcceptedBy String?
+  receivedAt         DateTime?
+  receivedBy         String?
+  status             String    @default("SUBMITTED")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  returnGroup WithdrawalReturnGroup          @relation(fields: [returnGroupId], references: [id], onDelete: Restrict)
+  lines       WithdrawalReturnShipmentLine[]
+
+  @@unique([returnGroupId, packageNumber])
+  @@index([trackingNumber])
+  @@index([returnGroupId, status])
+  @@map("withdrawal_return_shipments")
+}
+
+model WithdrawalReturnShipmentLine {
+  id                String   @id @default(cuid())
+  shipmentId        String
+  returnGroupLineId String
+  submittedQuantity Int      @default(0)
+  receivedQuantity  Int      @default(0)
+  missingQuantity   Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  shipment        WithdrawalReturnShipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  returnGroupLine WithdrawalReturnGroupLine @relation(fields: [returnGroupLineId], references: [id], onDelete: Restrict)
+
+  @@unique([shipmentId, returnGroupLineId])
+  @@index([returnGroupLineId])
+  @@map("withdrawal_return_shipment_lines")
+}
+
+model WithdrawalAccessToken {
+  id            String    @id @default(cuid())
+  returnGroupId String
+  purpose       String
+  tokenHash     String    @unique
+  issuedAt      DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  firstUsedAt   DateTime?
+  lastUsedAt    DateTime?
+  issuedReason  String?
+  revokedReason String?
+  createdAt     DateTime  @default(now())
+
+  returnGroup WithdrawalReturnGroup @relation(fields: [returnGroupId], references: [id], onDelete: Restrict)
+
+  @@index([returnGroupId, purpose, expiresAt])
+  @@map("withdrawal_access_tokens")
+}
+
+model WithdrawalActualRefundEvent {
+  id                         String    @id @default(cuid())
+  withdrawalRequestId        String
+  shopDomain                 String
+  shopifyRefundId            String
+  shopifyOrderId             String?
+  itemAmount                 Int       @default(0)
+  initialShippingAmount      Int       @default(0)
+  otherAmount                Int       @default(0)
+  currencyCode               String    @default("JPY")
+  webhookReceivedAt          DateTime?
+  ledgerReconciliationStatus String    @default("PENDING")
+  ledgerAmount               Int?
+  reconciliationJson         Json?
+  metadataJson               Json?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  withdrawalRequest WithdrawalRequest                  @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  allocations       WithdrawalActualRefundAllocation[]
+
+  @@unique([withdrawalRequestId, shopDomain, shopifyRefundId])
+  @@index([withdrawalRequestId, createdAt])
+  @@map("withdrawal_actual_refund_events")
+}
+
+model WithdrawalActualRefundAllocation {
+  id                    String   @id @default(cuid())
+  actualRefundEventId   String
+  withdrawalContractId  String?
+  requestedLineId       String?
+  shopifyLineItemId     String?
+  quantity              Int      @default(0)
+  itemAmount            Int      @default(0)
+  initialShippingAmount Int      @default(0)
+  createdAt             DateTime @default(now())
+
+  actualRefundEvent  WithdrawalActualRefundEvent @relation(fields: [actualRefundEventId], references: [id], onDelete: Restrict)
+  withdrawalContract WithdrawalContract?         @relation(fields: [withdrawalContractId], references: [id], onDelete: SetNull)
+  requestedLine      WithdrawalRequestedLine?    @relation(fields: [requestedLineId], references: [id], onDelete: SetNull)
+
+  @@index([actualRefundEventId])
+  @@index([withdrawalContractId])
+  @@index([requestedLineId])
+  @@map("withdrawal_actual_refund_allocations")
 }
 
 model WiseTransferEvent {

@@ -2,10 +2,24 @@ import { json } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
 import { processShopifyRefundSettlement } from "../services/sellerPayments.server.js";
+import { reconcileWithdrawalRefundWebhook } from "../services/withdrawalDirectReturns.server.js";
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
   const result = await processShopifyRefundSettlement({ payload, shop });
+  let withdrawalReconciliation = null;
+  try {
+    withdrawalReconciliation = await reconcileWithdrawalRefundWebhook({
+      payload,
+      shop,
+    });
+  } catch (error) {
+    console.error("withdrawal refund reconciliation failed:", {
+      shop,
+      refundId: payload?.id || null,
+      error: error?.message || String(error),
+    });
+  }
 
   if (!result.ok) {
     console.warn("refunds/create settlement skipped:", {
@@ -26,6 +40,12 @@ export const action = async ({ request }) => {
       sellerId: result.sellerId || null,
       amount: result.amount || null,
       currencyCode: result.currencyCode || null,
+    },
+    withdrawalReconciliation: {
+      ok: Boolean(withdrawalReconciliation?.ok),
+      duplicate: Boolean(withdrawalReconciliation?.duplicate),
+      skipped: Boolean(withdrawalReconciliation?.skipped),
+      reason: withdrawalReconciliation?.reason || null,
     },
   });
 };

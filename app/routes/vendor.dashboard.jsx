@@ -24,6 +24,7 @@ function badgeClass(label) {
 export const loader = async ({ request }) => {
   const {
     getVendorPublicContext,
+    getVendorWithdrawalSummary,
     requireVendorContext,
     serializeVendorProduct,
   } = await import("../services/vendorManagement.server");
@@ -36,6 +37,9 @@ export const loader = async ({ request }) => {
   const salesCreditSummary = await getSellerSalesCreditSummary({
     vendorId: vendor.id,
     currencyCode: "jpy",
+  });
+  const withdrawalSummary = await getVendorWithdrawalSummary({
+    storeId: store.id,
   });
 
   const rawProducts = Array.isArray(store.products) ? store.products : [];
@@ -62,6 +66,14 @@ export const loader = async ({ request }) => {
       value: `${products.length}件`,
       sub: "現在の店舗に紐づく商品数",
     },
+    {
+      title: "撤回申請",
+      value: `${withdrawalSummary.openCount}件`,
+      sub:
+        withdrawalSummary.actionCount > 0
+          ? `確認が必要: ${withdrawalSummary.actionCount}件`
+          : "対応中の申請",
+    },
   ];
 
   const chartData = [
@@ -87,6 +99,7 @@ export const loader = async ({ request }) => {
     monthlyPreview,
     products,
     salesCreditSummary,
+    withdrawalSummary,
   });
 };
 
@@ -320,7 +333,14 @@ function SalesTrendChart({ data }) {
 
 export default function VendorDashboard() {
   const actionData = useActionData();
-  const { store, summaryCards, chartData, monthlyPreview, products } =
+  const {
+    store,
+    summaryCards,
+    chartData,
+    monthlyPreview,
+    products,
+    withdrawalSummary,
+  } =
     useLoaderData();
 
   const [query, setQuery] = useState("");
@@ -328,6 +348,7 @@ export default function VendorDashboard() {
   const ordersPath = useVendorScopedPath("/vendor/orders");
   const productsPath = useVendorScopedPath("/vendor/products");
   const monthlyReportPath = useVendorScopedPath("/vendor/reports/monthly");
+  const withdrawalsPath = useVendorScopedPath("/vendor/withdrawals");
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -506,6 +527,36 @@ export default function VendorDashboard() {
             <p className="vendor-stat-sub">{card.sub}</p>
           </div>
         ))}
+      </section>
+
+      <section className="vendor-card">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "16px",
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <h2 className="vendor-section-title">撤回申請</h2>
+            <p className="vendor-section-subtitle" style={{ marginBottom: 0 }}>
+              お客様からの撤回申請がある場合、返送状況や商品状態をここから確認できます。
+            </p>
+          </div>
+          <Link className="vendor-shell__button" to={withdrawalsPath}>
+            撤回申請を開く
+          </Link>
+        </div>
+        <div className="vendor-note" style={{ marginTop: "16px" }}>
+          <strong>対応中 {withdrawalSummary.openCount}件</strong>
+          <div>
+            {withdrawalSummary.actionCount > 0
+              ? `返送到着・商品状態の確認が必要な申請が ${withdrawalSummary.actionCount}件あります。`
+              : "現在、出店者側で確認が必要な申請はありません。"}
+          </div>
+        </div>
       </section>
 
       <section className="vendor-card">

@@ -11,6 +11,15 @@ import {
   buildCarrierTrackingUrl,
   getShippingCarrierById,
 } from "../utils/shippingCarriers.js";
+import { updateWithdrawalReturnInfo } from "./withdrawals.server.js";
+import { updateWithdrawalGroupReview } from "./withdrawalDirectReturns.server.js";
+import {
+  WITHDRAWAL_STATUSES,
+  getWithdrawalEligibilityLabel,
+  getWithdrawalEligibilityTone,
+  getWithdrawalStatusLabel,
+  getWithdrawalStatusTone,
+} from "../utils/withdrawalStatus.js";
 
 const SHOPIFY_API_VERSION = "2026-01";
 export const READ_ORDERS_SCOPE = "read_orders";
@@ -20,6 +29,13 @@ export const READ_MERCHANT_FULFILLMENT_ORDERS_SCOPE =
 export const WRITE_MERCHANT_FULFILLMENT_ORDERS_SCOPE =
   "write_merchant_managed_fulfillment_orders";
 export const VENDOR_DRAFT_ORDERS_PAGE_SIZE = 50;
+
+const CLOSED_WITHDRAWAL_STATUSES = new Set([
+  WITHDRAWAL_STATUSES.REFUNDED,
+  WITHDRAWAL_STATUSES.CANCELLED,
+  WITHDRAWAL_STATUSES.REJECTED,
+  WITHDRAWAL_STATUSES.EXPIRED,
+]);
 
 const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `
   query CurrentAppInstallationAccessScopes {
@@ -291,6 +307,451 @@ export function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatDate(value) {
+  if (!value) return "未設定";
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "未設定";
+
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function normalizeIdSet(values = []) {
+  return new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+}
+
+function getJsonObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
+}
+
+function getJsonArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function isClosedWithdrawalStatus(status) {
+  return CLOSED_WITHDRAWAL_STATUSES.has(String(status || "").trim());
+}
+
+function isReturnReviewNeeded(withdrawalRequest) {
+  const returnRequirementStatus = String(
+    withdrawalRequest?.returnRequirementStatus || "UNDECIDED",
+  ).toUpperCase();
+  const returnConditionStatus = String(
+    withdrawalRequest?.returnConditionStatus || "UNDECIDED",
+  ).toUpperCase();
+
+  if (isClosedWithdrawalStatus(withdrawalRequest?.status)) {
+    return false;
+  }
+
+  if (["IN_TRANSIT", "RECEIVED"].includes(returnRequirementStatus)) {
+    return true;
+  }
+
+  return (
+    returnRequirementStatus === "CONDITION_CHECKED" &&
+    returnConditionStatus === "UNDECIDED"
+  );
+}
+
+function getVendorWithdrawalActionLabel(withdrawalRequest) {
+  const returnRequirementStatus = String(
+    withdrawalRequest?.returnRequirementStatus || "UNDECIDED",
+  ).toUpperCase();
+
+  if (isClosedWithdrawalStatus(withdrawalRequest?.status)) {
+    return "対応完了";
+  }
+
+  if (returnRequirementStatus === "RECEIVED") {
+    return "商品状態を確認";
+  }
+
+  if (returnRequirementStatus === "IN_TRANSIT") {
+    return "返送到着を確認";
+  }
+
+  if (returnRequirementStatus === "WAITING") {
+    return "返送待ち";
+  }
+
+  return "管理者確認中";
+}
+
+function getVendorWithdrawalTone(withdrawalRequest) {
+  if (isClosedWithdrawalStatus(withdrawalRequest?.status)) {
+    return "success";
+  }
+
+  if (isReturnReviewNeeded(withdrawalRequest)) {
+    return "warning";
+  }
+
+  return getWithdrawalStatusTone(withdrawalRequest?.status);
+}
+
+function getSelectedLineItemValues(withdrawalRequest) {
+  const data = getJsonObject(withdrawalRequest?.selectedLineItemsJson);
+  const submitted = getJsonObject(withdrawalRequest?.submittedPayloadJson);
+  const values = [
+    ...getJsonArray(data.selectedLineItems),
+    ...getJsonArray(submitted.selectedLineItems),
+  ];
+
+  return normalizeIdSet(values);
+}
+
+function lineMatchesSelectedWithdrawalValues(line, selectedValues) {
+  if (!line || !selectedValues?.size) {
+    return false;
+  }
+
+  const candidates = [
+    line.shopifyLineItemId,
+    line.shopifyProductId,
+    line.shopifyVariantId,
+    line.productId,
+    line.title,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return candidates.some((candidate) => selectedValues.has(candidate));
+}
+
+function sellerOrderTouchesWithdrawal(sellerOrder, withdrawalRequest) {
+  if (!sellerOrder || !withdrawalRequest) {
+    return false;
+  }
+
+  const requestMarketplaceOrderId = String(
+    withdrawalRequest.marketplaceOrderId || "",
+  ).trim();
+  const requestShopifyOrderId = String(withdrawalRequest.shopifyOrderId || "").trim();
+  const sellerMarketplaceOrderId = String(
+    sellerOrder.marketplaceOrderId || "",
+  ).trim();
+  const sellerShopifyOrderId = String(sellerOrder.shopifyOrderId || "").trim();
+
+  const sameOrder =
+    (requestMarketplaceOrderId &&
+      sellerMarketplaceOrderId &&
+      requestMarketplaceOrderId === sellerMarketplaceOrderId) ||
+    (requestShopifyOrderId &&
+      sellerShopifyOrderId &&
+      requestShopifyOrderId === sellerShopifyOrderId);
+
+  if (!sameOrder) {
+    return false;
+  }
+
+  if (String(withdrawalRequest.withdrawalScope || "FULL").toUpperCase() !== "PARTIAL") {
+    return true;
+  }
+
+  const selectedValues = getSelectedLineItemValues(withdrawalRequest);
+
+  // If the buyer described a partial withdrawal as free text, show it to every
+  // seller on the order so the vendor does not miss a manual-review case.
+  if (selectedValues.size === 0) {
+    return true;
+  }
+
+  for (const line of Array.isArray(sellerOrder.lines) ? sellerOrder.lines : []) {
+    if (lineMatchesSelectedWithdrawalValues(line, selectedValues)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function filterSellerOrderLinesForWithdrawal(sellerOrder, withdrawalRequest) {
+  if (
+    String(withdrawalRequest?.withdrawalScope || "FULL").toUpperCase() !==
+    "PARTIAL"
+  ) {
+    return sellerOrder;
+  }
+
+  const selectedValues = getSelectedLineItemValues(withdrawalRequest);
+
+  if (selectedValues.size === 0) {
+    return sellerOrder;
+  }
+
+  return {
+    ...sellerOrder,
+    lines: (Array.isArray(sellerOrder.lines) ? sellerOrder.lines : []).filter(
+      (line) => lineMatchesSelectedWithdrawalValues(line, selectedValues),
+    ),
+  };
+}
+
+/* Legacy serializer was corrupted by an earlier encoding conversion.
+function serializeVendorWithdrawalRequest(withdrawalRequest) {
+  const orderSnapshot = getJsonObject(withdrawalRequest?.orderSnapshotJson);
+  const selectedLineItemsJson = getJsonObject(
+    withdrawalRequest?.selectedLineItemsJson,
+  );
+  const orderLineItems = getJsonArray(selectedLineItemsJson.orderLineItems);
+  const submittedPayload = getJsonObject(withdrawalRequest?.submittedPayloadJson);
+  const statusTone = getVendorWithdrawalTone(withdrawalRequest);
+  const statusLabel = getWithdrawalStatusLabel(withdrawalRequest?.status);
+  const needsVendorAction = isReturnReviewNeeded(withdrawalRequest);
+
+  return {
+    id: withdrawalRequest.id,
+    shopDomain: withdrawalRequest.shopDomain || "",
+    marketplaceOrderId: withdrawalRequest.marketplaceOrderId || null,
+    shopifyOrderId: withdrawalRequest.shopifyOrderId || null,
+    shopifyOrderName:
+      withdrawalRequest.shopifyOrderName ||
+      withdrawalRequest.shopifyOrderNumber ||
+      submittedPayload.orderNumber ||
+      "-",
+    customerName: withdrawalRequest.customerName || "-",
+    customerEmail: withdrawalRequest.customerEmail || "-",
+    withdrawalScope: withdrawalRequest.withdrawalScope || "FULL",
+    withdrawalScopeLabel:
+      String(withdrawalRequest.withdrawalScope || "FULL").toUpperCase() === "PARTIAL"
+        ? "一部の商品"
+        : "注文全体",
+    itemText: submittedPayload.itemText || "",
+    itemCondition: withdrawalRequest.itemCondition || submittedPayload.itemCondition || "",
+    reason: withdrawalRequest.reason || submittedPayload.reason || "",
+    status: withdrawalRequest.status,
+    statusLabel,
+    statusTone,
+    eligibilityStatus: withdrawalRequest.eligibilityStatus,
+    eligibilityLabel: getWithdrawalEligibilityLabel(
+      withdrawalRequest.eligibilityStatus,
+    ),
+    eligibilityTone: getWithdrawalEligibilityTone(
+      withdrawalRequest.eligibilityStatus,
+    ),
+    returnRequirementStatus: withdrawalRequest.returnRequirementStatus,
+    returnConditionStatus: withdrawalRequest.returnConditionStatus,
+    returnTrackingCompany: withdrawalRequest.returnTrackingCompany || "",
+    returnTrackingNumber: withdrawalRequest.returnTrackingNumber || "",
+    returnTrackingUrl: withdrawalRequest.returnTrackingUrl || "",
+    returnReceivedAt: withdrawalRequest.returnReceivedAt || null,
+    returnReceivedAtLabel: formatDate(withdrawalRequest.returnReceivedAt),
+    returnConditionNotes: withdrawalRequest.returnConditionNotes || "",
+    refundDecisionStatus: withdrawalRequest.refundDecisionStatus,
+    completionStatus: withdrawalRequest.completionStatus,
+    createdAt: withdrawalRequest.createdAt || null,
+    createdAtLabel: formatDateTime(withdrawalRequest.createdAt),
+    updatedAt: withdrawalRequest.updatedAt || null,
+    updatedAtLabel: formatDateTime(withdrawalRequest.updatedAt),
+    deadlineAt: withdrawalRequest.deadlineAt || null,
+    deadlineAtLabel: formatDate(withdrawalRequest.deadlineAt),
+    receivedDate: withdrawalRequest.receivedDate || null,
+    receivedDateLabel: formatDate(withdrawalRequest.receivedDate),
+    needsVendorAction,
+    vendorActionLabel: getVendorWithdrawalActionLabel(withdrawalRequest),
+    orderLineItems,
+    selectedLineItemsJson,
+    orderSnapshot,
+  };
+}
+
+*/
+
+function serializeVendorWithdrawalRequest(withdrawalRequest) {
+  const orderSnapshot = getJsonObject(withdrawalRequest?.orderSnapshotJson);
+  const selectedLineItemsJson = getJsonObject(
+    withdrawalRequest?.selectedLineItemsJson,
+  );
+  const submittedPayload = getJsonObject(withdrawalRequest?.submittedPayloadJson);
+  const statusTone = getVendorWithdrawalTone(withdrawalRequest);
+
+  return {
+    id: withdrawalRequest.id,
+    workflowVersion: Number(withdrawalRequest.workflowVersion || 1),
+    returnMode: withdrawalRequest.returnMode || "OPERATOR_REVIEW",
+    shopDomain: withdrawalRequest.shopDomain || "",
+    marketplaceOrderId: withdrawalRequest.marketplaceOrderId || null,
+    shopifyOrderId: withdrawalRequest.shopifyOrderId || null,
+    shopifyOrderName:
+      withdrawalRequest.shopifyOrderName ||
+      withdrawalRequest.shopifyOrderNumber ||
+      submittedPayload.orderNumber ||
+      "-",
+    customerName: withdrawalRequest.customerName || "-",
+    customerEmail: withdrawalRequest.customerEmail || "-",
+    withdrawalScope: withdrawalRequest.withdrawalScope || "FULL",
+    withdrawalScopeLabel:
+      String(withdrawalRequest.withdrawalScope || "FULL").toUpperCase() === "PARTIAL"
+        ? "一部の商品"
+        : "注文全体",
+    itemText: submittedPayload.itemText || "",
+    itemCondition:
+      withdrawalRequest.itemCondition || submittedPayload.itemCondition || "",
+    reason: withdrawalRequest.reason || submittedPayload.reason || "",
+    status: withdrawalRequest.status,
+    statusLabel: getWithdrawalStatusLabel(withdrawalRequest?.status),
+    statusTone,
+    eligibilityStatus: withdrawalRequest.eligibilityStatus,
+    eligibilityLabel: getWithdrawalEligibilityLabel(
+      withdrawalRequest.eligibilityStatus,
+    ),
+    eligibilityTone: getWithdrawalEligibilityTone(
+      withdrawalRequest.eligibilityStatus,
+    ),
+    returnRequirementStatus: withdrawalRequest.returnRequirementStatus,
+    returnConditionStatus: withdrawalRequest.returnConditionStatus,
+    returnTrackingCompany: withdrawalRequest.returnTrackingCompany || "",
+    returnTrackingNumber: withdrawalRequest.returnTrackingNumber || "",
+    returnTrackingUrl: withdrawalRequest.returnTrackingUrl || "",
+    returnReceivedAt: withdrawalRequest.returnReceivedAt || null,
+    returnReceivedAtLabel: formatDate(withdrawalRequest.returnReceivedAt),
+    returnConditionNotes: withdrawalRequest.returnConditionNotes || "",
+    refundDecisionStatus: withdrawalRequest.refundDecisionStatus,
+    completionStatus: withdrawalRequest.completionStatus,
+    createdAt: withdrawalRequest.createdAt || null,
+    createdAtLabel: formatDateTime(withdrawalRequest.createdAt),
+    updatedAt: withdrawalRequest.updatedAt || null,
+    updatedAtLabel: formatDateTime(withdrawalRequest.updatedAt),
+    deadlineAt: withdrawalRequest.deadlineAt || null,
+    deadlineAtLabel: formatDate(withdrawalRequest.deadlineAt),
+    receivedDate: withdrawalRequest.receivedDate || null,
+    receivedDateLabel: formatDate(withdrawalRequest.receivedDate),
+    needsVendorAction: isReturnReviewNeeded(withdrawalRequest),
+    vendorActionLabel: getVendorWithdrawalActionLabel(withdrawalRequest),
+    orderLineItems: getJsonArray(selectedLineItemsJson.orderLineItems),
+    selectedLineItemsJson,
+    orderSnapshot,
+  };
+}
+
+function getVendorReturnGroupPresentation(group) {
+  if (group.instructionStatus !== "SENT") {
+    return {
+      label:
+        group.blockedReason === "RETURN_ADDRESS_MISSING"
+          ? "返送先の設定が必要"
+          : "返送案内待ち",
+      tone: group.blockedReason ? "warning" : "neutral",
+      action:
+        group.blockedReason === "RETURN_ADDRESS_MISSING"
+          ? "返送先を設定"
+          : "運営の案内待ち",
+      needsAction: group.blockedReason === "RETURN_ADDRESS_MISSING",
+    };
+  }
+  if (group.evidenceStatus === "NOT_SUBMITTED") {
+    return {
+      label: "購入者の返送待ち",
+      tone: "neutral",
+      action: "返送待ち",
+      needsAction: false,
+    };
+  }
+  if (group.receiptStatus !== "RECEIVED") {
+    return {
+      label: "返送中",
+      tone: "warning",
+      action: "到着を確認",
+      needsAction: true,
+    };
+  }
+  if (!["INSPECTED", "VALUE_REDUCTION_REVIEW"].includes(group.inspectionStatus)) {
+    return {
+      label: "到着済み",
+      tone: "warning",
+      action: "商品状態を確認",
+      needsAction: true,
+    };
+  }
+  if (group.refundDecisionStatus === "UNDECIDED") {
+    return {
+      label: "検品済み",
+      tone: "success",
+      action: "運営の返金判断待ち",
+      needsAction: false,
+    };
+  }
+  return {
+    label: group.progressStatus === "COMPLETED" ? "処理完了" : "返金処理中",
+    tone: group.progressStatus === "COMPLETED" ? "success" : "neutral",
+    action: group.progressStatus === "COMPLETED" ? "対応完了" : "運営処理中",
+    needsAction: false,
+  };
+}
+
+function serializeVendorWithdrawalV2Group(group) {
+  const presentation = getVendorReturnGroupPresentation(group);
+  const base = serializeVendorWithdrawalRequest(group.withdrawalRequest);
+  const receivedShipment = (group.shipments || []).find(
+    (shipment) => shipment.receivedAt,
+  );
+
+  return {
+    ...base,
+    returnGroupId: group.id,
+    storeName: group.storeNameSnapshot || group.vendorStore?.storeName || "-",
+    status: group.progressStatus,
+    statusLabel: presentation.label,
+    statusTone: presentation.tone,
+    needsVendorAction: presentation.needsAction,
+    vendorActionLabel: presentation.action,
+    instructionStatus: group.instructionStatus,
+    evidenceStatus: group.evidenceStatus,
+    receiptStatus: group.receiptStatus,
+    inspectionStatus: group.inspectionStatus,
+    refundDecisionStatus: group.refundDecisionStatus,
+    returnTrackingCompany: group.shipments?.[0]?.trackingCompany || "",
+    returnTrackingNumber: group.shipments?.[0]?.trackingNumber || "",
+    returnTrackingUrl: group.shipments?.[0]?.trackingUrl || "",
+    returnReceivedAt: receivedShipment?.receivedAt || null,
+    returnReceivedAtLabel: formatDate(receivedShipment?.receivedAt),
+    lines: (group.lines || []).map((line) => ({
+      id: line.id,
+      requestedLineId: line.requestedLineId,
+      title: line.requestedLine?.titleSnapshot || "-",
+      sku: line.requestedLine?.skuSnapshot || "",
+      instructedQuantity: line.instructedQuantity,
+      submittedQuantity: line.submittedQuantity,
+      receivedQuantity: line.receivedQuantity,
+      missingQuantity: line.missingQuantity,
+      conditionStatus: line.conditionStatus,
+      conditionNotes: line.conditionNotes || "",
+      amount:
+        line.requestedLine?.itemRefundBaseAmount ||
+        line.requestedLine?.paidAmountSnapshot ||
+        0,
+      currencyCode:
+        line.requestedLine?.currencyCode || group.currencyCode || "JPY",
+    })),
+    shipments: group.shipments || [],
+    instructions: group.instructions || [],
+  };
+}
+
+function createVendorWithdrawalSummary(withdrawalRequests = []) {
+  const items = Array.isArray(withdrawalRequests) ? withdrawalRequests : [];
+  const openItems = items.filter((item) => !isClosedWithdrawalStatus(item.status));
+  const actionItems = items.filter((item) => item.needsVendorAction);
+
+  return {
+    totalCount: items.length,
+    openCount: openItems.length,
+    actionCount: actionItems.length,
+    latest: items[0] || null,
+  };
 }
 
 export function mapApprovalLabel(value) {
@@ -2151,6 +2612,7 @@ export async function listVendorShopifyOrderSellerOrderReferences(
     take: first,
     select: {
       id: true,
+      marketplaceOrderId: true,
       shopifyOrderId: true,
       shopifyOrderName: true,
       sellerRefundAmount: true,
@@ -2162,6 +2624,17 @@ export async function listVendorShopifyOrderSellerOrderReferences(
       metadataJson: true,
       createdAt: true,
       updatedAt: true,
+      lines: {
+        select: {
+          id: true,
+          shopifyLineItemId: true,
+          shopifyProductId: true,
+          shopifyVariantId: true,
+          productId: true,
+          title: true,
+          quantity: true,
+        },
+      },
       shipments: {
         orderBy: {
           createdAt: "desc",
@@ -2199,6 +2672,384 @@ export async function listVendorShopifyOrderSellerOrderReferences(
       seenOrderIds.add(sellerOrder.shopifyOrderId);
       return true;
     });
+}
+
+async function listVendorWithdrawalRequestsForSellerOrders(
+  { sellerOrders, first = 100 },
+  { prismaClient = prisma } = {},
+) {
+  const orders = Array.isArray(sellerOrders) ? sellerOrders : [];
+  const shopifyOrderIds = Array.from(
+    new Set(
+      orders
+        .map((sellerOrder) => String(sellerOrder?.shopifyOrderId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const marketplaceOrderIds = Array.from(
+    new Set(
+      orders
+        .map((sellerOrder) =>
+          String(sellerOrder?.marketplaceOrderId || "").trim(),
+        )
+        .filter(Boolean),
+    ),
+  );
+
+  if (
+    !prismaClient?.withdrawalRequest?.findMany ||
+    (shopifyOrderIds.length === 0 && marketplaceOrderIds.length === 0)
+  ) {
+    return [];
+  }
+
+  const withdrawalRequests = await prismaClient.withdrawalRequest.findMany({
+    where: {
+      OR: [
+        ...(shopifyOrderIds.length > 0
+          ? [{ shopifyOrderId: { in: shopifyOrderIds } }]
+          : []),
+        ...(marketplaceOrderIds.length > 0
+          ? [{ marketplaceOrderId: { in: marketplaceOrderIds } }]
+          : []),
+      ],
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: first,
+  });
+
+  return withdrawalRequests
+    .filter((withdrawalRequest) =>
+      orders.some((sellerOrder) =>
+        sellerOrderTouchesWithdrawal(sellerOrder, withdrawalRequest),
+      ),
+    )
+    .map(serializeVendorWithdrawalRequest);
+}
+
+function groupVendorWithdrawalRequestsByOrderId(withdrawalRequests = []) {
+  const grouped = new Map();
+
+  for (const withdrawalRequest of Array.isArray(withdrawalRequests)
+    ? withdrawalRequests
+    : []) {
+    const orderId = String(withdrawalRequest.shopifyOrderId || "").trim();
+    if (!orderId) continue;
+
+    const current = grouped.get(orderId) || [];
+    current.push(withdrawalRequest);
+    grouped.set(orderId, current);
+  }
+
+  return grouped;
+}
+
+function attachWithdrawalSummaryToOrders(orders = [], withdrawalRequests = []) {
+  const byOrderId = groupVendorWithdrawalRequestsByOrderId(withdrawalRequests);
+
+  return (Array.isArray(orders) ? orders : []).map((order) => {
+    const withdrawals = byOrderId.get(order.orderId) || [];
+    return {
+      ...order,
+      withdrawals,
+      withdrawalSummary: createVendorWithdrawalSummary(withdrawals),
+    };
+  });
+}
+
+export async function listVendorWithdrawalRequests(
+  { storeId, first = 50 },
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.sellerOrder?.findMany) {
+    return [];
+  }
+
+  const sellerOrders = await prismaClient.sellerOrder.findMany({
+    where: {
+      vendorStoreId: storeId,
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: Math.max(first, 100),
+    select: {
+      id: true,
+      marketplaceOrderId: true,
+      shopifyOrderId: true,
+      lines: {
+        select: {
+          id: true,
+          shopifyLineItemId: true,
+          shopifyProductId: true,
+          shopifyVariantId: true,
+          productId: true,
+          title: true,
+          quantity: true,
+        },
+      },
+    },
+  });
+
+  const legacyRequests = await listVendorWithdrawalRequestsForSellerOrders(
+    { sellerOrders, first },
+    { prismaClient },
+  );
+
+  if (!prismaClient?.withdrawalReturnGroup?.findMany) {
+    return legacyRequests;
+  }
+
+  const v2Groups = await prismaClient.withdrawalReturnGroup.findMany({
+    where: { vendorStoreId: storeId },
+    orderBy: [{ createdAt: "desc" }],
+    take: first,
+    include: {
+      withdrawalRequest: true,
+      vendorStore: { select: { storeName: true } },
+      lines: {
+        include: { requestedLine: true },
+        orderBy: { createdAt: "asc" },
+      },
+      instructions: { orderBy: { version: "desc" }, take: 1 },
+      shipments: {
+        include: { lines: true },
+        orderBy: { packageNumber: "asc" },
+      },
+    },
+  });
+  const v2Items = v2Groups.map(serializeVendorWithdrawalV2Group);
+  const v2RequestIds = new Set(v2Items.map((item) => item.id));
+
+  return [...v2Items, ...legacyRequests.filter((item) => !v2RequestIds.has(item.id))]
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt || 0).getTime() -
+        new Date(left.createdAt || 0).getTime(),
+    )
+    .slice(0, first);
+}
+
+export async function getVendorWithdrawalSummary(
+  { storeId },
+  { prismaClient = prisma } = {},
+) {
+  const withdrawalRequests = await listVendorWithdrawalRequests(
+    { storeId, first: 100 },
+    { prismaClient },
+  );
+
+  return createVendorWithdrawalSummary(withdrawalRequests);
+}
+
+export async function getVendorWithdrawalRequestDetail(
+  { storeId, withdrawalRequestId },
+  { prismaClient = prisma } = {},
+) {
+  const withdrawalRequestIdValue = String(withdrawalRequestId || "").trim();
+
+  if (!withdrawalRequestIdValue) {
+    return null;
+  }
+
+  const withdrawalRequest = await prismaClient.withdrawalRequest.findUnique({
+    where: { id: withdrawalRequestIdValue },
+    include: {
+      statusHistory: { orderBy: { createdAt: "desc" }, take: 20 },
+      emailLogs: { orderBy: { createdAt: "desc" }, take: 10 },
+    },
+  });
+
+  if (!withdrawalRequest) {
+    return null;
+  }
+
+  if (
+    Number(withdrawalRequest.workflowVersion || 1) === 2 &&
+    prismaClient?.withdrawalReturnGroup?.findFirst
+  ) {
+    const returnGroup = await prismaClient.withdrawalReturnGroup.findFirst({
+      where: {
+        withdrawalRequestId: withdrawalRequest.id,
+        vendorStoreId: storeId,
+      },
+      include: {
+        vendorStore: { select: { storeName: true } },
+        returnAddress: true,
+        lines: {
+          include: { requestedLine: true },
+          orderBy: { createdAt: "asc" },
+        },
+        instructions: { orderBy: { version: "desc" } },
+        shipments: {
+          include: {
+            lines: { include: { returnGroupLine: true } },
+          },
+          orderBy: { packageNumber: "asc" },
+        },
+      },
+    });
+    if (!returnGroup) return null;
+
+    return {
+      withdrawalRequest: {
+        ...serializeVendorWithdrawalRequest(withdrawalRequest),
+        statusHistory: withdrawalRequest.statusHistory.map((item) => ({
+          ...item,
+          createdAtLabel: formatDateTime(item.createdAt),
+        })),
+        emailLogs: [],
+      },
+      returnGroup: serializeVendorWithdrawalV2Group({
+        ...returnGroup,
+        withdrawalRequest,
+      }),
+      sellerOrders: [],
+    };
+  }
+
+  const orderWhere = [
+    ...(withdrawalRequest.shopifyOrderId
+      ? [{ shopifyOrderId: withdrawalRequest.shopifyOrderId }]
+      : []),
+    ...(withdrawalRequest.marketplaceOrderId
+      ? [{ marketplaceOrderId: withdrawalRequest.marketplaceOrderId }]
+      : []),
+  ];
+
+  if (orderWhere.length === 0) {
+    return null;
+  }
+
+  const sellerOrders = await prismaClient.sellerOrder.findMany({
+    where: {
+      vendorStoreId: storeId,
+      OR: orderWhere,
+    },
+    select: {
+      id: true,
+      marketplaceOrderId: true,
+      shopifyOrderId: true,
+      sellerPayableAmount: true,
+      sellerRefundAmount: true,
+      currencyCode: true,
+      fulfillmentStatus: true,
+      lines: {
+        select: {
+          id: true,
+          shopifyLineItemId: true,
+          shopifyProductId: true,
+          shopifyVariantId: true,
+          productId: true,
+          title: true,
+          quantity: true,
+          netAmount: true,
+          currencyCode: true,
+        },
+      },
+    },
+  });
+
+  const matchingSellerOrders = sellerOrders
+    .filter((sellerOrder) =>
+      sellerOrderTouchesWithdrawal(sellerOrder, withdrawalRequest),
+    )
+    .map((sellerOrder) =>
+      filterSellerOrderLinesForWithdrawal(sellerOrder, withdrawalRequest),
+    )
+    .filter((sellerOrder) => (sellerOrder.lines || []).length > 0);
+
+  if (matchingSellerOrders.length === 0) {
+    return null;
+  }
+
+  return {
+    withdrawalRequest: {
+      ...serializeVendorWithdrawalRequest(withdrawalRequest),
+      statusHistory: withdrawalRequest.statusHistory.map((item) => ({
+        ...item,
+        createdAtLabel: formatDateTime(item.createdAt),
+      })),
+      emailLogs: withdrawalRequest.emailLogs.map((item) => ({
+        ...item,
+        sentAtLabel: formatDateTime(item.sentAt || item.createdAt),
+      })),
+    },
+    sellerOrders: matchingSellerOrders,
+  };
+}
+
+export async function updateVendorWithdrawalReturnInfo(
+  { storeId, withdrawalRequestId, formData },
+  { prismaClient = prisma } = {},
+) {
+  const access = await getVendorWithdrawalRequestDetail(
+    { storeId, withdrawalRequestId },
+    { prismaClient },
+  );
+
+  if (!access) {
+    return {
+      ok: false,
+      status: 404,
+      error: "撤回申請が見つかりません。",
+    };
+  }
+
+  if (Number(access.withdrawalRequest.workflowVersion || 1) === 2) {
+    const group = access.returnGroup;
+    if (!group) {
+      return { ok: false, status: 404, error: "返送グループが見つかりません。" };
+    }
+    const lineReviews = (group.lines || []).map((line) => ({
+      id: line.id,
+      receivedQuantity: formData.get(`receivedQuantity_${line.id}`),
+      conditionStatus: formData.get(`conditionStatus_${line.id}`),
+      conditionNotes: formData.get(`conditionNotes_${line.id}`),
+    }));
+    const result = await updateWithdrawalGroupReview({
+      returnGroupId: group.returnGroupId,
+      vendorStoreId: storeId,
+      allowFinancialDecision: false,
+      changedBy: `vendor:${storeId}`,
+      values: {
+        evidenceStatus: formData.get("evidenceStatus"),
+        receiptStatus: formData.get("receiptStatus"),
+        inspectionStatus: formData.get("inspectionStatus"),
+        reviewNotes: formData.get("reviewNotes"),
+        lineReviews,
+      },
+      prismaClient,
+    });
+    return result.ok
+      ? { ok: true, message: "到着・検品情報を保存しました。" }
+      : {
+          ok: false,
+          status: result.status || 400,
+          error: "到着・検品情報を保存できませんでした。",
+          errors: result.errors || {},
+        };
+  }
+
+  const result = await updateWithdrawalReturnInfo({
+    id: withdrawalRequestId,
+    formData,
+    changedBy: `vendor:${storeId}`,
+    prismaClient,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: result.status || 400,
+      error: "返送情報を保存できませんでした。",
+      errors: result.errors || {},
+    };
+  }
+
+  return {
+    ok: true,
+    message: "返送・商品状態を保存しました。",
+    withdrawalRequest: result.withdrawalRequest,
+  };
 }
 
 export async function listVendorShopifyOrdersFromLedger(
@@ -2316,15 +3167,30 @@ export async function listVendorShopifyOrdersFromSellerOrders(
       .filter((node) => node?.id)
       .map((node) => [String(node.id), node]),
   );
+  const withdrawalRequests = await listVendorWithdrawalRequestsForSellerOrders(
+    { sellerOrders, first: Math.max(100, sellerOrders.length * 5) },
+    { prismaClient },
+  );
+  const withdrawalsByOrderId =
+    groupVendorWithdrawalRequestsByOrderId(withdrawalRequests);
 
   const orders = sellerOrders
-    .map((sellerOrder) =>
-      serializeVendorOrderRow({
+    .map((sellerOrder) => {
+      const order = serializeVendorOrderRow({
         order: orderById.get(sellerOrder.shopifyOrderId),
         sellerOrder,
         ledgerSummary: createSellerOrderSettlementSummary(sellerOrder),
-      }),
-    )
+      });
+
+      if (!order) return null;
+
+      const withdrawals = withdrawalsByOrderId.get(order.orderId) || [];
+      return {
+        ...order,
+        withdrawals,
+        withdrawalSummary: createVendorWithdrawalSummary(withdrawals),
+      };
+    })
     .filter(Boolean);
 
   return {

@@ -9,9 +9,16 @@ const NAV_ITEMS = [
     end: true,
   },
   { key: "orders", label: "注文管理", to: "/vendor/orders", end: true },
+  { key: "withdrawals", label: "撤回申請", to: "/vendor/withdrawals", end: true },
   { key: "products", label: "商品管理", to: "/vendor/products", end: true },
   { key: "inventory", label: "在庫", to: "/vendor/inventory", end: true },
   { key: "settings", label: "設定", to: "/vendor/settings", end: true },
+  {
+    key: "return-address",
+    label: "返品受取先",
+    to: "/vendor/settings/returns",
+    end: true,
+  },
   {
     key: "payments",
     label: "精算設定",

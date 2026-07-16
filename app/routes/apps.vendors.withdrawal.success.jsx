@@ -19,7 +19,6 @@ export const loader = async ({ request }) => {
     select: {
       id: true,
       shopifyOrderName: true,
-      customerEmail: true,
       status: true,
       confirmationSentAt: true,
     },

@@ -9,70 +9,34 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
 export default function App() {
   const { apiKey } = useLoaderData();
-
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <NavMenu>
-        <Link to="/app" rel="home">
-          Home
-        </Link>
-
-        <Link to="/app/vendor-stores">
-          店舗一覧
-        </Link>
-
-        <Link to="/app/sellers">
-          出店者決済
-        </Link>
-
-        <Link to="/app/payout-runs">
-          出金管理
-        </Link>
-
-        <Link to="/app/production-readiness">
-          本番確認
-        </Link>
-
-        <Link to="/app/seller-order-shadow">
-          SellerOrder検証
-        </Link>
-
-        <Link to="/app/withdrawals">
-          撤回申請
-        </Link>
-
-        <Link to="/app/carrier-service">
-          配送サービス
-        </Link>
-
-        <Link to="/app/contact-inquiries">
-          問い合わせ一覧
-        </Link>
-
-        <Link to="/app/fixed-candidates">
-          固定文候補一覧
-        </Link>
-
-        <Link to="/app/additional">
-          Additional page
-        </Link>
+        <Link to="/app" rel="home">ホーム</Link>
+        <Link to="/app/vendor-stores">店舗一覧</Link>
+        <Link to="/app/sellers">出店者管理</Link>
+        <Link to="/app/payout-runs">出金管理</Link>
+        <Link to="/app/production-readiness">本番確認</Link>
+        <Link to="/app/seller-order-shadow">SellerOrder検証</Link>
+        <Link to="/app/withdrawals">撤回申請</Link>
+        <Link to="/app/withdrawal-settings">撤回運用設定</Link>
+        <Link to="/app/carrier-service">配送サービス</Link>
+        <Link to="/app/contact-inquiries">問い合わせ一覧</Link>
+        <Link to="/app/fixed-candidates">固定文候補一覧</Link>
+        <Link to="/app/additional">追加設定</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
   );
 }
 
-// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }
 
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+export const headers = (headersArgs) => boundary.headers(headersArgs);

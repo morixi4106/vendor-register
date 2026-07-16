@@ -227,6 +227,24 @@ export default function ProductionReadinessPage() {
           color:#374151;
           line-height:1.7;
         }
+        .readiness-action-stack{
+          display:grid;
+          gap:8px;
+          align-items:start;
+        }
+        .readiness-action-link{
+          display:inline-flex;
+          width:max-content;
+          min-height:32px;
+          align-items:center;
+          border:1px solid #d1d5db;
+          border-radius:999px;
+          padding:0 12px;
+          color:#111827;
+          background:#fff;
+          font-weight:900;
+          text-decoration:none;
+        }
         .readiness-link{
           color:#111827;
           font-weight:800;
@@ -371,6 +389,23 @@ export default function ProductionReadinessPage() {
             label="出店者"
             value={`${data.sellers.activeCount}/${data.sellers.totalCount}`}
           />
+          <Metric
+            label="撤回申請"
+            value={data.withdrawals?.openCount ?? 0}
+          />
+          <Metric
+            label="撤回期限"
+            value={`${data.withdrawals?.deadlineExpiredCount ?? 0}/${data.withdrawals?.deadlineSoonCount ?? 0}`}
+            compact
+          />
+          <Metric
+            label="撤回メール失敗"
+            value={data.withdrawals?.emailFailedCount ?? 0}
+          />
+          <Metric
+            label="撤回要確認"
+            value={data.withdrawals?.processingIssueCount ?? 0}
+          />
         </div>
       </section>
 
@@ -410,7 +445,19 @@ export default function ProductionReadinessPage() {
                   <td>{categoryLabel(check.category)}</td>
                   <td>{check.displayTitle}</td>
                   <td>{check.displayDetail || "-"}</td>
-                  <td>{check.displayAction || "-"}</td>
+                  <td>
+                    <div className="readiness-action-stack">
+                      <span>{check.displayAction || "-"}</span>
+                      {check.actionLink ? (
+                        <Link
+                          className="readiness-action-link"
+                          to={check.actionLink.to}
+                        >
+                          {check.actionLink.label}
+                        </Link>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -568,6 +615,7 @@ function decorateCheckForDisplay(check, data) {
     displayTitle: CHECK_TITLE_LABELS[check.id] || check.title,
     displayDetail: checkDetailForDisplay(check, data, { isOptionalStripe }),
     displayAction: checkActionForDisplay(check, data, { isOptionalStripe }),
+    actionLink: checkActionLinkForDisplay(check),
   };
 }
 
@@ -684,4 +732,31 @@ function formatMissingScopeDetail(detail, prefix) {
   }
 
   return detail;
+}
+
+function checkActionLinkForDisplay(check) {
+  switch (check.id) {
+    case "withdrawal_open_requests":
+      return {
+        label: "未完了を見る",
+        to: "/app/withdrawals?queue=open",
+      };
+    case "withdrawal_deadlines":
+      return {
+        label: "期限超過を見る",
+        to: "/app/withdrawals?queue=deadline_expired",
+      };
+    case "withdrawal_email_failures":
+      return {
+        label: "メール失敗を見る",
+        to: "/app/withdrawals?queue=email_failed",
+      };
+    case "withdrawal_processing_integrity":
+      return {
+        label: "処理不整合を見る",
+        to: "/app/withdrawals?queue=processing_issue",
+      };
+    default:
+      return null;
+  }
 }
