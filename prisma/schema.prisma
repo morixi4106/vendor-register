@@ -638,88 +638,109 @@ model BuyerWarningAcceptance {
 }
 
 model WithdrawalRequest {
-  id                          String    @id @default(cuid())
-  shopDomain                  String?
-  marketplaceOrderId          String?
-  shopifyOrderId              String?
-  shopifyOrderName            String?
-  shopifyOrderNumber          String?
-  customerName                String
-  customerEmail               String
-  customerPhone               String?
-  countryCode                 String?
-  countryLabel                String?
-  receivedDate                DateTime?
-  withdrawalScope             String    @default("FULL")
-  itemCondition               String?
-  reason                      String?
-  status                      String    @default("REQUESTED")
-  eligibilityStatus           String    @default("PENDING_REVIEW")
-  deadlineAt                  DateTime?
-  deadlineSource              String?
-  selectedLineItemsJson       Json?
-  submittedPayloadJson        Json
-  orderSnapshotJson           Json?
-  eligibilityJson             Json?
-  durableMediumEmailJson      Json?
-  confirmationSentAt          DateTime?
-  confirmationEmailMessageId  String?
-  decisionSentAt              DateTime?
-  returnRequirementStatus     String    @default("UNDECIDED")
-  returnTrackingCompany       String?
-  returnTrackingNumber        String?
-  returnTrackingUrl           String?
-  returnReceivedAt            DateTime?
-  returnConditionStatus       String    @default("UNDECIDED")
-  returnConditionNotes        String?
-  returnProofJson             Json?
-  returnProofTokenHash        String?
-  returnProofTokenExpiresAt   DateTime?
-  returnProofSubmittedAt      DateTime?
-  returnInfoUpdatedAt         DateTime?
-  returnInfoUpdatedBy         String?
-  refundDecisionStatus        String    @default("UNDECIDED")
-  refundItemAmount            Int?
-  refundInitialShippingAmount Int?
-  refundDeductionAmount       Int?
-  refundTotalAmount           Int?
-  refundCurrencyCode          String?
-  returnShippingPayer         String?
-  refundDecisionReason        String?
-  refundDecisionNotes         String?
-  refundDecisionUpdatedAt     DateTime?
-  refundDecisionUpdatedBy     String?
-  completionStatus            String    @default("UNDECIDED")
-  completionAction            String?
-  completionShopifyRefundId   String?
-  completionShopifyCancelId   String?
-  completionRefundedAmount    Int?
-  completionRefundedShipping  Int?
-  completionCurrencyCode      String?
-  completionNotes             String?
-  completionRecordedAt        DateTime?
-  completionRecordedBy        String?
-  completionNotifiedAt        DateTime?
-  completionEmailMessageId    String?
-  workflowVersion             Int       @default(1)
-  returnMode                  String    @default("LEGACY_SINGLE")
-  contractMode                String?
-  contractPolicyVersion       Int?
-  termsVersion                String?
-  progressStatus              String    @default("PENDING")
-  outcomeStatus               String    @default("UNDECIDED")
-  v2ActivatedAt               DateTime?
-  v2ReviewReason              String?
-  completedAt                 DateTime?
-  rejectedAt                  DateTime?
-  rejectionReason             String?
-  adminNotes                  String?
-  source                      String    @default("app_proxy")
-  ipAddress                   String?
-  userAgent                   String?
-  idempotencyKey              String    @unique
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  id                                    String    @id @default(cuid())
+  shopDomain                            String?
+  marketplaceOrderId                    String?
+  shopifyOrderId                        String?
+  shopifyOrderName                      String?
+  shopifyOrderNumber                    String?
+  customerName                          String
+  customerEmail                         String
+  customerPhone                         String?
+  countryCode                           String?
+  countryLabel                          String?
+  receivedDate                          DateTime?
+  withdrawalScope                       String    @default("FULL")
+  itemCondition                         String?
+  reason                                String?
+  status                                String    @default("REQUESTED")
+  eligibilityStatus                     String    @default("PENDING_REVIEW")
+  deadlineAt                            DateTime?
+  deadlineSource                        String?
+  selectedLineItemsJson                 Json?
+  submittedPayloadJson                  Json
+  orderSnapshotJson                     Json?
+  eligibilityJson                       Json?
+  durableMediumEmailJson                Json?
+  confirmationSentAt                    DateTime?
+  confirmationEmailMessageId            String?
+  decisionSentAt                        DateTime?
+  returnRequirementStatus               String    @default("UNDECIDED")
+  returnTrackingCompany                 String?
+  returnTrackingNumber                  String?
+  returnTrackingUrl                     String?
+  returnReceivedAt                      DateTime?
+  returnConditionStatus                 String    @default("UNDECIDED")
+  returnConditionNotes                  String?
+  returnProofJson                       Json?
+  returnProofTokenHash                  String?
+  returnProofTokenExpiresAt             DateTime?
+  returnProofSubmittedAt                DateTime?
+  returnInfoUpdatedAt                   DateTime?
+  returnInfoUpdatedBy                   String?
+  refundDecisionStatus                  String    @default("UNDECIDED")
+  refundItemAmount                      Int?
+  refundInitialShippingAmount           Int?
+  refundDeductionAmount                 Int?
+  refundTotalAmount                     Int?
+  refundCurrencyCode                    String?
+  returnShippingPayer                   String?
+  refundDecisionReason                  String?
+  refundDecisionNotes                   String?
+  refundDecisionUpdatedAt               DateTime?
+  refundDecisionUpdatedBy               String?
+  completionStatus                      String    @default("UNDECIDED")
+  completionAction                      String?
+  completionShopifyRefundId             String?
+  completionShopifyCancelId             String?
+  completionRefundedAmount              Int?
+  completionRefundedShipping            Int?
+  completionCurrencyCode                String?
+  completionNotes                       String?
+  completionRecordedAt                  DateTime?
+  completionRecordedBy                  String?
+  completionNotifiedAt                  DateTime?
+  completionEmailMessageId              String?
+  workflowVersion                       Int       @default(1)
+  returnMode                            String    @default("LEGACY_SINGLE")
+  contractMode                          String?
+  contractPolicyVersion                 Int?
+  termsVersion                          String?
+  submittedAt                           DateTime?
+  submittedViewLocale                   String?
+  correspondenceLocale                  String?
+  localeSource                          String?
+  shippingCountryAtOrder                String?
+  shopifyMarketCountry                  String?
+  consumerHabitualResidenceCountry      String?
+  consumerLawCountry                    String?
+  consumerLawCountrySource              String?
+  consumerLawRuleVersion                String?
+  consumerLawDeterminedAt               DateTime?
+  withdrawalInformationProvidedAt       DateTime?
+  withdrawalDeadlineRuleVersion         String?
+  purchaseWithdrawalTermsVersion        String?
+  purchaseWithdrawalTermsLocale         String?
+  purchaseWithdrawalTermsProvidedAt     DateTime?
+  purchaseWithdrawalTermsDeliveryMethod String?
+  submissionLegalBundleVersion          String?
+  submissionLegalBundleHash             String?
+  submittedPayloadSchemaVersion         Int?
+  submittedPayloadHash                  String?
+  progressStatus                        String    @default("PENDING")
+  outcomeStatus                         String    @default("UNDECIDED")
+  v2ActivatedAt                         DateTime?
+  v2ReviewReason                        String?
+  completedAt                           DateTime?
+  rejectedAt                            DateTime?
+  rejectionReason                       String?
+  adminNotes                            String?
+  source                                String    @default("app_proxy")
+  ipAddress                             String?
+  userAgent                             String?
+  idempotencyKey                        String    @unique
+  createdAt                             DateTime  @default(now())
+  updatedAt                             DateTime  @updatedAt
 
   statusHistory          WithdrawalRequestStatusHistory[]
   emailLogs              WithdrawalEmailLog[]
@@ -728,6 +749,8 @@ model WithdrawalRequest {
   requestedLines         WithdrawalRequestedLine[]
   actualRefundEvents     WithdrawalActualRefundEvent[]
   withdrawalReturnGroups WithdrawalReturnGroup[]
+  events                 WithdrawalEvent[]
+  emailOutbox            WithdrawalEmailOutbox[]
 
   @@index([shopDomain, shopifyOrderId])
   @@index([shopDomain, shopifyOrderName])
@@ -738,6 +761,9 @@ model WithdrawalRequest {
   @@index([returnProofTokenHash])
   @@index([refundDecisionStatus, createdAt])
   @@index([completionStatus, createdAt])
+  @@index([correspondenceLocale, createdAt])
+  @@index([consumerLawCountry, createdAt])
+  @@index([submittedAt])
   @@map("withdrawal_requests")
 }
 
@@ -787,6 +813,85 @@ model WithdrawalEmailLog {
   @@map("withdrawal_email_logs")
 }
 
+model WithdrawalEvent {
+  id                  String   @id @default(cuid())
+  withdrawalRequestId String
+  type                String
+  occurredAt          DateTime @default(now())
+  actorType           String
+  actorId             String?
+  payloadJson         Json?
+  payloadHash         String?
+  idempotencyKey      String   @unique
+  createdAt           DateTime @default(now())
+
+  withdrawalRequest WithdrawalRequest       @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  emailOutbox       WithdrawalEmailOutbox[]
+
+  @@index([withdrawalRequestId, occurredAt])
+  @@index([type, occurredAt])
+  @@map("withdrawal_events")
+}
+
+model WithdrawalEmailOutbox {
+  id                  String    @id @default(cuid())
+  withdrawalRequestId String
+  withdrawalEventId   String
+  messageType         String
+  recipient           String
+  sender              String?
+  locale              String
+  templateVersion     String
+  subjectSnapshot     String
+  textBodySnapshot    String
+  htmlBodySnapshot    String
+  renderedContentHash String
+  idempotencyKey      String    @unique
+  status              String    @default("PENDING")
+  attemptCount        Int       @default(0)
+  nextAttemptAt       DateTime  @default(now())
+  lockedUntil         DateTime?
+  lastErrorCode       String?
+  providerMessageId   String?
+  sentAt              DateTime?
+  deliveredAt         DateTime?
+  bouncedAt           DateTime?
+  complainedAt        DateTime?
+  deadLetteredAt      DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  withdrawalEvent   WithdrawalEvent   @relation(fields: [withdrawalEventId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([withdrawalRequestId, createdAt])
+  @@index([lockedUntil])
+  @@map("withdrawal_email_outbox")
+}
+
+model WithdrawalLegalBundle {
+  id                 String    @id @default(cuid())
+  consumerLawCountry String
+  locale             String
+  version            String
+  status             String    @default("DRAFT")
+  title              String
+  contentJson        Json
+  contentHash        String
+  reviewedAt         DateTime?
+  reviewedBy         String?
+  publishedAt        DateTime?
+  publishedBy        String?
+  retiredAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([consumerLawCountry, locale, version])
+  @@index([consumerLawCountry, locale, status])
+  @@map("withdrawal_legal_bundles")
+}
+
 model WithdrawalWorkflowPolicy {
   id                  String    @id @default(cuid())
   version             Int       @unique
@@ -822,6 +927,9 @@ model VendorReturnAddress {
   address2                   String?
   phone                      String?
   instructions               String?
+  internationalRecipientName String?
+  internationalAddressLines  Json?
+  phoneE164                  String?
   canReceiveReturnsConfirmed Boolean   @default(false)
   buyerDisclosureConfirmed   Boolean   @default(false)
   legalRecipientConfirmed    Boolean   @default(false)
@@ -834,12 +942,29 @@ model VendorReturnAddress {
   createdAt                  DateTime  @default(now())
   updatedAt                  DateTime  @updatedAt
 
-  vendorStore  VendorStore             @relation(fields: [vendorStoreId], references: [id], onDelete: Restrict)
+  vendorStore  VendorStore                 @relation(fields: [vendorStoreId], references: [id], onDelete: Restrict)
   returnGroups WithdrawalReturnGroup[]
+  locales      VendorReturnAddressLocale[]
 
   @@unique([vendorStoreId, version])
   @@index([vendorStoreId, status])
   @@map("vendor_return_addresses")
+}
+
+model VendorReturnAddressLocale {
+  id                   String   @id @default(cuid())
+  returnAddressId      String
+  locale               String
+  returnInstructions   String?
+  recipientDisplayName String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  returnAddress VendorReturnAddress @relation(fields: [returnAddressId], references: [id], onDelete: Cascade)
+
+  @@unique([returnAddressId, locale])
+  @@index([locale])
+  @@map("vendor_return_address_locales")
 }
 
 model WithdrawalContract {

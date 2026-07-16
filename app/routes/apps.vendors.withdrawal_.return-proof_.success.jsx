@@ -1,20 +1,31 @@
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
+import {
+  appendWithdrawalLocale,
+  getWithdrawalDictionary,
+  resolveWithdrawalLocale,
+} from "../utils/withdrawalLocale.js";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
+  const locale = resolveWithdrawalLocale({
+    urlLocale: url.searchParams.get("lang"),
+    acceptLanguage: request.headers.get("accept-language"),
+  }).locale;
   return json({
     ref: url.searchParams.get("ref") || "",
     embedded: url.searchParams.get("embedded") === "1",
+    locale,
   });
 };
 
 export default function ReturnProofSuccessPage() {
-  const { ref, embedded } = useLoaderData();
-  const formHref = embedded
+  const { ref, embedded, locale } = useLoaderData();
+  const copy = getWithdrawalDictionary(locale).returnProof;
+  const formHref = appendWithdrawalLocale(embedded
     ? "/apps/vendors/withdrawal?embedded=1"
-    : "/apps/vendors/withdrawal";
+    : "/apps/vendors/withdrawal", locale);
 
   useEffect(() => {
     if (!embedded || typeof window === "undefined") return undefined;
@@ -53,16 +64,13 @@ export default function ReturnProofSuccessPage() {
         {!embedded ? (
           <p className="return-proof-success__eyebrow">EU RIGHT OF WITHDRAWAL</p>
         ) : null}
-        <h1>返送証明を受け付けました</h1>
-        <p>
-          提出内容を確認し、返送状況と商品状態を確認したうえで手続きを進めます。
-          返金やキャンセルは自動実行されません。
-        </p>
+        <h1>{copy.successTitle}</h1>
+        <p>{copy.successBody}</p>
         <div className="return-proof-success__box">
-          <span>受付番号: {ref || "-"}</span>
+          <span>{copy.request}: {ref || "-"}</span>
         </div>
         <div className="return-proof-success__actions">
-          <Link to={formHref}>撤回申請フォームへ戻る</Link>
+          <Link to={formHref}>{copy.backToForm}</Link>
         </div>
       </section>
     </main>

@@ -3,6 +3,12 @@ import { Link, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 
 import prisma from "../db.server.js";
+import {
+  appendWithdrawalLocale,
+  formatWithdrawalDateTime,
+  getWithdrawalDictionary,
+  resolveWithdrawalLocale,
+} from "../utils/withdrawalLocale.js";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
@@ -21,7 +27,16 @@ export const loader = async ({ request }) => {
       shopifyOrderName: true,
       status: true,
       confirmationSentAt: true,
+      submittedAt: true,
+      createdAt: true,
+      correspondenceLocale: true,
     },
+  });
+
+  const localeResolution = resolveWithdrawalLocale({
+    urlLocale: url.searchParams.get("lang"),
+    savedLocale: withdrawalRequest?.correspondenceLocale,
+    acceptLanguage: request.headers.get("accept-language"),
   });
 
   return json({
@@ -30,12 +45,20 @@ export const loader = async ({ request }) => {
     embedded,
     ref,
     withdrawalRequest,
+    locale: localeResolution.locale,
   });
 };
 
 export default function WithdrawalSuccessPage() {
-  const { found, duplicate, embedded, ref, withdrawalRequest } = useLoaderData();
-  const formHref = embedded ? "/apps/vendors/withdrawal?embedded=1" : "/apps/vendors/withdrawal";
+  const { found, duplicate, embedded, ref, withdrawalRequest, locale = "en-GB" } =
+    useLoaderData();
+  const dictionary = getWithdrawalDictionary(locale);
+  const copy = dictionary.success;
+  const publicCopy = dictionary.public;
+  const formHref = appendWithdrawalLocale(
+    embedded ? "/apps/vendors/withdrawal?embedded=1" : "/apps/vendors/withdrawal",
+    locale,
+  );
 
   useEmbeddedFrameBehavior(embedded);
 
@@ -43,31 +66,32 @@ export default function WithdrawalSuccessPage() {
     <main className={`withdrawal-success${embedded ? " withdrawal-success--embedded" : ""}`}>
       <style>{pageStyles}</style>
       <section className="withdrawal-success__card">
-        <h1>{found ? "撤回申請を受け付けました" : "受付状況を確認しています"}</h1>
+        <h1>{found ? (duplicate ? copy.duplicateTitle : copy.title) : copy.emailPending}</h1>
         <p>
           {found
-            ? "内容を確認のうえ、今後の手続きをメールでご案内します。"
-            : "受付番号が見つかりませんでした。時間を置いて再度ご確認ください。"}
+            ? copy.body
+            : dictionary.errors.form}
         </p>
         <div className="withdrawal-success__box">
-          <span>受付番号: {withdrawalRequest?.id || ref || "-"}</span>
+          <span>{publicCopy.reference}: {withdrawalRequest?.id || ref || "-"}</span>
           {withdrawalRequest?.shopifyOrderName ? (
-            <span>注文番号: {withdrawalRequest.shopifyOrderName}</span>
+            <span>{publicCopy.order}: {withdrawalRequest.shopifyOrderName}</span>
           ) : null}
           {withdrawalRequest?.confirmationSentAt ? (
-            <span>受付確認メール: 送信済み</span>
+            <span>{copy.emailSent}</span>
           ) : (
-            <span>受付確認メール: 確認中</span>
+            <span>{copy.emailPending}</span>
           )}
-          {duplicate ? <span>同じ申請はすでに受け付け済みです。</span> : null}
+          <span>{publicCopy.submittedAt}: {formatWithdrawalDateTime(
+            withdrawalRequest?.submittedAt || withdrawalRequest?.createdAt,
+            locale,
+          )}</span>
         </div>
         <p>
-          商品が発送済みの場合、返送または返送証明の確認後に返金処理を進める場合があります。
-          通常配送分の初回送料は返金対象として確認しますが、追加配送費用や返送送料はお客様負担となる場合があります。
-          商品状態によっては返金額が減額される場合があります。
+          {publicCopy.receiptNotice}
         </p>
         <div className="withdrawal-success__actions">
-          <Link to={formHref}>フォームへ戻る</Link>
+          <Link to={formHref}>{publicCopy.edit}</Link>
         </div>
       </section>
     </main>

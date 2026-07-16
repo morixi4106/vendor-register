@@ -216,6 +216,18 @@ function addressSnapshot(address) {
     address2: address.address2,
     phone: address.phone,
     instructions: address.instructions,
+    internationalRecipientName: address.internationalRecipientName,
+    internationalAddressLines: address.internationalAddressLines,
+    phoneE164: address.phoneE164,
+    localizedInstructions: Object.fromEntries(
+      (Array.isArray(address.locales) ? address.locales : []).map((entry) => [
+        entry.locale,
+        {
+          recipientDisplayName: entry.recipientDisplayName,
+          returnInstructions: entry.returnInstructions,
+        },
+      ]),
+    ),
     confirmedAt: address.confirmedAt?.toISOString?.() || null,
   };
 }
@@ -453,6 +465,7 @@ export async function activateWithdrawalWorkflowPolicy({
 export async function getVendorReturnAddressState(vendorStoreId, prismaClient = prisma) {
   const addresses = await prismaClient.vendorReturnAddress.findMany({
     where: { vendorStoreId: text(vendorStoreId) },
+    include: { locales: true },
     orderBy: [{ version: "desc" }],
   });
   return {
@@ -480,6 +493,11 @@ function normalizeReturnAddressInput(values = {}) {
     address2: text(values.address2) || null,
     phone: text(values.phone) || null,
     instructions: text(values.instructions) || null,
+    internationalRecipientName: text(values.internationalRecipientName) || null,
+    internationalAddressLines: normalizeInternationalAddressLines(
+      values.internationalAddressLines,
+    ),
+    phoneE164: text(values.phoneE164) || null,
     canReceiveReturnsConfirmed: Boolean(values.canReceiveReturnsConfirmed),
     buyerDisclosureConfirmed: Boolean(values.buyerDisclosureConfirmed),
     legalRecipientConfirmed: Boolean(values.legalRecipientConfirmed),
@@ -490,6 +508,9 @@ function normalizeReturnAddressInput(values = {}) {
   }
   if (!/^[A-Z]{2}$/.test(data.countryCode)) errors.countryCode = "invalid";
   if (data.countryCode === "JP" && !data.region) errors.region = "required";
+  if (data.phoneE164 && !/^\+[1-9][0-9]{6,14}$/.test(data.phoneE164)) {
+    errors.phoneE164 = "invalid";
+  }
   return { ok: Object.keys(errors).length === 0, data, errors };
 }
 
@@ -520,6 +541,33 @@ export async function saveVendorReturnAddressDraft({
     : await prismaClient.vendorReturnAddress.create({
         data: { vendorStoreId, version: maxVersion + 1, status: "DRAFT", ...common },
       });
+  if (prismaClient.vendorReturnAddressLocale?.upsert) {
+    const localizedValues = [
+      {
+        locale: "ja-JP",
+        returnInstructions: text(values.instructions) || null,
+        recipientDisplayName: normalized.data.recipientName,
+      },
+      {
+        locale: "en-GB",
+        returnInstructions: text(values.instructionsEn) || null,
+        recipientDisplayName:
+          normalized.data.internationalRecipientName || normalized.data.recipientName,
+      },
+    ];
+    for (const localized of localizedValues) {
+      await prismaClient.vendorReturnAddressLocale.upsert({
+        where: {
+          returnAddressId_locale: {
+            returnAddressId: draft.id,
+            locale: localized.locale,
+          },
+        },
+        create: { returnAddressId: draft.id, ...localized },
+        update: localized,
+      });
+    }
+  }
   return { ok: true, draft };
 }
 
@@ -533,6 +581,14 @@ export async function activateVendorReturnAddress({
     where: { id: text(draftId), vendorStoreId: text(vendorStoreId), status: "DRAFT" },
   });
   if (!draft) return { ok: false, status: 404, error: "draft_not_found" };
+  if (
+    draft.countryCode === "JP" &&
+    (!draft.internationalRecipientName ||
+      !Array.isArray(draft.internationalAddressLines) ||
+      draft.internationalAddressLines.length === 0)
+  ) {
+    return { ok: false, status: 400, error: "international_address_required" };
+  }
   if (
     !draft.canReceiveReturnsConfirmed ||
     !draft.buyerDisclosureConfirmed ||
@@ -1134,7 +1190,7 @@ export async function createReturnInstruction({
     include: {
       withdrawalRequest: true,
       vendorStore: { include: { vendorAuth: true } },
-      returnAddress: true,
+      returnAddress: { include: { locales: true } },
       lines: { include: { requestedLine: true } },
       instructions: { orderBy: { version: "desc" }, take: 1 },
     },
@@ -2036,6 +2092,10 @@ export function returnAddressFromFormData(formData) {
     address2: formData.get("address2"),
     phone: formData.get("phone"),
     instructions: formData.get("instructions"),
+    internationalRecipientName: formData.get("internationalRecipientName"),
+    internationalAddressLines: formData.get("internationalAddressLines"),
+    phoneE164: formData.get("phoneE164"),
+    instructionsEn: formData.get("instructionsEn"),
     canReceiveReturnsConfirmed:
       consolidatedConfirmation || formData.get("canReceiveReturnsConfirmed") === "on",
     buyerDisclosureConfirmed:
@@ -2045,12 +2105,19 @@ export function returnAddressFromFormData(formData) {
   };
 }
 
-export function getReturnProofPublicUrl({ request, groupId, token }) {
+function normalizeInternationalAddressLines(value) {
+  const lines = Array.isArray(value) ? value : String(value || "").split(/\r?\n/);
+  const normalized = lines.map((line) => text(line)).filter(Boolean).slice(0, 8);
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function getReturnProofPublicUrl({ request, groupId, token, locale = null }) {
   const configured = text(process.env.WITHDRAWAL_PUBLIC_BASE_URL);
   const origin = configured || (request ? new URL(request.url).origin : "");
   const url = new URL("/apps/vendors/withdrawal/return-proof", origin);
   url.searchParams.set("group", groupId);
   url.searchParams.set("token", token);
+  if (locale) url.searchParams.set("lang", locale);
   return url.toString();
 }
 
@@ -2097,16 +2164,51 @@ export function buildDirectReturnInstructionEmail({ request, group, instruction,
   const address = jsonObject(instruction.addressSnapshotJson);
   const items = jsonArray(instruction.itemsSnapshotJson);
   const deadline = jsonObject(instruction.deadlineSnapshotJson);
-  const proofUrl = getReturnProofPublicUrl({ request, groupId: group.id, token });
-  const addressLines = [
-    address.recipientName,
-    address.postalCode,
-    [address.countryLabel || address.countryCode, address.region, address.city]
-      .filter(Boolean)
-      .join(" "),
-    address.address1,
-    address.address2,
-  ].filter(Boolean);
+  const locale = group.withdrawalRequest.correspondenceLocale === "en-GB" ? "en-GB" : "ja-JP";
+  const proofUrl = getReturnProofPublicUrl({ request, groupId: group.id, token, locale });
+  const localized = jsonObject(address.localizedInstructions)[locale] || {};
+  const internationalLines = jsonArray(address.internationalAddressLines);
+  const addressLines = locale === "en-GB" && internationalLines.length > 0
+    ? [address.internationalRecipientName || localized.recipientDisplayName, ...internationalLines]
+        .filter(Boolean)
+    : [
+        address.recipientName,
+        address.postalCode,
+        [address.countryLabel || address.countryCode, address.region, address.city]
+          .filter(Boolean)
+          .join(" "),
+        address.address1,
+        address.address2,
+      ].filter(Boolean);
+  if (locale === "en-GB") {
+    const lines = [
+      `Dear ${group.withdrawalRequest.customerName || "customer"},`,
+      "",
+      `Return instructions for ${group.storeNameSnapshot || "the selling store"}.`,
+      "If goods from more than one store are being returned, send a separate parcel to each store.",
+      "",
+      "Goods to return",
+      ...items.map((item) => `- ${item.title || "Item"} x ${Number(item.quantity || 0)}`),
+      "",
+      "Return address",
+      ...addressLines,
+      address.phoneE164 ? `Telephone: ${address.phoneE164}` : "",
+      localized.returnInstructions ? `Instructions: ${localized.returnInstructions}` : "",
+      `Return by: ${deadline.operationalReturnDeadlineAt || "See the administrator's instructions"}`,
+      group.returnShippingPayer === "SELLER"
+        ? "The selling store will bear the direct return cost. Follow the method provided."
+        : "You may have to bear the direct return cost unless the selling store agrees otherwise or applicable law requires the store to bear it.",
+      "Where the withdrawal is accepted, the price and the least expensive standard outbound delivery cost are assessed for reimbursement. Extra delivery costs may be excluded.",
+      "",
+      `Submit the tracking number or tracking URL for this store here: ${proofUrl}`,
+    ].filter((line) => line !== "");
+    return {
+      subject: `[${group.storeNameSnapshot || "Selling store"}] Return instructions`,
+      text: lines.join("\n"),
+      html: lines.map((line) => `<p>${escapeHtml(line)}</p>`).join(""),
+      proofUrl,
+    };
+  }
   const returnShippingMessage =
     group.returnShippingPayer === "SELLER"
       ? "返送送料は販売店舗が負担します。案内された返送方法に従ってください。"

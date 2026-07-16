@@ -1,4 +1,5 @@
 import { json, redirect } from "@remix-run/node";
+import { randomUUID } from "node:crypto";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -6,6 +7,11 @@ import {
   createWithdrawalRequestFromForm,
 } from "../services/withdrawals.server.js";
 import { authenticate } from "../shopify.server";
+import {
+  formatWithdrawalCountry,
+  getWithdrawalDictionary,
+  resolveWithdrawalLocale,
+} from "../utils/withdrawalLocale.js";
 
 const COUNTRY_OPTIONS = [
   ["AT", "Austria"],
@@ -47,15 +53,32 @@ export const loader = async ({ request }) => {
     url.searchParams.get("orderNumber") || url.searchParams.get("order") || "";
   const customerEmail =
     url.searchParams.get("customerEmail") || url.searchParams.get("email") || "";
-
-  return json({
-    shopDomain,
-    embedded: isEmbeddedRequest(request),
-    initialValues: {
-      orderNumber,
-      customerEmail,
-    },
+  const localeResolution = resolveWithdrawalLocale({
+    urlLocale: url.searchParams.get("lang"),
+    shopifyLocale: url.searchParams.get("locale"),
+    acceptLanguage: request.headers.get("accept-language"),
+    userSelected: url.searchParams.has("lang"),
   });
+  const languageLinks = Object.fromEntries(
+    ["ja-JP", "en-GB"].map((language) => {
+      const link = new URL(url.pathname + url.search, url.origin);
+      link.searchParams.set("lang", language);
+      return [language, link.pathname + link.search];
+    }),
+  );
+
+  return json(
+    {
+      shopDomain,
+      embedded: isEmbeddedRequest(request),
+      locale: localeResolution.locale,
+      localeSource: localeResolution.source,
+      submissionNonce: randomUUID(),
+      languageLinks,
+      initialValues: { orderNumber, customerEmail },
+    },
+    { headers: { "Cache-Control": "private, no-store", Vary: "Accept-Language" } },
+  );
 };
 
 export const action = async ({ request }) => {
@@ -68,10 +91,11 @@ export const action = async ({ request }) => {
   });
 
   if (!result.ok) {
+    const locale = formData.get("correspondenceLocale") || "en-GB";
     return json(
       {
         ok: false,
-        errors: result.errors || { form: "送信できませんでした。" },
+        errors: result.errors || { form: getWithdrawalDictionary(locale).errors.form },
         values: result.values || {},
       },
       { status: result.status || 400 },
@@ -86,6 +110,10 @@ export const action = async ({ request }) => {
   if (result.duplicate) {
     successUrl.searchParams.set("duplicate", "1");
   }
+  successUrl.searchParams.set(
+    "lang",
+    result.withdrawalRequest.correspondenceLocale || formData.get("correspondenceLocale") || "en-GB",
+  );
 
   return redirect(successUrl.pathname + successUrl.search);
 };
@@ -101,7 +129,16 @@ async function authenticateAppProxyShop(request) {
 }
 
 export default function WithdrawalFormPage() {
-  const { shopDomain, embedded, initialValues } = useLoaderData();
+  const {
+    shopDomain,
+    embedded,
+    initialValues,
+    locale,
+    localeSource,
+    submissionNonce,
+    languageLinks,
+  } =
+    useLoaderData();
   const actionData = useActionData();
   const [isConfirming, setIsConfirming] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
@@ -111,6 +148,8 @@ export default function WithdrawalFormPage() {
     ...(actionData?.values || {}),
   };
   const countryOptions = useMemo(() => COUNTRY_OPTIONS, []);
+  const dictionary = getWithdrawalDictionary(locale);
+  const copy = dictionary.public;
 
   useEmbeddedFrameBehavior(embedded, [isConfirming, actionData]);
 
@@ -132,20 +171,19 @@ export default function WithdrawalFormPage() {
     <main className={`withdrawal-page${embedded ? " withdrawal-page--embedded" : ""}`}>
       <style>{pageStyles}</style>
 
+      <nav className="withdrawal-language" aria-label="Language">
+        <a href={languageLinks["ja-JP"]} aria-current={locale === "ja-JP"}>日本語</a>
+        <a href={languageLinks["en-GB"]} aria-current={locale === "en-GB"}>English</a>
+      </nav>
+
       {!embedded ? (
         <section className="withdrawal-card withdrawal-hero">
-          <h1>EUのお客様向け撤回申請</h1>
-          <p>
-            EUのお客様は、対象となるオンライン購入について、商品を受け取った日から14日以内であれば撤回申請を行える場合があります。
-          </p>
-          <p>
-            申請後、注文内容・返送状況・商品状態を確認したうえで、キャンセルまたは返金手続きを進めます。
-          </p>
+          <span className="withdrawal-eyebrow">{copy.eyebrow}</span>
+          <h1>{copy.title}</h1>
+          <p>{copy.intro}</p>
           <div className="withdrawal-note">
-            <strong>返金は自動実行されません。</strong>
-            <span>
-              撤回が認められる場合、商品代金および通常配送方法に相当する初回送料を返金対象として確認します。通常配送より高い配送方法を選択された場合、その追加費用は返金対象外となる場合があります。商品の返送にかかる送料は、当店が別途負担すると案内した場合、または法令により当店負担となる場合を除き、お客様負担となる場合があります。商品の確認に必要な範囲を超えて使用・汚損・破損がある場合、返金額が減額されることがあります。
-            </span>
+            <strong>{copy.receiptNoticeTitle}</strong>
+            <span>{copy.receiptNotice}</span>
           </div>
         </section>
       ) : null}
@@ -154,19 +192,22 @@ export default function WithdrawalFormPage() {
 
       {!isConfirming ? (
         <section className="withdrawal-card">
-          {!embedded ? <h2>申請内容を入力</h2> : null}
+          {!embedded ? <h2>{copy.formTitle}</h2> : null}
           <Form method="post" className="withdrawal-form" onSubmit={handlePreview}>
             <input type="hidden" name="shopDomain" value={shopDomain || ""} />
+            <input type="hidden" name="correspondenceLocale" value={locale} />
+            <input type="hidden" name="localeSource" value={localeSource} />
+            <input type="hidden" name="submissionNonce" value={submissionNonce} />
             {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
             <Field
-              label="氏名"
+              label={copy.customerName}
               name="customerName"
               defaultValue={values.customerName}
               error={errors.customerName}
               required
             />
             <Field
-              label="メールアドレス"
+              label={copy.customerEmail}
               type="email"
               name="customerEmail"
               defaultValue={values.customerEmail}
@@ -174,7 +215,7 @@ export default function WithdrawalFormPage() {
               required
             />
             <Field
-              label="注文番号"
+              label={copy.orderNumber}
               name="orderNumber"
               placeholder="#1001"
               defaultValue={values.orderNumber}
@@ -182,21 +223,20 @@ export default function WithdrawalFormPage() {
               required
             />
             <Field
-              label="電話番号 任意"
+              label={copy.customerPhone}
               name="customerPhone"
               defaultValue={values.customerPhone}
             />
             <label className="withdrawal-field">
-              <span>居住国または配送先国</span>
+              <span>{copy.countryCode}</span>
               <select
                 name="countryCode"
                 defaultValue={values.countryCode || ""}
-                required
               >
-                <option value="">選択してください</option>
+                <option value="">{copy.notProvided}</option>
                 {countryOptions.map(([code, label]) => (
                   <option key={code} value={code}>
-                    {label}
+                    {formatWithdrawalCountry(code, locale) || label}
                   </option>
                 ))}
               </select>
@@ -205,32 +245,32 @@ export default function WithdrawalFormPage() {
               ) : null}
             </label>
             <Field
-              label="商品を受け取った日 任意"
+              label={copy.receivedDate}
               type="date"
               name="receivedDate"
               defaultValue={values.receivedDate}
             />
             <label className="withdrawal-field">
-              <span>撤回対象</span>
+              <span>{copy.withdrawalScope}</span>
               <select name="withdrawalScope" defaultValue={values.withdrawalScope || "FULL"}>
-                <option value="FULL">注文全体</option>
-                <option value="PARTIAL">一部の商品</option>
+                <option value="FULL">{copy.fullOrder}</option>
+                <option value="PARTIAL">{copy.partialOrder}</option>
               </select>
             </label>
             <label className="withdrawal-field withdrawal-field--wide">
-              <span>撤回したい商品</span>
+              <span>{copy.itemText}</span>
               <textarea
                 name="itemText"
                 rows="4"
                 defaultValue={values.itemText || ""}
-                placeholder="一部商品の場合は、商品名や数量を入力してください。注文全体の場合は「注文全体」と入力しても構いません。"
+                placeholder={copy.itemTextHint}
               />
               {errors.itemText ? (
                 <em className="withdrawal-error">{errors.itemText}</em>
               ) : null}
             </label>
             <label className="withdrawal-field withdrawal-field--wide">
-              <span>現在の商品状態 任意</span>
+              <span>{copy.itemCondition}</span>
               <textarea
                 name="itemCondition"
                 rows="3"
@@ -239,37 +279,35 @@ export default function WithdrawalFormPage() {
               />
             </label>
             <label className="withdrawal-field withdrawal-field--wide">
-              <span>撤回理由 任意</span>
+              <span>{copy.reason}</span>
               <textarea
                 name="reason"
                 rows="3"
                 defaultValue={values.reason || ""}
-                placeholder="理由の記載は任意です。"
+                placeholder={copy.reason}
               />
             </label>
             <div className="withdrawal-actions">
-              <button type="submit">入力内容を確認する</button>
+              <button type="submit">{copy.preview}</button>
             </div>
           </Form>
         </section>
       ) : (
         <section className="withdrawal-card">
-          <h2>入力内容の確認</h2>
-          <p className="withdrawal-subtle">
-            内容を確認し、問題なければ「撤回を確定して送信する」を押してください。
-          </p>
+          <h2>{copy.confirmTitle}</h2>
+          <p className="withdrawal-subtle">{copy.confirmHelp}</p>
           <dl className="withdrawal-confirm-list">
-            <ConfirmRow label="氏名" value={snapshot.customerName} />
-            <ConfirmRow label="メールアドレス" value={snapshot.customerEmail} />
-            <ConfirmRow label="注文番号" value={snapshot.orderNumber} />
-            <ConfirmRow label="国" value={snapshot.countryCode} />
+            <ConfirmRow label={copy.customerName} value={snapshot.customerName} />
+            <ConfirmRow label={copy.customerEmail} value={snapshot.customerEmail} />
+            <ConfirmRow label={copy.orderNumber} value={snapshot.orderNumber} />
+            <ConfirmRow label={copy.country} value={formatWithdrawalCountry(snapshot.countryCode, locale)} />
             <ConfirmRow
-              label="撤回対象"
-              value={snapshot.withdrawalScope === "PARTIAL" ? "一部の商品" : "注文全体"}
+              label={copy.withdrawalScope}
+              value={snapshot.withdrawalScope === "PARTIAL" ? copy.partialOrder : copy.fullOrder}
             />
-            <ConfirmRow label="撤回したい商品" value={snapshot.itemText || "注文全体"} />
-            <ConfirmRow label="商品状態" value={snapshot.itemCondition || "-"} />
-            <ConfirmRow label="理由" value={snapshot.reason || "-"} />
+            <ConfirmRow label={copy.itemText} value={snapshot.itemText || copy.wholeOrder} />
+            <ConfirmRow label={copy.itemCondition} value={snapshot.itemCondition || "-"} />
+            <ConfirmRow label={copy.reason} value={snapshot.reason || "-"} />
           </dl>
           <Form method="post" className="withdrawal-actions">
             {Object.entries(snapshot).map(([key, value]) => (
@@ -277,9 +315,9 @@ export default function WithdrawalFormPage() {
             ))}
             {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
             <button type="button" className="secondary" onClick={() => setIsConfirming(false)}>
-              修正する
+              {copy.edit}
             </button>
-            <button type="submit">撤回を確定して送信する</button>
+            <button type="submit">{copy.submit}</button>
           </Form>
         </section>
       )}
@@ -375,6 +413,33 @@ function ConfirmRow({ label, value }) {
 }
 
 const pageStyles = `
+  .withdrawal-language{
+    max-width:860px;
+    margin:0 auto 12px;
+    display:flex;
+    justify-content:flex-end;
+    gap:6px;
+  }
+  .withdrawal-language a{
+    color:#374151;
+    text-decoration:none;
+    padding:7px 10px;
+    border:1px solid transparent;
+    border-radius:6px;
+  }
+  .withdrawal-language a[aria-current="true"]{
+    color:#111827;
+    border-color:#d1d5db;
+    background:#fff;
+    font-weight:700;
+  }
+  .withdrawal-eyebrow{
+    display:block;
+    margin-bottom:8px;
+    color:#4b5563;
+    font-size:13px;
+    font-weight:800;
+  }
   .withdrawal-page{
     min-height:100vh;
     background:#f4f5f7;

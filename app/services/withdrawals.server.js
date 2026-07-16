@@ -17,6 +17,27 @@ import {
   getWithdrawalEligibilityLabel,
   getWithdrawalStatusLabel,
 } from "../utils/withdrawalStatus.js";
+import {
+  getWithdrawalDictionary,
+  resolveWithdrawalLocale,
+} from "../utils/withdrawalLocale.js";
+import {
+  buildWithdrawalSubmissionIdempotencyKey,
+  hashWithdrawalValue,
+  resolveWithdrawalConsumerLawContext,
+  resolveWithdrawalLegalBundle,
+  WITHDRAWAL_DEADLINE_RULE_VERSION,
+  WITHDRAWAL_PAYLOAD_SCHEMA_VERSION,
+} from "./withdrawalCompliance.server.js";
+import {
+  buildWithdrawalAcknowledgementSnapshot,
+  buildWithdrawalCompletionSnapshot,
+  buildWithdrawalStatusSnapshot,
+} from "./withdrawalEmailTemplates.js";
+import {
+  buildWithdrawalOutboxRecord,
+  processWithdrawalEmailOutbox,
+} from "./withdrawalEmailOutbox.server.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const RETURN_PROOF_TOKEN_BYTES = 32;
@@ -285,7 +306,8 @@ const WITHDRAWAL_ORDER_LOOKUP_QUERY = `#graphql
   }
 `;
 
-export function normalizeWithdrawalFormData(formData) {
+export function normalizeWithdrawalFormData(formData, { locale = "en-GB" } = {}) {
+  const dictionary = getWithdrawalDictionary(locale);
   const customerName = normalizeText(formData.get("customerName"), 120);
   const customerEmail = normalizeEmail(formData.get("customerEmail"));
   const customerPhone = normalizeText(formData.get("customerPhone"), 40);
@@ -311,27 +333,24 @@ export function normalizeWithdrawalFormData(formData) {
 
   const errors = {};
 
-  if (!customerName) errors.customerName = "氏名を入力してください。";
-  if (!customerEmail) errors.customerEmail = "メールアドレスを入力してください。";
+  if (!customerName) errors.customerName = dictionary.errors.customerName;
+  if (!customerEmail) errors.customerEmail = dictionary.errors.customerEmail;
   if (customerEmail && !EMAIL_PATTERN.test(customerEmail)) {
-    errors.customerEmail = "有効なメールアドレスを入力してください。";
+    errors.customerEmail = dictionary.errors.customerEmail;
   }
-  if (!orderNumber) errors.orderNumber = "注文番号を入力してください。";
+  if (!orderNumber) errors.orderNumber = dictionary.errors.orderNumber;
   if (orderNumber && orderNumber.length > 80) {
     errors.orderNumber = "注文番号が長すぎます。";
   }
-  if (!countryCode) errors.countryCode = "国を選択してください。";
   if (customerPhone && customerPhone.length > 40) {
     errors.customerPhone = "電話番号が長すぎます。";
   }
   if (receivedDate && isFutureDate(receivedDate)) {
-    errors.receivedDate = "未来の受取日は指定できません。";
+    errors.receivedDate = dictionary.errors.receivedDate;
   }
   if (withdrawalScope === "PARTIAL" && !itemText && selectedLineItems.length === 0) {
-    errors.itemText = "撤回したい商品を入力してください。";
+    errors.itemText = dictionary.errors.itemText;
   }
-
-  Object.assign(errors, buildReadableWithdrawalFormErrors(errors));
 
   return {
     ok: Object.keys(errors).length === 0,
@@ -375,7 +394,15 @@ export async function createWithdrawalRequestFromForm({
   shopDomain,
   prismaClient = prisma,
 } = {}) {
-  const normalized = normalizeWithdrawalFormData(formData);
+  const localeResolution = resolveWithdrawalLocale({
+    urlLocale: formData.get("correspondenceLocale") || formData.get("lang"),
+    shopifyLocale: formData.get("shopifyLocale"),
+    acceptLanguage: request?.headers?.get("accept-language"),
+    userSelected: Boolean(formData.get("correspondenceLocale")),
+  });
+  const normalized = normalizeWithdrawalFormData(formData, {
+    locale: localeResolution.locale,
+  });
 
   if (!normalized.ok) {
     return {
@@ -399,11 +426,12 @@ export async function createWithdrawalRequestFromForm({
   });
 
   if (!rateLimitResult.ok) {
+    const dictionary = getWithdrawalDictionary(localeResolution.locale);
     return {
       ok: false,
       status: 429,
       errors: {
-        form: "短時間に送信できる件数を超えています。時間をおいて再度お試しください。",
+        form: dictionary.errors.rateLimited,
       },
       values,
     };
@@ -421,14 +449,33 @@ export async function createWithdrawalRequestFromForm({
   });
   const selectedLineItemsJson = buildSelectedLineItemsJson(values, orderLookup);
   const submittedPayloadJson = buildSubmittedPayloadJson(values);
-  const idempotencyKey = buildWithdrawalIdempotencyKey({
-    shopDomain: normalizedShopDomain,
-    orderNumber: values.orderNumber,
-    email: values.customerEmail,
-    withdrawalScope: values.withdrawalScope,
-    itemText: values.itemText,
-    selectedLineItems: values.selectedLineItems,
+  const submittedAt = new Date();
+  const submissionNonce = normalizeText(formData.get("submissionNonce"), 200);
+  const idempotencyKey = submissionNonce
+    ? buildWithdrawalSubmissionIdempotencyKey({
+        shopDomain: normalizedShopDomain,
+        submissionNonce,
+        fallbackPayload: submittedPayloadJson,
+      })
+    : buildWithdrawalIdempotencyKey({
+        shopDomain: normalizedShopDomain,
+        orderNumber: values.orderNumber,
+        email: values.customerEmail,
+        withdrawalScope: values.withdrawalScope,
+        itemText: values.itemText,
+        selectedLineItems: values.selectedLineItems,
+      });
+  const lawContext = resolveWithdrawalConsumerLawContext({
+    orderSnapshot: orderLookup.orderSnapshot,
+    submittedCountryCode: values.countryCode,
+    shopifyMarketCountry: formData.get("shopifyMarketCountry"),
   });
+  const legalBundle = await resolveWithdrawalLegalBundle({
+    prismaClient,
+    consumerLawCountry: lawContext.consumerLawCountry,
+    locale: localeResolution.locale,
+  });
+  const submittedPayloadHash = hashWithdrawalValue(submittedPayloadJson);
 
   const existing = await prismaClient.withdrawalRequest.findUnique({
     where: { idempotencyKey },
@@ -453,11 +500,10 @@ export async function createWithdrawalRequestFromForm({
       });
     }
 
-    if (!hasSentAcknowledgement) {
-      await sendWithdrawalAcknowledgementEmail({
-        withdrawalRequestId: existing.id,
-        prismaClient,
-      });
+    if (!hasSentAcknowledgement && prismaClient.withdrawalEmailOutbox?.findFirst) {
+      await processWithdrawalEmailOutbox({ prismaClient, limit: 1 });
+    } else if (!hasSentAcknowledgement) {
+      await sendWithdrawalAcknowledgementEmail({ withdrawalRequestId: existing.id, prismaClient });
     }
 
     await sendWithdrawalVendorNotificationEmails({
@@ -499,6 +545,16 @@ export async function createWithdrawalRequestFromForm({
         submittedPayloadJson,
         orderSnapshotJson: orderLookup.orderSnapshot,
         eligibilityJson: serializeEligibilityForJson(eligibility),
+        submittedAt,
+        submittedViewLocale: localeResolution.locale,
+        correspondenceLocale: localeResolution.locale,
+        localeSource: localeResolution.source,
+        ...lawContext,
+        withdrawalDeadlineRuleVersion: WITHDRAWAL_DEADLINE_RULE_VERSION,
+        submissionLegalBundleVersion: legalBundle.version,
+        submissionLegalBundleHash: legalBundle.hash,
+        submittedPayloadSchemaVersion: WITHDRAWAL_PAYLOAD_SCHEMA_VERSION,
+        submittedPayloadHash,
         source: "app_proxy",
         ipAddress,
         userAgent,
@@ -520,6 +576,34 @@ export async function createWithdrawalRequestFromForm({
       },
     });
 
+    if (tx.withdrawalEvent?.create && tx.withdrawalEmailOutbox?.create) {
+      const event = await tx.withdrawalEvent.create({
+        data: {
+          withdrawalRequestId: created.id,
+          type: "WITHDRAWAL_SUBMITTED",
+          occurredAt: submittedAt,
+          actorType: "BUYER",
+          actorId: values.customerEmail,
+          payloadJson: {
+            schemaVersion: WITHDRAWAL_PAYLOAD_SCHEMA_VERSION,
+            submittedPayloadHash,
+            legalBundleVersion: legalBundle.version,
+            legalReviewRequired: legalBundle.requiresLegalReview,
+          },
+          payloadHash: submittedPayloadHash,
+          idempotencyKey: `withdrawal-submitted:${created.id}`,
+        },
+      });
+      const email = buildWithdrawalAcknowledgementSnapshot(created);
+      await tx.withdrawalEmailOutbox.create({
+        data: buildWithdrawalOutboxRecord({
+          withdrawalRequest: created,
+          withdrawalEventId: event.id,
+          email,
+        }),
+      });
+    }
+
     return created;
   });
 
@@ -531,10 +615,12 @@ export async function createWithdrawalRequestFromForm({
     prismaClient,
   });
 
-  const emailResult = await sendWithdrawalAcknowledgementEmail({
-    withdrawalRequestId: withdrawalRequest.id,
-    prismaClient,
-  });
+  const emailResult = prismaClient.withdrawalEmailOutbox?.findFirst
+    ? await processWithdrawalEmailOutbox({ prismaClient, limit: 1 })
+    : await sendWithdrawalAcknowledgementEmail({
+        withdrawalRequestId: withdrawalRequest.id,
+        prismaClient,
+      });
   const vendorNotificationResult = await sendWithdrawalVendorNotificationEmails({
     withdrawalRequestId: withdrawalRequest.id,
     prismaClient,
@@ -943,7 +1029,7 @@ export async function sendWithdrawalAcknowledgementEmail({
     return { ok: false, error: "withdrawal_request_not_found" };
   }
 
-  const email = buildAcknowledgementEmail(withdrawalRequest);
+  const email = buildWithdrawalAcknowledgementSnapshot(withdrawalRequest);
   const result = await sendWithdrawalEmail({
     prismaClient,
     withdrawalRequest,
@@ -3534,7 +3620,7 @@ function getCompletionStatusLabelV3(status) {
 }
 
 function buildCompletionEmail(withdrawalRequest) {
-  return buildCompletionEmailV3(withdrawalRequest);
+  return buildWithdrawalCompletionSnapshot(withdrawalRequest);
 
   const supportEmail = getWithdrawalSupportEmail();
   const customerName = withdrawalRequest.customerName || "お客様";
@@ -3656,7 +3742,7 @@ function normalizeAppBaseUrl(value) {
 }
 
 function buildStatusEmail(withdrawalRequest) {
-  return buildStatusEmailV3(withdrawalRequest);
+  return buildWithdrawalStatusSnapshot(withdrawalRequest);
 
   const customerName = withdrawalRequest.customerName || "お客様";
   const orderName =

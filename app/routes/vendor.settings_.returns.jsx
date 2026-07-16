@@ -121,6 +121,7 @@ export const action = async ({ request }) => {
 };
 
 function initialValues(address) {
+  const english = address?.locales?.find((entry) => entry.locale === "en-GB");
   return {
     recipientName: address?.recipientName || "",
     postalCode: address?.postalCode || "",
@@ -131,6 +132,12 @@ function initialValues(address) {
     address2: address?.address2 || "",
     phone: address?.phone || "",
     instructions: address?.instructions || "",
+    internationalRecipientName: address?.internationalRecipientName || "",
+    internationalAddressLines: Array.isArray(address?.internationalAddressLines)
+      ? address.internationalAddressLines.join("\n")
+      : "",
+    phoneE164: address?.phoneE164 || "",
+    instructionsEn: english?.returnInstructions || "",
   };
 }
 
@@ -450,6 +457,52 @@ export default function VendorReturnAddressPage() {
             />
           </label>
 
+          <div className="return-address-international">
+            <h3>海外から返送する場合の英字表記</h3>
+            <p>
+              EUのお客様へそのまま案内できる、配送ラベル用の英字表記を入力してください。
+            </p>
+            <TextField
+              autoComplete="name"
+              label="宛名（英字）"
+              name="internationalRecipientName"
+              onChange={updateValue}
+              required={values.countryCode === "JP"}
+              value={values.internationalRecipientName}
+            />
+            <label className="vendor-form__field">
+              <span className="vendor-form__label">住所（英字・配送ラベルの順序で改行）</span>
+              <textarea
+                className="vendor-form__textarea"
+                name="internationalAddressLines"
+                onChange={(event) => updateValue("internationalAddressLines", event.target.value)}
+                placeholder={"1-1 Chiyoda, Chiyoda-ku\nTokyo 100-0001\nJAPAN"}
+                required={values.countryCode === "JP"}
+                rows={4}
+                value={values.internationalAddressLines}
+              />
+            </label>
+            <TextField
+              autoComplete="tel"
+              label="電話番号（国番号付き）"
+              name="phoneE164"
+              onChange={updateValue}
+              placeholder="例：+81312345678"
+              value={values.phoneE164}
+            />
+            <label className="vendor-form__field">
+              <span className="vendor-form__label">返送時の注意事項（英語）</span>
+              <textarea
+                className="vendor-form__textarea"
+                name="instructionsEn"
+                onChange={(event) => updateValue("instructionsEn", event.target.value)}
+                placeholder="Example: Returns are accepted on weekdays from 10:00 to 17:00."
+                rows={4}
+                value={values.instructionsEn}
+              />
+            </label>
+          </div>
+
           <label className="return-address-confirmation">
             <input
               checked={confirmed}
@@ -517,6 +570,17 @@ export default function VendorReturnAddressPage() {
         .return-address-lookup--found{ color:#047857; }
         .return-address-lookup--not-found,
         .return-address-lookup--error{ color:#9a3412; }
+        .return-address-international{
+          display:grid;
+          gap:16px;
+          padding:20px;
+          border:1px solid #d1d5db;
+          border-radius:8px;
+          background:#f9fafb;
+        }
+        .return-address-international h3,
+        .return-address-international p{ margin:0; }
+        .return-address-international p{ color:#6b7280; line-height:1.6; }
         .return-address-confirmation{
           display:flex;
           align-items:flex-start;

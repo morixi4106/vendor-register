@@ -11,6 +11,10 @@ import {
   submitWithdrawalGroupShipment,
 } from "../services/withdrawalDirectReturns.server.js";
 import { authenticate } from "../shopify.server";
+import {
+  getWithdrawalDictionary,
+  resolveWithdrawalLocale,
+} from "../utils/withdrawalLocale.js";
 
 export const loader = async ({ request }) => {
   await authenticateAppProxyShop(request);
@@ -24,6 +28,10 @@ export const loader = async ({ request }) => {
       returnGroupId: groupId,
       token,
     });
+    const locale = resolveReturnProofLocale(
+      request,
+      groupResult.returnGroup?.withdrawalRequest?.correspondenceLocale,
+    );
     return json(
       {
         ok: groupResult.ok,
@@ -33,6 +41,7 @@ export const loader = async ({ request }) => {
         groupId,
         token,
         workflowVersion: 2,
+        locale,
         withdrawalRequest: groupResult.ok
           ? serializeReturnGroup(groupResult.returnGroup)
           : null,
@@ -42,6 +51,10 @@ export const loader = async ({ request }) => {
   }
 
   const result = await findWithdrawalReturnProofRequest({ requestId, token });
+  const locale = resolveReturnProofLocale(
+    request,
+    result.withdrawalRequest?.correspondenceLocale,
+  );
   return json(
     {
       ok: result.ok,
@@ -51,6 +64,7 @@ export const loader = async ({ request }) => {
       token,
       groupId: "",
       workflowVersion: 1,
+      locale,
       withdrawalRequest: result.withdrawalRequest
         ? serializeReturnProofRequest(result.withdrawalRequest)
         : null,
@@ -137,6 +151,11 @@ function redirectToSuccess(request, formData, reference) {
     request.url,
   );
   successUrl.searchParams.set("ref", reference);
+  const locale = resolveReturnProofLocale(
+    request,
+    formData.get("correspondenceLocale"),
+  );
+  successUrl.searchParams.set("lang", locale);
   if (isEmbeddedRequest(request, formData)) successUrl.searchParams.set("embedded", "1");
   return redirect(successUrl.pathname + successUrl.search);
 }
@@ -150,6 +169,7 @@ export default function ReturnProofPage() {
     groupId,
     token,
     workflowVersion,
+    locale,
     withdrawalRequest,
   } = useLoaderData();
   const actionData = useActionData();
@@ -157,6 +177,7 @@ export default function ReturnProofPage() {
   const isSubmitting = navigation.state !== "idle";
   const values = actionData?.values || {};
   const errors = actionData?.errors || {};
+  const copy = getWithdrawalDictionary(locale).returnProof;
 
   useEmbeddedFrameBehavior(embedded, [actionData]);
 
@@ -165,41 +186,41 @@ export default function ReturnProofPage() {
       <style>{pageStyles}</style>
       <section className="return-proof-card">
         {!embedded ? <p className="return-proof-eyebrow">EU RIGHT OF WITHDRAWAL</p> : null}
-        <h1>返送証明の提出</h1>
+        <h1>{copy.title}</h1>
         {!ok ? (
-          <div className="return-proof-alert">{getErrorMessage(error)}</div>
+          <div className="return-proof-alert">{getErrorMessage(error, copy)}</div>
         ) : (
           <>
             <p className="return-proof-lead">
-              商品を返送した後、配送会社と追跡番号または追跡URLを提出してください。
-              複数店舗へ返送する場合は、店舗ごとに届いた案内から別々に提出します。
+              {copy.intro}
             </p>
             <div className="return-proof-summary">
-              <span>受付番号: {withdrawalRequest.id}</span>
-              <span>注文番号: {withdrawalRequest.orderName}</span>
-              <span>メール: {withdrawalRequest.customerEmail}</span>
+                <span>{copy.request}: {withdrawalRequest.id}</span>
+                <span>{copy.order}: {withdrawalRequest.orderName}</span>
+                <span>{copy.email}: {withdrawalRequest.customerEmail}</span>
               {workflowVersion === 2 ? (
-                <span>返送先店舗: {withdrawalRequest.storeName}</span>
+                <span>{copy.store}: {withdrawalRequest.storeName}</span>
               ) : null}
             </div>
 
             {actionData?.error ? (
-              <div className="return-proof-alert">{getErrorMessage(actionData.error)}</div>
+              <div className="return-proof-alert">{getErrorMessage(actionData.error, copy)}</div>
             ) : null}
 
             <Form method="post" className="return-proof-form">
               <input type="hidden" name="requestId" value={requestId} />
               <input type="hidden" name="groupId" value={groupId} />
               <input type="hidden" name="token" value={token} />
+              <input type="hidden" name="correspondenceLocale" value={locale} />
               {embedded ? <input type="hidden" name="embedded" value="1" /> : null}
 
               {workflowVersion === 2 ? (
                 <fieldset className="return-proof-items">
-                  <legend>この荷物に入れた商品</legend>
+                  <legend>{copy.packageItems}</legend>
                   {withdrawalRequest.lines.map((line) => (
                     <label key={line.id}>
                       <span>
-                        {line.title}（残り {line.remainingQuantity} 点）
+                        {line.title} ({copy.remaining} {line.remainingQuantity} {copy.unit})
                       </span>
                       <input
                         name={`quantity:${line.id}`}
@@ -217,10 +238,10 @@ export default function ReturnProofPage() {
               ) : null}
 
               <label>
-                <span>配送会社</span>
+                <span>{copy.carrier}</span>
                 <input
                   name="returnTrackingCompany"
-                  placeholder="Japan Post / DHL / UPS など"
+                  placeholder="Japan Post / DHL / UPS"
                   defaultValue={
                     values.returnTrackingCompany ||
                     withdrawalRequest.returnTrackingCompany ||
@@ -229,10 +250,10 @@ export default function ReturnProofPage() {
                 />
               </label>
               <label>
-                <span>追跡番号</span>
+                <span>{copy.trackingNumber}</span>
                 <input
                   name="returnTrackingNumber"
-                  placeholder="例: TEST123456789JP"
+                  placeholder="TEST123456789JP"
                   defaultValue={
                     values.returnTrackingNumber ||
                     withdrawalRequest.returnTrackingNumber ||
@@ -240,11 +261,11 @@ export default function ReturnProofPage() {
                   }
                 />
                 {errors.returnTrackingNumber ? (
-                  <em>追跡番号または追跡URLのどちらかを入力してください。</em>
+                  <em>{copy.errors.tracking}</em>
                 ) : null}
               </label>
               <label>
-                <span>追跡URL</span>
+                <span>{copy.trackingUrl}</span>
                 <input
                   name="returnTrackingUrl"
                   type="url"
@@ -255,19 +276,19 @@ export default function ReturnProofPage() {
                 />
               </label>
               <label>
-                <span>補足メモ</span>
+                <span>{copy.memo}</span>
                 <textarea
                   name="customerMemo"
                   rows="4"
-                  placeholder="返送日や補足事項があれば入力してください。"
+                  placeholder={copy.memoPlaceholder}
                   defaultValue={values.customerMemo || ""}
                 />
               </label>
               <div className="return-proof-note">
-                返送証明を提出しただけでは返金は自動実行されません。店舗での到着確認と商品状態の確認後に、運営が返金内容を決定します。
+                {copy.notice}
               </div>
               <button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "送信中..." : "返送証明を提出する"}
+                {isSubmitting ? copy.submitting : copy.submit}
               </button>
             </Form>
           </>
@@ -296,14 +317,14 @@ function serializeReturnGroup(group) {
       group.withdrawalRequest.shopifyOrderNumber ||
       "-",
     customerEmail: maskEmail(group.withdrawalRequest.customerEmail),
-    storeName: group.storeNameSnapshot || "販売店舗",
+    storeName: group.storeNameSnapshot || "-",
     returnTrackingCompany: "",
     returnTrackingNumber: "",
     returnTrackingUrl: "",
     lines: (group.lines || [])
       .map((line) => ({
         id: line.id,
-        title: line.requestedLine.titleSnapshot || "商品",
+        title: line.requestedLine.titleSnapshot || "-",
         remainingQuantity: Math.max(
           0,
           Number(line.instructedQuantity || 0) - Number(line.submittedQuantity || 0),
@@ -320,24 +341,33 @@ function maskEmail(email) {
   return `${name.slice(0, 2)}***@${domain}`;
 }
 
-function getErrorMessage(error) {
+function getErrorMessage(error, copy) {
   switch (error) {
     case "return_proof_link_expired":
-      return "この返送証明リンクは期限切れです。サポートへお問い合わせください。";
+      return copy.errors.expired;
     case "withdrawal_request_closed":
-      return "この撤回申請はすでに処理済み、または受付を終了しています。";
+      return copy.errors.closed;
     case "invalid_return_proof":
     case "tracking_required":
-      return "追跡番号または追跡URLのどちらかを入力してください。";
+      return copy.errors.tracking;
     case "shipment_quantity_exceeded":
-      return "入力した商品数量が返送可能な残数を超えています。";
+      return copy.errors.quantityExceeded;
     case "shipment_lines_required":
-      return "この荷物に入れた商品の数量を入力してください。";
+      return copy.errors.quantityRequired;
     case "invalid_access_link":
     case "invalid_return_proof_link":
     default:
-      return "返送証明リンクを確認できませんでした。メール内のリンクを開き直してください。";
+      return copy.errors.invalid;
   }
+}
+
+function resolveReturnProofLocale(request, savedLocale) {
+  const url = new URL(request.url);
+  return resolveWithdrawalLocale({
+    urlLocale: url.searchParams.get("lang"),
+    savedLocale,
+    acceptLanguage: request.headers.get("accept-language"),
+  }).locale;
 }
 
 function isEmbeddedRequest(request, formData = null) {

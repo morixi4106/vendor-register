@@ -28,6 +28,7 @@ Render should already run migrations in pre-deploy. Confirm that this migration 
 ```text
 20260703090000_add_withdrawal_requests
 20260717120000_add_direct_return_workflow_v2
+20260717190000_add_withdrawal_compliance_foundation
 ```
 
 ## Environment Variables
@@ -38,6 +39,7 @@ Required for acknowledgement email:
 RESEND_API_KEY=...
 WITHDRAWAL_FROM_EMAIL=support@example.com
 WITHDRAWAL_SUPPORT_EMAIL=support@example.com
+WITHDRAWAL_OUTBOX_WORKER_TOKEN=use-a-random-value-with-at-least-24-characters
 ```
 
 Fallbacks:
@@ -53,6 +55,13 @@ WITHDRAWAL_ENABLE_SHOPIFY_WRITE_ACTIONS=false
 
 Keep this `false` until cancellation/refund mutations are fully tested with the current Shopify API version and scopes.
 
+The app attempts to send the acknowledgement immediately after recording the
+request. For retries, schedule an authenticated POST to
+`/internal/withdrawal-email-outbox?limit=10` with the header
+`Authorization: Bearer <WITHDRAWAL_OUTBOX_WORKER_TOKEN>`. The worker is
+idempotent and uses a short database lock so concurrent calls do not send the
+same queued message twice.
+
 No new environment variable is required for the direct-to-store V2 workflow.
 
 `WITHDRAWAL_RETURN_ADDRESS` is a legacy V1 common return address only. V2 never
@@ -61,6 +70,20 @@ address remains blocked from sending return instructions.
 
 Keep `WITHDRAWAL_PUBLIC_BASE_URL` set to the Shopify storefront origin so that
 buyer links do not expose the Render application URL.
+
+## Languages and legal snapshots
+
+- The public notice, success page, proof-of-return page and buyer emails support
+  `ja-JP` and `en-GB`.
+- The language chosen for correspondence is saved on the request and is not
+  changed by a later browser-language change.
+- The app records the server receipt time, payload hash, country-evidence source,
+  rule versions and the legal-bundle hash used at submission.
+- If no reviewed country-specific legal bundle is published, the app accepts the
+  notice using neutral wording and marks it for manual legal review. It does not
+  claim that eligibility or a refund has already been decided.
+- Active return addresses for EU-facing stores should include an international
+  recipient name, address lines and English instructions.
 
 ## Shopify Page
 

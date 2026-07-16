@@ -234,6 +234,7 @@ function inspectWithdrawalEmailEnvironment(env) {
   const supportEmail = normalizeText(env.WITHDRAWAL_SUPPORT_EMAIL);
   const publicBaseUrl = normalizeText(env.WITHDRAWAL_PUBLIC_BASE_URL);
   const returnAddress = normalizeText(env.WITHDRAWAL_RETURN_ADDRESS);
+  const outboxWorkerToken = normalizeText(env.WITHDRAWAL_OUTBOX_WORKER_TOKEN);
 
   return {
     hasResendApiKey: Boolean(resendApiKey),
@@ -247,6 +248,9 @@ function inspectWithdrawalEmailEnvironment(env) {
     publicBaseUrl,
     publicBaseUrlLooksValid: Boolean(publicBaseUrl && /^https?:\/\//i.test(publicBaseUrl)),
     returnAddress,
+    hasOutboxWorkerToken: Boolean(
+      outboxWorkerToken && outboxWorkerToken.length >= 24,
+    ),
   };
 }
 
@@ -266,6 +270,10 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       completionNotificationMissingCount: 0,
       rejectedWithoutReasonCount: 0,
       shopifyExternalRecordMissingCount: 0,
+      outboxPendingCount: 0,
+      outboxDeadLetterCount: 0,
+      legacyLocaleMissingCount: 0,
+      publishedLegalBundleCount: 0,
       error: "withdrawal_tables_unavailable",
     };
   }
@@ -288,6 +296,10 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       completionNotificationMissingCount,
       rejectedWithoutReasonCount,
       shopifyExternalRecordMissingCount,
+      outboxPendingCount,
+      outboxDeadLetterCount,
+      legacyLocaleMissingCount,
+      publishedLegalBundleCount,
     ] = await Promise.all([
       prismaClient.withdrawalRequest.count({
         where: { status: { in: WITHDRAWAL_OPEN_STATUSES } },
@@ -383,6 +395,30 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
           ],
         },
       }),
+      prismaClient.withdrawalEmailOutbox?.count
+        ? prismaClient.withdrawalEmailOutbox.count({
+            where: { status: { in: ["PENDING", "PROCESSING", "FAILED"] } },
+          })
+        : Promise.resolve(0),
+      prismaClient.withdrawalEmailOutbox?.count
+        ? prismaClient.withdrawalEmailOutbox.count({
+            where: { status: "DEAD_LETTER" },
+          })
+        : Promise.resolve(0),
+      prismaClient.withdrawalRequest.count({
+        where: {
+          OR: [
+            { submittedAt: null },
+            { submittedViewLocale: null },
+            { correspondenceLocale: null },
+          ],
+        },
+      }),
+      prismaClient.withdrawalLegalBundle?.count
+        ? prismaClient.withdrawalLegalBundle.count({
+            where: { status: "PUBLISHED" },
+          })
+        : Promise.resolve(0),
     ]);
     const processingIssueCount =
       refundDecisionMissingCount +
@@ -407,6 +443,10 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       completionNotificationMissingCount,
       rejectedWithoutReasonCount,
       shopifyExternalRecordMissingCount,
+      outboxPendingCount,
+      outboxDeadLetterCount,
+      legacyLocaleMissingCount,
+      publishedLegalBundleCount,
       error: null,
     };
   } catch (error) {
@@ -425,6 +465,10 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       completionNotificationMissingCount: 0,
       rejectedWithoutReasonCount: 0,
       shopifyExternalRecordMissingCount: 0,
+      outboxPendingCount: 0,
+      outboxDeadLetterCount: 0,
+      legacyLocaleMissingCount: 0,
+      publishedLegalBundleCount: 0,
       error: error?.code || "withdrawal_readiness_failed",
     };
   }
@@ -466,7 +510,16 @@ async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
           storeName: true,
           returnAddresses: {
             where: { status: "ACTIVE" },
-            select: { id: true },
+            select: {
+              id: true,
+              countryCode: true,
+              internationalRecipientName: true,
+              internationalAddressLines: true,
+              locales: {
+                where: { locale: "en-GB" },
+                select: { id: true },
+              },
+            },
             take: 1,
           },
         },
@@ -479,6 +532,20 @@ async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
       missingAddressStores: relevantStores
         .filter((store) => store.returnAddresses.length === 0)
         .map((store) => ({ id: store.id, storeName: store.storeName })),
+      incompleteInternationalAddressStores: relevantStores
+        .filter((store) => {
+          const address = store.returnAddresses[0];
+          if (!address) return false;
+          const lines = Array.isArray(address.internationalAddressLines)
+            ? address.internationalAddressLines.filter(Boolean)
+            : [];
+          return (
+            !address.internationalRecipientName ||
+            lines.length === 0 ||
+            address.locales.length === 0
+          );
+        })
+        .map((store) => ({ id: store.id, storeName: store.storeName })),
       error: null,
     };
   } catch (error) {
@@ -487,6 +554,7 @@ async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
       activePolicy: null,
       relevantStoreCount: 0,
       missingAddressStores: [],
+      incompleteInternationalAddressStores: [],
       error: error?.code || "direct_return_readiness_failed",
     };
   }
@@ -506,6 +574,8 @@ function buildDirectReturnChecks({ directReturns }) {
     ];
   }
   const missing = directReturns.missingAddressStores;
+  const incompleteInternational =
+    directReturns.incompleteInternationalAddressStores || [];
   return [
     createCheck({
       id: "withdrawal_direct_return_policy",
@@ -531,6 +601,20 @@ function buildDirectReturnChecks({ directReturns }) {
       action:
         missing.length > 0
           ? "各店舗の「返送先設定」で、実際に返品を受領できる住所を確認して有効化してください。"
+          : "",
+    }),
+    createCheck({
+      id: "withdrawal_direct_return_international_addresses",
+      category: "app",
+      status: incompleteInternational.length > 0 ? "warning" : "pass",
+      title: "海外購入者向け返送先表記",
+      detail:
+        incompleteInternational.length > 0
+          ? `${incompleteInternational.length}店舗で英字の宛名・住所・案内が不足しています: ${incompleteInternational.map((store) => store.storeName).join("、")}`
+          : "EU販売対象店舗の有効な返送先に英字表記があります。",
+      action:
+        incompleteInternational.length > 0
+          ? "各店舗の「返品受取先」で海外から返送できる英字表記を登録し、返送先を再度有効化してください。"
           : "",
     }),
   ];
@@ -790,6 +874,21 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
       action: withdrawalEmailEnv.publicBaseUrlLooksValid
         ? ""
         : "Set WITHDRAWAL_PUBLIC_BASE_URL to the storefront origin, for example https://oja-immanuel-bacchus.com.",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_outbox_worker_token",
+      category: "app",
+      status: withdrawalEmailEnv.hasOutboxWorkerToken ? "pass" : "warning",
+      title: "撤回メール再送ワーカー",
+      detail: withdrawalEmailEnv.hasOutboxWorkerToken
+        ? "WITHDRAWAL_OUTBOX_WORKER_TOKENが設定されています。"
+        : "WITHDRAWAL_OUTBOX_WORKER_TOKENが未設定または短すぎます。初回送信に失敗したメールを定期再送できません。",
+      action: withdrawalEmailEnv.hasOutboxWorkerToken
+        ? ""
+        : "24文字以上のランダムなWITHDRAWAL_OUTBOX_WORKER_TOKENを設定し、内部ワーカーを定期実行してください。",
     }),
   );
 
@@ -1440,6 +1539,52 @@ function buildWithdrawalOperationChecks({ withdrawalOperations }) {
         withdrawalOperations.emailFailedCount > 0
           ? "Open /app/withdrawals, filter by email failures, and resend or confirm the customer address."
           : "",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_email_outbox",
+      category: "app",
+      status:
+        withdrawalOperations.outboxDeadLetterCount > 0
+          ? "warning"
+          : withdrawalOperations.outboxPendingCount > 0
+            ? "manual"
+            : "pass",
+      title: "撤回メール送信キュー",
+      detail: withdrawalOperations.available
+        ? `再送待ち ${withdrawalOperations.outboxPendingCount}件、手動確認が必要 ${withdrawalOperations.outboxDeadLetterCount}件です。`
+        : "撤回メール送信キューを確認できませんでした。",
+      action:
+        withdrawalOperations.outboxDeadLetterCount > 0
+          ? "失敗理由と宛先を確認し、修正後に再送してください。"
+          : withdrawalOperations.outboxPendingCount > 0
+            ? "内部メールワーカーが定期実行されていることを確認してください。"
+            : "",
+    }),
+  );
+
+  checks.push(
+    createCheck({
+      id: "withdrawal_locale_and_legal_snapshots",
+      category: "app",
+      status:
+        withdrawalOperations.legacyLocaleMissingCount > 0
+          ? "warning"
+          : withdrawalOperations.publishedLegalBundleCount === 0
+            ? "manual"
+            : "pass",
+      title: "撤回申請の言語・法務スナップショット",
+      detail: withdrawalOperations.available
+        ? `言語または受付日時が不足する既存申請 ${withdrawalOperations.legacyLocaleMissingCount}件、公開済み法務文面 ${withdrawalOperations.publishedLegalBundleCount}件です。`
+        : "撤回申請の言語・法務スナップショットを確認できませんでした。",
+      action:
+        withdrawalOperations.legacyLocaleMissingCount > 0
+          ? "既存申請は互換表示できますが、必要に応じてバックフィルしてください。新規申請は受付時の値を固定保存します。"
+          : withdrawalOperations.publishedLegalBundleCount === 0
+            ? "国別法務文面が未公開の間は中立的な受付文面を使い、個別判断を管理者確認にしてください。"
+            : "",
     }),
   );
 

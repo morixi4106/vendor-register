@@ -7,10 +7,11 @@ import {
   ScrollRestoration,
   useLoaderData,
 } from "@remix-run/react";
+import { resolveWithdrawalLocale } from "./utils/withdrawalLocale.js";
 
 const FALLBACK_FAVICON_VERSION = "local";
 
-export const loader = async () => {
+export const loader = async ({ request }) => {
   const commit =
     process.env.RENDER_GIT_COMMIT ||
     process.env.COMMIT_SHA ||
@@ -19,15 +20,20 @@ export const loader = async () => {
 
   return json({
     faviconVersion: commit ? commit.slice(0, 12) : FALLBACK_FAVICON_VERSION,
+    documentLocale: resolveWithdrawalLocale({
+      urlLocale: new URL(request.url).searchParams.get("lang"),
+      acceptLanguage: request.headers.get("accept-language"),
+    }).locale,
   });
 };
 
 export default function App() {
-  const { faviconVersion = FALLBACK_FAVICON_VERSION } = useLoaderData() || {};
+  const { faviconVersion = FALLBACK_FAVICON_VERSION, documentLocale = "ja-JP" } =
+    useLoaderData() || {};
   const faviconCacheKey = `?v=${encodeURIComponent(faviconVersion)}`;
 
   return (
-    <html>
+    <html lang={documentLocale}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
