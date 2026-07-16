@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../db.server.js";
+import { formatPublicCountryLabel } from "../utils/deliveryEligibility.js";
 
 export const WITHDRAWAL_CONTRACT_MODES = Object.freeze({
   PLATFORM_SINGLE_CONTRACT: "PLATFORM_SINGLE_CONTRACT",
@@ -462,11 +463,17 @@ export async function getVendorReturnAddressState(vendorStoreId, prismaClient = 
 }
 
 function normalizeReturnAddressInput(values = {}) {
+  const countryCode = text(values.countryCode).toUpperCase();
+  const publicCountryLabel = formatPublicCountryLabel(countryCode);
   const data = {
     recipientName: text(values.recipientName),
     postalCode: text(values.postalCode),
-    countryCode: text(values.countryCode).toUpperCase(),
-    countryLabel: text(values.countryLabel) || null,
+    countryCode,
+    countryLabel:
+      (publicCountryLabel && publicCountryLabel !== countryCode ? publicCountryLabel : null) ||
+      text(values.countryLabel) ||
+      countryCode ||
+      null,
     region: text(values.region) || null,
     city: text(values.city) || null,
     address1: text(values.address1),
@@ -478,9 +485,11 @@ function normalizeReturnAddressInput(values = {}) {
     legalRecipientConfirmed: Boolean(values.legalRecipientConfirmed),
   };
   const errors = {};
-  for (const key of ["recipientName", "postalCode", "countryCode", "address1"]) {
+  for (const key of ["recipientName", "postalCode", "countryCode", "city", "address1"]) {
     if (!data[key]) errors[key] = "required";
   }
+  if (!/^[A-Z]{2}$/.test(data.countryCode)) errors.countryCode = "invalid";
+  if (data.countryCode === "JP" && !data.region) errors.region = "required";
   return { ok: Object.keys(errors).length === 0, data, errors };
 }
 
@@ -2015,6 +2024,7 @@ export async function reconcileWithdrawalCancellationWebhook({
 }
 
 export function returnAddressFromFormData(formData) {
+  const consolidatedConfirmation = formData.get("returnAddressConfirmed") === "on";
   return {
     recipientName: formData.get("recipientName"),
     postalCode: formData.get("postalCode"),
@@ -2026,9 +2036,12 @@ export function returnAddressFromFormData(formData) {
     address2: formData.get("address2"),
     phone: formData.get("phone"),
     instructions: formData.get("instructions"),
-    canReceiveReturnsConfirmed: formData.get("canReceiveReturnsConfirmed") === "on",
-    buyerDisclosureConfirmed: formData.get("buyerDisclosureConfirmed") === "on",
-    legalRecipientConfirmed: formData.get("legalRecipientConfirmed") === "on",
+    canReceiveReturnsConfirmed:
+      consolidatedConfirmation || formData.get("canReceiveReturnsConfirmed") === "on",
+    buyerDisclosureConfirmed:
+      consolidatedConfirmation || formData.get("buyerDisclosureConfirmed") === "on",
+    legalRecipientConfirmed:
+      consolidatedConfirmation || formData.get("legalRecipientConfirmed") === "on",
   };
 }
 

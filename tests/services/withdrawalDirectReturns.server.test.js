@@ -8,9 +8,20 @@ import {
   buildDirectReturnStoreNotificationEmail,
   findWithdrawalGroupByToken,
   reconcileWithdrawalCancellationWebhook,
+  returnAddressFromFormData,
   submitWithdrawalGroupShipment,
   updateWithdrawalGroupReview,
 } from "../../app/services/withdrawalDirectReturns.server.js";
+
+test("one return address confirmation preserves all audit confirmations", () => {
+  const formData = new FormData();
+  formData.set("returnAddressConfirmed", "on");
+  const values = returnAddressFromFormData(formData);
+
+  assert.equal(values.canReceiveReturnsConfirmed, true);
+  assert.equal(values.buyerDisclosureConfirmed, true);
+  assert.equal(values.legalRecipientConfirmed, true);
+});
 
 test("initial shipping allocation is integer-safe and never duplicated", () => {
   const result = __testables.allocateIntegerByWeight(870, [
