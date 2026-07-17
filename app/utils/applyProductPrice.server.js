@@ -120,6 +120,9 @@ async function resolveSnapshotTarget({
         id: true,
         shopDomain: true,
         shopifyProductId: true,
+        vendorStore: {
+          select: { isPlatformStore: true },
+        },
       },
     });
 
@@ -289,6 +292,9 @@ export function createApplyProductPrice({
         id: true,
         shopDomain: true,
         shopifyProductId: true,
+        vendorStore: {
+          select: { isPlatformStore: true },
+        },
       },
     });
 
@@ -310,6 +316,19 @@ export function createApplyProductPrice({
         },
         prismaClient,
       );
+
+      if (snapshotTarget?.vendorStore?.isPlatformStore) {
+        return {
+          ok: true,
+          productId,
+          localProductId: snapshotTarget.id,
+          skipped: true,
+          skipReason: "shopify_managed_platform_product",
+          shopDomain:
+            normalizeShopDomainImpl(snapshotTarget.shopDomain) ||
+            preferredShopDomain,
+        };
+      }
 
       const readQuery = `
         query ReadProductAndShop($id: ID!) {

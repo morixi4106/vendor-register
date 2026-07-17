@@ -424,3 +424,43 @@ test('applyProductPrice skips Shopify mutation when the price is unchanged', asy
   assert.equal(prismaClient.state.logs.length, 1);
   assert.equal(prismaClient.state.logs[0].status, 'success');
 });
+
+test('applyProductPrice never overwrites a Shopify-managed platform product', async () => {
+  const prismaClient = createFakePrisma({
+    linkedProducts: [
+      {
+        id: 'platform_product',
+        shopDomain: 'shop-a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+        vendorStore: { isPlatformStore: true },
+      },
+    ],
+    productsById: {
+      platform_product: {
+        shopDomain: 'shop-a.myshopify.com',
+        shopifyProductId: 'gid://shopify/Product/1',
+        vendorStore: { isPlatformStore: true },
+      },
+    },
+  });
+  let shopifyReadCalled = false;
+  const applyProductPrice = createApplyProductPrice({
+    prismaClient,
+    shopifyGraphQLWithOfflineSessionImpl: async () => {
+      shopifyReadCalled = true;
+      return createReadProductResponse();
+    },
+  });
+
+  const result = await applyProductPrice('gid://shopify/Product/1', {
+    shopDomain: 'shop-a.myshopify.com',
+    localProductId: 'platform_product',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.skipReason, 'shopify_managed_platform_product');
+  assert.equal(shopifyReadCalled, false);
+  assert.equal(prismaClient.state.updates.length, 0);
+  assert.equal(prismaClient.state.logs.length, 0);
+});

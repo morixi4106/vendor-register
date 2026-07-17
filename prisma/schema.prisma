@@ -28,19 +28,20 @@ model Session {
 }
 
 model VendorStore {
-  id          String   @id @default(cuid())
-  ownerName   String
-  storeName   String
-  email       String
-  phone       String
-  address     String
-  country     String
-  category    String
-  note        String?
-  ageCheck    String
-  isTestStore Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(cuid())
+  ownerName       String
+  storeName       String
+  email           String
+  phone           String
+  address         String
+  country         String
+  category        String
+  note            String?
+  ageCheck        String
+  isTestStore     Boolean  @default(false)
+  isPlatformStore Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   vendorAuth             Vendor?
   seller                 Seller?

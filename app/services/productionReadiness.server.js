@@ -1,6 +1,7 @@
 import Stripe from "stripe";
 
 import prisma from "../db.server.js";
+import { isMarketplaceSeller } from "../utils/sellerRoles.js";
 import { WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY } from "./operationalHealth.server.js";
 import { listSellerLedgerRepairCandidates } from "./sellerPayments.server.js";
 import {
@@ -2013,18 +2014,19 @@ export async function getProductionReadiness({
   const withdrawalOperations = await inspectWithdrawalOperations({
     prismaClient,
   });
+  const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
   const directReturns = await inspectDirectReturnReadiness({ prismaClient });
   const launchIntegrity = await inspectLaunchIntegrity({
     prismaClient,
-    sellerRows,
+    sellerRows: marketplaceSellerRows,
     now,
   });
   const shopifyProductSync = await inspectShopifyProductSync({ prismaClient });
 
   const connectedAccountProbe = stripeConnectProductionEnabled
-    ? await probeConnectedAccounts({
+      ? await probeConnectedAccounts({
         stripeEnv,
-        sellerRows,
+        sellerRows: marketplaceSellerRows,
       })
     : [];
   const configuredScopes = parseScopes(env.SCOPES);
@@ -2041,7 +2043,7 @@ export async function getProductionReadiness({
     ...buildShopifyProductSyncChecks(shopifyProductSync),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
-      sellerRows,
+      sellerRows: marketplaceSellerRows,
       connectedAccountProbe,
       operationEnv,
     }),
@@ -2084,9 +2086,10 @@ export async function getProductionReadiness({
         .filter(Boolean),
     },
     sellers: {
-      totalCount: sellerRows.length,
-      activeCount: sellerRows.filter((seller) => seller.status === "active")
-        .length,
+      totalCount: marketplaceSellerRows.length,
+      activeCount: marketplaceSellerRows.filter(
+        (seller) => seller.status === "active",
+      ).length,
       testStoreCount: launchIntegrity.testStores.count,
       connectedAccountProbe,
       probeLimit: STRIPE_ACCOUNT_PROBE_LIMIT,

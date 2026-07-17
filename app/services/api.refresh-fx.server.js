@@ -119,6 +119,9 @@ export function createRunAutoPriceRefresh({
         shopifyProductId: {
           not: null,
         },
+        vendorStore: {
+          isPlatformStore: false,
+        },
       },
       select: {
         id: true,

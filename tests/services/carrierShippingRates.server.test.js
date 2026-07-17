@@ -8,6 +8,7 @@ import {
   createCarrierShippingRatesLoader,
   getCarrierRatesEmptyReason,
   getCarrierCallbackUrl,
+  resolveCarrierFulfillmentOwnership,
   toShopifyCarrierSubunits,
   upsertShippingV2CarrierService,
   validateCarrierEuDeliveryPolicy,
@@ -16,6 +17,11 @@ import {
   clearShippingDiagnosticEvents,
   listShippingDiagnosticEvents,
 } from '../../app/services/shippingDiagnostics.server.js';
+
+const passThroughOwnershipResolution = async ({ quoteRequest }) => ({
+  ok: true,
+  quoteRequest,
+});
 
 function createCarrierRequest(overrides = {}) {
   const { rate: rateOverrides = {}, ...rest } = overrides;
@@ -114,10 +120,109 @@ test('carrier shipping rates accepts Shopify carrier postal_code payloads', () =
   ]);
 });
 
+test('carrier shipping rates split physical items by their owning vendor store', async () => {
+  const quoteRequest = buildCarrierShippingV2QuoteRequest(
+    createCarrierRequest({
+      rate: {
+        items: [
+          {
+            product_id: 9044842447011,
+            variant_id: 111222333,
+            quantity: 1,
+            price: 2100,
+            requires_shipping: true,
+          },
+          {
+            product_id: 9159637270691,
+            variant_id: 444555666,
+            quantity: 1,
+            price: 6500,
+            requires_shipping: true,
+          },
+        ],
+      },
+    }),
+  );
+  const result = await resolveCarrierFulfillmentOwnership({
+    quoteRequest,
+    prismaClient: {
+      product: {
+        async findMany() {
+          return [
+            {
+              id: 'marketplace_product',
+              shopifyProductId: 'gid://shopify/Product/9044842447011',
+              shopifyVariantId: 'gid://shopify/ProductVariant/111222333',
+              vendorStoreId: 'marketplace_store',
+              vendorStore: {
+                id: 'marketplace_store',
+                isPlatformStore: false,
+              },
+            },
+            {
+              id: 'platform_product',
+              shopifyProductId: 'gid://shopify/Product/9159637270691',
+              shopifyVariantId: 'gid://shopify/ProductVariant/444555666',
+              vendorStoreId: 'platform_store',
+              vendorStore: {
+                id: 'platform_store',
+                isPlatformStore: true,
+              },
+            },
+          ];
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.quoteRequest.orderLike.lines.map((line) => ({
+      productId: line.productId,
+      shipFromId: line.shipFromId,
+      directShipGroup: line.directShipGroup,
+      shippingClass: line.shippingClass,
+    })),
+    [
+      {
+        productId: '9044842447011',
+        shipFromId: 'marketplace_store',
+        directShipGroup: 'marketplace_store',
+        shippingClass: 'direct',
+      },
+      {
+        productId: '9159637270691',
+        shipFromId: 'platform_store',
+        directShipGroup: 'platform_store',
+        shippingClass: 'direct',
+      },
+    ],
+  );
+});
+
+test('carrier shipping rates reject a physical item without an app product owner', async () => {
+  const quoteRequest = buildCarrierShippingV2QuoteRequest(createCarrierRequest());
+  const result = await resolveCarrierFulfillmentOwnership({
+    quoteRequest,
+    prismaClient: {
+      product: {
+        async findMany() {
+          return [];
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'unmanaged_product');
+  assert.equal(result.productId, '9044842447011');
+});
+
 test('carrier shipping rates returns rates from Shipping V2 quote response', async () => {
   let receivedQuoteRequest = null;
   const infoLogs = [];
   const action = createCarrierShippingRatesAction({
+    resolveCarrierFulfillmentOwnershipImpl: passThroughOwnershipResolution,
     fetchShippingV2QuoteImpl: async ({ quoteRequest }) => {
       receivedQuoteRequest = quoteRequest;
 
@@ -203,6 +308,7 @@ test('carrier shipping rates blocks EU checkout when the current product EU stat
   let quoteCallCount = 0;
   let productQuery = null;
   const action = createCarrierShippingRatesAction({
+    resolveCarrierFulfillmentOwnershipImpl: passThroughOwnershipResolution,
     prismaClient: {
       product: {
         async findMany(query) {
@@ -426,6 +532,7 @@ test('carrier shipping rates returns empty rates for quote errors and undelivera
   );
 
   const action = createCarrierShippingRatesAction({
+    resolveCarrierFulfillmentOwnershipImpl: passThroughOwnershipResolution,
     fetchShippingV2QuoteImpl: async () => {
       throw new Error('quote_error');
     },
@@ -453,6 +560,7 @@ test('carrier shipping rates returns empty rates for quote errors and undelivera
 test('carrier shipping rates records empty rate reasons for diagnostics', async () => {
   clearShippingDiagnosticEvents();
   const action = createCarrierShippingRatesAction({
+    resolveCarrierFulfillmentOwnershipImpl: passThroughOwnershipResolution,
     fetchShippingV2QuoteImpl: async () => ({
       ok: true,
       enabled: true,

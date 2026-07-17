@@ -231,6 +231,144 @@ function productMatchesCarrierReference(product, reference) {
   );
 }
 
+function getProductVendorStoreId(product) {
+  return normalizeText(product?.vendorStoreId || product?.vendorStore?.id);
+}
+
+function findCarrierLineProducts(products, line) {
+  const reference = {
+    productId: normalizeText(line?.productId),
+    productGid: normalizeShopifyProductGid(line?.productId),
+    variantId: normalizeText(line?.variantId),
+    variantGid: normalizeShopifyVariantGid(line?.variantId),
+  };
+  const variantMatches = products.filter((product) => {
+    const shopifyVariantId = normalizeText(product?.shopifyVariantId);
+    return Boolean(
+      shopifyVariantId &&
+        (shopifyVariantId === reference.variantId ||
+          shopifyVariantId === reference.variantGid),
+    );
+  });
+
+  if (variantMatches.length > 0) {
+    return variantMatches;
+  }
+
+  return products.filter((product) =>
+    productMatchesCarrierReference(product, reference),
+  );
+}
+
+export async function resolveCarrierFulfillmentOwnership({
+  quoteRequest,
+  prismaClient = prisma,
+} = {}) {
+  const lines = Array.isArray(quoteRequest?.orderLike?.lines)
+    ? quoteRequest.orderLike.lines
+    : [];
+  const shippableLines = lines.filter(
+    (line) => line?.requiresShipping !== false && Number(line?.quantity || 0) > 0,
+  );
+
+  if (shippableLines.length === 0) {
+    return { ok: true, quoteRequest, matchedProductCount: 0 };
+  }
+
+  const productIdCandidates = getCarrierProductIdCandidates(shippableLines);
+  const variantIdCandidates = getCarrierVariantIdCandidates(shippableLines);
+  const productWhereClauses = [];
+
+  if (productIdCandidates.length > 0) {
+    productWhereClauses.push({ shopifyProductId: { in: productIdCandidates } });
+  }
+  if (variantIdCandidates.length > 0) {
+    productWhereClauses.push({ shopifyVariantId: { in: variantIdCandidates } });
+  }
+  if (productWhereClauses.length === 0) {
+    return {
+      ok: false,
+      reason: 'missing_product_reference',
+      quoteRequest,
+    };
+  }
+
+  const shopDomain = normalizeShopDomain(quoteRequest?.shopDomain);
+  const products = await prismaClient.product.findMany({
+    where: {
+      OR: productWhereClauses,
+      ...(shopDomain
+        ? { shopDomain: { in: [shopDomain, null] } }
+        : {}),
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      shopifyVariantId: true,
+      vendorStoreId: true,
+      vendorStore: {
+        select: {
+          id: true,
+          isPlatformStore: true,
+        },
+      },
+    },
+  });
+  const resolvedLines = [];
+
+  for (const line of lines) {
+    if (line?.requiresShipping === false || Number(line?.quantity || 0) <= 0) {
+      resolvedLines.push(line);
+      continue;
+    }
+
+    const matches = findCarrierLineProducts(products, line);
+    const vendorStoreIds = Array.from(
+      new Set(matches.map(getProductVendorStoreId).filter(Boolean)),
+    );
+
+    if (vendorStoreIds.length === 0) {
+      return {
+        ok: false,
+        reason: 'unmanaged_product',
+        productId: normalizeText(line?.productId),
+        variantId: normalizeText(line?.variantId),
+        quoteRequest,
+      };
+    }
+    if (vendorStoreIds.length > 1) {
+      return {
+        ok: false,
+        reason: 'ambiguous_product_owner',
+        productId: normalizeText(line?.productId),
+        variantId: normalizeText(line?.variantId),
+        vendorStoreIds,
+        quoteRequest,
+      };
+    }
+
+    const vendorStoreId = vendorStoreIds[0];
+    resolvedLines.push({
+      ...line,
+      shipFromId: vendorStoreId,
+      directShipGroup: vendorStoreId,
+      shippingClass: line.shippingClass || 'direct',
+    });
+  }
+
+  return {
+    ok: true,
+    quoteRequest: {
+      ...quoteRequest,
+      orderLike: {
+        ...quoteRequest.orderLike,
+        lines: resolvedLines,
+      },
+    },
+    matchedProductCount: products.length,
+  };
+}
+
 export async function validateCarrierEuDeliveryPolicy({
   quoteRequest,
   prismaClient = prisma,
@@ -622,6 +760,7 @@ export function createCarrierShippingRatesLoader({ logInfo = console.log } = {})
 
 export function createCarrierShippingRatesAction({
   fetchShippingV2QuoteImpl = fetchShippingV2Quote,
+  resolveCarrierFulfillmentOwnershipImpl = resolveCarrierFulfillmentOwnership,
   prismaClient = prisma,
   logInfo = console.log,
   logError = console.error,
@@ -672,11 +811,55 @@ export function createCarrierShippingRatesAction({
     }
 
     const rate = isPlainObject(body?.rate) ? body.rate : {};
-    const quoteRequest = buildCarrierShippingV2QuoteRequest(body);
+    let quoteRequest = buildCarrierShippingV2QuoteRequest(body);
     const parsedSummary = {
       destination: summarizeCarrierDestination(rate.destination),
       items: summarizeCarrierItems(rate.items),
     };
+    let ownershipResolution;
+
+    try {
+      ownershipResolution = await resolveCarrierFulfillmentOwnershipImpl({
+        quoteRequest,
+        prismaClient,
+      });
+    } catch (error) {
+      logError?.('carrier shipping rates ownership lookup failed:', {
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      recordCarrierDiagnostic({
+        requestId,
+        level: 'error',
+        message: 'ownership_lookup_failed',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return json({ rates: [] });
+    }
+
+    if (!ownershipResolution.ok) {
+      logInfo?.('carrier shipping rates blocked by product ownership:', {
+        requestId,
+        ...ownershipResolution,
+        quoteRequest: undefined,
+      });
+      recordCarrierDiagnostic({
+        requestId,
+        level: 'warn',
+        message: 'product_ownership_unresolved',
+        details: {
+          reason: ownershipResolution.reason,
+          productId: ownershipResolution.productId || null,
+          variantId: ownershipResolution.variantId || null,
+          vendorStoreIds: ownershipResolution.vendorStoreIds || [],
+        },
+      });
+      return json({ rates: [] });
+    }
+
+    quoteRequest = ownershipResolution.quoteRequest;
     const quoteRequestSummary = summarizeQuoteRequest(quoteRequest);
 
     logInfo?.('carrier shipping rates parsed payload:', {

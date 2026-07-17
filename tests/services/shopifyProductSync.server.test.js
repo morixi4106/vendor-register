@@ -177,3 +177,94 @@ test("sync does not choose between duplicate store names", async () => {
     "store_2",
   ]);
 });
+
+test("sync assigns the configured Shopify vendor label to the platform store", async () => {
+  const issues = createIssueDelegate();
+  let createArgs = null;
+  const platformStore = {
+    id: "platform_store",
+    storeName: "Oja Immanuel Bacchus",
+    isPlatformStore: true,
+  };
+  const prismaClient = {
+    product: {
+      findFirst: async () => null,
+      create: async (args) => {
+        createArgs = args;
+        return { id: "platform_product", ...args.data };
+      },
+    },
+    vendorStore: {
+      findFirst: async ({ where }) => {
+        assert.deepEqual(where, { isPlatformStore: true });
+        return platformStore;
+      },
+    },
+    shopifyProductSyncIssue: issues,
+  };
+
+  const result = await syncShopifyProductPayload(
+    productPayload({ vendor: "Oja Immanuel Bacchus" }),
+    { prismaClient, shopDomain: "shop.myshopify.com" },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.source, "platform_vendor_label");
+  assert.equal(createArgs.data.vendorStoreId, "platform_store");
+  assert.equal(createArgs.data.costAmount, null);
+  assert.equal(
+    createArgs.data.priceSnapshotJson.source,
+    "shopify_admin_platform_product",
+  );
+});
+
+test("sync keeps Shopify as the price and publication source for platform products", async () => {
+  const issues = createIssueDelegate();
+  let updateArgs = null;
+  const existing = {
+    id: "platform_product",
+    name: "Old title",
+    price: 500,
+    calculatedPrice: 500,
+    approvalStatus: "approved",
+    vendorStoreId: "platform_store",
+    shopifyVariantId: null,
+    vendorStore: { id: "platform_store", isPlatformStore: true },
+  };
+  const prismaClient = {
+    product: {
+      findFirst: async () => existing,
+      update: async (args) => {
+        updateArgs = args;
+        return { ...existing, ...args.data };
+      },
+    },
+    shopifyProductSyncIssue: issues,
+  };
+
+  const result = await syncShopifyProductPayload(
+    productPayload({
+      vendor: "Oja Immanuel Bacchus",
+      status: "draft",
+      variants: [
+        {
+          id: 456,
+          admin_graphql_api_id: "gid://shopify/ProductVariant/456",
+          price: "1600",
+          inventory_quantity: 7,
+        },
+      ],
+    }),
+    { prismaClient, shopDomain: "shop.myshopify.com" },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(updateArgs.data.price, 1600);
+  assert.equal(updateArgs.data.calculatedPrice, 1600);
+  assert.equal(updateArgs.data.approvalStatus, "pending");
+  assert.equal(updateArgs.data.inventoryQuantity, 7);
+  assert.equal(
+    updateArgs.data.priceSnapshotJson.source,
+    "shopify_admin_platform_product",
+  );
+});

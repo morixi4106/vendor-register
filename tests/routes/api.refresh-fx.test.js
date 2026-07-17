@@ -18,6 +18,29 @@ function createFakePrismaForAutoRefresh(products = []) {
   };
 }
 
+test('auto price refresh excludes Shopify-managed platform products at the query boundary', async () => {
+  let receivedWhere = null;
+  const runner = createRunAutoPriceRefresh({
+    prismaClient: {
+      product: {
+        async findMany({ where }) {
+          receivedWhere = where;
+          return [];
+        },
+      },
+    },
+    logInfo: () => {},
+  });
+
+  const result = await runner();
+
+  assert.deepEqual(receivedWhere, {
+    shopifyProductId: { not: null },
+    vendorStore: { isPlatformStore: false },
+  });
+  assert.equal(result.targeted, 0);
+});
+
 test('api.refresh-fx refreshes rates without auto applying prices by default', async () => {
   let applyCalled = false;
   const action = createRefreshFxAction({

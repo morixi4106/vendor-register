@@ -8,6 +8,7 @@ const SHOPIFY_API_VERSION = "2026-04";
 const DIRECT_IMPORT_FORMULA_VERSION = "shopify_direct_import_v1";
 const RESOLVED_ISSUE_STATUS = "resolved";
 const UNRESOLVED_ISSUE_STATUS = "unresolved";
+const DEFAULT_PLATFORM_VENDOR_LABEL = "Oja Immanuel Bacchus";
 
 function normalizeText(value) {
   const normalized = String(value ?? "").trim();
@@ -157,7 +158,11 @@ function uniqueStores(stores) {
 
 export async function resolveVendorStoreForShopifyProduct(
   payload,
-  { prismaClient = prisma, vendorStoreIdOverride = null } = {},
+  {
+    prismaClient = prisma,
+    vendorStoreIdOverride = null,
+    platformVendorLabel = process.env.SHOPIFY_PLATFORM_VENDOR_LABEL,
+  } = {},
 ) {
   const explicitStoreId =
     normalizeText(vendorStoreIdOverride) || getExplicitStoreReference(payload);
@@ -165,7 +170,7 @@ export async function resolveVendorStoreForShopifyProduct(
   if (explicitStoreId) {
     const store = await prismaClient.vendorStore.findUnique({
       where: { id: explicitStoreId },
-      select: { id: true, storeName: true },
+      select: { id: true, storeName: true, isPlatformStore: true },
     });
 
     return store
@@ -182,6 +187,27 @@ export async function resolveVendorStoreForShopifyProduct(
     return { ok: false, reason: "vendor_label_missing", candidateStores: [] };
   }
 
+  const normalizedPlatformVendorLabel =
+    normalizeText(platformVendorLabel) || DEFAULT_PLATFORM_VENDOR_LABEL;
+  if (
+    vendorLabel.localeCompare(normalizedPlatformVendorLabel, undefined, {
+      sensitivity: "accent",
+    }) === 0
+  ) {
+    const platformStore = await prismaClient.vendorStore.findFirst({
+      where: { isPlatformStore: true },
+      select: { id: true, storeName: true, isPlatformStore: true },
+    });
+
+    return platformStore
+      ? { ok: true, store: platformStore, source: "platform_vendor_label" }
+      : {
+          ok: false,
+          reason: "platform_store_not_configured",
+          candidateStores: [],
+        };
+  }
+
   const [vendors, stores] = await Promise.all([
     prismaClient.vendor.findMany({
       where: {
@@ -191,12 +217,14 @@ export async function resolveVendorStoreForShopifyProduct(
         ],
       },
       select: {
-        vendorStore: { select: { id: true, storeName: true } },
+        vendorStore: {
+          select: { id: true, storeName: true, isPlatformStore: true },
+        },
       },
     }),
     prismaClient.vendorStore.findMany({
       where: { storeName: { equals: vendorLabel, mode: "insensitive" } },
-      select: { id: true, storeName: true },
+      select: { id: true, storeName: true, isPlatformStore: true },
     }),
   ]);
   const candidateStores = uniqueStores([
@@ -228,6 +256,11 @@ async function findExistingProduct(prismaClient, shopDomain, snapshot) {
     where: {
       shopifyProductId: { in: productIdCandidates },
       OR: [{ shopDomain }, { shopDomain: null }],
+    },
+    include: {
+      vendorStore: {
+        select: { id: true, isPlatformStore: true },
+      },
     },
   });
 }
@@ -337,6 +370,10 @@ export async function syncShopifyProductPayload(
   );
 
   if (existingProduct) {
+    const isPlatformProduct = Boolean(
+      existingProduct.vendorStore?.isPlatformStore,
+    );
+    const now = new Date();
     const updateData = {
       name: snapshot.title || existingProduct.name,
       description: snapshot.description || existingProduct.description,
@@ -346,6 +383,26 @@ export async function syncShopifyProductPayload(
       shopifyVariantId: snapshot.variantId || existingProduct.shopifyVariantId,
       shopDomain,
     };
+
+    if (isPlatformProduct && snapshot.price != null) {
+      Object.assign(updateData, {
+        price: snapshot.price,
+        calculatedPrice: snapshot.price,
+        calculatedAt: now,
+        approvalStatus: getApprovalStatus(payload),
+        priceSyncStatus: "applied",
+        priceSyncError: null,
+        priceAppliedAt: now,
+        priceFormulaVersion: DIRECT_IMPORT_FORMULA_VERSION,
+        priceSnapshotJson: {
+          source: "shopify_admin_platform_product",
+          shopifyPrice: snapshot.price,
+          vendorLabel: snapshot.vendor,
+          variantCount: snapshot.variantCount,
+          syncedAt: now.toISOString(),
+        },
+      });
+    }
 
     if (snapshot.inventoryQuantity != null) {
       updateData.inventoryQuantity = snapshot.inventoryQuantity;
@@ -403,6 +460,7 @@ export async function syncShopifyProductPayload(
     process.env.SHOPIFY_STORE_CURRENCY || "JPY",
   ).toUpperCase();
   const now = new Date();
+  const isPlatformProduct = Boolean(storeResolution.store.isPlatformStore);
   const product = await prismaClient.product.create({
     data: {
       name: snapshot.title || "Shopify商品",
@@ -410,7 +468,7 @@ export async function syncShopifyProductPayload(
       imageUrl: snapshot.imageUrl,
       category: snapshot.productType,
       price: snapshot.price,
-      costAmount: snapshot.price,
+      costAmount: isPlatformProduct ? null : snapshot.price,
       costCurrency: currencyCode,
       vendorStoreId: storeResolution.store.id,
       approvalStatus: getApprovalStatus(payload),
@@ -423,7 +481,9 @@ export async function syncShopifyProductPayload(
       priceAppliedAt: now,
       priceFormulaVersion: DIRECT_IMPORT_FORMULA_VERSION,
       priceSnapshotJson: {
-        source: "shopify_admin",
+        source: isPlatformProduct
+          ? "shopify_admin_platform_product"
+          : "shopify_admin",
         shopifyPrice: snapshot.price,
         vendorLabel: snapshot.vendor,
         variantCount: snapshot.variantCount,

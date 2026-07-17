@@ -5093,6 +5093,91 @@ test("createPayoutRun refuses test stores before settlement", async () => {
   assert.equal(ledgerReadCalled, false);
 });
 
+test("createPayoutRun refuses the internal platform operator seller", async () => {
+  let ledgerReadCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "platform_seller",
+          status: "active",
+          sellerLegalRole: "PLATFORM_OPERATOR",
+          vendor: {
+            id: "platform_vendor",
+            vendorStore: {
+              id: "platform_store",
+              isPlatformStore: true,
+              isTestStore: false,
+            },
+          },
+          stripeAccount: null,
+          payoutRecipient: null,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        ledgerReadCalled = true;
+        return [];
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    {
+      sellerId: "platform_seller",
+      amount: 1000,
+      currencyCode: "JPY",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "platform_seller_payout_disabled");
+  assert.equal(ledgerReadCalled, false);
+});
+
+test("authorizeSalesCreditOffset refuses the internal platform operator seller", async () => {
+  let ledgerReadCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "platform_seller",
+          status: "active",
+          sellerLegalRole: "PLATFORM_OPERATOR",
+          payoutRecipient: null,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        ledgerReadCalled = true;
+        return [];
+      },
+    },
+    salesCreditOffset: {
+      async findUnique() {
+        return null;
+      },
+    },
+  };
+
+  const result = await authorizeSalesCreditOffset(
+    {
+      sellerId: "platform_seller",
+      amount: 1000,
+      currencyCode: "jpy",
+      idempotencyKey: "platform-credit-disabled",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "platform_seller_sales_credit_disabled");
+  assert.equal(ledgerReadCalled, false);
+});
+
 test("createPayoutRun refuses amounts above the seller payoutable ledger balance", async () => {
   let payoutRunCreateCalled = false;
   const fakePrisma = {

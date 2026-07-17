@@ -6,6 +6,7 @@ import isoCountries from "i18n-iso-countries";
 
 import prisma from "../db.server.js";
 import { formatMoney } from "../utils/money.js";
+import { isMarketplaceSeller } from "../utils/sellerRoles.js";
 
 const require = createRequire(import.meta.url);
 const jaLocale = require("i18n-iso-countries/langs/ja.json");
@@ -1105,7 +1106,9 @@ export async function listAdminSellerRows({ prismaClient = prisma } = {}) {
     },
   });
 
-  return vendors.map(serializeSellerSummary);
+  return vendors
+    .filter((vendor) => !vendor.seller || isMarketplaceSeller(vendor.seller))
+    .map(serializeSellerSummary);
 }
 
 export async function getAdminSellerDetail(
@@ -7603,6 +7606,19 @@ export async function getSellerSalesCreditSummary(
     };
   }
 
+  if (!isMarketplaceSeller(seller)) {
+    const empty = calculateSellerSalesCreditAvailability([], { now });
+    return {
+      sellerId: seller.id,
+      currencyCode: normalizedCurrency,
+      ...empty,
+      ...createSalesCreditSummaryLabels(empty, normalizedCurrency),
+      canUseSalesCredit: false,
+      unavailableReason: "platform_seller_sales_credit_disabled",
+      payoutVerification: getSellerPayoutVerificationState(seller),
+    };
+  }
+
   const [entries, offsetLocks, payoutRuns] = await Promise.all([
     prismaClient.ledgerEntry.findMany({
       where: {
@@ -8249,6 +8265,9 @@ export async function listSellerLedgerRepairCandidates(
     normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
   const payoutEntryTypes = Object.keys(SELLER_PAYOUT_LEDGER_ENTRY_SIGNS);
   const sellers = await prismaClient.seller.findMany({
+    where: {
+      sellerLegalRole: "MARKETPLACE_SELLER",
+    },
     orderBy: [{ createdAt: "desc" }],
     include: {
       vendor: {
@@ -8514,6 +8533,13 @@ async function assertPayoutEligibleSeller(
     };
   }
 
+  if (!isMarketplaceSeller(seller)) {
+    return {
+      ok: false,
+      reason: "platform_seller_payout_disabled",
+    };
+  }
+
   if (["restricted", "banned"].includes(seller.status)) {
     return {
       ok: false,
@@ -8662,6 +8688,13 @@ export async function approvePayoutRun(
     };
   }
 
+  if (!isMarketplaceSeller(payoutRun.seller)) {
+    return {
+      ok: false,
+      reason: "platform_seller_payout_disabled",
+    };
+  }
+
   if (["restricted", "banned"].includes(payoutRun.seller.status)) {
     return {
       ok: false,
@@ -8731,6 +8764,13 @@ export async function markPayoutRunManuallyPaid(
     return {
       ok: false,
       reason: "payout_run_not_executable",
+    };
+  }
+
+  if (!isMarketplaceSeller(payoutRun.seller)) {
+    return {
+      ok: false,
+      reason: "platform_seller_payout_disabled",
     };
   }
 
@@ -9056,6 +9096,13 @@ export async function executeWisePayoutRun(
     return {
       ok: false,
       reason: "payout_run_not_executable",
+    };
+  }
+
+  if (!isMarketplaceSeller(payoutRun.seller)) {
+    return {
+      ok: false,
+      reason: "platform_seller_payout_disabled",
     };
   }
 
