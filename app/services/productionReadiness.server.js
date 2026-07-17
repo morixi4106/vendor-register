@@ -275,7 +275,11 @@ function inspectWithdrawalEmailEnvironment(env) {
   };
 }
 
-async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
+export async function inspectWithdrawalOperations({
+  prismaClient = prisma,
+  now = new Date(),
+  updatedSince = null,
+} = {}) {
   if (!prismaClient.withdrawalRequest || !prismaClient.withdrawalEmailLog) {
     return {
       available: false,
@@ -293,13 +297,15 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       shopifyExternalRecordMissingCount: 0,
       outboxPendingCount: 0,
       outboxDeadLetterCount: 0,
+      outboxFailedDueCount: 0,
+      outboxStaleProcessingCount: 0,
+      recentErrorCount: 0,
       legacyLocaleMissingCount: 0,
       publishedLegalBundleCount: 0,
       error: "withdrawal_tables_unavailable",
     };
   }
 
-  const now = new Date();
   const soon = new Date(
     now.getTime() + URGENT_WITHDRAWAL_DEADLINE_DAYS * 24 * 60 * 60 * 1000,
   );
@@ -319,6 +325,9 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       shopifyExternalRecordMissingCount,
       outboxPendingCount,
       outboxDeadLetterCount,
+      outboxFailedDueCount,
+      outboxStaleProcessingCount,
+      recentErrorCount,
       legacyLocaleMissingCount,
       publishedLegalBundleCount,
     ] = await Promise.all([
@@ -426,6 +435,21 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
             where: { status: "DEAD_LETTER" },
           })
         : Promise.resolve(0),
+      prismaClient.withdrawalEmailOutbox?.count
+        ? prismaClient.withdrawalEmailOutbox.count({
+            where: { status: "FAILED", nextAttemptAt: { lte: now } },
+          })
+        : Promise.resolve(0),
+      prismaClient.withdrawalEmailOutbox?.count
+        ? prismaClient.withdrawalEmailOutbox.count({
+            where: { status: "PROCESSING", lockedUntil: { lt: now } },
+          })
+        : Promise.resolve(0),
+      updatedSince
+        ? prismaClient.withdrawalRequest.count({
+            where: { status: "ERROR", updatedAt: { gte: updatedSince } },
+          })
+        : Promise.resolve(0),
       prismaClient.withdrawalRequest.count({
         where: {
           OR: [
@@ -466,6 +490,9 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       shopifyExternalRecordMissingCount,
       outboxPendingCount,
       outboxDeadLetterCount,
+      outboxFailedDueCount,
+      outboxStaleProcessingCount,
+      recentErrorCount,
       legacyLocaleMissingCount,
       publishedLegalBundleCount,
       error: null,
@@ -488,6 +515,9 @@ async function inspectWithdrawalOperations({ prismaClient = prisma } = {}) {
       shopifyExternalRecordMissingCount: 0,
       outboxPendingCount: 0,
       outboxDeadLetterCount: 0,
+      outboxFailedDueCount: 0,
+      outboxStaleProcessingCount: 0,
+      recentErrorCount: 0,
       legacyLocaleMissingCount: 0,
       publishedLegalBundleCount: 0,
       error: error?.code || "withdrawal_readiness_failed",
@@ -587,35 +617,10 @@ export async function inspectLaunchIntegrity({
   now = new Date(),
   ledgerRepairLoader = listSellerLedgerRepairCandidates,
 } = {}) {
-  let heartbeat = null;
-  let heartbeatError = null;
-  if (prismaClient?.operationalHeartbeat?.findUnique) {
-    try {
-      heartbeat = await prismaClient.operationalHeartbeat.findUnique({
-        where: { key: WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY },
-      });
-    } catch (error) {
-      heartbeatError = error?.code || "heartbeat_read_failed";
-    }
-  } else {
-    heartbeatError = "operational_heartbeat_table_unavailable";
-  }
-
-  const lastSucceededAt = heartbeat?.lastSucceededAt
-    ? new Date(heartbeat.lastSucceededAt)
-    : null;
-  const lastFailedAt = heartbeat?.lastFailedAt
-    ? new Date(heartbeat.lastFailedAt)
-    : null;
-  const minutesSinceSuccess = lastSucceededAt
-    ? Math.max(
-        0,
-        Math.floor((now.getTime() - lastSucceededAt.getTime()) / 60000),
-      )
-    : null;
-  const heartbeatFailureUnresolved = Boolean(
-    lastFailedAt && (!lastSucceededAt || lastFailedAt > lastSucceededAt),
-  );
+  const heartbeatResult = await inspectWithdrawalWorkerHeartbeat({
+    prismaClient,
+    now,
+  });
 
   let shadowChecks = null;
   let shadowError = null;
@@ -686,14 +691,7 @@ export async function inspectLaunchIntegrity({
 
   return {
     heartbeat: {
-      available: !heartbeatError,
-      row: heartbeat,
-      error: heartbeatError,
-      minutesSinceSuccess,
-      stale:
-        minutesSinceSuccess !== null &&
-        minutesSinceSuccess > WITHDRAWAL_OUTBOX_HEARTBEAT_STALE_MINUTES,
-      failureUnresolved: heartbeatFailureUnresolved,
+      ...heartbeatResult,
     },
     sellerOrderShadow: {
       available: !shadowError,
@@ -717,49 +715,81 @@ export async function inspectLaunchIntegrity({
   };
 }
 
-function buildLaunchIntegrityChecks({ launchIntegrity, env }) {
-  const checks = [];
-  const heartbeat = launchIntegrity.heartbeat;
-  const workerExpected = Boolean(
-    normalizeText(env.WITHDRAWAL_OUTBOX_WORKER_TOKEN),
-  );
-  let heartbeatStatus = "pass";
-  let heartbeatDetail = "撤回メールの定期処理は正常に稼働しています。";
-  let heartbeatAction = "";
-
-  if (!heartbeat.available) {
-    heartbeatStatus = "manual";
-    heartbeatDetail = `定期処理の稼働記録を確認できません: ${heartbeat.error}.`;
-    heartbeatAction =
-      "migration適用後、定期処理を1回実行して再確認してください。";
-  } else if (heartbeat.failureUnresolved) {
-    heartbeatStatus = "fail";
-    heartbeatDetail = `撤回メールの定期処理が失敗したままです: ${heartbeat.row?.lastErrorCode || "原因不明"}.`;
-    heartbeatAction =
-      "RenderのCron Jobログと撤回メール送信キューを確認してください。";
-  } else if (heartbeat.stale) {
-    heartbeatStatus = "fail";
-    heartbeatDetail = `撤回メールの定期処理が${heartbeat.minutesSinceSuccess}分間成功していません。`;
-    heartbeatAction =
-      "RenderのCron Jobが10分間隔で稼働しているか確認してください。";
-  } else if (!heartbeat.row?.lastSucceededAt) {
-    heartbeatStatus = workerExpected ? "fail" : "warning";
-    heartbeatDetail = "撤回メールの定期処理がまだ成功していません。";
-    heartbeatAction = workerExpected
-      ? "RenderのCron Jobを実行し、成功記録を確認してください。"
-      : "ワーカートークンとCron Jobを設定してください。";
+export async function inspectWithdrawalWorkerHeartbeat({
+  prismaClient = prisma,
+  now = new Date(),
+} = {}) {
+  let row = null;
+  let error = null;
+  if (prismaClient?.operationalHeartbeat?.findUnique) {
+    try {
+      row = await prismaClient.operationalHeartbeat.findUnique({
+        where: { key: WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY },
+      });
+    } catch (readError) {
+      error = readError?.code || "heartbeat_read_failed";
+    }
   } else {
-    heartbeatDetail = `最終成功は${heartbeat.minutesSinceSuccess}分前です。`;
+    error = "operational_heartbeat_table_unavailable";
   }
 
+  const lastSucceededAt = row?.lastSucceededAt
+    ? new Date(row.lastSucceededAt)
+    : null;
+  const lastFailedAt = row?.lastFailedAt ? new Date(row.lastFailedAt) : null;
+  const minutesSinceSuccess = lastSucceededAt
+    ? Math.max(
+        0,
+        Math.floor((now.getTime() - lastSucceededAt.getTime()) / 60000),
+      )
+    : null;
+
+  return {
+    available: !error,
+    row,
+    error,
+    minutesSinceSuccess,
+    stale:
+      minutesSinceSuccess !== null &&
+      minutesSinceSuccess > WITHDRAWAL_OUTBOX_HEARTBEAT_STALE_MINUTES,
+    failureUnresolved: Boolean(
+      lastFailedAt && (!lastSucceededAt || lastFailedAt > lastSucceededAt),
+    ),
+  };
+}
+
+export async function loadLaunchIntegritySellerRows({
+  prismaClient = prisma,
+} = {}) {
+  if (!prismaClient?.seller?.findMany) return [];
+  const rows = await prismaClient.seller.findMany({
+    include: {
+      vendor: {
+        include: {
+          vendorStore: true,
+        },
+      },
+      payoutRuns: {
+        where: { status: { in: OPEN_PAYOUT_RUN_STATUSES } },
+        select: {
+          id: true,
+          status: true,
+          amount: true,
+          currencyCode: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+  return rows.filter(isMarketplaceSeller);
+}
+
+export function buildLaunchIntegrityChecks({ launchIntegrity, env }) {
+  const checks = [];
   checks.push(
-    createCheck({
-      id: "withdrawal_email_worker_heartbeat",
-      category: "app",
-      status: heartbeatStatus,
-      title: "撤回メール定期処理",
-      detail: heartbeatDetail,
-      action: heartbeatAction,
+    buildWithdrawalWorkerHeartbeatCheck({
+      heartbeat: launchIntegrity.heartbeat,
+      env,
     }),
   );
 
@@ -830,6 +860,49 @@ function buildLaunchIntegrityChecks({ launchIntegrity, env }) {
   );
 
   return checks;
+}
+
+export function buildWithdrawalWorkerHeartbeatCheck({ heartbeat, env }) {
+  const workerExpected = Boolean(
+    normalizeText(env.WITHDRAWAL_OUTBOX_WORKER_TOKEN),
+  );
+  let heartbeatStatus = "pass";
+  let heartbeatDetail = "撤回メールの定期処理は正常に稼働しています。";
+  let heartbeatAction = "";
+
+  if (!heartbeat.available) {
+    heartbeatStatus = "manual";
+    heartbeatDetail = `定期処理の稼働記録を確認できません: ${heartbeat.error}.`;
+    heartbeatAction =
+      "migration適用後、定期処理を1回実行して再確認してください。";
+  } else if (heartbeat.failureUnresolved) {
+    heartbeatStatus = "fail";
+    heartbeatDetail = `撤回メールの定期処理が失敗したままです: ${heartbeat.row?.lastErrorCode || "原因不明"}.`;
+    heartbeatAction =
+      "RenderのCron Jobログと撤回メール送信キューを確認してください。";
+  } else if (heartbeat.stale) {
+    heartbeatStatus = "fail";
+    heartbeatDetail = `撤回メールの定期処理が${heartbeat.minutesSinceSuccess}分間成功していません。`;
+    heartbeatAction =
+      "RenderのCron Jobが10分間隔で稼働しているか確認してください。";
+  } else if (!heartbeat.row?.lastSucceededAt) {
+    heartbeatStatus = workerExpected ? "fail" : "warning";
+    heartbeatDetail = "撤回メールの定期処理がまだ成功していません。";
+    heartbeatAction = workerExpected
+      ? "RenderのCron Jobを実行し、成功記録を確認してください。"
+      : "ワーカートークンとCron Jobを設定してください。";
+  } else {
+    heartbeatDetail = `最終成功は${heartbeat.minutesSinceSuccess}分前です。`;
+  }
+
+  return createCheck({
+    id: "withdrawal_email_worker_heartbeat",
+    category: "app",
+    status: heartbeatStatus,
+    title: "撤回メール定期処理",
+    detail: heartbeatDetail,
+    action: heartbeatAction,
+  });
 }
 
 function buildDirectReturnChecks({ directReturns }) {
@@ -1739,7 +1812,7 @@ function buildSellerChecks({
   ];
 }
 
-function buildWithdrawalOperationChecks({ withdrawalOperations }) {
+export function buildWithdrawalOperationChecks({ withdrawalOperations }) {
   const checks = [];
 
   checks.push(
@@ -1820,21 +1893,27 @@ function buildWithdrawalOperationChecks({ withdrawalOperations }) {
       id: "withdrawal_email_outbox",
       category: "app",
       status:
-        withdrawalOperations.outboxDeadLetterCount > 0
-          ? "warning"
-          : withdrawalOperations.outboxPendingCount > 0
+        withdrawalOperations.outboxDeadLetterCount > 0 ||
+        withdrawalOperations.outboxStaleProcessingCount > 0
+          ? "fail"
+          : withdrawalOperations.outboxFailedDueCount > 0 ||
+              withdrawalOperations.outboxPendingCount > 0
             ? "manual"
             : "pass",
       title: "撤回メール送信キュー",
       detail: withdrawalOperations.available
-        ? `再送待ち ${withdrawalOperations.outboxPendingCount}件、手動確認が必要 ${withdrawalOperations.outboxDeadLetterCount}件です。`
+        ? `送信待ち ${withdrawalOperations.outboxPendingCount}件、再送期限超過 ${withdrawalOperations.outboxFailedDueCount}件、処理停止の疑い ${withdrawalOperations.outboxStaleProcessingCount}件、手動確認が必要 ${withdrawalOperations.outboxDeadLetterCount}件です。`
         : "撤回メール送信キューを確認できませんでした。",
       action:
         withdrawalOperations.outboxDeadLetterCount > 0
           ? "失敗理由と宛先を確認し、修正後に再送してください。"
-          : withdrawalOperations.outboxPendingCount > 0
-            ? "内部メールワーカーが定期実行されていることを確認してください。"
-            : "",
+          : withdrawalOperations.outboxStaleProcessingCount > 0
+            ? "期限切れのPROCESSINGを回収できるワーカーが稼働しているか確認してください。"
+            : withdrawalOperations.outboxFailedDueCount > 0
+              ? "撤回メールワーカーと再送予定時刻を確認してください。"
+              : withdrawalOperations.outboxPendingCount > 0
+                ? "内部メールワーカーが定期実行されていることを確認してください。"
+                : "",
     }),
   );
 
@@ -1905,8 +1984,9 @@ async function inspectShopifyProductSync({ prismaClient = prisma } = {}) {
     });
     const activeCount = issues.filter(
       (issue) =>
-        String(issue?.payloadJson?.status || "").trim().toLowerCase() ===
-        "active",
+        String(issue?.payloadJson?.status || "")
+          .trim()
+          .toLowerCase() === "active",
     ).length;
 
     return {
@@ -2024,7 +2104,7 @@ export async function getProductionReadiness({
   const shopifyProductSync = await inspectShopifyProductSync({ prismaClient });
 
   const connectedAccountProbe = stripeConnectProductionEnabled
-      ? await probeConnectedAccounts({
+    ? await probeConnectedAccounts({
         stripeEnv,
         sellerRows: marketplaceSellerRows,
       })

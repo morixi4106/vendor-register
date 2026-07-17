@@ -22,6 +22,7 @@ export default function App() {
         <Link to="/app/sellers">出店者管理</Link>
         <Link to="/app/payout-runs">出金管理</Link>
         <Link to="/app/production-readiness">本番確認</Link>
+        <Link to="/app/launch-monitor">公開監視</Link>
         <Link to="/app/seller-order-shadow">SellerOrder検証</Link>
         <Link to="/app/shopify-product-sync">Shopify商品同期</Link>
         <Link to="/app/withdrawals">撤回申請</Link>

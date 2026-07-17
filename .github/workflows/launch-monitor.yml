@@ -1,0 +1,43 @@
+name: Launch monitor (72 hours)
+
+on:
+  schedule:
+    - cron: "2-57/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: launch-monitor-72-hours
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      LAUNCH_MONITOR_URL: ${{ vars.LAUNCH_MONITOR_URL }}
+      LAUNCH_MONITOR_TOKEN: ${{ secrets.LAUNCH_MONITOR_TOKEN }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID }}
+      RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+      LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION: ${{ vars.LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION }}
+      LAUNCH_MONITOR_STOREFRONT_URL: ${{ vars.LAUNCH_MONITOR_STOREFRONT_URL }}
+      LAUNCH_MONITOR_STOREFRONT_MARKER: ${{ vars.LAUNCH_MONITOR_STOREFRONT_MARKER }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Run launch monitor
+        run: node scripts/launch-monitor-agent.mjs
