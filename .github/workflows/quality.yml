@@ -1,0 +1,51 @@
+name: Quality checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vendor_register_ci?schema=public
+      SHOPIFY_API_KEY: ci-api-key
+      SHOPIFY_API_SECRET: ci-api-secret
+      SHOPIFY_APP_URL: https://example.test
+      SCOPES: read_products
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Prisma schema
+        run: |
+          npx prisma format --schema=prisma/schema.prisma
+          git diff --exit-code -- prisma/schema.prisma
+          npx prisma validate --schema=prisma/schema.prisma
+          npx prisma generate --schema=prisma/schema.prisma
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test:pricing
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low

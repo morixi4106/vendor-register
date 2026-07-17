@@ -27,9 +27,7 @@ export async function consumePublicEndpointRateLimit({
 } = {}) {
   const boundedLimit = Math.max(1, Number(limit) || 1);
   const boundedWindowMs = Math.max(1_000, Number(windowMs) || 60_000);
-  const windowStart = new Date(
-    Math.floor(now.getTime() / boundedWindowMs) * boundedWindowMs,
-  );
+  const windowStart = getWindowStart(now, boundedWindowMs);
   const expiresAt = new Date(windowStart.getTime() + boundedWindowMs * 2);
   const keyHash = hashPublicRateLimitKey(key);
   const record = await prismaClient.publicEndpointRateLimit.upsert({
@@ -49,4 +47,50 @@ export async function consumePublicEndpointRateLimit({
       Math.ceil((windowStart.getTime() + boundedWindowMs - now.getTime()) / 1000),
     ),
   };
+}
+
+export async function inspectPublicEndpointRateLimit({
+  endpoint,
+  key,
+  limit,
+  windowMs,
+  prismaClient = prisma,
+  now = new Date(),
+} = {}) {
+  const boundedLimit = Math.max(1, Number(limit) || 1);
+  const boundedWindowMs = Math.max(1_000, Number(windowMs) || 60_000);
+  const windowStart = getWindowStart(now, boundedWindowMs);
+  const record = await prismaClient.publicEndpointRateLimit.findUnique({
+    where: {
+      endpoint_keyHash_windowStart: {
+        endpoint,
+        keyHash: hashPublicRateLimitKey(key),
+        windowStart,
+      },
+    },
+  });
+  const count = Number(record?.count || 0);
+
+  return {
+    ok: count < boundedLimit,
+    count,
+    limit: boundedLimit,
+    retryAfterSeconds: Math.max(
+      1,
+      Math.ceil((windowStart.getTime() + boundedWindowMs - now.getTime()) / 1000),
+    ),
+  };
+}
+
+export async function pruneExpiredPublicEndpointRateLimits({
+  prismaClient = prisma,
+  now = new Date(),
+} = {}) {
+  return prismaClient.publicEndpointRateLimit.deleteMany({
+    where: { expiresAt: { lt: now } },
+  });
+}
+
+function getWindowStart(now, windowMs) {
+  return new Date(Math.floor(now.getTime() / windowMs) * windowMs);
 }

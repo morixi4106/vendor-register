@@ -5,25 +5,21 @@ import { Resend } from "resend";
 
 import prisma from "../db.server.js";
 import {
+  buildAdminContactNotification,
+  buildContactAcknowledgement,
+} from "../services/contactInquiry.server.js";
+import {
   consumePublicEndpointRateLimit,
   getRequestClientIp,
+  inspectPublicEndpointRateLimit,
+  pruneExpiredPublicEndpointRateLimits,
 } from "../services/publicEndpointRateLimit.server.js";
 
 const CONTACT_ENDPOINT = "contact-ai";
 const MAX_BODY_BYTES = 20_000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ESCALATION_KEYWORDS = [
-  "返品",
-  "返金",
-  "交換",
-  "クレーム",
-  "破損",
-  "未着",
-  "訴訟",
-  "違法",
-  "副作用",
-  "アレルギー",
-];
+const GLOBAL_HOURLY_LIMIT = 100;
+const GLOBAL_DAILY_LIMIT = 500;
 
 export const loader = async ({ request }) => {
   if (request.method !== "OPTIONS") return new Response("Not Found", { status: 404 });
@@ -69,6 +65,29 @@ export const action = async ({ request }) => {
       .digest("hex")
       .slice(0, 40);
 
+    const globalHourStatus = await inspectPublicEndpointRateLimit({
+      endpoint: CONTACT_ENDPOINT,
+      key: "global:hour",
+      limit: GLOBAL_HOURLY_LIMIT,
+      windowMs: 60 * 60 * 1000,
+    });
+    const globalDayStatus = await inspectPublicEndpointRateLimit({
+      endpoint: CONTACT_ENDPOINT,
+      key: "global:day",
+      limit: GLOBAL_DAILY_LIMIT,
+      windowMs: 24 * 60 * 60 * 1000,
+    });
+    if (!globalHourStatus.ok || !globalDayStatus.ok) {
+      const retryAfter = Math.max(
+        globalHourStatus.ok ? 0 : globalHourStatus.retryAfterSeconds,
+        globalDayStatus.ok ? 0 : globalDayStatus.retryAfterSeconds,
+      );
+      return json(
+        { ok: false, error: "temporarily_unavailable" },
+        { status: 429, headers: { ...headers, "Retry-After": String(retryAfter) } },
+      );
+    }
+
     const ipLimit = await consumePublicEndpointRateLimit({
       endpoint: CONTACT_ENDPOINT,
       key: `ip:${getRequestClientIp(request)}`,
@@ -92,17 +111,42 @@ export const action = async ({ request }) => {
       );
     }
 
-    ensureEmailConfiguration();
-    const matchedRule = await findFixedReplyRule(message);
-    let replyType = "fixed";
-    let replyText = matchedRule?.replyText || null;
-    if (!replyText && shouldEscalate(message)) {
-      replyType = "escalation";
-      replyText = buildEscalationReply(name);
-    } else if (!replyText) {
-      replyType = "ai";
-      replyText = await createClaudeReply({ name, email, phone, message });
+    const globalHourLimit = await consumePublicEndpointRateLimit({
+      endpoint: CONTACT_ENDPOINT,
+      key: "global:hour",
+      limit: GLOBAL_HOURLY_LIMIT,
+      windowMs: 60 * 60 * 1000,
+    });
+    const globalDayLimit = await consumePublicEndpointRateLimit({
+      endpoint: CONTACT_ENDPOINT,
+      key: "global:day",
+      limit: GLOBAL_DAILY_LIMIT,
+      windowMs: 24 * 60 * 60 * 1000,
+    });
+    if (!globalHourLimit.ok || !globalDayLimit.ok) {
+      const retryAfter = Math.max(
+        globalHourLimit.ok ? 0 : globalHourLimit.retryAfterSeconds,
+        globalDayLimit.ok ? 0 : globalDayLimit.retryAfterSeconds,
+      );
+      console.warn("contact inquiry global rate limit reached", {
+        hourlyCount: globalHourLimit.count,
+        dailyCount: globalDayLimit.count,
+      });
+      return json(
+        { ok: false, error: "temporarily_unavailable" },
+        { status: 429, headers: { ...headers, "Retry-After": String(retryAfter) } },
+      );
     }
+
+    try {
+      await pruneExpiredPublicEndpointRateLimits();
+    } catch (error) {
+      console.warn("expired public rate limit cleanup failed", error);
+    }
+
+    ensureEmailConfiguration();
+    const replyType = "fixed";
+    const replyText = buildContactAcknowledgement({ name });
 
     await prisma.contactInquiry.create({
       data: {
@@ -112,7 +156,7 @@ export const action = async ({ request }) => {
         message,
         replyText,
         replyType,
-        matchedRuleId: matchedRule?.id || null,
+        matchedRuleId: null,
       },
     });
     const resend = new Resend(process.env.RESEND_API_KEY);
@@ -131,25 +175,20 @@ export const action = async ({ request }) => {
         from: process.env.MAIL_FROM,
         to: process.env.ADMIN_EMAIL,
         subject: "新しいお問い合わせ",
-        text: [
-          `返信種別: ${replyType}`,
-          `名前: ${name}`,
-          `メール: ${email}`,
-          `電話番号: ${phone || "未入力"}`,
-          "",
-          "お問い合わせ内容:",
+        text: buildAdminContactNotification({
+          name,
+          email,
+          phone,
           message,
-          "",
-          "返信内容:",
           replyText,
-        ].join("\n"),
+        }),
       },
       { idempotencyKey: `contact-admin-${submissionKey}` },
     );
     if (adminResult?.error) throw new Error(adminResult.error.message || "admin_email_failed");
 
     return json(
-      { ok: true, replyType, matchedRuleId: matchedRule?.id || null },
+      { ok: true, replyType, matchedRuleId: null },
       { headers },
     );
   } catch (error) {
@@ -207,50 +246,4 @@ function ensureEmailConfiguration() {
   if (!process.env.RESEND_API_KEY || !process.env.MAIL_FROM || !process.env.ADMIN_EMAIL) {
     throw new Error("email_not_configured");
   }
-}
-
-async function findFixedReplyRule(message) {
-  const text = message.toLowerCase();
-  const rules = await prisma.fixedReplyRule.findMany({
-    where: { isActive: true },
-    orderBy: { createdAt: "asc" },
-  });
-  return rules.find((rule) => {
-    const keyword = String(rule.keyword || "").trim().toLowerCase();
-    return keyword && text.includes(keyword);
-  }) || null;
-}
-
-function shouldEscalate(message) {
-  const text = message.toLowerCase();
-  return ESCALATION_KEYWORDS.some((keyword) => text.includes(keyword));
-}
-
-function buildEscalationReply(name) {
-  return `${name} 様\n\nお問い合わせありがとうございます。内容を担当者が確認し、改めてご案内いたします。恐れ入りますが、返信までしばらくお待ちください。\n\nOja Immanuel Bacchus サポート`;
-}
-
-async function createClaudeReply({ name, email, phone, message }) {
-  if (!process.env.CLAUDE_API_KEY) throw new Error("claude_not_configured");
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.CLAUDE_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-5",
-      max_tokens: 700,
-      messages: [{
-        role: "user",
-        content: `ECサイトのカスタマーサポートとして、断定しすぎない簡潔で丁寧な日本語の一次返信を作成してください。法的判断、医療判断、返品・返金の確約はしないでください。\n名前: ${name}\nメール: ${email}\n電話: ${phone || "未入力"}\n内容: ${message}`,
-      }],
-    }),
-  });
-  if (!response.ok) throw new Error(`claude_error_${response.status}`);
-  const data = await response.json();
-  const reply = String(data?.content?.[0]?.text || "").trim();
-  if (!reply) throw new Error("claude_empty_reply");
-  return reply;
 }
