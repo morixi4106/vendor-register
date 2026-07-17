@@ -46,8 +46,8 @@ export async function action({ request }) {
     );
   }
 
-  const lockAcquired = await acquireLaunchMonitorRunLock();
-  if (!lockAcquired) {
+  const lockOwner = await acquireLaunchMonitorRunLock();
+  if (!lockOwner) {
     return json(
       { ok: false, error: "monitor_run_in_progress" },
       { status: 409, headers: { "Cache-Control": "no-store" } },
@@ -78,6 +78,6 @@ export async function action({ request }) {
       { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   } finally {
-    await releaseLaunchMonitorRunLock().catch(() => {});
+    await releaseLaunchMonitorRunLock({ owner: lockOwner }).catch(() => {});
   }
 }

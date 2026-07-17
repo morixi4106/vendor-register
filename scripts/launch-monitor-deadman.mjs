@@ -65,7 +65,7 @@ function isDeadmanResponse(payload) {
 
 async function suspendSelf() {
   const serviceId = String(process.env.RENDER_CRON_SERVICE_ID || "").trim();
-  if (!/^(crn|srv)-[a-z0-9]+$/i.test(serviceId)) {
+  if (!/^crn-[a-z0-9]+$/i.test(serviceId)) {
     throw new Error("invalid_render_cron_service_id");
   }
   const response = await fetchWithTimeout(

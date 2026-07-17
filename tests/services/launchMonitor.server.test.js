@@ -7,8 +7,11 @@ import {
   collectLaunchMonitorReport,
   evaluateExternalPublicSnapshot,
   evaluateRenderSnapshot,
+  fingerprintReport,
+  hashReportResult,
   readLaunchMonitorDeadmanState,
   releaseLaunchMonitorRunLock,
+  resolveLaunchMonitorCampaign,
   resolveNotificationKind,
   sanitizeLaunchMonitorResult,
 } from "../../app/services/launchMonitor.server.js";
@@ -188,6 +191,71 @@ test("light runs reuse the latest heavy result instead of reporting recovery", a
   );
 });
 
+test("failed heavy checks remain critical and are safe to reuse until retry", async () => {
+  const report = await collectLaunchMonitorReport({
+    renderSnapshot: healthySnapshot(),
+    prismaClient: basePrisma(),
+    env: { WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured" },
+    now: NOW,
+    runHeavyChecks: true,
+    dependencies: {
+      inspectWithdrawalOperations: async () => withdrawalOperations(),
+      inspectWithdrawalWorkerHeartbeat: async () => launchIntegrity().heartbeat,
+      loadLaunchIntegritySellerRows: async () => {
+        throw Object.assign(new Error("query failed"), { code: "P1001" });
+      },
+    },
+  });
+  assert.equal(report.heavyCheckCompleted, false);
+  assert.equal(find(report.heavyChecks, "launch_integrity").severity, "critical");
+
+  const light = await collectReport({
+    runHeavyChecks: false,
+    previousHeavyChecks: report.heavyChecks,
+  });
+  assert.equal(find(light.checks, "launch_integrity").severity, "critical");
+});
+
+test("incident identity ignores count changes while result hash records them", () => {
+  const first = buildReport({
+    now: NOW,
+    checks: [
+      { id: "contact_inquiry_spike", severity: "warning", count: 10 },
+    ],
+  });
+  const second = buildReport({
+    now: NOW,
+    checks: [
+      { id: "contact_inquiry_spike", severity: "warning", count: 11 },
+    ],
+  });
+  assert.equal(fingerprintReport(first), fingerprintReport(second));
+  assert.notEqual(hashReportResult(first), hashReportResult(second));
+});
+
+test("a new campaign does not inherit completion and notification state", () => {
+  const oldCampaign = resolveLaunchMonitorCampaign({
+    storedMetadata: {},
+    configuredStart: "2026-07-01T00:00:00.000Z",
+    now: NOW,
+    durationHours: 72,
+  });
+  const next = resolveLaunchMonitorCampaign({
+    storedMetadata: {
+      campaignId: oldCampaign.campaignId,
+      startedAt: "2026-07-01T00:00:00.000Z",
+      completedAt: "2026-07-04T00:00:00.000Z",
+      completionSentAt: "2026-07-04T00:00:00.000Z",
+      runCount: 99,
+    },
+    configuredStart: "2026-07-18T00:00:00.000Z",
+    now: NOW,
+    durationHours: 72,
+  });
+  assert.notEqual(next.campaignId, oldCampaign.campaignId);
+  assert.deepEqual(next.previousMetadata, {});
+});
+
 test("notification policy suppresses repeats, escalates, reminds, and recovers", () => {
   const warning = reportWithStatus("warning");
   const critical = reportWithStatus("critical");
@@ -313,6 +381,15 @@ test("monitor run lock rejects concurrent runs and can be released", async () =>
         return row;
       },
       updateMany: async ({ where, data }) => {
+        if (where?.metadataJson) {
+          const owner = where.metadataJson.equals;
+          if (row.metadataJson?.owner !== owner) return { count: 0 };
+          row = { ...row, ...data };
+          return { count: 1 };
+        }
+        if (where?.lastStartedAt && row.lastStartedAt !== where.lastStartedAt) {
+          return { count: 0 };
+        }
         const cutoff = where?.OR?.[1]?.lastStartedAt?.lt;
         const eligible =
           !where.OR ||
@@ -324,21 +401,27 @@ test("monitor run lock rejects concurrent runs and can be released", async () =>
       },
     },
   };
+  const owner = await acquireLaunchMonitorRunLock({ prismaClient, now: NOW });
+  assert.equal(typeof owner, "string");
+  assert.equal(await acquireLaunchMonitorRunLock({ prismaClient, now: NOW }), null);
   assert.equal(
-    await acquireLaunchMonitorRunLock({ prismaClient, now: NOW }),
-    true,
-  );
-  assert.equal(
-    await acquireLaunchMonitorRunLock({ prismaClient, now: NOW }),
+    await releaseLaunchMonitorRunLock({
+      prismaClient,
+      now: NOW,
+      owner: "not-the-owner",
+    }),
     false,
   );
-  await releaseLaunchMonitorRunLock({ prismaClient, now: NOW });
   assert.equal(
-    await acquireLaunchMonitorRunLock({
+    await releaseLaunchMonitorRunLock({ prismaClient, now: NOW, owner }),
+    true,
+  );
+  assert.equal(
+    typeof (await acquireLaunchMonitorRunLock({
       prismaClient,
       now: new Date(NOW.getTime() + 1_000),
-    }),
-    true,
+    })),
+    "string",
   );
 });
 

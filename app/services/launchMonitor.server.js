@@ -25,7 +25,6 @@ const WARNING_SEVERITY = "warning";
 const HEALTHY_STATUS = "healthy";
 const READINESS_LIGHT_CHECK_IDS = new Set([
   "withdrawal_operations_available",
-  "withdrawal_email_failures",
   "withdrawal_email_outbox",
   "withdrawal_processing_integrity",
 ]);
@@ -33,6 +32,7 @@ const READINESS_HEAVY_CHECK_IDS = new Set([
   "seller_order_unresolved_shadow_checks",
   "seller_ledger_repair_candidates",
   "test_store_pending_payout_runs",
+  "launch_integrity",
 ]);
 
 export async function runLaunchMonitor({
@@ -47,16 +47,20 @@ export async function runLaunchMonitor({
   }
 
   const previous = await readMonitorHeartbeat(prismaClient);
-  const previousMetadata = asObject(previous?.metadataJson);
-  const configuredStart = parseDate(env.LAUNCH_MONITOR_STARTED_AT);
-  const startedAt =
-    configuredStart || parseDate(previousMetadata.startedAt) || new Date(now);
+  const storedMetadata = asObject(previous?.metadataJson);
   const durationHours = boundedNumber(
     env.LAUNCH_MONITOR_DURATION_HOURS,
     DEFAULT_DURATION_HOURS,
     1,
     24 * 14,
   );
+  const { campaignId, previousMetadata, startedAt } =
+    resolveLaunchMonitorCampaign({
+      storedMetadata,
+      configuredStart: env.LAUNCH_MONITOR_STARTED_AT,
+      now,
+      durationHours,
+    });
   const endsAt = new Date(startedAt.getTime() + durationHours * 60 * 60 * 1000);
 
   if (now >= endsAt) {
@@ -74,6 +78,7 @@ export async function runLaunchMonitor({
     const metadataJson = {
       ...previousMetadata,
       schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
+      campaignId,
       startedAt: startedAt.toISOString(),
       endsAt: endsAt.toISOString(),
       completedAt: now.toISOString(),
@@ -110,6 +115,7 @@ export async function runLaunchMonitor({
     previousHeavyChecks: previousMetadata.lastHeavyChecks,
   });
   const incidentFingerprint = fingerprintReport(report);
+  const resultHash = hashReportResult(report);
   const previousStatus = String(previousMetadata.lastOverallStatus || "");
   const previousFingerprint = String(
     previousMetadata.lastIncidentFingerprint || "",
@@ -136,15 +142,16 @@ export async function runLaunchMonitor({
   const metadataJson = {
     ...previousMetadata,
     schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
+    campaignId,
     active: true,
     startedAt: startedAt.toISOString(),
     endsAt: endsAt.toISOString(),
     lastCheckedAt: now.toISOString(),
-    lastHeavyCheckedAt: runHeavyChecks
+    lastHeavyCheckedAt: runHeavyChecks && report.heavyCheckCompleted
       ? now.toISOString()
       : previousMetadata.lastHeavyCheckedAt || null,
     lastHeavyChecks: runHeavyChecks
-      ? report.checks.filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
+      ? asCheckArray(report.heavyChecks)
       : asCheckArray(previousMetadata.lastHeavyChecks),
     lastOverallStatus: report.overallStatus,
     lastIncidentFingerprint: incidentFingerprint,
@@ -178,7 +185,7 @@ export async function runLaunchMonitor({
       report.overallStatus === previousStatus
         ? Number(previousMetadata.consecutiveCount || 0) + 1
         : 1,
-    lastResultHash: incidentFingerprint,
+    lastResultHash: resultHash,
     runCount,
     criticalRunCount:
       Number(previousMetadata.criticalRunCount || 0) +
@@ -237,6 +244,8 @@ export async function collectLaunchMonitorReport({
   const windowStartedAt =
     parseDate(renderSnapshot.windowStartedAt) ||
     new Date(now.getTime() - 12 * 60 * 1000);
+  let heavyCheckCompleted = runHeavyChecks ? false : null;
+  let heavyChecks = [];
 
   try {
     await prismaClient.$queryRaw`SELECT 1`;
@@ -334,20 +343,20 @@ export async function collectLaunchMonitorReport({
         sellerRows,
         now,
       });
-      checks.push(
-        ...buildLaunchIntegrityChecks({ launchIntegrity: integrity, env })
-          .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
-          .map(readinessCheckToMonitorCheck),
-      );
+      heavyChecks = buildLaunchIntegrityChecks({ launchIntegrity: integrity, env })
+        .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
+        .map(readinessCheckToMonitorCheck);
+      checks.push(...heavyChecks);
+      heavyCheckCompleted = true;
     } catch (error) {
-      checks.push(
-        issueCheck(
-          "launch_integrity",
-          CRITICAL_SEVERITY,
-          "台帳と出店者別注文の整合性確認に失敗しました。",
-          safeErrorCode(error),
-        ),
+      const failure = issueCheck(
+        "launch_integrity",
+        CRITICAL_SEVERITY,
+        "台帳と出店者別注文の整合性確認に失敗しました。5分後に再試行します。",
+        safeErrorCode(error),
       );
+      heavyChecks = [failure];
+      checks.push(failure);
     }
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(
@@ -366,12 +375,21 @@ export async function collectLaunchMonitorReport({
     );
   }
 
-  return buildReport({
-    checks,
-    now,
-    renderSnapshot,
-    checkMode: runHeavyChecks ? "full" : "light",
-  });
+  return {
+    ...buildReport({
+      checks,
+      now,
+      renderSnapshot,
+      checkMode: runHeavyChecks ? "full" : "light",
+    }),
+    heavyCheckCompleted,
+    heavyChecks:
+      runHeavyChecks
+        ? heavyChecks
+        : asCheckArray(previousHeavyChecks).filter((check) =>
+            READINESS_HEAVY_CHECK_IDS.has(check.id),
+          ),
+  };
 }
 
 export function evaluateRenderSnapshot(snapshot = {}) {
@@ -601,6 +619,7 @@ export async function acquireLaunchMonitorRunLock({
   ttlMinutes = 4,
 } = {}) {
   const key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`;
+  const owner = crypto.randomUUID();
   const releasedAt = new Date(0);
   await prismaClient.operationalHeartbeat.upsert({
     where: { key },
@@ -619,21 +638,42 @@ export async function acquireLaunchMonitorRunLock({
     },
     data: { lastStartedAt: now },
   });
-  return result.count === 1;
+  if (result.count !== 1) return null;
+  const ownership = await prismaClient.operationalHeartbeat.updateMany({
+    where: { key, lastStartedAt: now },
+    data: {
+      metadataJson: {
+        schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
+        owner,
+      },
+    },
+  });
+  return ownership.count === 1 ? owner : null;
 }
 
 export async function releaseLaunchMonitorRunLock({
   prismaClient = prisma,
   now = new Date(),
+  owner,
 } = {}) {
+  const normalizedOwner = String(owner || "").trim();
+  if (!normalizedOwner) return false;
   const key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`;
-  await prismaClient.operationalHeartbeat.updateMany({
-    where: { key },
+  const result = await prismaClient.operationalHeartbeat.updateMany({
+    where: {
+      key,
+      metadataJson: { path: ["owner"], equals: normalizedOwner },
+    },
     data: {
       lastStartedAt: new Date(0),
       lastSucceededAt: now,
+      metadataJson: {
+        schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
+        owner: null,
+      },
     },
   });
+  return result.count === 1;
 }
 
 export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
@@ -725,13 +765,24 @@ async function writeMonitorHeartbeat({
   });
 }
 
-function fingerprintReport(report = {}) {
+export function fingerprintReport(report = {}) {
   const active = (Array.isArray(report.checks) ? report.checks : [])
     .filter(
       (check) =>
         check.severity === CRITICAL_SEVERITY ||
         check.severity === WARNING_SEVERITY,
     )
+    .map((check) => `${check.severity}:${check.id}:${check.errorCode || ""}`)
+    .sort();
+  return crypto
+    .createHash("sha256")
+    .update(active.join("|"))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export function hashReportResult(report = {}) {
+  const checks = (Array.isArray(report.checks) ? report.checks : [])
     .map(
       (check) =>
         `${check.severity}:${check.id}:${check.errorCode || ""}:${boundedCount(check.count)}`,
@@ -739,7 +790,36 @@ function fingerprintReport(report = {}) {
     .sort();
   return crypto
     .createHash("sha256")
-    .update(active.join("|"))
+    .update(`${report.overallStatus || "unknown"}|${checks.join("|")}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export function resolveLaunchMonitorCampaign({
+  storedMetadata = {},
+  configuredStart = null,
+  now = new Date(),
+  durationHours = DEFAULT_DURATION_HOURS,
+} = {}) {
+  const metadata = asObject(storedMetadata);
+  const startedAt =
+    parseDate(configuredStart) ||
+    (metadata.active === true && !metadata.completedAt
+      ? parseDate(metadata.startedAt)
+      : null) ||
+    new Date(now);
+  const campaignId = buildCampaignId(startedAt, durationHours);
+  return {
+    campaignId,
+    startedAt,
+    previousMetadata: metadata.campaignId === campaignId ? metadata : {},
+  };
+}
+
+function buildCampaignId(startedAt, durationHours) {
+  return crypto
+    .createHash("sha256")
+    .update(`${startedAt.toISOString()}:${durationHours}`)
     .digest("hex")
     .slice(0, 24);
 }

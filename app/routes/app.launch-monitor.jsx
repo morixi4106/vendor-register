@@ -1,7 +1,8 @@
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
 
 import prisma from "../db.server.js";
+import { buildLaunchMonitorGuide } from "../services/launchMonitorGuide.js";
 import { LAUNCH_MONITOR_HEARTBEAT_KEY } from "../services/launchMonitor.server.js";
 import { authenticate } from "../shopify.server.js";
 
@@ -10,14 +11,19 @@ export async function loader({ request }) {
   const heartbeat = await prisma.operationalHeartbeat.findUnique({
     where: { key: LAUNCH_MONITOR_HEARTBEAT_KEY },
   });
+  const monitorEnabled = isEnabled(process.env.LAUNCH_MONITOR_ENABLED);
+  const guide = buildLaunchMonitorGuide({
+    enabled: monitorEnabled,
+    metadata: heartbeat?.metadataJson || {},
+  });
   return json(
-    { heartbeat },
+    { heartbeat, guide },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }
 
 export default function LaunchMonitorPage() {
-  const { heartbeat } = useLoaderData();
+  const { heartbeat, guide } = useLoaderData();
   const metadata = heartbeat?.metadataJson || {};
   const report = metadata.lastReport || {};
   const checks = Array.isArray(report.checks) ? report.checks : [];
@@ -38,6 +44,41 @@ export default function LaunchMonitorPage() {
         <Metric label="終了予定" value={formatDate(metadata.endsAt)} />
         <Metric label="最終確認" value={formatDate(metadata.lastCheckedAt)} />
         <Metric label="実行回数" value={String(metadata.runCount || 0)} />
+      </section>
+
+      <section style={styles.panel}>
+        <div style={styles.guideHeader}>
+          <div>
+            <h2 style={styles.sectionTitle}>運用ガイド</h2>
+            <p style={styles.muted}>現在の監視結果から、次に確認する項目を順番に表示します。</p>
+          </div>
+          <StatusBadge status={guide.tone} compact />
+        </div>
+        <div>
+          <strong style={styles.guideTitle}>{guide.title}</strong>
+          <p style={styles.detail}>{guide.description}</p>
+        </div>
+        {guide.steps.length > 0 ? (
+          <ol style={styles.guideList}>
+            {guide.steps.map((step) => (
+              <li key={step.id} style={styles.guideRow}>
+                <div style={styles.guideRowInner}>
+                  <div>
+                    <strong>{step.title}</strong>
+                    <p style={styles.detail}>{step.detail}</p>
+                  </div>
+                  {step.href ? (
+                    <Link to={step.href} style={styles.guideLink}>
+                      確認する
+                    </Link>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p style={styles.noAction}>作業は不要です。次回の自動確認を待ちます。</p>
+        )}
       </section>
 
       <section style={styles.panel}>
@@ -138,6 +179,12 @@ function checkLabel(id) {
   return labels[id] || id;
 }
 
+function isEnabled(value) {
+  return ["1", "true", "yes", "on"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
+}
+
 const styles = {
   page: {
     display: "grid",
@@ -179,6 +226,36 @@ const styles = {
     border: "1px solid #dfe3e8",
     background: "#fff",
     borderRadius: 8,
+  },
+  guideHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+  },
+  guideTitle: { display: "block", fontSize: 18 },
+  guideList: { margin: 0, paddingLeft: 24 },
+  guideRow: {
+    padding: "16px 0",
+    borderBottom: "1px solid #eaecf0",
+  },
+  guideRowInner: {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 18,
+  },
+  guideLink: {
+    color: "#101828",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  noAction: {
+    margin: 0,
+    padding: "14px 0",
+    color: "#087a55",
+    fontWeight: 700,
   },
   list: { display: "grid" },
   row: {

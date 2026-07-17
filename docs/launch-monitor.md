@@ -32,9 +32,13 @@ Render側から異常を検出できます。
 - 内容変更、重要度上昇、復旧は即時
 - 開始時と72時間完了時にも通知
 - Dead Man's Switchの同一障害通知はResendの冪等キーで1時間に1回まで
+- 重大異常時はGitHub Actionsも失敗扱いになり、Resendとは別に赤い実行履歴を残す
 
 監視状態、通知抑制、復旧状態、ロックは既存の`OperationalHeartbeat`へ保存します。
 業務データへの書き込みは行いません。
+
+管理画面の「公開監視」には、現在の検査結果から確認先を示す決定表ベースの
+運用ガイドがあります。AIによる自動判断や自動修復は行いません。
 
 ## Webサービスの環境変数
 
@@ -45,6 +49,10 @@ LAUNCH_MONITOR_DEADMAN_TOKEN=<別の32文字以上のランダム値>
 LAUNCH_MONITOR_DURATION_HOURS=72
 LAUNCH_MONITOR_STARTED_AT=<UTC ISO日時>
 ```
+
+`LAUNCH_MONITOR_STARTED_AT`はパスワード解除直後の時刻へ必ず更新します。
+開始時刻と期間から監視キャンペーンを識別し、以前の完了・通知・重い検査の状態を
+新しい72時間へ引き継ぎません。
 
 任意:
 
@@ -109,6 +117,8 @@ ADMIN_EMAIL
 - 監視対象URLとDB条件はサーバー側で固定し、リクエストから指定できない
 - Agentはコマンド実行、`eval`、動的スクリプト実行をしない
 - 同時実行はGitHub ActionsのconcurrencyとDBロックの両方で抑止
+- DBロックは所有者を記録し、古い実行が後続実行のロックを解除できない
+- Renderの自己停止対象は`crn-`で始まるCron Job IDだけ
 
 `node scripts/launch-monitor-agent.mjs --dry-run` はRenderログと公開URLだけを確認し、
 内部監視、DB書き込み、通知を行いません。

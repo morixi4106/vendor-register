@@ -131,6 +131,11 @@ async function main() {
         schedulerStopped,
       }),
     );
+    return;
+  }
+
+  if (payload.status === "critical") {
+    process.exitCode = 2;
   }
 }
 
@@ -240,7 +245,7 @@ async function stopScheduler() {
 
 async function suspendMonitorCron() {
   const serviceId = String(process.env.RENDER_CRON_SERVICE_ID || "").trim();
-  if (!serviceId.startsWith("crn-")) {
+  if (!/^crn-[a-z0-9]+$/i.test(serviceId)) {
     throw new Error("invalid_render_cron_service_id");
   }
   const response = await fetchWithTimeout(

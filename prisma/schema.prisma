@@ -1411,6 +1411,8 @@ model ContactInquiry {
   replyType     String
   matchedRuleId String?
   createdAt     DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model PublicEndpointRateLimit {
