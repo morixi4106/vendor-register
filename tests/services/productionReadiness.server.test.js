@@ -26,6 +26,8 @@ function createFakePrisma({
   sellerRows = [],
   sessions = null,
   withdrawalCounts = {},
+  heartbeat = undefined,
+  shadowChecks = undefined,
 } = {}) {
   const withdrawalCountQueue = [
     withdrawalCounts.openCount || 0,
@@ -40,7 +42,7 @@ function createFakePrisma({
     withdrawalCounts.shopifyExternalRecordMissingCount || 0,
   ];
 
-  return {
+  const fakePrisma = {
     session: {
       findMany: async () =>
         sessions || [
@@ -61,11 +63,26 @@ function createFakePrisma({
       count: async () => withdrawalCounts.emailFailedCount || 0,
     },
   };
+
+  if (heartbeat !== undefined) {
+    fakePrisma.operationalHeartbeat = {
+      findUnique: async () => heartbeat,
+    };
+  }
+  if (shadowChecks !== undefined) {
+    fakePrisma.sellerOrderShadowCheck = {
+      findMany: async () => shadowChecks,
+    };
+  }
+
+  return fakePrisma;
 }
 
 function createActiveSeller({
   stripeAccount = true,
   payoutRecipient = false,
+  isTestStore = false,
+  payoutRuns = [],
 } = {}) {
   return {
     id: "seller_1",
@@ -73,7 +90,13 @@ function createActiveSeller({
     vendor: {
       handle: "vendor-one",
       storeName: "Vendor One",
+      vendorStore: {
+        id: "vendor_store_1",
+        storeName: "Vendor One",
+        isTestStore,
+      },
     },
+    payoutRuns,
     stripeAccount: stripeAccount
       ? {
           id: "seller_stripe_1",
@@ -95,6 +118,101 @@ function createActiveSeller({
       : null,
   };
 }
+
+test("getProductionReadiness blocks a stale withdrawal email worker", async () => {
+  const now = new Date("2026-07-17T12:00:00.000Z");
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+      heartbeat: {
+        key: "withdrawal_email_outbox",
+        lastSucceededAt: new Date("2026-07-17T11:29:00.000Z"),
+        lastFailedAt: null,
+      },
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      WITHDRAWAL_OUTBOX_WORKER_TOKEN: "worker-token",
+    },
+    now,
+  });
+  const check = result.checks.find(
+    (row) => row.id === "withdrawal_email_worker_heartbeat",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /31/);
+});
+
+test("getProductionReadiness blocks unresolved SellerOrder differences when multi-seller checkout is open", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+      shadowChecks: [
+        {
+          id: "shadow_1",
+          shopDomain: "example.myshopify.com",
+          shopifyOrderId: "gid://shopify/Order/1",
+          shopifyOrderName: "#1001",
+          status: "amount_mismatch",
+          checkedAt: new Date("2026-07-17T11:00:00.000Z"),
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED: "true",
+      MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED: "true",
+      VENDOR_ORDERS_USE_SELLER_ORDERS: "true",
+      SELLER_ORDER_SHADOW_WRITE_ENABLED: "true",
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "seller_order_unresolved_shadow_checks",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.equal(result.integrity.sellerOrderShadow.unresolvedCount, 1);
+});
+
+test("getProductionReadiness blocks pending payout runs for test stores", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [
+        createActiveSeller({
+          stripeAccount: false,
+          isTestStore: true,
+          payoutRuns: [
+            {
+              id: "payout_1",
+              status: "approved",
+              amount: 100,
+              currencyCode: "jpy",
+            },
+          ],
+        }),
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "test_store_pending_payout_runs",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.equal(result.integrity.testStores.pendingPayoutRunCount, 1);
+});
 
 test("inspectStripeEnvironment detects live Stripe keys", () => {
   const result = inspectStripeEnvironment({
@@ -250,7 +368,10 @@ test("getProductionReadiness reports withdrawal operation counts", async () => {
 
   assert.equal(result.withdrawals.openCount, 4);
   assert.equal(result.withdrawals.processingIssueCount, 25);
-  assert.equal(checksById.get("withdrawal_operations_available").status, "pass");
+  assert.equal(
+    checksById.get("withdrawal_operations_available").status,
+    "pass",
+  );
   assert.equal(checksById.get("withdrawal_open_requests").status, "manual");
   assert.equal(checksById.get("withdrawal_deadlines").status, "warning");
   assert.equal(checksById.get("withdrawal_email_failures").status, "warning");

@@ -19,10 +19,8 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const {
-    getCarrierCallbackUrl,
-    upsertShippingV2CarrierService,
-  } = await import("../services/carrierShippingRates.server.js");
+  const { getCarrierCallbackUrl, upsertShippingV2CarrierService } =
+    await import("../services/carrierShippingRates.server.js");
   const appUrl = process.env.APP_URL;
 
   if (!appUrl) {
@@ -71,8 +69,9 @@ export default function ProductionReadinessPage() {
     warningCount: displayChecks.filter(
       (check) => check.displayStatus === "warning",
     ).length,
-    manualCount: displayChecks.filter((check) => check.displayStatus === "manual")
-      .length,
+    manualCount: displayChecks.filter(
+      (check) => check.displayStatus === "manual",
+    ).length,
     optionalCount: displayChecks.filter(
       (check) => check.displayStatus === "optional",
     ).length,
@@ -342,7 +341,11 @@ export default function ProductionReadinessPage() {
             </p>
           </div>
           <Form method="post">
-            <button className="readiness-button" type="submit" disabled={isCarrierSubmitting}>
+            <button
+              className="readiness-button"
+              type="submit"
+              disabled={isCarrierSubmitting}
+            >
               {isCarrierSubmitting ? "再登録中" : "Shipping V2を再登録"}
             </button>
           </Form>
@@ -389,10 +392,7 @@ export default function ProductionReadinessPage() {
             label="出店者"
             value={`${data.sellers.activeCount}/${data.sellers.totalCount}`}
           />
-          <Metric
-            label="撤回申請"
-            value={data.withdrawals?.openCount ?? 0}
-          />
+          <Metric label="撤回申請" value={data.withdrawals?.openCount ?? 0} />
           <Metric
             label="撤回期限"
             value={`${data.withdrawals?.deadlineExpiredCount ?? 0}/${data.withdrawals?.deadlineSoonCount ?? 0}`}
@@ -405,6 +405,24 @@ export default function ProductionReadinessPage() {
           <Metric
             label="撤回要確認"
             value={data.withdrawals?.processingIssueCount ?? 0}
+          />
+          <Metric
+            label="定期メール"
+            value={heartbeatStatusLabel(data.integrity?.heartbeat)}
+            compact
+          />
+          <Metric
+            label="注文差分"
+            value={data.integrity?.sellerOrderShadow?.unresolvedCount ?? 0}
+          />
+          <Metric
+            label="台帳補正待ち"
+            value={`${data.integrity?.ledgerRepairs?.productionCount ?? 0}/${data.integrity?.ledgerRepairs?.testCount ?? 0}`}
+            compact
+          />
+          <Metric
+            label="テスト出金予定"
+            value={data.integrity?.testStores?.pendingPayoutRunCount ?? 0}
           />
         </div>
       </section>
@@ -468,7 +486,8 @@ export default function ProductionReadinessPage() {
       <section className="readiness-card">
         <h2 className="readiness-section-title">補足</h2>
         <p className="readiness-subtitle">
-          Shopify Payments、KOMOJU、Wise、銀行口座などの外部側ステータスは、アプリから完全には確認できません。
+          Shopify
+          Payments、KOMOJU、Wise、銀行口座などの外部側ステータスは、アプリから完全には確認できません。
           Shopify管理画面と各決済サービス側で有効状態を確認し、少額注文、返金、キャンセル、精算記録まで通してください。
           出金管理は{" "}
           <Link className="readiness-link" to="/app/payout-runs">
@@ -575,6 +594,13 @@ function sellerPayoutFlowLabel(operation) {
   return operation?.sellerPayoutProviderLabel || "未設定";
 }
 
+function heartbeatStatusLabel(heartbeat) {
+  if (!heartbeat?.available) return "未確認";
+  if (heartbeat.failureUnresolved || heartbeat.stale) return "要確認";
+  if (!heartbeat.row?.lastSucceededAt) return "未実行";
+  return "稼働中";
+}
+
 const CHECK_TITLE_LABELS = {
   payment_provider: "決済方式",
   seller_payout_provider: "出店者精算方式",
@@ -653,7 +679,9 @@ function checkDetailForDisplay(check, data, { isOptionalStripe }) {
       return "入金口座や決済サービス側の有効状態は、アプリから完全には確認できません。";
     case "active_sellers_have_stripe_accounts":
       if (data.operation?.sellerPayoutProvider === "wise") {
-        return check.detail || "Wise精算では、出店者ごとの受取先登録が必要です。";
+        return (
+          check.detail || "Wise精算では、出店者ごとの受取先登録が必要です。"
+        );
       }
       return "月次手動精算では、出店者のStripe登録は不要です。";
     case "connected_accounts_match_current_stripe_key":
@@ -755,6 +783,22 @@ function checkActionLinkForDisplay(check) {
       return {
         label: "処理不整合を見る",
         to: "/app/withdrawals?queue=processing_issue",
+      };
+    case "withdrawal_email_worker_heartbeat":
+      return {
+        label: "送信キューを見る",
+        to: "/app/withdrawals?queue=email_failed",
+      };
+    case "seller_order_unresolved_shadow_checks":
+      return {
+        label: "注文差分を見る",
+        to: "/app/seller-order-shadow",
+      };
+    case "seller_ledger_repair_candidates":
+    case "test_store_pending_payout_runs":
+      return {
+        label: "出金管理を見る",
+        to: "/app/payout-runs",
       };
     default:
       return null;

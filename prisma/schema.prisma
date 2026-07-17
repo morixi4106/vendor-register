@@ -340,6 +340,19 @@ model SellerOrderShadowCheck {
   @@map("seller_order_shadow_checks")
 }
 
+model OperationalHeartbeat {
+  key             String    @id
+  lastStartedAt   DateTime?
+  lastSucceededAt DateTime?
+  lastFailedAt    DateTime?
+  lastErrorCode   String?
+  metadataJson    Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("operational_heartbeats")
+}
+
 model SalesCreditOffset {
   id                String    @id @default(cuid())
   sellerId          String
