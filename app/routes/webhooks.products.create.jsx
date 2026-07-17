@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { Resend } from "resend";
+import { syncShopifyProductPayload } from "../services/shopifyProductSync.server.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -7,6 +8,18 @@ export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
+
+  const syncResult = await syncShopifyProductPayload(payload, {
+    shopDomain: shop,
+  });
+
+  if (!syncResult.ok) {
+    console.warn("Shopify product requires store assignment:", {
+      shop,
+      productId: payload?.admin_graphql_api_id || payload?.id,
+      reason: syncResult.reason,
+    });
+  }
 
   try {
     const { error } = await resend.emails.send({

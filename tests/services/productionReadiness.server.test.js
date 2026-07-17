@@ -28,6 +28,7 @@ function createFakePrisma({
   withdrawalCounts = {},
   heartbeat = undefined,
   shadowChecks = undefined,
+  productSyncIssues = undefined,
 } = {}) {
   const withdrawalCountQueue = [
     withdrawalCounts.openCount || 0,
@@ -72,6 +73,11 @@ function createFakePrisma({
   if (shadowChecks !== undefined) {
     fakePrisma.sellerOrderShadowCheck = {
       findMany: async () => shadowChecks,
+    };
+  }
+  if (productSyncIssues !== undefined) {
+    fakePrisma.shopifyProductSyncIssue = {
+      findMany: async () => productSyncIssues,
     };
   }
 
@@ -212,6 +218,31 @@ test("getProductionReadiness blocks pending payout runs for test stores", async 
   assert.equal(result.canGoLive, false);
   assert.equal(check.status, "fail");
   assert.equal(result.integrity.testStores.pendingPayoutRunCount, 1);
+});
+
+test("getProductionReadiness blocks active Shopify products without a store mapping", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+      productSyncIssues: [
+        {
+          id: "sync_issue_1",
+          payloadJson: { status: "active" },
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "shopify_product_store_mapping",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /販売中 1件/);
 });
 
 test("inspectStripeEnvironment detects live Stripe keys", () => {

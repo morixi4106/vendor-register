@@ -614,6 +614,7 @@ const CHECK_TITLE_LABELS = {
   production_runtime: "実行環境",
   shopify_configured_scopes: "Shopify設定権限",
   shopify_granted_scopes: "Shopify承認済み権限",
+  shopify_product_store_mapping: "Shopify商品と店舗の紐付け",
   shopify_payments_bank_account: "決済入金口座",
   active_sellers_have_stripe_accounts: "出店者の受取先",
   connected_accounts_match_current_stripe_key: "Stripe接続アカウント確認",
@@ -764,6 +765,11 @@ function formatMissingScopeDetail(detail, prefix) {
 
 function checkActionLinkForDisplay(check) {
   switch (check.id) {
+    case "shopify_product_store_mapping":
+      return {
+        label: "商品同期を開く",
+        to: "/app/shopify-product-sync",
+      };
     case "withdrawal_open_requests":
       return {
         label: "未完了を見る",

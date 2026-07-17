@@ -98,6 +98,29 @@ model Product {
   @@index([productEuStatus, updatedAt])
 }
 
+model ShopifyProductSyncIssue {
+  id                    String    @id @default(cuid())
+  shopDomain            String
+  shopifyProductId      String
+  productTitle          String?
+  vendorLabel           String?
+  status                String    @default("unresolved")
+  reason                String
+  candidateStoreIdsJson Json?
+  payloadJson           Json
+  resolvedVendorStoreId String?
+  localProductId        String?
+  lastAttemptAt         DateTime  @default(now())
+  resolvedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([shopDomain, shopifyProductId])
+  @@index([status, lastAttemptAt])
+  @@index([resolvedVendorStoreId])
+  @@map("shopify_product_sync_issues")
+}
+
 model ProductPriceApplyLog {
   id                  String   @id @default(cuid())
   productId           String?

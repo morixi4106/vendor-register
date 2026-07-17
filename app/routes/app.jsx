@@ -23,6 +23,7 @@ export default function App() {
         <Link to="/app/payout-runs">出金管理</Link>
         <Link to="/app/production-readiness">本番確認</Link>
         <Link to="/app/seller-order-shadow">SellerOrder検証</Link>
+        <Link to="/app/shopify-product-sync">Shopify商品同期</Link>
         <Link to="/app/withdrawals">撤回申請</Link>
         <Link to="/app/withdrawal-settings">撤回運用設定</Link>
         <Link to="/app/carrier-service">配送サービス</Link>

@@ -58,11 +58,19 @@ export const action = async ({ request }) => {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const deleted = await db.product.deleteMany({
-    where: {
-      OR: matchers,
-    },
-  });
+  const [deleted] = await db.$transaction([
+    db.product.deleteMany({
+      where: {
+        OR: matchers,
+      },
+    }),
+    db.shopifyProductSyncIssue.deleteMany({
+      where: {
+        shopDomain,
+        shopifyProductId: { in: candidates },
+      },
+    }),
+  ]);
 
   console.log(
     `products/delete webhook removed ${deleted.count} local product(s) for ids: ${candidates.join(", ")}`

@@ -1889,6 +1889,78 @@ function buildWithdrawalOperationChecks({ withdrawalOperations }) {
   return checks;
 }
 
+async function inspectShopifyProductSync({ prismaClient = prisma } = {}) {
+  if (!prismaClient.shopifyProductSyncIssue?.findMany) {
+    return { available: false, unresolvedCount: 0, activeCount: 0 };
+  }
+
+  try {
+    const issues = await prismaClient.shopifyProductSyncIssue.findMany({
+      where: { status: "unresolved" },
+      select: {
+        id: true,
+        payloadJson: true,
+      },
+    });
+    const activeCount = issues.filter(
+      (issue) =>
+        String(issue?.payloadJson?.status || "").trim().toLowerCase() ===
+        "active",
+    ).length;
+
+    return {
+      available: true,
+      unresolvedCount: issues.length,
+      activeCount,
+    };
+  } catch (error) {
+    if (error?.code === "P2021") {
+      return { available: false, unresolvedCount: 0, activeCount: 0 };
+    }
+
+    throw error;
+  }
+}
+
+function buildShopifyProductSyncChecks(syncState) {
+  if (!syncState.available) {
+    return [
+      createCheck({
+        id: "shopify_product_store_mapping",
+        category: "shopify",
+        status: "warning",
+        title: "Shopify商品と店舗の紐付け",
+        detail: "商品同期テーブルの準備状態を確認できませんでした。",
+        action: "最新のPrisma migrationを適用してください。",
+      }),
+    ];
+  }
+
+  const status =
+    syncState.activeCount > 0
+      ? "fail"
+      : syncState.unresolvedCount > 0
+        ? "warning"
+        : "pass";
+
+  return [
+    createCheck({
+      id: "shopify_product_store_mapping",
+      category: "shopify",
+      status,
+      title: "Shopify商品と店舗の紐付け",
+      detail:
+        syncState.unresolvedCount > 0
+          ? `未解決 ${syncState.unresolvedCount}件（販売中 ${syncState.activeCount}件）`
+          : "Shopifyから直接登録された商品も店舗へ紐付いています。",
+      action:
+        syncState.unresolvedCount > 0
+          ? "Shopify商品同期を開き、販売店舗を確定してください。"
+          : "",
+    }),
+  ];
+}
+
 export async function getProductionReadiness({
   prismaClient = prisma,
   env = process.env,
@@ -1947,6 +2019,7 @@ export async function getProductionReadiness({
     sellerRows,
     now,
   });
+  const shopifyProductSync = await inspectShopifyProductSync({ prismaClient });
 
   const connectedAccountProbe = stripeConnectProductionEnabled
     ? await probeConnectedAccounts({
@@ -1965,6 +2038,7 @@ export async function getProductionReadiness({
     ...buildWithdrawalOperationChecks({ withdrawalOperations }),
     ...buildDirectReturnChecks({ directReturns }),
     ...buildLaunchIntegrityChecks({ launchIntegrity, env }),
+    ...buildShopifyProductSyncChecks(shopifyProductSync),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
       sellerRows,
@@ -2004,6 +2078,7 @@ export async function getProductionReadiness({
     shopify: {
       configuredScopes,
       grantedScopes,
+      productSync: shopifyProductSync,
       offlineSessionShops: sessions
         .map((session) => session.shop)
         .filter(Boolean),
