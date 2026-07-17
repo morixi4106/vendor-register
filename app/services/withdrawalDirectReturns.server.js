@@ -1407,66 +1407,112 @@ export async function submitWithdrawalGroupShipment({
     return { ok: false, status: 400, error: "tracking_required" };
   }
   const quantities = jsonObject(values.quantities);
-  const requestedByLine = new Map(group.lines.map((line) => [line.id, line]));
-  const priorByLine = new Map();
-  for (const shipment of group.shipments) {
-    for (const line of shipment.lines) {
-      priorByLine.set(
-        line.returnGroupLineId,
-        Number(priorByLine.get(line.returnGroupLineId) || 0) + Number(line.submittedQuantity || 0),
-      );
-    }
-  }
-  const shipmentLines = [];
-  for (const [lineId, rawQuantity] of Object.entries(quantities)) {
-    const groupLine = requestedByLine.get(lineId);
-    const quantity = Number(rawQuantity || 0);
-    if (!groupLine || !Number.isInteger(quantity) || quantity <= 0) continue;
-    const available =
-      Number(groupLine.instructedQuantity || 0) - Number(priorByLine.get(lineId) || 0);
-    if (quantity > available) {
-      return { ok: false, status: 409, error: "shipment_quantity_exceeded" };
-    }
-    shipmentLines.push({ groupLine, quantity });
-  }
-  if (!shipmentLines.length) return { ok: false, status: 400, error: "shipment_lines_required" };
-  const shipment = await prismaClient.$transaction(async (tx) => {
-    const packageCount = await tx.withdrawalReturnShipment.count({
-      where: { returnGroupId: group.id },
-    });
-    const created = await tx.withdrawalReturnShipment.create({
-      data: {
-        returnGroupId: group.id,
-        packageNumber: packageCount + 1,
-        trackingCompany: text(values.trackingCompany) || null,
-        trackingNumber: trackingNumber || null,
-        trackingUrl: trackingUrl || null,
-        customerMemo: text(values.customerMemo) || null,
-        proofJson: jsonObject(values.proofJson),
-        submittedAt: new Date(),
-      },
-    });
-    for (const item of shipmentLines) {
-      await tx.withdrawalReturnShipmentLine.create({
-        data: {
-          shipmentId: created.id,
-          returnGroupLineId: item.groupLine.id,
-          submittedQuantity: item.quantity,
+  let shipment = null;
+  for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
+    try {
+      shipment = await prismaClient.$transaction(
+        async (tx) => {
+          const freshGroup = await tx.withdrawalReturnGroup.findUnique({
+            where: { id: group.id },
+            include: { lines: true },
+          });
+          if (!freshGroup || isGroupTerminal(freshGroup)) {
+            throw createSubmissionError("invalid_access_link", 404);
+          }
+
+          const requestedByLine = new Map(
+            freshGroup.lines.map((line) => [line.id, line]),
+          );
+          const shipmentLines = [];
+          for (const [lineId, rawQuantity] of Object.entries(quantities)) {
+            const groupLine = requestedByLine.get(lineId);
+            const quantity = Number(rawQuantity || 0);
+            if (!groupLine || !Number.isInteger(quantity) || quantity <= 0) continue;
+            const available =
+              Number(groupLine.instructedQuantity || 0) -
+              Number(groupLine.submittedQuantity || 0);
+            if (quantity > available) {
+              throw createSubmissionError("shipment_quantity_exceeded", 409);
+            }
+            shipmentLines.push({ groupLine, quantity });
+          }
+          if (!shipmentLines.length) {
+            throw createSubmissionError("shipment_lines_required", 400);
+          }
+
+          const packageCount = await tx.withdrawalReturnShipment.count({
+            where: { returnGroupId: freshGroup.id },
+          });
+          const created = await tx.withdrawalReturnShipment.create({
+            data: {
+              returnGroupId: freshGroup.id,
+              packageNumber: packageCount + 1,
+              trackingCompany: text(values.trackingCompany) || null,
+              trackingNumber: trackingNumber || null,
+              trackingUrl: trackingUrl || null,
+              customerMemo: text(values.customerMemo) || null,
+              proofJson: jsonObject(values.proofJson),
+              submittedAt: new Date(),
+            },
+          });
+          for (const item of shipmentLines) {
+            const updated = await tx.withdrawalReturnGroupLine.updateMany({
+              where: {
+                id: item.groupLine.id,
+                submittedQuantity: Number(item.groupLine.submittedQuantity || 0),
+              },
+              data: { submittedQuantity: { increment: item.quantity } },
+            });
+            if (updated.count !== 1) {
+              throw createSubmissionError("shipment_submission_conflict", 409);
+            }
+            await tx.withdrawalReturnShipmentLine.create({
+              data: {
+                shipmentId: created.id,
+                returnGroupLineId: item.groupLine.id,
+                submittedQuantity: item.quantity,
+              },
+            });
+          }
+          await tx.withdrawalReturnGroup.update({
+            where: { id: freshGroup.id },
+            data: { evidenceStatus: "SUBMITTED" },
+          });
+          return created;
         },
-      });
-      await tx.withdrawalReturnGroupLine.update({
-        where: { id: item.groupLine.id },
-        data: { submittedQuantity: { increment: item.quantity } },
-      });
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      break;
+    } catch (error) {
+      const retryable =
+        error?.code === "P2034" ||
+        error?.code === "P2002" ||
+        error?.message === "shipment_submission_conflict";
+      if (retryable && attempt + 1 < MAX_TRANSACTION_RETRIES) continue;
+      if (error?.publicStatus) {
+        return {
+          ok: false,
+          status: error.publicStatus,
+          error: error.message,
+        };
+      }
+      if (retryable) {
+        return { ok: false, status: 409, error: "shipment_submission_conflict" };
+      }
+      throw error;
     }
-    await tx.withdrawalReturnGroup.update({
-      where: { id: group.id },
-      data: { evidenceStatus: "SUBMITTED" },
-    });
-    return created;
-  });
+  }
+  if (!shipment) {
+    return { ok: false, status: 409, error: "shipment_submission_conflict" };
+  }
   await recomputeWithdrawalV2State(group.withdrawalRequestId, prismaClient);
   return { ok: true, shipment };
+}
+
+function createSubmissionError(message, status) {
+  const error = new Error(message);
+  error.publicStatus = status;
+  return error;
 }
 
 export async function updateWithdrawalGroupReview({

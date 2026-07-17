@@ -3,6 +3,11 @@ import { Link, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 
 import prisma from "../db.server.js";
+import { authenticate } from "../shopify.server";
+import {
+  hashWithdrawalReceiptToken,
+  isWithdrawalIdentityReviewStatus,
+} from "../services/withdrawals.server.js";
 import {
   appendWithdrawalLocale,
   formatWithdrawalDateTime,
@@ -11,17 +16,25 @@ import {
 } from "../utils/withdrawalLocale.js";
 
 export const loader = async ({ request }) => {
-  const url = new URL(request.url);
-  const ref = String(url.searchParams.get("ref") || "").trim();
-  const duplicate = url.searchParams.get("duplicate") === "1";
-  const embedded = url.searchParams.get("embedded") === "1";
-
-  if (!ref) {
-    return json({ found: false, duplicate: false, embedded, ref: "" });
+  const { session } = await authenticate.public.appProxy(request);
+  if (!session?.shop) {
+    throw new Response("Unauthorized", { status: 401 });
   }
 
-  const withdrawalRequest = await prisma.withdrawalRequest.findUnique({
-    where: { id: ref },
+  const url = new URL(request.url);
+  const receipt = String(url.searchParams.get("receipt") || "").trim();
+  const duplicate = url.searchParams.get("duplicate") === "1";
+  const embedded = url.searchParams.get("embedded") === "1";
+  const now = new Date();
+
+  const withdrawalRequest = receipt
+    ? await prisma.withdrawalRequest.findFirst({
+    where: {
+      receiptTokenHash: hashWithdrawalReceiptToken(receipt),
+      receiptTokenRevokedAt: null,
+      receiptTokenExpiresAt: { gt: now },
+      shopDomain: session.shop,
+    },
     select: {
       id: true,
       shopifyOrderName: true,
@@ -30,8 +43,21 @@ export const loader = async ({ request }) => {
       submittedAt: true,
       createdAt: true,
       correspondenceLocale: true,
+      eligibilityStatus: true,
+      receiptTokenFirstUsedAt: true,
     },
-  });
+  })
+    : null;
+
+  if (withdrawalRequest) {
+    await prisma.withdrawalRequest.update({
+      where: { id: withdrawalRequest.id },
+      data: {
+        receiptTokenFirstUsedAt: withdrawalRequest.receiptTokenFirstUsedAt || now,
+        receiptTokenLastUsedAt: now,
+      },
+    });
+  }
 
   const localeResolution = resolveWithdrawalLocale({
     urlLocale: url.searchParams.get("lang"),
@@ -39,18 +65,32 @@ export const loader = async ({ request }) => {
     acceptLanguage: request.headers.get("accept-language"),
   });
 
-  return json({
-    found: Boolean(withdrawalRequest),
-    duplicate,
-    embedded,
-    ref,
-    withdrawalRequest,
-    locale: localeResolution.locale,
-  });
+  const identityReviewRequired = isWithdrawalIdentityReviewStatus(
+    withdrawalRequest?.eligibilityStatus,
+  );
+
+  return json(
+    {
+      found: Boolean(withdrawalRequest),
+      duplicate,
+      embedded,
+      reference: withdrawalRequest?.id || "",
+      withdrawalRequest: withdrawalRequest
+        ? {
+            ...withdrawalRequest,
+            shopifyOrderName: identityReviewRequired
+              ? null
+              : withdrawalRequest.shopifyOrderName,
+          }
+        : null,
+      locale: localeResolution.locale,
+    },
+    { headers: privateReceiptHeaders() },
+  );
 };
 
 export default function WithdrawalSuccessPage() {
-  const { found, duplicate, embedded, ref, withdrawalRequest, locale = "en-GB" } =
+  const { found, duplicate, embedded, reference, withdrawalRequest, locale = "en-GB" } =
     useLoaderData();
   const dictionary = getWithdrawalDictionary(locale);
   const copy = dictionary.success;
@@ -73,7 +113,7 @@ export default function WithdrawalSuccessPage() {
             : dictionary.errors.form}
         </p>
         <div className="withdrawal-success__box">
-          <span>{publicCopy.reference}: {withdrawalRequest?.id || ref || "-"}</span>
+          <span>{publicCopy.reference}: {reference || "-"}</span>
           {withdrawalRequest?.shopifyOrderName ? (
             <span>{publicCopy.order}: {withdrawalRequest.shopifyOrderName}</span>
           ) : null}
@@ -96,6 +136,15 @@ export default function WithdrawalSuccessPage() {
       </section>
     </main>
   );
+}
+
+function privateReceiptHeaders() {
+  return {
+    "Cache-Control": "private, no-store, max-age=0",
+    Pragma: "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
+  };
 }
 
 function useEmbeddedFrameBehavior(embedded) {

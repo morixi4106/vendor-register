@@ -303,6 +303,28 @@ test('normalizeWithdrawalFormData requires selected items for partial withdrawal
   assert.equal(Boolean(normalized.errors.itemText), true);
 });
 
+test('normalizeWithdrawalFormData localizes length validation without truncating the phone value', () => {
+  const longOrderNumber = `#${'1'.repeat(80)}`;
+  const longPhone = `+44${'1'.repeat(39)}`;
+  const normalized = normalizeWithdrawalFormData(
+    createFormData([
+      ['customerName', 'Test User'],
+      ['customerEmail', 'test@example.com'],
+      ['orderNumber', longOrderNumber],
+      ['customerPhone', longPhone],
+    ]),
+    { locale: 'en-GB' },
+  );
+
+  assert.equal(normalized.ok, false);
+  assert.equal(normalized.errors.orderNumber, 'The order number is too long.');
+  assert.equal(
+    normalized.errors.customerPhone,
+    'The telephone number is too long.',
+  );
+  assert.equal(normalized.values.customerPhone, longPhone);
+});
+
 test('normalizeWithdrawalRefundDecisionFormData computes the planned refund total', () => {
   const normalized = normalizeWithdrawalRefundDecisionFormData(
     createFormData([
@@ -670,6 +692,57 @@ test('createWithdrawalRequestFromForm returns duplicate without creating another
     assert.equal(prismaClient._state.withdrawalRequests.length, 1);
     assert.equal(prismaClient._state.statusHistory.length, 1);
     assert.equal(prismaClient._state.emailLogs.length, 2);
+  });
+});
+
+test('email mismatch is recorded but does not start seller return processing', async () => {
+  await withWithdrawalEmailEnvDisabled(async () => {
+    const prismaClient = createFakeWithdrawalPrisma({
+      sellerOrders: [
+        {
+          id: 'seller_order_1',
+          marketplaceOrderId: 'marketplace_order_1',
+          shopifyOrderId: 'gid://shopify/Order/1010',
+          sellerId: 'seller_1',
+          vendorStoreId: 'store_1',
+          lines: [{ id: 'line_1', title: 'Test Product' }],
+        },
+      ],
+      sellers: [
+        {
+          id: 'seller_1',
+          vendorId: 'vendor_1',
+          vendorStoreId: 'store_1',
+          vendor: { managementEmail: 'vendor@example.com' },
+          vendorStore: { email: 'store@example.com' },
+        },
+      ],
+    });
+    const formData = createValidWithdrawalForm();
+    formData.set('customerEmail', 'different@example.com');
+
+    const result = await createWithdrawalRequestFromForm({
+      request: new Request('https://example.com/apps/vendors/withdrawal'),
+      formData,
+      shopDomain: 'b30ize-1a.myshopify.com',
+      prismaClient,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.identityReviewRequired, true);
+    assert.equal(
+      result.withdrawalRequest.eligibilityStatus,
+      WITHDRAWAL_ELIGIBILITY_STATUSES.EMAIL_MISMATCH_REVIEW,
+    );
+    assert.equal(result.withdrawalRequest.progressStatus, 'REVIEW_REQUIRED');
+    assert.equal(result.directReturnResult.reason, 'identity_review_required');
+    assert.equal(result.vendorNotificationResult.reason, 'identity_review_required');
+    assert.equal(
+      prismaClient._state.emailLogs.some((log) => log.emailType === 'vendor_notification'),
+      false,
+    );
+    assert.ok(result.receiptToken);
+    assert.notEqual(result.withdrawalRequest.receiptTokenHash, result.receiptToken);
   });
 });
 

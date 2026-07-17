@@ -91,6 +91,8 @@ export const withdrawalJaJp = {
     customerName: "氏名を入力してください。",
     customerEmail: "有効なメールアドレスを入力してください。",
     orderNumber: "注文番号を入力してください。",
+    orderNumberTooLong: "注文番号が長すぎます。",
+    customerPhoneTooLong: "電話番号が長すぎます。",
     receivedDate: "未来の日付は指定できません。",
     itemText: "一部商品の場合は、商品と数量を入力してください。",
     rateLimited: "短時間の送信回数が多いため、時間をおいて再度お試しください。",

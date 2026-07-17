@@ -16,6 +16,12 @@ import {
   resolveWithdrawalLocale,
 } from "../utils/withdrawalLocale.js";
 
+export const headers = () => ({
+  "Cache-Control": "private, no-store, max-age=0",
+  "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex, nofollow, noarchive",
+});
+
 export const loader = async ({ request }) => {
   await authenticateAppProxyShop(request);
   const url = new URL(request.url);
@@ -188,7 +194,9 @@ export default function ReturnProofPage() {
         {!embedded ? <p className="return-proof-eyebrow">EU RIGHT OF WITHDRAWAL</p> : null}
         <h1>{copy.title}</h1>
         {!ok ? (
-          <div className="return-proof-alert">{getErrorMessage(error, copy)}</div>
+          <div className="return-proof-alert" role="alert">
+            {getErrorMessage(error, copy)}
+          </div>
         ) : (
           <>
             <p className="return-proof-lead">
@@ -204,7 +212,9 @@ export default function ReturnProofPage() {
             </div>
 
             {actionData?.error ? (
-              <div className="return-proof-alert">{getErrorMessage(actionData.error, copy)}</div>
+              <div className="return-proof-alert" role="alert">
+                {getErrorMessage(actionData.error, copy)}
+              </div>
             ) : null}
 
             <Form method="post" className="return-proof-form">
@@ -240,6 +250,7 @@ export default function ReturnProofPage() {
               <label>
                 <span>{copy.carrier}</span>
                 <input
+                  id="returnTrackingCompany"
                   name="returnTrackingCompany"
                   placeholder="Japan Post / DHL / UPS"
                   defaultValue={
@@ -249,11 +260,16 @@ export default function ReturnProofPage() {
                   }
                 />
               </label>
-              <label>
+              <label htmlFor="returnTrackingNumber">
                 <span>{copy.trackingNumber}</span>
                 <input
+                  id="returnTrackingNumber"
                   name="returnTrackingNumber"
                   placeholder="TEST123456789JP"
+                  aria-invalid={Boolean(errors.returnTrackingNumber)}
+                  aria-describedby={
+                    errors.returnTrackingNumber ? "returnTrackingNumber-error" : undefined
+                  }
                   defaultValue={
                     values.returnTrackingNumber ||
                     withdrawalRequest.returnTrackingNumber ||
@@ -261,12 +277,13 @@ export default function ReturnProofPage() {
                   }
                 />
                 {errors.returnTrackingNumber ? (
-                  <em>{copy.errors.tracking}</em>
+                  <em id="returnTrackingNumber-error">{copy.errors.tracking}</em>
                 ) : null}
               </label>
-              <label>
+              <label htmlFor="returnTrackingUrl">
                 <span>{copy.trackingUrl}</span>
                 <input
+                  id="returnTrackingUrl"
                   name="returnTrackingUrl"
                   type="url"
                   placeholder="https://..."
@@ -275,9 +292,10 @@ export default function ReturnProofPage() {
                   }
                 />
               </label>
-              <label>
+              <label htmlFor="customerMemo">
                 <span>{copy.memo}</span>
                 <textarea
+                  id="customerMemo"
                   name="customerMemo"
                   rows="4"
                   placeholder={copy.memoPlaceholder}

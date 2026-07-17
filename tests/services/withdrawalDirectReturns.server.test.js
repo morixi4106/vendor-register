@@ -321,13 +321,19 @@ test("a store return can be submitted as multiple packages but not over quantity
       },
     },
     withdrawalReturnGroupLine: {
-      async update({ where, data }) {
+      async updateMany({ where, data }) {
         const line = group.lines.find((item) => item.id === where.id);
+        if (!line || line.submittedQuantity !== where.submittedQuantity) {
+          return { count: 0 };
+        }
         line.submittedQuantity += Number(data.submittedQuantity.increment || 0);
-        return line;
+        return { count: 1 };
       },
     },
     withdrawalReturnGroup: {
+      async findUnique() {
+        return { ...group, lines: group.lines.map((line) => ({ ...line })) };
+      },
       async update({ data }) {
         Object.assign(group, data);
         return group;

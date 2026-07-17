@@ -2,8 +2,10 @@ import { json, redirect } from "@remix-run/node";
 import { Form, Link, Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
+import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
-export const loader = async () => {
+export const loader = async ({ request }) => {
+  await requireShopifyAdmin(request);
   const products = await prisma.product.findMany({
     where: {
       approvalStatus: "pending",
@@ -17,6 +19,7 @@ export const loader = async () => {
 };
 
 export const action = async ({ request }) => {
+  await requireShopifyAdmin(request);
   const formData = await request.formData();
 
   const intent = String(formData.get("intent") || "");

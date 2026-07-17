@@ -28,13 +28,21 @@ export async function processWithdrawalEmailOutbox({
   };
 }
 
-async function claimNextOutboxItem(prismaClient) {
+export async function claimNextOutboxItem(prismaClient) {
   const now = new Date();
   const candidate = await prismaClient.withdrawalEmailOutbox.findFirst({
     where: {
-      status: { in: ["PENDING", "FAILED"] },
-      nextAttemptAt: { lte: now },
-      OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+      OR: [
+        {
+          status: { in: ["PENDING", "FAILED"] },
+          nextAttemptAt: { lte: now },
+          OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+        },
+        {
+          status: "PROCESSING",
+          lockedUntil: { lt: now },
+        },
+      ],
     },
     orderBy: [{ nextAttemptAt: "asc" }, { createdAt: "asc" }],
   });
@@ -43,8 +51,16 @@ async function claimNextOutboxItem(prismaClient) {
   const claimed = await prismaClient.withdrawalEmailOutbox.updateMany({
     where: {
       id: candidate.id,
-      status: { in: ["PENDING", "FAILED"] },
-      OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+      OR: [
+        {
+          status: { in: ["PENDING", "FAILED"] },
+          OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+        },
+        {
+          status: "PROCESSING",
+          lockedUntil: { lt: now },
+        },
+      ],
     },
     data: {
       status: "PROCESSING",
@@ -64,13 +80,16 @@ async function deliverOutboxItem({ prismaClient, item }) {
     if (!process.env.RESEND_API_KEY || !from || !item.recipient) {
       throw new Error("email_not_configured");
     }
-    const response = await new Resend(process.env.RESEND_API_KEY).emails.send({
-      from,
-      to: item.recipient,
-      subject: item.subjectSnapshot,
-      text: item.textBodySnapshot,
-      html: item.htmlBodySnapshot,
-    });
+    const response = await new Resend(process.env.RESEND_API_KEY).emails.send(
+      {
+        from,
+        to: item.recipient,
+        subject: item.subjectSnapshot,
+        text: item.textBodySnapshot,
+        html: item.htmlBodySnapshot,
+      },
+      { idempotencyKey: item.idempotencyKey },
+    );
     if (response?.error) {
       throw new Error(response.error.message || response.error.name || "resend_error");
     }
@@ -195,7 +214,7 @@ export function buildWithdrawalOutboxRecord({
     recipient: withdrawalRequest.customerEmail,
     sender: getWithdrawalFromEmail(),
     locale: email.locale,
-    templateVersion: "withdrawal-ack-v2",
+    templateVersion: "withdrawal-ack-v3",
     subjectSnapshot: email.subject,
     textBodySnapshot: email.text,
     htmlBodySnapshot: email.html,

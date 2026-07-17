@@ -89,6 +89,24 @@ Do not enable live Wise funding from an automatic job until sandbox and dry-run 
 
 ## 5. App checks
 
+Before opening the store, deploy the Shopify app configuration and approve the
+updated access scopes. The runtime, webhooks, and direct Admin API requests use
+Shopify API `2026-04`. If Render defines `SCOPES`, it must include the scopes in
+`shopify.app.toml`, including `read_publications` and `write_publications`.
+
+If the scheduled FX refresh endpoint is used, configure a unique random secret
+of at least 32 characters and send it as a Bearer token:
+
+```text
+FX_REFRESH_WORKER_TOKEN=...
+```
+
+Apply production database migrations before serving the new release:
+
+```text
+npx prisma migrate deploy --schema=prisma/schema.prisma
+```
+
 Open Shopify Admin > vendor-register > Production readiness.
 
 The page checks:

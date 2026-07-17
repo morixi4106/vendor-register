@@ -45,12 +45,31 @@ test("buyer email snapshots use the saved correspondence language", () => {
     completionRefundedAmount: 1000,
     completionRefundedShipping: 200,
     completionCurrencyCode: "EUR",
+    customerName: "Test Buyer",
+    customerEmail: "buyer@example.com",
+    submissionLegalBundleVersion: "eu-withdrawal-2026-07",
+    submittedPayloadJson: {
+      customerName: "Test Buyer",
+      customerEmail: "buyer@example.com",
+      orderNumber: "#1001",
+      withdrawalScope: "PARTIAL",
+      selectedLineItems: [{ title: "Test coat", quantity: 2 }],
+      receivedDate: "2026-07-16T00:00:00.000Z",
+      itemCondition: "Opened for inspection",
+      reason: "No longer needed",
+      countryCode: "DE",
+    },
   };
   const acknowledgement = buildWithdrawalAcknowledgementSnapshot(request);
   const status = buildWithdrawalStatusSnapshot(request);
   const completion = buildWithdrawalCompletionSnapshot(request);
 
   assert.match(acknowledgement.subject, /received/i);
+  assert.match(acknowledgement.text, /Test Buyer/);
+  assert.match(acknowledgement.text, /buyer@example\.com/);
+  assert.match(acknowledgement.text, /Test coat x 2/);
+  assert.match(acknowledgement.text, /eu-withdrawal-2026-07/);
+  assert.match(acknowledgement.text, /Server receipt time \(UTC\)/);
   assert.match(status.text, /Return the goods/i);
   assert.match(completion.text, /standard outbound delivery/i);
   assert.doesNotMatch(completion.text, /返金/);

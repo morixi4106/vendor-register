@@ -8,7 +8,7 @@ import {
   buildVendorCollectionUrl,
 } from "./vendorCollectionHandles.js";
 
-const SHOPIFY_API_VERSION = "2026-04";
+import { SHOPIFY_API_VERSION } from "./shopifyApiVersion.js";
 const PRODUCT_PAGE_SIZE = 250;
 const REQUIRED_PRODUCT_SCOPES = ["read_products", "write_products"];
 const REQUIRED_PUBLICATION_SCOPES = ["read_publications", "write_publications"];

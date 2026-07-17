@@ -21,7 +21,7 @@ import {
   getWithdrawalStatusTone,
 } from "../utils/withdrawalStatus.js";
 
-const SHOPIFY_API_VERSION = "2026-01";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 export const READ_ORDERS_SCOPE = "read_orders";
 export const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
 export const READ_MERCHANT_FULFILLMENT_ORDERS_SCOPE =

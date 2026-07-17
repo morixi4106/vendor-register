@@ -13,7 +13,7 @@ import { normalizeProductCategory } from "../utils/productCategories";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
-const SHOPIFY_API_VERSION = "2026-01";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
 const COPY = {

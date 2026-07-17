@@ -10,6 +10,7 @@ import {
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
 import {
+  approveWithdrawalIdentityReview,
   getWithdrawalShopifyLiveOrderStatus,
   sendWithdrawalAcknowledgementEmail,
   sendWithdrawalCompletionEmail,
@@ -122,6 +123,22 @@ export const action = async ({ request, params }) => {
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+
+  if (intent === "approve_identity_review") {
+    const result = await approveWithdrawalIdentityReview({
+      withdrawalRequestId: params.id,
+      changedBy: "admin",
+    });
+    return json(
+      {
+        ok: result.ok,
+        message: result.ok
+          ? "注文と申請者の照合を確認し、店舗別の撤回処理を開始しました。"
+          : `本人確認待ちを解除できませんでした: ${result.error || "unknown"}`,
+      },
+      { status: result.status || (result.ok ? 200 : 400) },
+    );
+  }
 
   if (intent === "confirm_direct_return_line_mapping") {
     const lineSelections = String(formData.get("availableLineIds") || "")
@@ -529,6 +546,10 @@ export default function WithdrawalDetailPage() {
     currencyCode,
     liveShopifyOrderStatus,
   );
+  const identityReviewRequired = [
+    "ORDER_NOT_FOUND_REVIEW",
+    "EMAIL_MISMATCH_REVIEW",
+  ].includes(withdrawalRequest.eligibilityStatus);
 
   return (
     <main className="withdrawal-detail">
@@ -567,6 +588,24 @@ export default function WithdrawalDetailPage() {
         >
           {actionData.message}
         </div>
+      ) : null}
+
+      {identityReviewRequired ? (
+        <section className="withdrawal-detail__card withdrawal-detail__alert">
+          <div>
+            <h2>本人確認待ち</h2>
+            <p>
+              申請は受け付けていますが、店舗通知・返送先の作成・商品数量の予約は停止しています。
+              注文と申請者の関係を確認してから解除してください。
+            </p>
+          </div>
+          <Form method="post">
+            <input type="hidden" name="intent" value="approve_identity_review" />
+            <button type="submit" disabled={isSubmitting}>
+              本人確認済みとして処理を開始
+            </button>
+          </Form>
+        </section>
       ) : null}
 
       {shopifyReconciliation.issues.length > 0 ? (

@@ -25,8 +25,9 @@ import {
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server";
 import { ensureApprovedProductPublished } from "../services/productPublication.server";
+import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 
-const SHOPIFY_API_VERSION = "2026-01";
 const SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS = "publishing";
 const SHOPIFY_PRODUCT_CREATE_CLAIMABLE_STATUSES = [
   "pending",
@@ -728,7 +729,8 @@ async function resetShopifyProductCreationClaim(productId, approvalStatus) {
   });
 }
 
-export const loader = async ({ params }) => {
+export const loader = async ({ params, request }) => {
+  await requireShopifyAdmin(request);
   const id = String(params.id || "");
   const showInternalPriceDebug = shouldShowInternalPriceDebug();
 
@@ -970,6 +972,7 @@ export const loader = async ({ params }) => {
 };
 
 export const action = async ({ request }) => {
+  await requireShopifyAdmin(request);
   try {
     const formData = await request.formData();
 

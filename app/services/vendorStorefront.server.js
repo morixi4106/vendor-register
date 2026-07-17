@@ -16,6 +16,7 @@ import {
   evaluateCartDeliveryEligibility,
 } from '../utils/deliveryEligibility.js';
 import { normalizeProductCategory } from '../utils/productCategories.js';
+import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -45,7 +46,7 @@ const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
 const VARIANT_REQUIRED_ERROR = 'variant_required';
 const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DEFAULT_ADMIN_API_VERSION = '2025-01';
+const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
 const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = 'jpy';
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
   'MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED',

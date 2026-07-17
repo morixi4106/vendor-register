@@ -48,7 +48,7 @@ api_version = "2026-04"
   uri = "/webhooks/disputes/update"
 
 [access_scopes]
-scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes"
+scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_publications,write_publications"
 optional_scopes = ["read_draft_orders"]
 
 [auth]

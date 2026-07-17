@@ -501,7 +501,7 @@ test.skip("getVendorOrdersPageData returns mapped orders when read_draft_orders 
   );
 
   assert.equal(receivedGraphQLCall.shopDomain, "shop-a.myshopify.com");
-  assert.equal(receivedGraphQLCall.apiVersion, "2026-01");
+  assert.equal(receivedGraphQLCall.apiVersion, "2026-04");
   assert.match(receivedGraphQLCall.query, /draftOrders/);
   assert.deepEqual(receivedGraphQLCall.variables, {
     first: VENDOR_DRAFT_ORDERS_PAGE_SIZE,
@@ -624,7 +624,7 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
     },
   });
   assert.equal(receivedGraphQLCall.shopDomain, "shop-a.myshopify.com");
-  assert.equal(receivedGraphQLCall.apiVersion, "2026-01");
+  assert.equal(receivedGraphQLCall.apiVersion, "2026-04");
   assert.match(receivedGraphQLCall.query, /nodes\(ids: \$ids\)/);
   assert.deepEqual(receivedGraphQLCall.variables, {
     ids: ["gid://shopify/Order/1001"],

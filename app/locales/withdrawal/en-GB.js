@@ -91,6 +91,8 @@ export const withdrawalEnGb = {
     customerName: "Enter your name.",
     customerEmail: "Enter a valid email address.",
     orderNumber: "Enter the order number.",
+    orderNumberTooLong: "The order number is too long.",
+    customerPhoneTooLong: "The telephone number is too long.",
     receivedDate: "A future date cannot be used.",
     itemText: "For a partial withdrawal, identify the items and quantities.",
     rateLimited: "Too many submissions were made recently. Please try again later.",

@@ -42,6 +42,8 @@ import {
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const RETURN_PROOF_TOKEN_BYTES = 32;
 const RETURN_PROOF_TOKEN_TTL_DAYS = 45;
+const RECEIPT_TOKEN_BYTES = 32;
+const RECEIPT_TOKEN_TTL_HOURS = 24;
 const EMAIL_RATE_LIMIT_PER_HOUR = 5;
 const IP_RATE_LIMIT_PER_HOUR = 20;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -119,6 +121,10 @@ const TERMINAL_WITHDRAWAL_STATUSES = new Set([
   WITHDRAWAL_STATUSES.CANCELLED,
   WITHDRAWAL_STATUSES.REJECTED,
   WITHDRAWAL_STATUSES.EXPIRED,
+]);
+const WITHDRAWAL_IDENTITY_REVIEW_STATUSES = new Set([
+  WITHDRAWAL_ELIGIBILITY_STATUSES.ORDER_NOT_FOUND_REVIEW,
+  WITHDRAWAL_ELIGIBILITY_STATUSES.EMAIL_MISMATCH_REVIEW,
 ]);
 const ALLOWED_WITHDRAWAL_STATUS_TRANSITIONS = {
   [WITHDRAWAL_STATUSES.REQUESTED]: new Set([
@@ -310,7 +316,7 @@ export function normalizeWithdrawalFormData(formData, { locale = "en-GB" } = {})
   const dictionary = getWithdrawalDictionary(locale);
   const customerName = normalizeText(formData.get("customerName"), 120);
   const customerEmail = normalizeEmail(formData.get("customerEmail"));
-  const customerPhone = normalizeText(formData.get("customerPhone"), 40);
+  const customerPhone = normalizeText(formData.get("customerPhone"));
   const orderNumber = normalizeOrderNumber(formData.get("orderNumber"));
   const countryCode = normalizeCountryCode(formData.get("countryCode"));
   const countryLabel =
@@ -340,10 +346,10 @@ export function normalizeWithdrawalFormData(formData, { locale = "en-GB" } = {})
   }
   if (!orderNumber) errors.orderNumber = dictionary.errors.orderNumber;
   if (orderNumber && orderNumber.length > 80) {
-    errors.orderNumber = "注文番号が長すぎます。";
+    errors.orderNumber = dictionary.errors.orderNumberTooLong;
   }
   if (customerPhone && customerPhone.length > 40) {
-    errors.customerPhone = "電話番号が長すぎます。";
+    errors.customerPhone = dictionary.errors.customerPhoneTooLong;
   }
   if (receivedDate && isFutureDate(receivedDate)) {
     errors.receivedDate = dictionary.errors.receivedDate;
@@ -372,20 +378,24 @@ export function normalizeWithdrawalFormData(formData, { locale = "en-GB" } = {})
   };
 }
 
-function buildReadableWithdrawalFormErrors(errors) {
-  const readable = {};
+export function hashWithdrawalReceiptToken(token) {
+  return crypto
+    .createHash("sha256")
+    .update(String(token || ""), "utf8")
+    .digest("hex");
+}
 
-  if (errors.customerName) readable.customerName = "氏名を入力してください。";
-  if (errors.customerEmail) {
-    readable.customerEmail = "有効なメールアドレスを入力してください。";
-  }
-  if (errors.orderNumber) readable.orderNumber = "注文番号を入力してください。";
-  if (errors.countryCode) readable.countryCode = "国を選択してください。";
-  if (errors.customerPhone) readable.customerPhone = "電話番号が長すぎます。";
-  if (errors.receivedDate) readable.receivedDate = "未来の受取日は指定できません。";
-  if (errors.itemText) readable.itemText = "撤回したい商品を入力してください。";
+export function isWithdrawalIdentityReviewStatus(status) {
+  return WITHDRAWAL_IDENTITY_REVIEW_STATUSES.has(String(status || ""));
+}
 
-  return readable;
+function issueWithdrawalReceiptToken(now = new Date()) {
+  const token = crypto.randomBytes(RECEIPT_TOKEN_BYTES).toString("base64url");
+  return {
+    token,
+    tokenHash: hashWithdrawalReceiptToken(token),
+    expiresAt: new Date(now.getTime() + RECEIPT_TOKEN_TTL_HOURS * ONE_HOUR_MS),
+  };
 }
 
 export async function createWithdrawalRequestFromForm({
@@ -486,11 +496,25 @@ export async function createWithdrawalRequestFromForm({
   });
 
   if (existing) {
+    const receipt = issueWithdrawalReceiptToken();
+    await prismaClient.withdrawalRequest.update({
+      where: { id: existing.id },
+      data: {
+        receiptTokenHash: receipt.tokenHash,
+        receiptTokenExpiresAt: receipt.expiresAt,
+        receiptTokenRevokedAt: null,
+        receiptTokenFirstUsedAt: null,
+        receiptTokenLastUsedAt: null,
+      },
+    });
     const hasSentAcknowledgement = existing.emailLogs.some(
       (log) => log.emailType === "acknowledgement" && log.status === "sent",
     );
+    const identityReviewRequired = isWithdrawalIdentityReviewStatus(
+      existing.eligibilityStatus,
+    );
 
-    if (Number(existing.workflowVersion || 1) === 1) {
+    if (!identityReviewRequired && Number(existing.workflowVersion || 1) === 1) {
       const { initializeWithdrawalDirectReturnWorkflow } = await import(
         "./withdrawalDirectReturns.server.js"
       );
@@ -506,18 +530,24 @@ export async function createWithdrawalRequestFromForm({
       await sendWithdrawalAcknowledgementEmail({ withdrawalRequestId: existing.id, prismaClient });
     }
 
-    await sendWithdrawalVendorNotificationEmails({
-      withdrawalRequestId: existing.id,
-      prismaClient,
-    });
+    if (!identityReviewRequired) {
+      await sendWithdrawalVendorNotificationEmails({
+        withdrawalRequestId: existing.id,
+        prismaClient,
+      });
+    }
 
     return {
       ok: true,
       duplicate: true,
       withdrawalRequest: existing,
+      receiptToken: receipt.token,
+      identityReviewRequired,
     };
   }
 
+  const receipt = issueWithdrawalReceiptToken(submittedAt);
+  const identityReviewRequired = isWithdrawalIdentityReviewStatus(eligibility.status);
   const withdrawalRequest = await prismaClient.$transaction(async (tx) => {
     const created = await tx.withdrawalRequest.create({
       data: {
@@ -559,6 +589,14 @@ export async function createWithdrawalRequestFromForm({
         ipAddress,
         userAgent,
         idempotencyKey,
+        receiptTokenHash: receipt.tokenHash,
+        receiptTokenExpiresAt: receipt.expiresAt,
+        ...(identityReviewRequired
+          ? {
+              progressStatus: "REVIEW_REQUIRED",
+              v2ReviewReason: "identity_verification_required",
+            }
+          : {}),
       },
     });
 
@@ -607,13 +645,20 @@ export async function createWithdrawalRequestFromForm({
     return created;
   });
 
-  const { initializeWithdrawalDirectReturnWorkflow } = await import(
-    "./withdrawalDirectReturns.server.js"
-  );
-  const directReturnResult = await initializeWithdrawalDirectReturnWorkflow({
-    withdrawalRequestId: withdrawalRequest.id,
-    prismaClient,
-  });
+  let directReturnResult = {
+    ok: false,
+    skipped: true,
+    reason: "identity_review_required",
+  };
+  if (!identityReviewRequired) {
+    const { initializeWithdrawalDirectReturnWorkflow } = await import(
+      "./withdrawalDirectReturns.server.js"
+    );
+    directReturnResult = await initializeWithdrawalDirectReturnWorkflow({
+      withdrawalRequestId: withdrawalRequest.id,
+      prismaClient,
+    });
+  }
 
   const emailResult = prismaClient.withdrawalEmailOutbox?.findFirst
     ? await processWithdrawalEmailOutbox({ prismaClient, limit: 1 })
@@ -621,10 +666,12 @@ export async function createWithdrawalRequestFromForm({
         withdrawalRequestId: withdrawalRequest.id,
         prismaClient,
       });
-  const vendorNotificationResult = await sendWithdrawalVendorNotificationEmails({
-    withdrawalRequestId: withdrawalRequest.id,
-    prismaClient,
-  });
+  const vendorNotificationResult = identityReviewRequired
+    ? { ok: true, skipped: true, reason: "identity_review_required" }
+    : await sendWithdrawalVendorNotificationEmails({
+        withdrawalRequestId: withdrawalRequest.id,
+        prismaClient,
+      });
 
   const reloaded = await prismaClient.withdrawalRequest.findUnique({
     where: { id: withdrawalRequest.id },
@@ -641,7 +688,73 @@ export async function createWithdrawalRequestFromForm({
     emailResult,
     vendorNotificationResult,
     directReturnResult,
+    receiptToken: receipt.token,
+    identityReviewRequired,
   };
+}
+
+export async function approveWithdrawalIdentityReview({
+  withdrawalRequestId,
+  changedBy = "admin",
+  prismaClient = prisma,
+} = {}) {
+  const current = await prismaClient.withdrawalRequest.findUnique({
+    where: { id: String(withdrawalRequestId || "") },
+  });
+  if (!current) {
+    return { ok: false, status: 404, error: "withdrawal_request_not_found" };
+  }
+  if (!isWithdrawalIdentityReviewStatus(current.eligibilityStatus)) {
+    return { ok: false, status: 409, error: "identity_review_not_required" };
+  }
+  if (!current.shopifyOrderId && !current.marketplaceOrderId) {
+    return { ok: false, status: 409, error: "verified_order_required" };
+  }
+
+  await prismaClient.$transaction(async (tx) => {
+    await tx.withdrawalRequest.update({
+      where: { id: current.id },
+      data: {
+        eligibilityStatus: WITHDRAWAL_ELIGIBILITY_STATUSES.PENDING_REVIEW,
+        progressStatus: "PENDING",
+        v2ReviewReason: null,
+      },
+    });
+    await tx.withdrawalRequestStatusHistory.create({
+      data: {
+        withdrawalRequestId: current.id,
+        fromStatus: current.status,
+        toStatus: current.status,
+        changedBy,
+        reason: "identity_verified",
+        metadataJson: {
+          previousEligibilityStatus: current.eligibilityStatus,
+          nextEligibilityStatus: WITHDRAWAL_ELIGIBILITY_STATUSES.PENDING_REVIEW,
+        },
+      },
+    });
+  });
+
+  const { initializeWithdrawalDirectReturnWorkflow } = await import(
+    "./withdrawalDirectReturns.server.js"
+  );
+  const directReturnResult = await initializeWithdrawalDirectReturnWorkflow({
+    withdrawalRequestId: current.id,
+    prismaClient,
+  });
+  if (!directReturnResult.ok) {
+    return {
+      ok: false,
+      status: directReturnResult.status || 409,
+      error: directReturnResult.error || directReturnResult.reason,
+    };
+  }
+
+  const vendorNotificationResult = await sendWithdrawalVendorNotificationEmails({
+    withdrawalRequestId: current.id,
+    prismaClient,
+  });
+  return { ok: true, directReturnResult, vendorNotificationResult };
 }
 
 export async function findOrderForWithdrawal({

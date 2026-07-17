@@ -1,7 +1,9 @@
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
 export const action = async ({ request }) => {
+  await requireShopifyAdmin(request);
   console.log("🔥 product create hit");
 
   const formData = await request.formData();

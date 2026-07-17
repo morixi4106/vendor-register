@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
+import { authenticate } from "../shopify.server";
 import {
   appendWithdrawalLocale,
   getWithdrawalDictionary,
@@ -8,6 +9,8 @@ import {
 } from "../utils/withdrawalLocale.js";
 
 export const loader = async ({ request }) => {
+  const { session } = await authenticate.public.appProxy(request);
+  if (!session?.shop) throw new Response("Unauthorized", { status: 401 });
   const url = new URL(request.url);
   const locale = resolveWithdrawalLocale({
     urlLocale: url.searchParams.get("lang"),
@@ -19,6 +22,12 @@ export const loader = async ({ request }) => {
     locale,
   });
 };
+
+export const headers = () => ({
+  "Cache-Control": "private, no-store, max-age=0",
+  "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex, nofollow, noarchive",
+});
 
 export default function ReturnProofSuccessPage() {
   const { ref, embedded, locale } = useLoaderData();

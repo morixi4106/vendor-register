@@ -4,7 +4,7 @@ import {
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server.js";
 
-const SHOPIFY_API_VERSION = "2026-04";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 const DIRECT_IMPORT_FORMULA_VERSION = "shopify_direct_import_v1";
 const RESOLVED_ISSUE_STATUS = "resolved";
 const UNRESOLVED_ISSUE_STATUS = "unresolved";

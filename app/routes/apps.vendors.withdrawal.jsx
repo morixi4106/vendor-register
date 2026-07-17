@@ -46,6 +46,15 @@ const COUNTRY_OPTIONS = [
   ["GB", "United Kingdom"],
 ];
 
+const WITHDRAWAL_DRAFT_KEY = "vendor-withdrawal-form-draft-v1";
+const WITHDRAWAL_DRAFT_EXCLUDED_FIELDS = new Set([
+  "shopDomain",
+  "correspondenceLocale",
+  "localeSource",
+  "submissionNonce",
+  "embedded",
+]);
+
 export const loader = async ({ request }) => {
   const shopDomain = await authenticateAppProxyShop(request);
   const url = new URL(request.url);
@@ -103,7 +112,7 @@ export const action = async ({ request }) => {
   }
 
   const successUrl = new URL("/apps/vendors/withdrawal/success", request.url);
-  successUrl.searchParams.set("ref", result.withdrawalRequest.id);
+  successUrl.searchParams.set("receipt", result.receiptToken);
   if (isEmbeddedRequest(request, formData)) {
     successUrl.searchParams.set("embedded", "1");
   }
@@ -153,6 +162,50 @@ export default function WithdrawalFormPage() {
 
   useEmbeddedFrameBehavior(embedded, [isConfirming, actionData]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || actionData?.values) return;
+    const form = document.getElementById("withdrawal-entry-form");
+    if (!form) return;
+
+    try {
+      const draft = JSON.parse(window.sessionStorage.getItem(WITHDRAWAL_DRAFT_KEY) || "null");
+      if (!draft || typeof draft !== "object") return;
+
+      Object.entries(draft).forEach(([name, value]) => {
+        const control = form.elements.namedItem(name);
+        if (!control || typeof value !== "string") return;
+        control.value = value;
+      });
+    } catch {
+      window.sessionStorage.removeItem(WITHDRAWAL_DRAFT_KEY);
+    }
+  }, [locale, actionData?.values]);
+
+  useEffect(() => {
+    if (!errors.form || typeof document === "undefined") return;
+    document.querySelector(".withdrawal-alert")?.focus();
+  }, [errors.form]);
+
+  function preserveDraftBeforeLanguageChange() {
+    if (typeof window === "undefined") return;
+    const form = document.getElementById("withdrawal-entry-form");
+    if (!form) return;
+
+    const draft = {};
+    for (const [name, value] of new FormData(form).entries()) {
+      if (typeof value === "string" && !WITHDRAWAL_DRAFT_EXCLUDED_FIELDS.has(name)) {
+        draft[name] = value;
+      }
+    }
+    window.sessionStorage.setItem(WITHDRAWAL_DRAFT_KEY, JSON.stringify(draft));
+  }
+
+  function clearSavedDraft() {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(WITHDRAWAL_DRAFT_KEY);
+    }
+  }
+
   function handlePreview(event) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -172,8 +225,20 @@ export default function WithdrawalFormPage() {
       <style>{pageStyles}</style>
 
       <nav className="withdrawal-language" aria-label="Language">
-        <a href={languageLinks["ja-JP"]} aria-current={locale === "ja-JP"}>日本語</a>
-        <a href={languageLinks["en-GB"]} aria-current={locale === "en-GB"}>English</a>
+        <a
+          href={languageLinks["ja-JP"]}
+          aria-current={locale === "ja-JP"}
+          onClick={preserveDraftBeforeLanguageChange}
+        >
+          日本語
+        </a>
+        <a
+          href={languageLinks["en-GB"]}
+          aria-current={locale === "en-GB"}
+          onClick={preserveDraftBeforeLanguageChange}
+        >
+          English
+        </a>
       </nav>
 
       {!embedded ? (
@@ -188,12 +253,21 @@ export default function WithdrawalFormPage() {
         </section>
       ) : null}
 
-      {errors.form ? <div className="withdrawal-alert">{errors.form}</div> : null}
+      {errors.form ? (
+        <div className="withdrawal-alert" role="alert" tabIndex="-1">
+          {errors.form}
+        </div>
+      ) : null}
 
       {!isConfirming ? (
         <section className="withdrawal-card">
           {!embedded ? <h2>{copy.formTitle}</h2> : null}
-          <Form method="post" className="withdrawal-form" onSubmit={handlePreview}>
+          <Form
+            id="withdrawal-entry-form"
+            method="post"
+            className="withdrawal-form"
+            onSubmit={handlePreview}
+          >
             <input type="hidden" name="shopDomain" value={shopDomain || ""} />
             <input type="hidden" name="correspondenceLocale" value={locale} />
             <input type="hidden" name="localeSource" value={localeSource} />
@@ -227,11 +301,14 @@ export default function WithdrawalFormPage() {
               name="customerPhone"
               defaultValue={values.customerPhone}
             />
-            <label className="withdrawal-field">
+            <label className="withdrawal-field" htmlFor="withdrawal-countryCode">
               <span>{copy.countryCode}</span>
               <select
+                id="withdrawal-countryCode"
                 name="countryCode"
                 defaultValue={values.countryCode || ""}
+                aria-invalid={Boolean(errors.countryCode)}
+                aria-describedby={errors.countryCode ? "withdrawal-countryCode-error" : undefined}
               >
                 <option value="">{copy.notProvided}</option>
                 {countryOptions.map(([code, label]) => (
@@ -241,7 +318,13 @@ export default function WithdrawalFormPage() {
                 ))}
               </select>
               {errors.countryCode ? (
-                <em className="withdrawal-error">{errors.countryCode}</em>
+                <em
+                  id="withdrawal-countryCode-error"
+                  className="withdrawal-error"
+                  role="alert"
+                >
+                  {errors.countryCode}
+                </em>
               ) : null}
             </label>
             <Field
@@ -250,37 +333,65 @@ export default function WithdrawalFormPage() {
               name="receivedDate"
               defaultValue={values.receivedDate}
             />
-            <label className="withdrawal-field">
+            <label className="withdrawal-field" htmlFor="withdrawal-scope">
               <span>{copy.withdrawalScope}</span>
-              <select name="withdrawalScope" defaultValue={values.withdrawalScope || "FULL"}>
+              <select
+                id="withdrawal-scope"
+                name="withdrawalScope"
+                defaultValue={values.withdrawalScope || "FULL"}
+              >
                 <option value="FULL">{copy.fullOrder}</option>
                 <option value="PARTIAL">{copy.partialOrder}</option>
               </select>
             </label>
-            <label className="withdrawal-field withdrawal-field--wide">
+            <label
+              className="withdrawal-field withdrawal-field--wide"
+              htmlFor="withdrawal-itemText"
+            >
               <span>{copy.itemText}</span>
               <textarea
+                id="withdrawal-itemText"
                 name="itemText"
                 rows="4"
                 defaultValue={values.itemText || ""}
                 placeholder={copy.itemTextHint}
+                aria-invalid={Boolean(errors.itemText)}
+                aria-describedby={errors.itemText ? "withdrawal-itemText-error" : undefined}
               />
               {errors.itemText ? (
-                <em className="withdrawal-error">{errors.itemText}</em>
+                <em
+                  id="withdrawal-itemText-error"
+                  className="withdrawal-error"
+                  role="alert"
+                >
+                  {errors.itemText}
+                </em>
               ) : null}
             </label>
-            <label className="withdrawal-field withdrawal-field--wide">
+            <label
+              className="withdrawal-field withdrawal-field--wide"
+              htmlFor="withdrawal-itemCondition"
+            >
               <span>{copy.itemCondition}</span>
               <textarea
+                id="withdrawal-itemCondition"
                 name="itemCondition"
                 rows="3"
                 defaultValue={values.itemCondition || ""}
-                placeholder="未使用、開封済み、試着のみ、破損あり等"
+                placeholder={
+                  locale === "ja-JP"
+                    ? "未使用、開封済み、試着のみ、破損あり等"
+                    : "For example: unused, opened, tried on, or damaged"
+                }
               />
             </label>
-            <label className="withdrawal-field withdrawal-field--wide">
+            <label
+              className="withdrawal-field withdrawal-field--wide"
+              htmlFor="withdrawal-reason"
+            >
               <span>{copy.reason}</span>
               <textarea
+                id="withdrawal-reason"
                 name="reason"
                 rows="3"
                 defaultValue={values.reason || ""}
@@ -309,7 +420,7 @@ export default function WithdrawalFormPage() {
             <ConfirmRow label={copy.itemCondition} value={snapshot.itemCondition || "-"} />
             <ConfirmRow label={copy.reason} value={snapshot.reason || "-"} />
           </dl>
-          <Form method="post" className="withdrawal-actions">
+          <Form method="post" className="withdrawal-actions" onSubmit={clearSavedDraft}>
             {Object.entries(snapshot).map(([key, value]) => (
               <input key={key} type="hidden" name={key} value={value || ""} />
             ))}
@@ -380,18 +491,27 @@ function useEmbeddedFrameBehavior(embedded, dependencies) {
 function Field({ label, name, type = "text", defaultValue, error, required, placeholder }) {
   const normalizedDefaultValue =
     type === "date" ? formatDateInputValue(defaultValue) : defaultValue || "";
+  const inputId = `withdrawal-${name}`;
+  const errorId = `${inputId}-error`;
 
   return (
-    <label className="withdrawal-field">
+    <label className="withdrawal-field" htmlFor={inputId}>
       <span>{label}</span>
       <input
+        id={inputId}
         type={type}
         name={name}
         defaultValue={normalizedDefaultValue}
         required={required}
         placeholder={placeholder}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
       />
-      {error ? <em className="withdrawal-error">{error}</em> : null}
+      {error ? (
+        <em id={errorId} className="withdrawal-error" role="alert">
+          {error}
+        </em>
+      ) : null}
     </label>
   );
 }

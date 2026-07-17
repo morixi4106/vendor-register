@@ -6,7 +6,9 @@ import {
 } from '../utils/shopifyAdmin.server.js';
 import { prepareShippingV2WriterPayload } from './shippingV2Writer.server.js';
 
-const DEFAULT_ADMIN_API_VERSION = '2025-01';
+import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
+
+const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
 const GENERIC_SHIPPING_ERROR_MESSAGE =
