@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
+import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 
 export const GOVERNANCE_SNAPSHOT_VERSION = "marketplace-governance-v1";
 export const SELLER_AGREEMENT_TYPE = "SELLER_MASTER";
@@ -21,6 +22,8 @@ export const PRODUCT_COMPLIANCE_STATUSES = [
 ];
 export const PRODUCT_CONDITION_STATUSES = ["NEW", "USED"];
 export const OPERATIONAL_CASE_TYPES = [
+  "SELLER_DISCLOSURE",
+  "TAX_INVOICE",
   "WITHDRAWAL",
   "REFUND",
   "DELIVERY",
@@ -106,6 +109,78 @@ export function isMarketplaceGovernanceGateEnabled(env = process.env) {
   return normalizeBoolean(env.MARKETPLACE_GOVERNANCE_GATE_ENABLED);
 }
 
+export function isMarketplaceSettlementActionsEnabled(env = process.env) {
+  return normalizeBoolean(env.MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED);
+}
+
+export function isDomesticSellerSettlementEnabled(env = process.env) {
+  return normalizeBoolean(env.DOMESTIC_SELLER_SETTLEMENT_ENABLED);
+}
+
+export function isCrossBorderSellerSettlementEnabled(env = process.env) {
+  return normalizeBoolean(env.CROSS_BORDER_SELLER_SETTLEMENT_ENABLED);
+}
+
+export function getShopifyMarketplacePaymentsApproval(env = process.env) {
+  const confirmed = normalizeBoolean(
+    env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED,
+  );
+  const reference = normalizeText(
+    env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE,
+  );
+
+  return {
+    ready: Boolean(confirmed && reference),
+    confirmed,
+    reference,
+    reasons: [
+      ...(!confirmed
+        ? ["shopify_marketplace_payments_approval_not_confirmed"]
+        : []),
+      ...(!reference
+        ? ["shopify_marketplace_payments_approval_reference_missing"]
+        : []),
+    ],
+  };
+}
+
+export function evaluateSellerSettlementExecutionReadiness(
+  seller,
+  { env = process.env } = {},
+) {
+  const reasons = [];
+  const paymentsApproval = getShopifyMarketplacePaymentsApproval(env);
+  const countryCode = normalizeUpper(seller?.complianceProfile?.countryCode);
+  const settlementScope = countryCode === "JP" ? "domestic" : "cross_border";
+
+  if (!isMarketplaceSettlementActionsEnabled(env)) {
+    reasons.push("marketplace_settlement_actions_disabled");
+  }
+  if (!paymentsApproval.ready) {
+    reasons.push(...paymentsApproval.reasons);
+  }
+  if (!countryCode) {
+    reasons.push("seller_settlement_country_unknown");
+  } else if (
+    settlementScope === "domestic" &&
+    !isDomesticSellerSettlementEnabled(env)
+  ) {
+    reasons.push("domestic_seller_settlement_disabled");
+  } else if (
+    settlementScope === "cross_border" &&
+    !isCrossBorderSellerSettlementEnabled(env)
+  ) {
+    reasons.push("cross_border_seller_settlement_disabled");
+  }
+
+  return {
+    ready: reasons.length === 0,
+    reasons,
+    countryCode: countryCode || null,
+    settlementScope,
+  };
+}
+
 export function getCurrentSellerAgreementVersion(env = process.env) {
   return normalizeText(env.SELLER_AGREEMENT_VERSION) || "UNCONFIGURED";
 }
@@ -134,6 +209,11 @@ export function getCurrentBuyerTermsVersion(env = process.env) {
   return normalizeText(env.BUYER_TERMS_VERSION) || "UNCONFIGURED";
 }
 
+export function getCurrentBuyerTermsDocumentHash(env = process.env) {
+  const documentHash = normalizeLower(env.BUYER_TERMS_DOCUMENT_HASH);
+  return /^[a-f0-9]{64}$/.test(documentHash) ? documentHash : null;
+}
+
 export function getCurrentBuyerTermsUrl(env = process.env) {
   return normalizePublicHttpUrl(env.BUYER_TERMS_URL);
 }
@@ -144,6 +224,7 @@ export function getMarketplaceGovernanceConfiguration(env = process.env) {
     getCurrentSellerAgreementDocumentHash(env);
   const sellerAgreementUrl = getCurrentSellerAgreementUrl(env);
   const buyerTermsVersion = getCurrentBuyerTermsVersion(env);
+  const buyerTermsDocumentHash = getCurrentBuyerTermsDocumentHash(env);
   const buyerTermsUrl = getCurrentBuyerTermsUrl(env);
   const reasons = [];
 
@@ -157,6 +238,9 @@ export function getMarketplaceGovernanceConfiguration(env = process.env) {
   if (buyerTermsVersion === "UNCONFIGURED") {
     reasons.push("buyer_terms_version_unconfigured");
   }
+  if (!buyerTermsDocumentHash) {
+    reasons.push("buyer_terms_document_hash_unconfigured");
+  }
   if (!buyerTermsUrl) reasons.push("buyer_terms_url_unconfigured");
 
   return {
@@ -166,6 +250,7 @@ export function getMarketplaceGovernanceConfiguration(env = process.env) {
     sellerAgreementDocumentHash,
     sellerAgreementUrl,
     buyerTermsVersion,
+    buyerTermsDocumentHash,
     buyerTermsUrl,
   };
 }
@@ -510,47 +595,69 @@ export async function recordSellerAgreementAcceptance(
     source = "ADMIN_RECORDED",
     ipAddress = null,
     userAgent = null,
+    acceptedByUserId = null,
+    acceptedByEmail = null,
+    evidenceUrl = null,
+    evidenceHash = null,
   },
   { prismaClient = prisma } = {},
 ) {
   const normalizedVersion = normalizeText(version);
   const normalizedHash = normalizeLower(documentHash);
   const normalizedAcceptedBy = normalizeText(acceptedBy);
+  const normalizedSource = normalizeUpper(source) || "ADMIN_RECORDED";
+  const normalizedEvidenceUrl = normalizePublicHttpUrl(evidenceUrl);
+  const normalizedEvidenceHash = normalizeLower(evidenceHash);
   if (
     !normalizedVersion ||
     !/^[a-f0-9]{64}$/.test(normalizedHash) ||
-    !normalizedAcceptedBy
+    !normalizedAcceptedBy ||
+    (normalizedEvidenceHash && !/^[a-f0-9]{64}$/.test(normalizedEvidenceHash))
   ) {
     return { ok: false, reason: "invalid_agreement_acceptance" };
   }
-  const acceptance = await prismaClient.sellerAgreementAcceptance.upsert({
-    where: {
-      sellerId_agreementType_version: {
-        sellerId,
-        agreementType: SELLER_AGREEMENT_TYPE,
-        version: normalizedVersion,
-      },
-    },
-    create: {
+  if (
+    normalizedSource === "ADMIN_RECORDED" &&
+    !normalizedEvidenceUrl &&
+    !normalizedEvidenceHash
+  ) {
+    return { ok: false, reason: "agreement_evidence_required" };
+  }
+
+  const acceptanceKey = hashValue(
+    JSON.stringify({
       sellerId,
       agreementType: SELLER_AGREEMENT_TYPE,
       version: normalizedVersion,
       documentHash: normalizedHash,
       acceptedBy: normalizedAcceptedBy,
-      source,
-      ipHash: ipAddress ? hashValue(ipAddress) : null,
-      userAgentHash: userAgent ? hashValue(userAgent) : null,
-    },
-    update: {
+      acceptedByUserId: normalizeText(acceptedByUserId),
+      acceptedByEmail: normalizeLower(acceptedByEmail),
+      source: normalizedSource,
+      evidenceUrl: normalizedEvidenceUrl,
+      evidenceHash: normalizedEvidenceHash || null,
+    }),
+  );
+  const existing = await prismaClient.sellerAgreementAcceptance.findUnique({
+    where: { acceptanceKey },
+  });
+  if (existing) return { ok: true, unchanged: true, acceptance: existing };
+
+  const acceptance = await prismaClient.sellerAgreementAcceptance.create({
+    data: {
+      acceptanceKey,
+      sellerId,
+      agreementType: SELLER_AGREEMENT_TYPE,
+      version: normalizedVersion,
       documentHash: normalizedHash,
       acceptedBy: normalizedAcceptedBy,
-      acceptedAt: new Date(),
-      source,
-      ipHash: ipAddress ? hashValue(ipAddress) : null,
-      userAgentHash: userAgent ? hashValue(userAgent) : null,
-      revokedAt: null,
-      revokedBy: null,
-      revocationReason: null,
+      acceptedByUserId: normalizeText(acceptedByUserId),
+      acceptedByEmail: normalizeLower(acceptedByEmail),
+      source: normalizedSource,
+      ipHash: hashPrivateIdentifier(ipAddress),
+      userAgentHash: hashPrivateIdentifier(userAgent),
+      evidenceUrl: normalizedEvidenceUrl,
+      evidenceHash: normalizedEvidenceHash || null,
     },
   });
   return { ok: true, acceptance };
@@ -675,6 +782,28 @@ export async function createMarketplaceOperationalCase(
   if (!OPERATIONAL_CASE_TYPES.includes(caseType) || !summary) {
     return { ok: false, reason: "invalid_case" };
   }
+  const dueAt = values.dueAt ? new Date(values.dueAt) : null;
+  if (values.dueAt && Number.isNaN(dueAt?.getTime())) {
+    return { ok: false, reason: "invalid_case_due_at" };
+  }
+  const detailsJson = parseJsonObject(values.detailsJson) || {};
+  if (caseType === "SELLER_DISCLOSURE") {
+    const legalBasis = normalizeText(values.legalBasis || detailsJson.legalBasis);
+    const claimantIdentityStatus = normalizeUpper(
+      values.claimantIdentityStatus || detailsJson.claimantIdentityStatus,
+    );
+    if (!dueAt || !legalBasis || !claimantIdentityStatus) {
+      return { ok: false, reason: "seller_disclosure_details_required" };
+    }
+    detailsJson.legalBasis = legalBasis;
+    detailsJson.claimantIdentityStatus = claimantIdentityStatus;
+    detailsJson.relatedOrderReference = normalizeText(
+      values.relatedOrderReference || detailsJson.relatedOrderReference,
+    );
+    detailsJson.requestedFields = normalizeText(
+      values.requestedFields || detailsJson.requestedFields,
+    );
+  }
   const created = await prismaClient.$transaction(async (tx) => {
     const entry = await tx.marketplaceOperationalCase.create({
       data: {
@@ -693,8 +822,8 @@ export async function createMarketplaceOperationalCase(
         currencyCode: normalizeLower(values.currencyCode) || "jpy",
         claimedAmount: normalizeNonNegativeInteger(values.claimedAmount),
         summary,
-        detailsJson: parseJsonObject(values.detailsJson),
-        dueAt: values.dueAt ? new Date(values.dueAt) : null,
+        detailsJson,
+        dueAt,
         assignedTo: normalizeText(values.assignedTo),
         openedBy: actor,
       },
@@ -785,6 +914,9 @@ export async function createSettlementAdjustment(
   if (!SETTLEMENT_ADJUSTMENT_TYPES.includes(normalizedType) || !normalizedAmount || !normalizedReason) {
     return { ok: false, reason: "invalid_adjustment" };
   }
+  if (normalizedType === "SET_OFF" && normalizedDirection !== "debit") {
+    return { ok: false, reason: "invalid_adjustment_direction" };
+  }
   const adjustment = await prismaClient.$transaction(async (tx) => {
     const seller = await tx.seller.findUnique({
       where: { id: sellerId },
@@ -864,11 +996,12 @@ export async function createSettlementAdjustment(
 
 export async function applySettlementAdjustment(
   { adjustmentId, actor = "admin" },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   return prismaClient.$transaction(async (tx) => {
     const adjustment = await tx.sellerSettlementAdjustment.findUnique({
       where: { id: adjustmentId },
+      include: { seller: { include: { complianceProfile: true } } },
     });
     if (!adjustment) return { ok: false, reason: "adjustment_not_found" };
     if (adjustment.status === "APPLIED") {
@@ -876,6 +1009,17 @@ export async function applySettlementAdjustment(
     }
     if (!["PENDING", "APPROVED"].includes(adjustment.status)) {
       return { ok: false, reason: "adjustment_not_applicable" };
+    }
+    const settlementReadiness = evaluateSellerSettlementExecutionReadiness(
+      adjustment.seller,
+      { env },
+    );
+    if (!settlementReadiness.ready) {
+      return {
+        ok: false,
+        reason: "seller_settlement_disabled",
+        settlementReasons: settlementReadiness.reasons,
+      };
     }
     if (
       adjustment.direction === "debit" &&
@@ -927,6 +1071,22 @@ export async function applySettlementAdjustment(
           return { ok: false, reason: "future_setoff_not_authorized" };
         }
       }
+    }
+    const claimed = await tx.sellerSettlementAdjustment.updateMany({
+      where: {
+        id: adjustment.id,
+        status: { in: ["PENDING", "APPROVED"] },
+      },
+      data: { status: "APPLYING" },
+    });
+    if (claimed.count !== 1) {
+      const latest = await tx.sellerSettlementAdjustment.findUnique({
+        where: { id: adjustment.id },
+      });
+      if (latest?.status === "APPLIED") {
+        return { ok: true, unchanged: true, adjustment: latest };
+      }
+      return { ok: false, reason: "adjustment_application_in_progress" };
     }
     let ledgerEntry = null;
     let controlChange = null;

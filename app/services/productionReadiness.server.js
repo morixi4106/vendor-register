@@ -16,7 +16,11 @@ import {
 import { INTERNATIONAL_SERVICE_STATUS } from "./internationalShippingAvailability.server.js";
 import {
   getMarketplaceGovernanceDashboard,
+  getShopifyMarketplacePaymentsApproval,
+  isCrossBorderSellerSettlementEnabled,
+  isDomesticSellerSettlementEnabled,
   isMarketplaceGovernanceGateEnabled,
+  isMarketplaceSettlementActionsEnabled,
 } from "./marketplaceGovernance.server.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
@@ -205,6 +209,10 @@ function createCheck({ id, category, status, title, detail, action }) {
 
 function buildMarketplaceGovernanceChecks({ governance, env }) {
   const gateEnabled = isMarketplaceGovernanceGateEnabled(env);
+  const settlementActionsEnabled = isMarketplaceSettlementActionsEnabled(env);
+  const domesticSettlementEnabled = isDomesticSellerSettlementEnabled(env);
+  const crossBorderSettlementEnabled =
+    isCrossBorderSellerSettlementEnabled(env);
 
   if (!governance?.available) {
     return [
@@ -236,8 +244,113 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
     ({ seller }) => seller.settlementControl?.payoutHold,
   );
   const versionsConfigured = Boolean(governance.configuration?.ready);
+  const shopifyPaymentsApproval =
+    getShopifyMarketplacePaymentsApproval(env);
+  const shopifyPaymentsApproved = shopifyPaymentsApproval.ready;
+  const shopifyApprovalReference = shopifyPaymentsApproval.reference;
+  const crossBorderLegalApprovalReference = normalizeText(
+    env.CROSS_BORDER_SETTLEMENT_LEGAL_APPROVAL_REFERENCE,
+  );
+  const sellerDisclosureProcedureReference = normalizeText(
+    env.SELLER_DISCLOSURE_PROCEDURE_APPROVAL_REFERENCE,
+  );
+  const taxInvoicePolicyReference = normalizeText(
+    env.MARKETPLACE_TAX_INVOICE_POLICY_APPROVAL_REFERENCE,
+  );
+  const privacyHashSecretConfigured =
+    normalizeText(env.PRIVACY_HASH_SECRET).length >= 32;
+  const hasThirdPartyProductionSeller = productionSellers.length > 0;
+  const unsafeSettlementSwitch =
+    settlementActionsEnabled &&
+    (!shopifyPaymentsApproved ||
+      (!domesticSettlementEnabled && !crossBorderSettlementEnabled));
 
   return [
+    createCheck({
+      id: "seller_disclosure_procedure",
+      category: "legal",
+      status:
+        !gateEnabled || sellerDisclosureProcedureReference ? "pass" : "fail",
+      title: "販売者情報開示請求の運用手順",
+      detail: sellerDisclosureProcedureReference
+        ? `承認済み手順の証跡を記録済みです: ${sellerDisclosureProcedureReference}`
+        : "本人確認、開示根拠、対象項目、店舗通知及び期限を含む承認済み手順が未記録です。",
+      action:
+        gateEnabled && !sellerDisclosureProcedureReference
+          ? "手順を承認し、証跡参照をSELLER_DISCLOSURE_PROCEDURE_APPROVAL_REFERENCEへ設定してください。"
+          : "",
+    }),
+    createCheck({
+      id: "marketplace_tax_invoice_policy",
+      category: "tax",
+      status: !gateEnabled || taxInvoicePolicyReference ? "pass" : "fail",
+      title: "複数売主注文の税務・請求書方針",
+      detail: taxInvoicePolicyReference
+        ? `税理士等の確認証跡を記録済みです: ${taxInvoicePolicyReference}`
+        : "領収書・適格請求書の発行主体、店舗別売上、手数料及び返金の処理方針が未記録です。",
+      action:
+        gateEnabled && !taxInvoicePolicyReference
+          ? "税務方針を確定し、証跡参照をMARKETPLACE_TAX_INVOICE_POLICY_APPROVAL_REFERENCEへ設定してください。"
+          : "",
+    }),
+    createCheck({
+      id: "privacy_identifier_hash_secret",
+      category: "security",
+      status: privacyHashSecretConfigured ? "pass" : "warning",
+      title: "公開フォーム識別子の専用ハッシュ鍵",
+      detail: privacyHashSecretConfigured
+        ? "専用HMAC鍵を設定済みです。"
+        : "SHOPIFY_API_SECRET等へフォールバックしています。鍵の用途分離が未完了です。",
+      action: privacyHashSecretConfigured
+        ? ""
+        : "32文字以上の乱数をPRIVACY_HASH_SECRETへ設定してください。",
+    }),
+    createCheck({
+      id: "shopify_marketplace_payments_written_approval",
+      category: "payout",
+      status:
+        !hasThirdPartyProductionSeller || shopifyPaymentsApproved
+          ? "pass"
+          : "fail",
+      title: "Shopify Paymentsのマーケットプレイス利用確認",
+      detail: !hasThirdPartyProductionSeller
+        ? "精算対象となる第三者の本番店舗はありません。"
+        : shopifyPaymentsApproved
+          ? `Shopifyからの書面回答を記録済みです: ${shopifyApprovalReference}`
+          : "第三者店舗を売主とし、運営が代金を受領して後日精算する構造について、Shopifyからの書面承認が未記録です。",
+      action:
+        hasThirdPartyProductionSeller && !shopifyPaymentsApproved
+          ? "精算と複数店舗販売を開始せず、Shopifyの書面回答を取得して参照番号をRenderへ設定してください。"
+          : "",
+    }),
+    createCheck({
+      id: "marketplace_settlement_kill_switches",
+      category: "payout",
+      status: unsafeSettlementSwitch ? "fail" : "pass",
+      title: "店舗精算の独立停止スイッチ",
+      detail: `全体 ${settlementActionsEnabled ? "ON" : "OFF"} / 国内 ${domesticSettlementEnabled ? "ON" : "OFF"} / 越境 ${crossBorderSettlementEnabled ? "ON" : "OFF"}`,
+      action: unsafeSettlementSwitch
+        ? "書面承認と対象地域の確認が完了するまで、MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED=falseを維持してください。"
+        : "",
+    }),
+    createCheck({
+      id: "cross_border_settlement_legal_approval",
+      category: "payout",
+      status:
+        !crossBorderSettlementEnabled || crossBorderLegalApprovalReference
+          ? "pass"
+          : "fail",
+      title: "越境精算の法務確認",
+      detail: crossBorderSettlementEnabled
+        ? crossBorderLegalApprovalReference
+          ? `越境精算の確認証跡を記録済みです: ${crossBorderLegalApprovalReference}`
+          : "越境精算がONですが、資金移動・収納代行規制の個別確認証跡がありません。"
+        : "越境精算は停止しています。",
+      action:
+        crossBorderSettlementEnabled && !crossBorderLegalApprovalReference
+          ? "CROSS_BORDER_SELLER_SETTLEMENT_ENABLED=falseへ戻し、資格者の書面確認後にだけ有効化してください。"
+          : "",
+    }),
     createCheck({
       id: "marketplace_governance_versions",
       category: "app",

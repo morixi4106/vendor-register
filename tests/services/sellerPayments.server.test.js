@@ -34,6 +34,13 @@ import {
   syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
 
+process.env.MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED = "true";
+process.env.DOMESTIC_SELLER_SETTLEMENT_ENABLED = "true";
+process.env.CROSS_BORDER_SELLER_SETTLEMENT_ENABLED = "false";
+process.env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED = "true";
+process.env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE =
+  "unit-test-approval";
+
 test("buildMarketplaceOrderSnapshot preserves Carrier Service Air Packet rate provenance", () => {
   const snapshot = buildMarketplaceOrderSnapshot({
     payload: {
@@ -142,6 +149,30 @@ function assertShopifyProductLookupWhere(
 
 function createSellerOrderShadowFakeModels(state) {
   return {
+    ...(state.checkoutEvidenceByReference
+      ? {
+          marketplaceCheckoutEvidence: {
+            async findUnique({ where }) {
+              return (
+                state.checkoutEvidenceByReference.get(
+                  where.checkoutReference,
+                ) || null
+              );
+            },
+            async update({ where, data }) {
+              const current = Array.from(
+                state.checkoutEvidenceByReference.values(),
+              ).find((entry) => entry.id === where.id);
+              const updated = { ...current, ...data };
+              state.checkoutEvidenceByReference.set(
+                updated.checkoutReference,
+                updated,
+              );
+              return updated;
+            },
+          },
+        }
+      : {}),
     marketplaceOrder: {
       async upsert({ where, create, update }) {
         const key = `${where.shopDomain_shopifyOrderId.shopDomain}:${where.shopDomain_shopifyOrderId.shopifyOrderId}`;
@@ -713,7 +744,10 @@ test("createCheckoutOrderPaymentIntent creates a direct charge on the connected 
             },
             vendor: {
               id: "vendor_1",
+              vendorStore: { isTestStore: false },
             },
+            complianceProfile: { countryCode: "JP" },
+            settlementControl: { payoutHold: false },
           },
           sellerStripeAccount: {
             stripeAccountId: "acct_123",
@@ -778,7 +812,7 @@ test("createCheckoutOrderPaymentIntent creates a direct charge on the connected 
   });
 });
 
-test("handleStripeWebhook stores raw events idempotently and writes charge ledger entries", async () => {
+test("handleStripeWebhook stores a minimized audit event idempotently and writes charge ledger entries", async () => {
   delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_vendor_register";
 
@@ -921,6 +955,10 @@ test("handleStripeWebhook stores raw events idempotently and writes charge ledge
   assert.equal(state.ledgerEntries[0].stripeEventId, "sev_1");
   assert.equal(state.ledgerEntries[0].entryType, "charge");
   assert.equal(state.ledgerEntries[0].stripeObjectId, "ch_123");
+  assert.equal(state.savedEvent.payloadJson.eventId, "evt_123");
+  assert.equal(state.savedEvent.payloadJson.object.id, "pi_123");
+  assert.equal(state.savedEvent.payloadJson.object.metadata.orderId, "order_1");
+  assert.equal(state.savedEvent.payloadJson.data, undefined);
 });
 
 test("handleStripeWebhook prefers the Connect webhook secret when present", async () => {
@@ -1360,6 +1398,47 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
     sellerOrders: new Map(),
     sellerOrderLines: new Map(),
     sellerOrderShadowChecks: [],
+    checkoutEvidenceByReference: new Map([
+      [
+        "checkout:evidence-1101",
+        {
+          id: "mce_1",
+          checkoutReference: "checkout:evidence-1101",
+          sellerAgreementVersion: "seller-2026-01",
+          buyerTermsVersion: "buyer-2026-01",
+          buyerTermsHash: "a".repeat(64),
+          buyerTermsUrl: "https://example.com/buyer-terms",
+          buyerTermsLocale: "ja-JP",
+          presentedAt: new Date("2026-06-19T08:59:00Z"),
+          sellerSnapshotsJson: [
+            {
+              sellerId: "seller_1",
+              snapshot: {
+                governanceSnapshotVersion: "marketplace-governance-v1",
+                buyerTermsVersion: "buyer-2026-01",
+                legalSellerSnapshotJson: {
+                  sellerId: "seller_1",
+                  legalName: "Checkout Legal Seller",
+                },
+                sellerAgreementSnapshotJson: {
+                  version: "seller-2026-01",
+                  documentHash: "b".repeat(64),
+                },
+              },
+            },
+          ],
+          productSnapshotsJson: [
+            {
+              productId: "product_1",
+              snapshot: {
+                productId: "product_1",
+                conditionStatus: "CHECKOUT_CAPTURED",
+              },
+            },
+          ],
+        },
+      ],
+    ]),
   };
   const fakePrisma = {
     ...createSellerOrderShadowFakeModels(state),
@@ -1426,6 +1505,9 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
         subtotal_price: "2000",
         total_discounts: "100",
         total_tax: "0",
+        note_attributes: [
+          { name: "checkout_reference", value: "checkout:evidence-1101" },
+        ],
         line_items: [
           {
             id: 501,
@@ -1461,6 +1543,16 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   assert.equal(sellerOrder.sellerSubtotalAmount, 2000);
   assert.equal(sellerOrder.sellerDiscountAmount, 100);
   assert.equal(sellerOrder.sellerPayableAmount, 1900);
+  assert.equal(sellerOrder.buyerTermsVersion, "buyer-2026-01");
+  assert.equal(sellerOrder.buyerTermsHash, "a".repeat(64));
+  assert.equal(
+    sellerOrder.legalSellerSnapshotJson.legalName,
+    "Checkout Legal Seller",
+  );
+  assert.equal(
+    sellerOrder.sellerAgreementSnapshotJson.documentHash,
+    "b".repeat(64),
+  );
 
   const line = Array.from(state.sellerOrderLines.values())[0];
   assert.equal(line.shopifyLineItemId, "gid://shopify/LineItem/501");
@@ -1468,6 +1560,12 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   assert.equal(line.shopifyVariantId, "gid://shopify/ProductVariant/912");
   assert.equal(line.quantity, 2);
   assert.equal(line.netAmount, 1900);
+  assert.equal(line.complianceSnapshotJson.conditionStatus, "CHECKOUT_CAPTURED");
+
+  assert.equal(
+    state.checkoutEvidenceByReference.get("checkout:evidence-1101").status,
+    "ORDER_CAPTURED",
+  );
 
   assert.equal(state.sellerOrderShadowChecks[0].status, "matched");
   assert.equal(state.sellerOrderShadowChecks[0].currencyCode, "jpy");
@@ -4343,6 +4441,15 @@ test("calculateSellerPayoutableLedgerBalance applies ledger adjustments", () => 
   assert.equal(balance, 0);
 });
 
+test("calculateSellerPayoutableLedgerBalance deducts applied case set-offs", () => {
+  const balance = calculateSellerPayoutableLedgerBalance([
+    { entryType: "shopify_order_paid", amount: 1000 },
+    { entryType: "case_adjustment", amount: 300 },
+  ]);
+
+  assert.equal(balance, 700);
+});
+
 test("repairSellerNegativeLedgerBalance creates a credit adjustment", async () => {
   const state = {
     ledgerEntries: [],
@@ -4563,6 +4670,12 @@ test("repairSellerNegativeLedgerBalance repairs a Shopify order reversal overage
 });
 
 const VERIFIED_PAYOUT_SELLER_FIELDS = {
+  complianceProfile: { countryCode: "JP" },
+  settlementControl: {
+    payoutHold: false,
+    reserveAmount: 0,
+    directInvoiceBalance: 0,
+  },
   phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
   documentVerificationStatus: "VERIFIED",
   verificationNameMatched: true,
@@ -5083,6 +5196,8 @@ test("createPayoutRun requires first payout verification before settlement", asy
           vendor: {
             id: "vendor_1",
           },
+          complianceProfile: { countryCode: "JP" },
+          settlementControl: { payoutHold: false },
           stripeAccount: null,
           payoutRecipient: null,
           phoneVerifiedAt: null,
@@ -5372,6 +5487,46 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
   assert.equal(result.payoutRun.id, "pr_1");
 });
 
+test("createPayoutRun cannot reserve funds already held by another open payout", async () => {
+  let createCalled = false;
+  const fakePrisma = {
+    seller: {
+      async findUnique() {
+        return {
+          id: "seller_1",
+          status: "active",
+          vendor: { id: "vendor_1", storeName: "Test Store" },
+          stripeAccount: null,
+          ...VERIFIED_PAYOUT_SELLER_FIELDS,
+        };
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 1000 }];
+      },
+    },
+    payoutRun: {
+      async findMany() {
+        return [{ amount: 800 }];
+      },
+      async create() {
+        createCalled = true;
+      },
+    },
+  };
+
+  const result = await createPayoutRun(
+    { sellerId: "seller_1", amount: 300, currencyCode: "jpy" },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "insufficient_unreserved_ledger_balance");
+  assert.equal(result.reservedPayoutAmount, 800);
+  assert.equal(createCalled, false);
+});
+
 test("createPayoutRun allows manual settlement without a Stripe account", async () => {
   const fakePrisma = {
     seller: {
@@ -5438,7 +5593,10 @@ test("createPayoutRun creates Wise payout runs only when a Wise recipient exists
             status: "active",
             vendor: {
               id: "vendor_1",
+              vendorStore: { isTestStore: false },
             },
+            complianceProfile: { countryCode: "JP" },
+            settlementControl: { payoutHold: false },
             stripeAccount: null,
             payoutRecipient: {
               id: "spr_1",
@@ -5758,6 +5916,10 @@ test("createConnectedAccountPayout sends connected account as a Stripe header", 
     assert.equal(calls[0].url, "https://api.stripe.com/v1/payouts");
     assert.equal(calls[0].init.headers["Stripe-Account"], "acct_123");
     assert.equal(calls[0].init.headers.Authorization, "Bearer sk_test_unit");
+    assert.equal(
+      calls[0].init.headers["Idempotency-Key"],
+      "seller-payout-pr_1",
+    );
     assert.match(calls[0].init.body.toString(), /amount=5000/);
     assert.doesNotMatch(calls[0].init.body.toString(), /stripeAccount/);
   } finally {
@@ -5783,6 +5945,9 @@ test("payout runs require approval and execute on the connected account only whe
       seller: {
         id: "seller_1",
         status: "active",
+        vendor: { id: "vendor_1", vendorStore: { isTestStore: false } },
+        complianceProfile: { countryCode: "JP" },
+        settlementControl: { payoutHold: false },
         phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
         documentVerificationStatus: "VERIFIED",
         verificationNameMatched: true,
@@ -5819,6 +5984,21 @@ test("payout runs require approval and execute on the connected account only whe
           ...data,
         };
         return state.payoutRun;
+      },
+      async updateMany({ where, data }) {
+        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+          return { count: 0 };
+        }
+        state.payoutRun = { ...state.payoutRun, ...data };
+        return { count: 1 };
+      },
+      async findMany() {
+        return [];
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 5000 }];
       },
     },
   };
@@ -5872,6 +6052,9 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
       seller: {
         id: "seller_1",
         status: "active",
+        vendor: { id: "vendor_1", vendorStore: { isTestStore: false } },
+        complianceProfile: { countryCode: "JP" },
+        settlementControl: { payoutHold: false },
         phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
         documentVerificationStatus: "VERIFIED",
         verificationNameMatched: true,
@@ -5910,8 +6093,21 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
         };
         return state.payoutRun;
       },
+      async updateMany({ where, data }) {
+        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+          return { count: 0 };
+        }
+        state.payoutRun = { ...state.payoutRun, ...data };
+        return { count: 1 };
+      },
+      async findMany() {
+        return [];
+      },
     },
     ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 9900 }];
+      },
       async create({ data }) {
         state.ledgerEntries.push(data);
         return {
@@ -5951,6 +6147,11 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
 
 test("executeWisePayoutRun creates and funds a Wise transfer after approval", async () => {
   const env = {
+    MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "true",
+    DOMESTIC_SELLER_SETTLEMENT_ENABLED: "true",
+    SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+    SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE:
+      "unit-test-approval",
     SELLER_PAYOUT_PROVIDER: "wise",
     WISE_API_TOKEN: "wise-token",
     WISE_PROFILE_ID: "30000000",
@@ -5974,6 +6175,9 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
       seller: {
         id: "seller_1",
         status: "active",
+        vendor: { id: "vendor_1", vendorStore: { isTestStore: false } },
+        complianceProfile: { countryCode: "JP" },
+        settlementControl: { payoutHold: false },
         phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
         documentVerificationStatus: "VERIFIED",
         verificationNameMatched: true,
@@ -6006,6 +6210,16 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
           ...data,
         };
         return state.payoutRun;
+      },
+      async updateMany({ where, data }) {
+        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+          return { count: 0 };
+        }
+        state.payoutRun = { ...state.payoutRun, ...data };
+        return { count: 1 };
+      },
+      async findMany() {
+        return [];
       },
     },
     ledgerEntry: {
@@ -6188,7 +6402,12 @@ test("executePayoutRun refuses to create a payout above connected account availa
       currencyCode: "jpy",
       status: "approved",
       seller: {
+        id: "seller_1",
         status: "active",
+        vendor: { id: "vendor_1", vendorStore: { isTestStore: false } },
+        complianceProfile: { countryCode: "JP" },
+        settlementControl: { payoutHold: false },
+        ...VERIFIED_PAYOUT_SELLER_FIELDS,
         stripeAccount: {
           payoutsEnabled: true,
         },
@@ -6200,6 +6419,11 @@ test("executePayoutRun refuses to create a payout above connected account availa
     payoutRun: {
       async findUnique() {
         return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async findMany() {
+        return [{ entryType: "shopify_order_paid", amount: 5000 }];
       },
     },
   };

@@ -51,6 +51,8 @@ export const action = async ({ request }) => {
         documentHash: configuration.sellerAgreementDocumentHash,
         acceptedBy: String(formData.get("acceptedBy") || "shopify_admin"),
         source: "ADMIN_RECORDED",
+        evidenceUrl: formData.get("evidenceUrl"),
+        evidenceHash: formData.get("evidenceHash"),
       });
       }
       break;
@@ -356,6 +358,9 @@ function AgreementForm({
       <p>SHA-256: {documentHash || "未設定"}</p>
       {agreementUrl ? <a href={agreementUrl} rel="noreferrer noopener" target="_blank">契約本文を開く</a> : null}
       <Field label="同意者" name="acceptedBy" value={seller.vendor?.managementEmail} />
+      <Field label="同意証跡URL" name="evidenceUrl" placeholder="https://..." />
+      <Field label="同意証跡SHA-256（URLがない場合）" name="evidenceHash" placeholder="64文字のSHA-256" />
+      <p className="governance-note">管理者による代理記録では、署名済み文書などの証跡URLまたはSHA-256が必須です。</p>
       <button disabled={busy || !agreementUrl || !documentHash || agreementVersion === "UNCONFIGURED"} type="submit">契約同意を記録</button>
     </Form>
   );
@@ -404,12 +409,18 @@ function CreateCaseForm({ sellers, busy }) {
   return (
     <Form method="post" className="governance-form governance-form--case">
       <input type="hidden" name="intent" value="create_case" />
-      <label>種別<select name="caseType"><option>WITHDRAWAL</option><option>REFUND</option><option>DELIVERY</option><option>DAMAGE</option><option>COUNTERFEIT</option><option>COMPLIANCE</option><option>CHARGEBACK</option><option>OTHER</option></select></label>
+      <label>種別<select name="caseType"><option>SELLER_DISCLOSURE</option><option>TAX_INVOICE</option><option>WITHDRAWAL</option><option>REFUND</option><option>DELIVERY</option><option>DAMAGE</option><option>COUNTERFEIT</option><option>COMPLIANCE</option><option>CHARGEBACK</option><option>OTHER</option></select></label>
       <label>優先度<select name="priority"><option>NORMAL</option><option>LOW</option><option>HIGH</option><option>CRITICAL</option></select></label>
       <label>対象店舗<select name="sellerId"><option value="">未確定</option>{sellers.map(({ seller }) => <option key={seller.id} value={seller.id}>{seller.vendor?.storeName || seller.id}</option>)}</select></label>
       <Field label="概要" name="summary" />
       <Field label="申告額" name="claimedAmount" type="number" value={0} />
       <Field label="通貨" name="currencyCode" value="jpy" />
+      <Field label="対応期限" name="dueAt" type="datetime-local" />
+      <Field label="法的根拠・請求根拠" name="legalBasis" placeholder="販売者情報開示請求、税務照会など" />
+      <Field label="本人確認状態" name="claimantIdentityStatus" placeholder="VERIFIED / PENDING / NOT_REQUIRED" />
+      <Field label="関連注文" name="relatedOrderReference" placeholder="#1001 など" />
+      <Field label="開示対象項目" name="requestedFields" placeholder="名称、住所、電話番号など" />
+      <label>補足データ（JSON）<textarea name="detailsJson" placeholder='{"note":"受付経緯"}' /></label>
       <button disabled={busy} type="submit">案件を作成</button>
     </Form>
   );
@@ -449,8 +460,8 @@ function AdjustmentForm({ entry, busy }) {
   );
 }
 
-function Field({ label, name, value = "", type = "text" }) {
-  return <label>{label}<input defaultValue={value ?? ""} min={type === "number" ? 0 : undefined} name={name} type={type} /></label>;
+function Field({ label, name, value = "", type = "text", placeholder = "" }) {
+  return <label>{label}<input defaultValue={value ?? ""} min={type === "number" ? 0 : undefined} name={name} placeholder={placeholder} type={type} /></label>;
 }
 
 const styles = `

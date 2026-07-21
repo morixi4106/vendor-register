@@ -129,7 +129,8 @@ export const action = async ({ request }) => {
       version: governance.agreementVersion,
       documentHash,
       acceptedBy: vendor.managementEmail,
-      source: "VENDOR_SETTINGS",
+      acceptedByEmail: vendor.managementEmail,
+      source: "VENDOR_SELF_SERVICE",
       ipAddress:
         request.headers.get("cf-connecting-ip") ||
         request.headers.get("x-forwarded-for"),

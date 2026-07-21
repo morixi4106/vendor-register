@@ -6,11 +6,14 @@ import {
   buildProductComplianceSnapshot,
   buildSellerGovernanceSnapshot,
   calculateGovernedPayoutAvailability,
+  createMarketplaceOperationalCase,
   createSettlementAdjustment,
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
+  evaluateSellerSettlementExecutionReadiness,
   getMarketplaceGovernanceConfiguration,
   getSellerAgreementReadinessOptions,
+  getShopifyMarketplacePaymentsApproval,
   recordSellerAgreementAcceptance,
   updateMarketplaceOperationalCase,
 } from "../../app/services/marketplaceGovernance.server.js";
@@ -120,6 +123,7 @@ test("governance configuration requires published contract URLs and a SHA-256", 
     SELLER_AGREEMENT_DOCUMENT_HASH: "a".repeat(64),
     SELLER_AGREEMENT_URL: "https://example.com/seller-agreement",
     BUYER_TERMS_VERSION: "buyer-2026-01",
+    BUYER_TERMS_DOCUMENT_HASH: "b".repeat(64),
     BUYER_TERMS_URL: "https://example.com/terms",
   });
 
@@ -130,6 +134,44 @@ test("governance configuration requires published contract URLs and a SHA-256", 
   );
 });
 
+test("settlement requires explicit switches and a recorded Shopify written approval", () => {
+  const seller = { complianceProfile: { countryCode: "JP" } };
+  const approval = getShopifyMarketplacePaymentsApproval({
+    SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+  });
+  assert.equal(approval.ready, false);
+  assert.ok(
+    approval.reasons.includes(
+      "shopify_marketplace_payments_approval_reference_missing",
+    ),
+  );
+
+  const blocked = evaluateSellerSettlementExecutionReadiness(seller, {
+    env: {
+      MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "true",
+      DOMESTIC_SELLER_SETTLEMENT_ENABLED: "true",
+    },
+  });
+  assert.equal(blocked.ready, false);
+  assert.ok(
+    blocked.reasons.includes(
+      "shopify_marketplace_payments_approval_not_confirmed",
+    ),
+  );
+
+  const ready = evaluateSellerSettlementExecutionReadiness(seller, {
+    env: {
+      MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "true",
+      DOMESTIC_SELLER_SETTLEMENT_ENABLED: "true",
+      SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+      SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE:
+        "shopify-support-case-123",
+    },
+  });
+  assert.equal(ready.ready, true);
+  assert.equal(ready.settlementScope, "domestic");
+});
+
 test("seller readiness rejects an acceptance for a different contract hash", () => {
   const seller = readySeller();
   seller.agreementAcceptances[0].documentHash = "b".repeat(64);
@@ -138,6 +180,7 @@ test("seller readiness rejects an acceptance for a different contract hash", () 
     SELLER_AGREEMENT_DOCUMENT_HASH: "a".repeat(64),
     SELLER_AGREEMENT_URL: "https://example.com/seller-agreement",
     BUYER_TERMS_VERSION: "buyer-2026-01",
+    BUYER_TERMS_DOCUMENT_HASH: "b".repeat(64),
     BUYER_TERMS_URL: "https://example.com/terms",
   };
 
@@ -154,9 +197,12 @@ test("agreement acceptance only stores a valid SHA-256", async () => {
   let stored = null;
   const prismaClient = {
     sellerAgreementAcceptance: {
-      async upsert(args) {
+      async findUnique() {
+        return null;
+      },
+      async create(args) {
         stored = args;
-        return { id: "acceptance_1", ...args.create };
+        return { id: "acceptance_1", ...args.data };
       },
     },
   };
@@ -179,11 +225,53 @@ test("agreement acceptance only stores a valid SHA-256", async () => {
       version: "seller-2026-01",
       documentHash: "A".repeat(64),
       acceptedBy: "seller@example.com",
+      evidenceHash: "b".repeat(64),
     },
     { prismaClient },
   );
   assert.equal(valid.ok, true);
-  assert.equal(stored.create.documentHash, "a".repeat(64));
+  assert.equal(stored.data.documentHash, "a".repeat(64));
+});
+
+test("agreement acceptances are append-only and duplicate evidence is idempotent", async () => {
+  const records = new Map();
+  const prismaClient = {
+    sellerAgreementAcceptance: {
+      async findUnique({ where }) {
+        return records.get(where.acceptanceKey) || null;
+      },
+      async create({ data }) {
+        const record = { id: `acceptance_${records.size + 1}`, ...data };
+        records.set(data.acceptanceKey, record);
+        return record;
+      },
+    },
+  };
+  const base = {
+    sellerId: "seller_1",
+    version: "seller-2026-01",
+    documentHash: "a".repeat(64),
+    acceptedBy: "seller@example.com",
+    source: "ADMIN_RECORDED",
+  };
+
+  const first = await recordSellerAgreementAcceptance(
+    { ...base, evidenceHash: "b".repeat(64) },
+    { prismaClient },
+  );
+  const second = await recordSellerAgreementAcceptance(
+    { ...base, evidenceHash: "c".repeat(64) },
+    { prismaClient },
+  );
+  const duplicate = await recordSellerAgreementAcceptance(
+    { ...base, evidenceHash: "b".repeat(64) },
+    { prismaClient },
+  );
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(records.size, 2);
+  assert.equal(duplicate.unchanged, true);
 });
 
 test("product governance readiness requires approved provenance and authenticity data", () => {
@@ -384,6 +472,29 @@ test("case liability cannot be lowered below committed adjustments", async () =>
   });
 });
 
+test("seller disclosure cases require identity, legal basis, and a deadline", async () => {
+  const result = await createMarketplaceOperationalCase(
+    {
+      caseType: "SELLER_DISCLOSURE",
+      summary: "販売者情報の開示請求",
+      claimantIdentityStatus: "VERIFIED",
+      legalBasis: "取引DPF消費者保護法に基づく請求",
+    },
+    {
+      prismaClient: {
+        async $transaction() {
+          throw new Error("incomplete disclosure must not be persisted");
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "seller_disclosure_details_required",
+  });
+});
+
 test("reserve adjustments change payout controls without creating a ledger debit", async () => {
   let controlData = null;
   const tx = {
@@ -401,7 +512,13 @@ test("reserve adjustments change payout controls without creating a ledger debit
           reason: "temporary reserve",
           approvedAt: null,
           approvedBy: null,
+          seller: {
+            complianceProfile: { countryCode: "JP" },
+          },
         };
+      },
+      async updateMany() {
+        return { count: 1 };
       },
       async update({ data }) {
         return { id: "adjustment_1", ...data };
@@ -430,7 +547,16 @@ test("reserve adjustments change payout controls without creating a ledger debit
 
   const result = await applySettlementAdjustment(
     { adjustmentId: "adjustment_1", actor: "admin@example.com" },
-    { prismaClient: transactionClient(tx) },
+    {
+      prismaClient: transactionClient(tx),
+      env: {
+        MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "true",
+        DOMESTIC_SELLER_SETTLEMENT_ENABLED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE:
+          "unit-test-approval",
+      },
+    },
   );
 
   assert.equal(result.ok, true);

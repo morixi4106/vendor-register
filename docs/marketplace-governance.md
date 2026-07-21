@@ -13,12 +13,29 @@ SELLER_AGREEMENT_URL=https://example.com/seller-agreement
 SELLER_AGREEMENT_DOCUMENT_HASH=<公開した契約本文のSHA-256>
 BUYER_TERMS_VERSION=buyer-terms-2026-01
 BUYER_TERMS_URL=https://example.com/terms
+BUYER_TERMS_DOCUMENT_HASH=<公開した購入規約本文のSHA-256>
+SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED=false
+SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE=
+MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED=false
+DOMESTIC_SELLER_SETTLEMENT_ENABLED=false
+CROSS_BORDER_SELLER_SETTLEMENT_ENABLED=false
+CROSS_BORDER_SETTLEMENT_LEGAL_APPROVAL_REFERENCE=
+SELLER_DISCLOSURE_PROCEDURE_APPROVAL_REFERENCE=
+MARKETPLACE_TAX_INVOICE_POLICY_APPROVAL_REFERENCE=
+PRIVACY_HASH_SECRET=<32文字以上の乱数>
 ```
 
 - 初回デプロイ時は `MARKETPLACE_GOVERNANCE_GATE_ENABLED=false` のままにします。
 - 契約URLは出店者が実際に閲覧できる `https` URLを設定します。
 - 文書ハッシュは契約本文から計算した64桁のSHA-256です。秘密値ではありません。
+- Shopifyの書面回答、税務方針及び開示手順の参照値には、社内で保存したメール・PDF・議事録等の識別子だけを設定し、秘密資料そのものをPublic repositoryへ置きません。
 - 契約本文を変更するときは版とハッシュを更新し、出店者から改めて同意を取得します。
+
+## 決済・精算の開始条件
+
+第三者店舗を売主とし、運営がShopify Paymentsで代金を受領して後日精算する構造は、環境変数だけで合法・契約適合にはなりません。Shopifyから当該フローについて書面回答を取得するまで、精算とガバナンスの各スイッチを `false` に維持します。
+
+確認時は [Shopify Payments 日本向け利用規約](https://www.shopify.com/jp/legal/terms-payments/jp) と [Shopify Payments Terms of Service](https://www.shopify.com/legal/terms-shopify-payments) の双方を参照し、回答資料は非公開領域で保存します。
 
 ## 段階公開
 

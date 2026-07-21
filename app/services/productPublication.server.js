@@ -3,7 +3,9 @@ import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server
 import {
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
+  getMarketplaceGovernanceConfiguration,
   getSellerAgreementReadinessOptions,
+  getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
 
@@ -113,6 +115,9 @@ export async function ensureApprovedProductPublished(
   }
 
   if (isMarketplaceGovernanceGateEnabled(env)) {
+    const governanceConfiguration = getMarketplaceGovernanceConfiguration(env);
+    const shopifyPaymentsApproval =
+      getShopifyMarketplacePaymentsApproval(env);
     const seller =
       product.vendorStore?.seller || product.vendorStore?.vendorAuth?.seller || null;
     const sellerForEvaluation = seller
@@ -127,12 +132,19 @@ export async function ensureApprovedProductPublished(
     );
     const productReadiness = evaluateProductGovernanceReadiness(product);
 
-    if (!sellerReadiness.ready || !productReadiness.ready) {
+    if (
+      !governanceConfiguration.ready ||
+      !shopifyPaymentsApproval.ready ||
+      !sellerReadiness.ready ||
+      !productReadiness.ready
+    ) {
       throw new ProductPublicationError(
         "Marketplace governance requirements are incomplete",
         {
           reason: "marketplace_governance_incomplete",
           productId,
+          configurationReasons: governanceConfiguration.reasons,
+          shopifyPaymentsApprovalReasons: shopifyPaymentsApproval.reasons,
           sellerReasons: sellerReadiness.reasons,
           productReasons: productReadiness.reasons,
         },

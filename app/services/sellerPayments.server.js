@@ -15,9 +15,8 @@ import {
   buildProductComplianceSnapshot,
   buildSellerGovernanceSnapshot,
   calculateGovernedPayoutAvailability,
+  evaluateSellerSettlementExecutionReadiness,
   evaluateSellerGovernanceReadiness,
-  getCurrentBuyerTermsVersion,
-  getCurrentSellerAgreementVersion,
   getSellerAgreementReadinessOptions,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
@@ -107,6 +106,7 @@ export const LEDGER_ENTRY_TYPES = [
   "dispute_funds_withdrawn",
   "dispute_funds_reinstated",
   "ledger_adjustment",
+  "case_adjustment",
   "payout_created",
   "payout_paid",
   "payout_failed",
@@ -764,6 +764,7 @@ export async function createConnectedAccountPayout({
     headers: {
       Authorization: `Bearer ${getStripeSecretKey()}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      "Idempotency-Key": `seller-payout-${payoutRunId}`,
       "Stripe-Account": normalizedStripeAccountId,
     },
     body,
@@ -1315,7 +1316,7 @@ export async function upsertSellerWiseRecipient(
     accountSummary = null,
     status = "active",
   },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   const normalizedSellerId = normalizeText(sellerId);
   const normalizedWiseRecipientId = normalizeText(wiseRecipientId);
@@ -1733,7 +1734,7 @@ async function loadSellerWithStripeContext(sellerId, prismaClient = prisma) {
     include: {
       vendor: {
         include: {
-          vendorStore: true,
+          vendorStore: { include: { returnAddresses: true } },
         },
       },
       stripeAccount: true,
@@ -4049,12 +4050,76 @@ async function recordShopifyOrderSellerOrderShadow(
         bucket.lines.map((line) => line.productId).filter(Boolean),
       ),
     );
+    // Never manufacture checkout evidence from the configuration that happens
+    // to be current when a delayed paid webhook arrives.
+    const checkoutReference =
+      getShopifyOrderAttribute(payload, "checkout_reference") || null;
+    const checkoutEvidence =
+      checkoutReference &&
+      prismaClient?.marketplaceCheckoutEvidence?.findUnique
+        ? await prismaClient.marketplaceCheckoutEvidence.findUnique({
+            where: { checkoutReference },
+          })
+        : null;
     const agreementVersion =
+      checkoutEvidence?.sellerAgreementVersion ||
       getShopifyOrderAttribute(payload, "seller_agreement_version") ||
-      getCurrentSellerAgreementVersion(env);
+      "UNRECORDED";
     const buyerTermsVersion =
-      getShopifyOrderAttribute(payload, "buyer_terms_version") ||
-      getCurrentBuyerTermsVersion(env);
+      checkoutEvidence?.buyerTermsVersion ||
+      getShopifyOrderAttribute(payload, "buyer_terms_version") || null;
+    const buyerTermsHash =
+      checkoutEvidence?.buyerTermsHash ||
+      getShopifyOrderAttribute(payload, "buyer_terms_hash") || null;
+    const buyerTermsUrl =
+      checkoutEvidence?.buyerTermsUrl ||
+      getShopifyOrderAttribute(payload, "buyer_terms_url") || null;
+    const buyerTermsLocale =
+      checkoutEvidence?.buyerTermsLocale ||
+      getShopifyOrderAttribute(payload, "buyer_terms_locale") || null;
+    const buyerTermsPresentedAt =
+      normalizeDateValue(checkoutEvidence?.presentedAt) ||
+      normalizeDateValue(
+        getShopifyOrderAttribute(payload, "buyer_terms_presented_at"),
+      );
+    const buyerTermsEvidenceComplete = Boolean(
+      buyerTermsVersion &&
+        /^[a-f0-9]{64}$/i.test(buyerTermsHash || "") &&
+        buyerTermsUrl &&
+        buyerTermsLocale &&
+        buyerTermsPresentedAt &&
+        checkoutReference,
+    );
+    Object.assign(marketplaceData, {
+      buyerTermsVersion,
+      buyerTermsHash,
+      buyerTermsUrl,
+      buyerTermsLocale,
+      buyerTermsPresentedAt,
+      checkoutReference,
+      metadataJson: {
+        ...(marketplaceData.metadataJson || {}),
+        buyerTermsEvidenceStatus: buyerTermsEvidenceComplete
+          ? checkoutEvidence
+            ? "DATABASE_CHECKOUT_CAPTURED"
+            : "ORDER_ATTRIBUTE_CAPTURED"
+          : "MISSING_OR_INCOMPLETE",
+      },
+    });
+    const capturedSellerSnapshotById = new Map(
+      (Array.isArray(checkoutEvidence?.sellerSnapshotsJson)
+        ? checkoutEvidence.sellerSnapshotsJson
+        : [])
+        .filter((entry) => normalizeText(entry?.sellerId) && entry?.snapshot)
+        .map((entry) => [normalizeText(entry.sellerId), entry.snapshot]),
+    );
+    const capturedProductSnapshotById = new Map(
+      (Array.isArray(checkoutEvidence?.productSnapshotsJson)
+        ? checkoutEvidence.productSnapshotsJson
+        : [])
+        .filter((entry) => normalizeText(entry?.productId) && entry?.snapshot)
+        .map((entry) => [normalizeText(entry.productId), entry.snapshot]),
+    );
     const sourceSellerById = new Map();
     const sourceProductById = new Map();
     for (const { product } of matchedLines) {
@@ -4105,25 +4170,30 @@ async function recordShopifyOrderSellerOrderShadow(
     const sellerSnapshotById = new Map(
       sellerIds.map((sellerId) => [
         sellerId,
-        buildSellerGovernanceSnapshot({
-          ...sourceSellerById.get(sellerId),
-          id: sellerId,
-          complianceProfile: sellerProfileById.get(sellerId) || null,
-          agreementAcceptances: agreementsBySellerId.get(sellerId) || [],
-        }, {
-          agreementVersion,
-          buyerTermsVersion,
-        }),
+        capturedSellerSnapshotById.get(sellerId) ||
+          buildSellerGovernanceSnapshot(
+            {
+              ...sourceSellerById.get(sellerId),
+              id: sellerId,
+              complianceProfile: sellerProfileById.get(sellerId) || null,
+              agreementAcceptances: agreementsBySellerId.get(sellerId) || [],
+            },
+            {
+              agreementVersion,
+              buyerTermsVersion,
+            },
+          ),
       ]),
     );
     const productSnapshotById = new Map(
       productIds.map((productId) => [
         productId,
-        buildProductComplianceSnapshot({
-          ...sourceProductById.get(productId),
-          id: productId,
-          complianceProfile: productProfileById.get(productId) || null,
-        }),
+        capturedProductSnapshotById.get(productId) ||
+          buildProductComplianceSnapshot({
+            ...sourceProductById.get(productId),
+            id: productId,
+            complianceProfile: productProfileById.get(productId) || null,
+          }),
       ]),
     );
     const marketplaceOrder = await prismaClient.marketplaceOrder.upsert({
@@ -4133,10 +4203,25 @@ async function recordShopifyOrderSellerOrderShadow(
           shopifyOrderId,
         },
       },
-      update: marketplaceData,
+      update: {
+        financialStatus: marketplaceData.financialStatus,
+        fulfillmentStatus: marketplaceData.fulfillmentStatus,
+        cancelledAt: marketplaceData.cancelledAt,
+      },
       create: marketplaceData,
     });
     const writtenSellerOrders = [];
+
+    if (checkoutEvidence && prismaClient.marketplaceCheckoutEvidence?.update) {
+      await prismaClient.marketplaceCheckoutEvidence.update({
+        where: { id: checkoutEvidence.id },
+        data: {
+          status: "ORDER_CAPTURED",
+          shopifyOrderId,
+          orderCapturedAt: new Date(),
+        },
+      });
+    }
 
     if (writeSellerOrders && !multiSellerDetected) {
       for (const bucket of sellerBuckets) {
@@ -4171,6 +4256,11 @@ async function recordShopifyOrderSellerOrderShadow(
           sellerAgreementSnapshotJson:
             governanceSnapshot.sellerAgreementSnapshotJson,
           buyerTermsVersion: governanceSnapshot.buyerTermsVersion,
+          buyerTermsHash,
+          buyerTermsUrl,
+          buyerTermsLocale,
+          buyerTermsPresentedAt,
+          checkoutReference,
           metadataJson: {
             vendorId: bucket.vendorId,
             vendorHandle: bucket.vendorHandle,
@@ -4187,7 +4277,12 @@ async function recordShopifyOrderSellerOrderShadow(
               sellerId: bucket.sellerId,
             },
           },
-          update: sellerOrderData,
+          update: {
+            sellerRefundAmount: sellerOrderData.sellerRefundAmount,
+            paymentStatus: sellerOrderData.paymentStatus,
+            fulfillmentStatus: sellerOrderData.fulfillmentStatus,
+            riskStatus: sellerOrderData.riskStatus,
+          },
           create: sellerOrderData,
         });
 
@@ -4211,7 +4306,10 @@ async function recordShopifyOrderSellerOrderShadow(
                 shopifyLineItemId: line.shopifyLineItemId,
               },
             },
-            update: governedLine,
+            update: {
+              fulfilledQuantity: governedLine.fulfilledQuantity,
+              refundedQuantity: governedLine.refundedQuantity,
+            },
             create: {
               ...governedLine,
               sellerOrderId: sellerOrder.id,
@@ -7438,16 +7536,62 @@ export async function handleStripeWebhook(
     };
   }
 
+  const stripeObject = event?.data?.object || {};
+  const safeMetadata = ["orderId", "sellerId", "vendorId", "payoutRunId"]
+    .reduce((result, key) => {
+      const value = normalizeText(stripeObject?.metadata?.[key]);
+      if (value) result[key] = value;
+      return result;
+    }, {});
+  const payloadJson = {
+    schemaVersion: 1,
+    eventId: normalizeText(event.id),
+    eventType: normalizeText(event.type),
+    eventCreated: Number.isFinite(Number(event.created))
+      ? Number(event.created)
+      : null,
+    accountId: normalizeText(event.account),
+    livemode: Boolean(event.livemode),
+    webhookSecretType,
+    object: {
+      id: normalizeText(stripeObject.id),
+      objectType: normalizeText(stripeObject.object),
+      status: normalizeText(stripeObject.status),
+      amount: Number.isFinite(Number(stripeObject.amount))
+        ? Number(stripeObject.amount)
+        : null,
+      amountReceived: Number.isFinite(Number(stripeObject.amount_received))
+        ? Number(stripeObject.amount_received)
+        : null,
+      amountPaid: Number.isFinite(Number(stripeObject.amount_paid))
+        ? Number(stripeObject.amount_paid)
+        : null,
+      currency: normalizeText(stripeObject.currency)?.toLowerCase() || null,
+      paymentIntentId: normalizeText(
+        stripeObject.payment_intent ||
+          (stripeObject.object === "payment_intent" ? stripeObject.id : null),
+      ),
+      chargeId: normalizeText(
+        stripeObject.charge || stripeObject.latest_charge,
+      ),
+      payoutId: normalizeText(
+        stripeObject.payout ||
+          (stripeObject.object === "payout" ? stripeObject.id : null),
+      ),
+      failureCode: normalizeText(
+        stripeObject.failure_code || stripeObject.last_payment_error?.code,
+      ),
+      metadata: safeMetadata,
+    },
+  };
+
   const savedEvent = await prismaClient.stripeEvent.create({
     data: {
       stripeEventId: event.id,
       stripeAccountId: normalizeText(event.account),
       type: event.type,
       livemode: Boolean(event.livemode),
-      payloadJson: {
-        ...event,
-        webhookSecretType,
-      },
+      payloadJson,
       processingStatus: "pending",
     },
   });
@@ -7557,6 +7701,7 @@ const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
   dispute_created: -1,
   dispute_funds_reinstated: 1,
   ledger_adjustment: 1,
+  case_adjustment: -1,
   payout_paid: -1,
   sales_credit_offset_captured: -1,
   sales_credit_offset_refund_reversal: 1,
@@ -8381,6 +8526,72 @@ export async function getSellerPayoutableLedgerBalance(
   return calculateSellerPayoutableLedgerBalance(entries);
 }
 
+async function getReservedPayoutRunAmount(
+  { sellerId, currencyCode, excludePayoutRunId = null },
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.payoutRun?.findMany) return 0;
+  const runs = await prismaClient.payoutRun.findMany({
+    where: {
+      sellerId: normalizeText(sellerId),
+      currencyCode:
+        normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
+      status: { in: ["draft", "approved", "processing"] },
+      ...(excludePayoutRunId
+        ? { id: { not: normalizeText(excludePayoutRunId) } }
+        : {}),
+    },
+    select: { amount: true },
+  });
+
+  return runs.reduce(
+    (total, run) => total + Math.max(0, clampInteger(run?.amount)),
+    0,
+  );
+}
+
+function runSerializableTransaction(prismaClient, callback) {
+  if (typeof prismaClient?.$transaction !== "function") {
+    return callback(prismaClient);
+  }
+  return prismaClient.$transaction(callback, {
+    isolationLevel: "Serializable",
+  });
+}
+
+async function getSellerPayoutAvailability(
+  { seller, currencyCode, excludePayoutRunId = null },
+  { prismaClient = prisma } = {},
+) {
+  const ledgerBalance = await getSellerPayoutableLedgerBalance(
+    { sellerId: seller.id, currencyCode },
+    { prismaClient },
+  );
+  const reservedPayoutAmount = await getReservedPayoutRunAmount(
+    {
+      sellerId: seller.id,
+      currencyCode,
+      excludePayoutRunId,
+    },
+    { prismaClient },
+  );
+  const unreservedLedgerBalance = Math.max(
+    0,
+    ledgerBalance - reservedPayoutAmount,
+  );
+  const governed = calculateGovernedPayoutAvailability(
+    unreservedLedgerBalance,
+    seller.settlementControl,
+  );
+
+  return {
+    ...governed,
+    ledgerBalance,
+    unreservedLedgerBalance,
+    reservedPayoutAmount,
+  };
+}
+
 function getLedgerEntryShopifyOrderId(entry) {
   const metadata = getLedgerEntryMetadata(entry);
   const metadataOrderId = normalizeText(metadata.shopifyOrderId);
@@ -8744,20 +8955,25 @@ export async function repairSellerNegativeLedgerBalance(
 
 async function assertPayoutEligibleSeller(
   sellerId,
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env, seller: providedSeller = null } = {},
 ) {
-  const seller = await prismaClient.seller.findUnique({
-    where: { id: sellerId },
-    include: {
-      vendor: {
-        include: {
-          vendorStore: true,
+  const seller =
+    providedSeller ||
+    (await prismaClient.seller.findUnique({
+      where: { id: sellerId },
+      include: {
+        vendor: {
+          include: {
+            vendorStore: { include: { returnAddresses: true } },
+          },
         },
+        stripeAccount: true,
+        payoutRecipient: true,
+        settlementControl: true,
+        complianceProfile: true,
+        agreementAcceptances: { orderBy: { acceptedAt: "desc" } },
       },
-      stripeAccount: true,
-      payoutRecipient: true,
-    },
-  });
+    }));
 
   if (!seller?.vendor) {
     return {
@@ -8802,13 +9018,26 @@ async function assertPayoutEligibleSeller(
     };
   }
 
-  if (isMarketplaceGovernanceGateEnabled()) {
+  const settlementReadiness = evaluateSellerSettlementExecutionReadiness(
+    seller,
+    { env },
+  );
+  if (!settlementReadiness.ready) {
+    return {
+      ok: false,
+      reason: "seller_settlement_disabled",
+      settlementReasons: settlementReadiness.reasons,
+      settlementScope: settlementReadiness.settlementScope,
+    };
+  }
+
+  if (isMarketplaceGovernanceGateEnabled(env)) {
     const governanceReadiness = evaluateSellerGovernanceReadiness(
       {
         ...seller,
         vendorStore: seller.vendor.vendorStore,
       },
-      getSellerAgreementReadinessOptions(process.env, {
+      getSellerAgreementReadinessOptions(env, {
         requirePayoutReadiness: true,
       }),
     );
@@ -8839,22 +9068,27 @@ async function assertPayoutEligibleSeller(
   };
 }
 
+const PAYOUT_ELIGIBILITY_SELLER_INCLUDE = {
+  vendor: {
+    include: {
+      vendorStore: { include: { returnAddresses: true } },
+    },
+  },
+  stripeAccount: true,
+  payoutRecipient: true,
+  settlementControl: true,
+  complianceProfile: true,
+  agreementAcceptances: { orderBy: { acceptedAt: "desc" } },
+};
+
 export async function createPayoutRun(
   { sellerId, amount, currencyCode },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
-  const eligibility = await assertPayoutEligibleSeller(sellerId, {
-    prismaClient,
-  });
-
-  if (!eligibility.ok) {
-    return eligibility;
-  }
-
   const normalizedAmount = toPositiveInteger(amount);
   const normalizedCurrency =
     normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
-  const payoutProvider = getConfiguredSellerPayoutProvider();
+  const payoutProvider = getConfiguredSellerPayoutProvider(env);
 
   if (normalizedAmount == null) {
     return {
@@ -8863,85 +9097,98 @@ export async function createPayoutRun(
     };
   }
 
-  const availableLedgerBalance = await getSellerPayoutableLedgerBalance(
-    {
-      sellerId: eligibility.seller.id,
-      currencyCode: normalizedCurrency,
-    },
-    { prismaClient },
-  );
+  try {
+    return await runSerializableTransaction(
+      prismaClient,
+      async (tx) => {
+        const eligibility = await assertPayoutEligibleSeller(sellerId, {
+          prismaClient: tx,
+          env,
+        });
+        if (!eligibility.ok) return eligibility;
 
-  const governedAvailability = calculateGovernedPayoutAvailability(
-    availableLedgerBalance,
-    eligibility.seller.settlementControl,
-  );
+        const availability = await getSellerPayoutAvailability(
+          {
+            seller: eligibility.seller,
+            currencyCode: normalizedCurrency,
+          },
+          { prismaClient: tx },
+        );
 
-  if (governedAvailability.availableAmount < normalizedAmount) {
-    const governanceReducedAvailability =
-      governedAvailability.availableAmount < availableLedgerBalance;
-    return {
-      ok: false,
-      reason: governanceReducedAvailability
-        ? "insufficient_governed_balance"
-        : "insufficient_ledger_balance",
-      availableLedgerBalance,
-      governedAvailableAmount: governedAvailability.availableAmount,
-      reserveAmount: governedAvailability.reserveAmount,
-      directInvoiceBalance: governedAvailability.directInvoiceBalance,
-      requestedAmount: normalizedAmount,
-      currencyCode: normalizedCurrency,
-    };
+        if (availability.availableAmount < normalizedAmount) {
+          const governanceReducedAvailability =
+            availability.availableAmount < availability.unreservedLedgerBalance;
+          return {
+            ok: false,
+            reason:
+              availability.reservedPayoutAmount > 0
+                ? "insufficient_unreserved_ledger_balance"
+                : governanceReducedAvailability
+                  ? "insufficient_governed_balance"
+                  : "insufficient_ledger_balance",
+            availableLedgerBalance: availability.ledgerBalance,
+            unreservedLedgerBalance: availability.unreservedLedgerBalance,
+            reservedPayoutAmount: availability.reservedPayoutAmount,
+            governedAvailableAmount: availability.availableAmount,
+            reserveAmount: availability.reserveAmount,
+            directInvoiceBalance: availability.directInvoiceBalance,
+            requestedAmount: normalizedAmount,
+            currencyCode: normalizedCurrency,
+          };
+        }
+
+        const payoutRecipient =
+          payoutProvider === "wise" ? eligibility.seller.payoutRecipient : null;
+        if (
+          payoutProvider === "wise" &&
+          (!payoutRecipient ||
+            payoutRecipient.provider !== "wise" ||
+            payoutRecipient.status !== "active" ||
+            !payoutRecipient.wiseRecipientId)
+        ) {
+          return { ok: false, reason: "wise_recipient_missing" };
+        }
+
+        const payoutRun = await tx.payoutRun.create({
+          data: {
+            sellerId: eligibility.seller.id,
+            sellerStripeAccountId: eligibility.seller.stripeAccount?.id || null,
+            sellerPayoutRecipientId: payoutRecipient?.id || null,
+            stripeAccountId:
+              eligibility.seller.stripeAccount?.stripeAccountId || null,
+            amount: normalizedAmount,
+            currencyCode: normalizedCurrency,
+            status: "draft",
+            transferMethod:
+              payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
+          },
+        });
+
+        return {
+          ok: true,
+          payoutRun,
+          availableLedgerBalance: availability.ledgerBalance,
+          reservedPayoutAmount: availability.reservedPayoutAmount,
+        };
+      },
+    );
+  } catch (error) {
+    if (error?.code === "P2034") {
+      return { ok: false, reason: "payout_reservation_conflict" };
+    }
+    throw error;
   }
-
-  const payoutRecipient =
-    payoutProvider === "wise" ? eligibility.seller.payoutRecipient : null;
-
-  if (
-    payoutProvider === "wise" &&
-    (!payoutRecipient ||
-      payoutRecipient.provider !== "wise" ||
-      payoutRecipient.status !== "active" ||
-      !payoutRecipient.wiseRecipientId)
-  ) {
-    return {
-      ok: false,
-      reason: "wise_recipient_missing",
-    };
-  }
-
-  const payoutRun = await prismaClient.payoutRun.create({
-    data: {
-      sellerId: eligibility.seller.id,
-      sellerStripeAccountId: eligibility.seller.stripeAccount?.id || null,
-      sellerPayoutRecipientId: payoutRecipient?.id || null,
-      stripeAccountId:
-        eligibility.seller.stripeAccount?.stripeAccountId || null,
-      amount: normalizedAmount,
-      currencyCode: normalizedCurrency,
-      status: "draft",
-      transferMethod:
-        payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
-    },
-  });
-
-  return {
-    ok: true,
-    payoutRun,
-    availableLedgerBalance,
-  };
 }
 
 export async function approvePayoutRun(
   { payoutRunId, approvedBy = "admin" },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   const payoutRun = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
       seller: {
-        include: {
-          payoutRecipient: true,
-        },
+        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
       },
       sellerPayoutRecipient: true,
     },
@@ -8961,41 +9208,45 @@ export async function approvePayoutRun(
     };
   }
 
-  if (!isMarketplaceSeller(payoutRun.seller)) {
-    return {
-      ok: false,
-      reason: "platform_seller_payout_disabled",
-    };
-  }
-
-  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
-    return {
-      ok: false,
-      reason: "seller_payout_restricted",
-    };
-  }
-
-  const payoutVerification = getSellerPayoutVerificationState({
-    ...payoutRun.seller,
-    payoutRecipient:
-      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+    prismaClient,
+    env,
+    seller: payoutRun.seller,
   });
+  if (!eligibility.ok) return eligibility;
 
-  if (!payoutVerification.complete) {
+  const availability = await getSellerPayoutAvailability(
+    {
+      seller: eligibility.seller,
+      currencyCode: payoutRun.currencyCode,
+      excludePayoutRunId: payoutRun.id,
+    },
+    { prismaClient },
+  );
+  if (availability.availableAmount < payoutRun.amount) {
     return {
       ok: false,
-      reason: "seller_verification_required",
-      verification: payoutVerification,
+      reason: "insufficient_available_balance_at_approval",
+      availableLedgerBalance: availability.ledgerBalance,
+      reservedPayoutAmount: availability.reservedPayoutAmount,
+      governedAvailableAmount: availability.availableAmount,
+      requestedAmount: payoutRun.amount,
     };
   }
 
-  const updated = await prismaClient.payoutRun.update({
-    where: { id: payoutRunId },
+  const claimed = await prismaClient.payoutRun.updateMany({
+    where: { id: payoutRunId, status: "draft" },
     data: {
       status: "approved",
       approvedAt: new Date(),
       approvedBy,
     },
+  });
+  if (claimed.count !== 1) {
+    return { ok: false, reason: "payout_run_state_conflict" };
+  }
+  const updated = await prismaClient.payoutRun.findUnique({
+    where: { id: payoutRunId },
   });
 
   return {
@@ -9011,16 +9262,13 @@ export async function markPayoutRunManuallyPaid(
     externalTransferId = null,
     transferMemo = null,
   },
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, env = process.env } = {},
 ) {
   const payoutRun = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
       seller: {
-        include: {
-          stripeAccount: true,
-          payoutRecipient: true,
-        },
+        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
       },
       sellerPayoutRecipient: true,
     },
@@ -9039,32 +9287,26 @@ export async function markPayoutRunManuallyPaid(
       reason: "payout_run_not_executable",
     };
   }
-
-  if (!isMarketplaceSeller(payoutRun.seller)) {
-    return {
-      ok: false,
-      reason: "platform_seller_payout_disabled",
-    };
-  }
-
-  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
-    return {
-      ok: false,
-      reason: "seller_payout_restricted",
-    };
-  }
-
-  const payoutVerification = getSellerPayoutVerificationState({
-    ...payoutRun.seller,
-    payoutRecipient:
-      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+    prismaClient,
+    env,
+    seller: payoutRun.seller,
   });
-
-  if (!payoutVerification.complete) {
+  if (!eligibility.ok) return eligibility;
+  const availability = await getSellerPayoutAvailability(
+    {
+      seller: eligibility.seller,
+      currencyCode: payoutRun.currencyCode,
+      excludePayoutRunId: payoutRun.id,
+    },
+    { prismaClient },
+  );
+  if (availability.availableAmount < payoutRun.amount) {
     return {
       ok: false,
-      reason: "seller_verification_required",
-      verification: payoutVerification,
+      reason: "insufficient_available_balance_at_execution",
+      governedAvailableAmount: availability.availableAmount,
+      requestedAmount: payoutRun.amount,
     };
   }
 
@@ -9073,6 +9315,13 @@ export async function markPayoutRunManuallyPaid(
   const normalizedTransferMemo = normalizeText(transferMemo);
 
   return prismaClient.$transaction(async (tx) => {
+    const claimed = await tx.payoutRun.updateMany({
+      where: { id: payoutRun.id, status: "approved" },
+      data: { status: "processing" },
+    });
+    if (claimed.count !== 1) {
+      return { ok: false, reason: "payout_run_state_conflict" };
+    }
     const updated = await tx.payoutRun.update({
       where: { id: payoutRun.id },
       data: {
@@ -9350,9 +9599,7 @@ export async function executeWisePayoutRun(
     where: { id: payoutRunId },
     include: {
       seller: {
-        include: {
-          payoutRecipient: true,
-        },
+        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
       },
       sellerPayoutRecipient: true,
     },
@@ -9371,34 +9618,12 @@ export async function executeWisePayoutRun(
       reason: "payout_run_not_executable",
     };
   }
-
-  if (!isMarketplaceSeller(payoutRun.seller)) {
-    return {
-      ok: false,
-      reason: "platform_seller_payout_disabled",
-    };
-  }
-
-  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
-    return {
-      ok: false,
-      reason: "seller_payout_restricted",
-    };
-  }
-
-  const payoutVerification = getSellerPayoutVerificationState({
-    ...payoutRun.seller,
-    payoutRecipient:
-      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient,
+  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+    prismaClient,
+    env,
+    seller: payoutRun.seller,
   });
-
-  if (!payoutVerification.complete) {
-    return {
-      ok: false,
-      reason: "seller_verification_required",
-      verification: payoutVerification,
-    };
-  }
+  if (!eligibility.ok) return eligibility;
 
   const payoutRecipient =
     payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
@@ -9415,22 +9640,32 @@ export async function executeWisePayoutRun(
     };
   }
 
-  const availableLedgerBalance = await getSellerPayoutableLedgerBalance(
+  const availability = await getSellerPayoutAvailability(
     {
-      sellerId: payoutRun.sellerId,
+      seller: eligibility.seller,
       currencyCode: payoutRun.currencyCode,
+      excludePayoutRunId: payoutRun.id,
     },
     { prismaClient },
   );
 
-  if (availableLedgerBalance < payoutRun.amount) {
+  if (availability.availableAmount < payoutRun.amount) {
     return {
       ok: false,
-      reason: "insufficient_ledger_balance",
-      availableLedgerBalance,
+      reason: "insufficient_available_balance_at_execution",
+      availableLedgerBalance: availability.ledgerBalance,
+      governedAvailableAmount: availability.availableAmount,
       requestedAmount: payoutRun.amount,
       currencyCode: payoutRun.currencyCode,
     };
+  }
+
+  const claimed = await prismaClient.payoutRun.updateMany({
+    where: { id: payoutRun.id, status: "approved" },
+    data: { status: "processing" },
+  });
+  if (claimed.count !== 1) {
+    return { ok: false, reason: "payout_run_state_conflict" };
   }
 
   const customerTransactionId =
@@ -9641,15 +9876,14 @@ export async function executePayoutRun(
     prismaClient = prisma,
     stripeClient,
     createPayout = createConnectedAccountPayout,
+    env = process.env,
   } = {},
 ) {
   const payoutRun = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
       seller: {
-        include: {
-          stripeAccount: true,
-        },
+        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
       },
     },
   });
@@ -9667,11 +9901,26 @@ export async function executePayoutRun(
       reason: "payout_run_not_executable",
     };
   }
-
-  if (["restricted", "banned"].includes(payoutRun.seller.status)) {
+  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+    prismaClient,
+    env,
+    seller: payoutRun.seller,
+  });
+  if (!eligibility.ok) return eligibility;
+  const availability = await getSellerPayoutAvailability(
+    {
+      seller: eligibility.seller,
+      currencyCode: payoutRun.currencyCode,
+      excludePayoutRunId: payoutRun.id,
+    },
+    { prismaClient },
+  );
+  if (availability.availableAmount < payoutRun.amount) {
     return {
       ok: false,
-      reason: "seller_payout_restricted",
+      reason: "insufficient_available_balance_at_execution",
+      governedAvailableAmount: availability.availableAmount,
+      requestedAmount: payoutRun.amount,
     };
   }
 
@@ -9701,6 +9950,14 @@ export async function executePayoutRun(
         availableBalance,
         payoutRun,
       };
+    }
+
+    const claimed = await prismaClient.payoutRun.updateMany({
+      where: { id: payoutRun.id, status: "approved" },
+      data: { status: "processing" },
+    });
+    if (claimed.count !== 1) {
+      return { ok: false, reason: "payout_run_state_conflict" };
     }
 
     const payout = await createPayout({

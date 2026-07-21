@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-chars';
+
 import {
   createDraftOrderCheckout,
   createDraftOrderCheckoutLoader,

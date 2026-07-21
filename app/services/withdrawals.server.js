@@ -38,6 +38,7 @@ import {
   buildWithdrawalOutboxRecord,
   processWithdrawalEmailOutbox,
 } from "./withdrawalEmailOutbox.server.js";
+import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const RETURN_PROOF_TOKEN_BYTES = 32;
@@ -428,11 +429,14 @@ export async function createWithdrawalRequestFromForm({
     normalizeShopDomain(shopDomain) || getShopDomainFromRequest(request);
   const ipAddress = getClientIp(request);
   const userAgent = request?.headers?.get("user-agent") || null;
+  const ipHash = hashPrivateIdentifier(ipAddress);
+  const userAgentHash = hashPrivateIdentifier(userAgent);
 
   const rateLimitResult = await checkWithdrawalRateLimit({
     prismaClient,
     email: values.customerEmail,
     ipAddress,
+    ipHash,
   });
 
   if (!rateLimitResult.ok) {
@@ -586,8 +590,10 @@ export async function createWithdrawalRequestFromForm({
         submittedPayloadSchemaVersion: WITHDRAWAL_PAYLOAD_SCHEMA_VERSION,
         submittedPayloadHash,
         source: "app_proxy",
-        ipAddress,
-        userAgent,
+        ipAddress: null,
+        userAgent: null,
+        ipHash,
+        userAgentHash,
         idempotencyKey,
         receiptTokenHash: receipt.tokenHash,
         receiptTokenExpiresAt: receipt.expiresAt,
@@ -1447,8 +1453,10 @@ export async function submitWithdrawalReturnProof({
     customerMemo,
     submittedBy: "customer",
     submittedAt: now.toISOString(),
-    ipAddress: getClientIp(request),
-    userAgent: request?.headers?.get("user-agent") || null,
+    ipHash: hashPrivateIdentifier(getClientIp(request)),
+    userAgentHash: hashPrivateIdentifier(
+      request?.headers?.get("user-agent") || null,
+    ),
   };
 
   const updated = await prismaClient.$transaction(async (tx) => {
@@ -2299,7 +2307,7 @@ function getClientIp(request) {
   return normalizeText(header.split(",")[0]) || null;
 }
 
-async function checkWithdrawalRateLimit({ prismaClient, email, ipAddress }) {
+async function checkWithdrawalRateLimit({ prismaClient, email, ipAddress, ipHash }) {
   const since = new Date(Date.now() - ONE_HOUR_MS);
   const conditions = [];
 
@@ -2314,12 +2322,15 @@ async function checkWithdrawalRateLimit({ prismaClient, email, ipAddress }) {
     });
   }
 
-  if (ipAddress) {
+  if (ipHash || ipAddress) {
     conditions.push({
       label: "ip",
       limit: IP_RATE_LIMIT_PER_HOUR,
       where: {
-        ipAddress,
+        OR: [
+          ...(ipHash ? [{ ipHash }] : []),
+          ...(ipAddress ? [{ ipAddress }] : []),
+        ],
         createdAt: { gte: since },
       },
     });

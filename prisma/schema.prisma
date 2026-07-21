@@ -232,26 +232,32 @@ model Seller {
 }
 
 model MarketplaceOrder {
-  id                 String    @id @default(cuid())
-  shopDomain         String
-  shopifyOrderId     String
-  shopifyOrderName   String?
-  shopifyOrderNumber String?
-  buyerEmail         String?
-  buyerName          String?
-  totalAmount        Int       @default(0)
-  subtotalAmount     Int       @default(0)
-  shippingAmount     Int       @default(0)
-  discountAmount     Int       @default(0)
-  taxAmount          Int       @default(0)
-  currencyCode       String    @default("jpy")
-  financialStatus    String?
-  fulfillmentStatus  String?
-  processedAt        DateTime?
-  cancelledAt        DateTime?
-  metadataJson       Json?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  shopDomain            String
+  shopifyOrderId        String
+  shopifyOrderName      String?
+  shopifyOrderNumber    String?
+  buyerEmail            String?
+  buyerName             String?
+  totalAmount           Int       @default(0)
+  subtotalAmount        Int       @default(0)
+  shippingAmount        Int       @default(0)
+  discountAmount        Int       @default(0)
+  taxAmount             Int       @default(0)
+  currencyCode          String    @default("jpy")
+  financialStatus       String?
+  fulfillmentStatus     String?
+  processedAt           DateTime?
+  cancelledAt           DateTime?
+  buyerTermsVersion     String?
+  buyerTermsHash        String?
+  buyerTermsUrl         String?
+  buyerTermsLocale      String?
+  buyerTermsPresentedAt DateTime?
+  checkoutReference     String?
+  metadataJson          Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   sellerOrders            SellerOrder[]
   shadowChecks            SellerOrderShadowCheck[]
@@ -266,33 +272,64 @@ model MarketplaceOrder {
   @@map("marketplace_orders")
 }
 
+model MarketplaceCheckoutEvidence {
+  id                     String    @id @default(cuid())
+  checkoutReference      String    @unique
+  shopDomain             String
+  status                 String    @default("PREPARED")
+  sellerAgreementVersion String?
+  sellerAgreementHash    String?
+  sellerAgreementUrl     String?
+  buyerTermsVersion      String?
+  buyerTermsHash         String?
+  buyerTermsUrl          String?
+  buyerTermsLocale       String?
+  presentedAt            DateTime
+  sellerSnapshotsJson    Json
+  productSnapshotsJson   Json
+  shopifyOrderId         String?
+  orderCapturedAt        DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([shopDomain, createdAt])
+  @@index([status, createdAt])
+  @@index([shopifyOrderId])
+  @@map("marketplace_checkout_evidence")
+}
+
 model SellerOrder {
-  id                          String   @id @default(cuid())
+  id                          String    @id @default(cuid())
   marketplaceOrderId          String
   shopifyOrderId              String
   shopifyOrderName            String?
   sellerId                    String
   vendorStoreId               String?
-  sellerSubtotalAmount        Int      @default(0)
-  sellerDiscountAmount        Int      @default(0)
-  sellerRefundAmount          Int      @default(0)
-  sellerNetAmount             Int      @default(0)
-  sellerPayableAmount         Int      @default(0)
-  shippingQuotedAmount        Int      @default(0)
-  shippingChargedAmount       Int      @default(0)
-  shippingAllocationMethod    String   @default("not_allocated")
-  currencyCode                String   @default("jpy")
-  paymentStatus               String   @default("paid")
-  fulfillmentStatus           String   @default("unfulfilled")
-  settlementStatus            String   @default("shadow")
-  riskStatus                  String   @default("normal")
+  sellerSubtotalAmount        Int       @default(0)
+  sellerDiscountAmount        Int       @default(0)
+  sellerRefundAmount          Int       @default(0)
+  sellerNetAmount             Int       @default(0)
+  sellerPayableAmount         Int       @default(0)
+  shippingQuotedAmount        Int       @default(0)
+  shippingChargedAmount       Int       @default(0)
+  shippingAllocationMethod    String    @default("not_allocated")
+  currencyCode                String    @default("jpy")
+  paymentStatus               String    @default("paid")
+  fulfillmentStatus           String    @default("unfulfilled")
+  settlementStatus            String    @default("shadow")
+  riskStatus                  String    @default("normal")
   governanceSnapshotVersion   String?
   legalSellerSnapshotJson     Json?
   sellerAgreementSnapshotJson Json?
   buyerTermsVersion           String?
+  buyerTermsHash              String?
+  buyerTermsUrl               String?
+  buyerTermsLocale            String?
+  buyerTermsPresentedAt       DateTime?
+  checkoutReference           String?
   metadataJson                Json?
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   marketplaceOrder         MarketplaceOrder             @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
   lines                    SellerOrderLine[]
@@ -652,15 +689,20 @@ model SellerComplianceProfile {
 
 model SellerAgreementAcceptance {
   id               String    @id @default(cuid())
+  acceptanceKey    String    @unique
   sellerId         String
   agreementType    String    @default("SELLER_MASTER")
   version          String
   documentHash     String
   acceptedBy       String
+  acceptedByUserId String?
+  acceptedByEmail  String?
   acceptedAt       DateTime  @default(now())
   source           String    @default("ADMIN_RECORDED")
   ipHash           String?
   userAgentHash    String?
+  evidenceUrl      String?
+  evidenceHash     String?
   revokedAt        DateTime?
   revokedBy        String?
   revocationReason String?
@@ -669,7 +711,7 @@ model SellerAgreementAcceptance {
 
   seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  @@unique([sellerId, agreementType, version])
+  @@index([sellerId, agreementType, version, acceptedAt])
   @@index([agreementType, version, acceptedAt])
   @@map("seller_agreement_acceptances")
 }
@@ -905,12 +947,15 @@ model BuyerWarningAcceptance {
   acceptedAt                   DateTime @default(now())
   ipAddress                    String?
   userAgent                    String?
+  ipHash                       String?
+  userAgentHash                String?
   importResponsibilityAccepted Boolean  @default(false)
   metadataJson                 Json?
   createdAt                    DateTime @default(now())
 
   @@index([orderId])
   @@index([shippingCountry, acceptedAt])
+  @@index([ipHash, acceptedAt])
   @@map("buyer_warning_acceptances")
 }
 
@@ -1020,6 +1065,8 @@ model WithdrawalRequest {
   source                                String    @default("app_proxy")
   ipAddress                             String?
   userAgent                             String?
+  ipHash                                String?
+  userAgentHash                         String?
   idempotencyKey                        String    @unique
   createdAt                             DateTime  @default(now())
   updatedAt                             DateTime  @updatedAt
@@ -1047,6 +1094,7 @@ model WithdrawalRequest {
   @@index([correspondenceLocale, createdAt])
   @@index([consumerLawCountry, createdAt])
   @@index([submittedAt])
+  @@index([ipHash, createdAt])
   @@map("withdrawal_requests")
 }
 

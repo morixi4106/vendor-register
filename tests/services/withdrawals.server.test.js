@@ -21,6 +21,8 @@ import {
 } from '../../app/services/withdrawals.server.js';
 import { WITHDRAWAL_ELIGIBILITY_STATUSES } from '../../app/utils/withdrawalStatus.js';
 
+process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-chars';
+
 function daysAgo(days) {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() - days);

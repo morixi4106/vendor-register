@@ -17,12 +17,20 @@ import {
 } from '../utils/deliveryEligibility.js';
 import { normalizeProductCategory } from '../utils/productCategories.js';
 import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
+import { hashPrivateIdentifier } from '../utils/privacyHash.server.js';
 import {
+  buildProductComplianceSnapshot,
+  buildSellerGovernanceSnapshot,
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
+  getCurrentSellerAgreementDocumentHash,
+  getCurrentSellerAgreementUrl,
+  getCurrentBuyerTermsDocumentHash,
+  getCurrentBuyerTermsUrl,
   getCurrentBuyerTermsVersion,
   getCurrentSellerAgreementVersion,
   getSellerAgreementReadinessOptions,
+  getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from './marketplaceGovernance.server.js';
 
@@ -428,7 +436,13 @@ function evaluateMultiSellerCheckoutCountryPolicy({
 function buildCheckoutCustomAttributes(
   vendorContext,
   countryPolicy,
-  { isMultiSeller = false, selectedProducts = [], env = process.env } = {},
+  {
+    isMultiSeller = false,
+    selectedProducts = [],
+    checkoutReference = null,
+    presentedAt = null,
+    env = process.env,
+  } = {},
 ) {
   const attributes = isMultiSeller
     ? [
@@ -454,7 +468,12 @@ function buildCheckoutCustomAttributes(
       ];
 
   const sellerAgreementVersion = getCurrentSellerAgreementVersion(env);
+  const sellerAgreementDocumentHash =
+    getCurrentSellerAgreementDocumentHash(env);
+  const sellerAgreementUrl = getCurrentSellerAgreementUrl(env);
   const buyerTermsVersion = getCurrentBuyerTermsVersion(env);
+  const buyerTermsDocumentHash = getCurrentBuyerTermsDocumentHash(env);
+  const buyerTermsUrl = getCurrentBuyerTermsUrl(env);
   if (
     sellerAgreementVersion !== 'UNCONFIGURED' ||
     buyerTermsVersion !== 'UNCONFIGURED'
@@ -469,12 +488,41 @@ function buildCheckoutCustomAttributes(
         value: sellerAgreementVersion,
       });
     }
+    if (sellerAgreementDocumentHash) {
+      attributes.push({
+        key: 'seller_agreement_hash',
+        value: sellerAgreementDocumentHash,
+      });
+    }
+    if (sellerAgreementUrl) {
+      attributes.push({ key: 'seller_agreement_url', value: sellerAgreementUrl });
+    }
     if (buyerTermsVersion !== 'UNCONFIGURED') {
       attributes.push({
         key: 'buyer_terms_version',
         value: buyerTermsVersion,
       });
     }
+    if (buyerTermsDocumentHash) {
+      attributes.push({ key: 'buyer_terms_hash', value: buyerTermsDocumentHash });
+    }
+    if (buyerTermsUrl) {
+      attributes.push({ key: 'buyer_terms_url', value: buyerTermsUrl });
+    }
+    attributes.push(
+      {
+        key: 'buyer_terms_locale',
+        value: normalizeText(env.BUYER_TERMS_LOCALE) || 'ja-JP',
+      },
+      {
+        key: 'buyer_terms_presented_at',
+        value: (presentedAt || new Date()).toISOString(),
+      },
+      {
+        key: 'checkout_reference',
+        value: checkoutReference || `checkout:${randomUUID()}`,
+      },
+    );
   }
 
   if (countryPolicy?.requiresWarning) {
@@ -485,6 +533,69 @@ function buildCheckoutCustomAttributes(
   }
 
   return attributes;
+}
+
+async function recordMarketplaceCheckoutEvidence(
+  {
+    checkoutReference,
+    shopDomain,
+    presentedAt,
+    selectedProducts,
+    env,
+  },
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.marketplaceCheckoutEvidence?.create) {
+    throw new Error('Marketplace checkout evidence storage is unavailable.');
+  }
+
+  const sellerAgreementVersion = getCurrentSellerAgreementVersion(env);
+  const buyerTermsVersion = getCurrentBuyerTermsVersion(env);
+  const sellerSnapshots = new Map();
+
+  for (const { product } of selectedProducts) {
+    const seller =
+      product.vendorStore?.seller || product.vendorStore?.vendorAuth?.seller || null;
+    if (!seller?.id || sellerSnapshots.has(seller.id)) continue;
+    sellerSnapshots.set(seller.id, {
+      sellerId: seller.id,
+      vendorStoreId: product.vendorStoreId || product.vendorStore?.id || null,
+      snapshot: buildSellerGovernanceSnapshot(
+        {
+          ...seller,
+          vendorStore: product.vendorStore,
+        },
+        { agreementVersion: sellerAgreementVersion, buyerTermsVersion },
+      ),
+    });
+  }
+
+  const productSnapshots = selectedProducts.map(({ product, quantity }) => ({
+    productId: product.id,
+    sellerId:
+      product.vendorStore?.seller?.id ||
+      product.vendorStore?.vendorAuth?.seller?.id ||
+      null,
+    quantity,
+    snapshot: buildProductComplianceSnapshot(product),
+  }));
+
+  return prismaClient.marketplaceCheckoutEvidence.create({
+    data: {
+      checkoutReference,
+      shopDomain,
+      sellerAgreementVersion,
+      sellerAgreementHash: getCurrentSellerAgreementDocumentHash(env),
+      sellerAgreementUrl: getCurrentSellerAgreementUrl(env),
+      buyerTermsVersion,
+      buyerTermsHash: getCurrentBuyerTermsDocumentHash(env),
+      buyerTermsUrl: getCurrentBuyerTermsUrl(env),
+      buyerTermsLocale: normalizeText(env.BUYER_TERMS_LOCALE) || 'ja-JP',
+      presentedAt,
+      sellerSnapshotsJson: Array.from(sellerSnapshots.values()),
+      productSnapshotsJson: productSnapshots,
+    },
+  });
 }
 
 function calculateSelectedProductSubtotal(selectedProducts = []) {
@@ -838,10 +949,15 @@ export async function recordBuyerWarningAcceptance({
         importResponsibilityAccepted: Boolean(
           acceptance.importResponsibilityAccepted,
         ),
-        ipAddress:
-          normalizeText(request?.headers?.get?.('x-forwarded-for')) ||
-          normalizeText(request?.headers?.get?.('cf-connecting-ip')),
-        userAgent: normalizeText(request?.headers?.get?.('user-agent')),
+        ipAddress: null,
+        userAgent: null,
+        ipHash: hashPrivateIdentifier(
+          normalizeText(request?.headers?.get?.('cf-connecting-ip')) ||
+            normalizeText(request?.headers?.get?.('x-forwarded-for'))?.split(',')[0],
+        ),
+        userAgentHash: hashPrivateIdentifier(
+          normalizeText(request?.headers?.get?.('user-agent')),
+        ),
         metadataJson: acceptance.metadataJson || null,
       },
     });
@@ -1732,6 +1848,16 @@ async function buildServerTrustedCheckoutPayload({
   });
 
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
+  const shopifyPaymentsApproval = governanceGateEnabled
+    ? getShopifyMarketplacePaymentsApproval(env)
+    : null;
+
+  if (governanceGateEnabled && !shopifyPaymentsApproval?.ready) {
+    return {
+      ok: false,
+      error: CHECKOUT_UNAVAILABLE_MESSAGE,
+    };
+  }
 
   if (products.length !== uniqueProductIds.length) {
     if (governanceGateEnabled) {
@@ -1922,6 +2048,30 @@ async function buildServerTrustedCheckoutPayload({
     };
   }
 
+  const checkoutReference = `checkout:${randomUUID()}`;
+  const termsPresentedAt = new Date();
+
+  if (governanceGateEnabled) {
+    try {
+      await recordMarketplaceCheckoutEvidence(
+        {
+          checkoutReference,
+          shopDomain: shopDomains[0],
+          presentedAt: termsPresentedAt,
+          selectedProducts,
+          env,
+        },
+        { prismaClient },
+      );
+    } catch (error) {
+      console.error('marketplace checkout evidence write failed:', error);
+      return {
+        ok: false,
+        error: CHECKOUT_UNAVAILABLE_MESSAGE,
+      };
+    }
+  }
+
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource, {
     isMultiSeller: isMultiSellerCheckout,
   });
@@ -1929,6 +2079,8 @@ async function buildServerTrustedCheckoutPayload({
     ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy, {
       isMultiSeller: isMultiSellerCheckout,
       selectedProducts,
+      checkoutReference,
+      presentedAt: termsPresentedAt,
       env,
     }),
     ...salesCredit.customAttributes,

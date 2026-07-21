@@ -173,6 +173,11 @@ test("ensureApprovedProductPublished blocks governance-incomplete products when 
       assert.ok(error instanceof ProductPublicationError);
       assert.equal(error.details.reason, "marketplace_governance_incomplete");
       assert.ok(error.details.productReasons.includes("product_compliance_missing"));
+      assert.ok(
+        error.details.shopifyPaymentsApprovalReasons.includes(
+          "shopify_marketplace_payments_approval_not_confirmed",
+        ),
+      );
       return true;
     },
   );
