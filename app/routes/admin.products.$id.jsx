@@ -1,7 +1,7 @@
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { json, redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import prisma from "../db.server";
 import { calculateProductPriceResult } from "../utils/buildCalculatedPrice";
 import { buildPriceSnapshot } from "../utils/priceSnapshot";
@@ -25,8 +25,17 @@ import {
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server";
 import { ensureApprovedProductPublished } from "../services/productPublication.server";
+import { syncAndRecordShopifyVariantWeight } from "../services/shopifyInventoryWeight.server";
 import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
+import {
+  PRODUCT_SHIPPING_METHOD,
+  PRODUCT_SHIPPING_METHOD_OPTIONS,
+  buildConfirmedShippingProfileData,
+  getProductShippingMethodLabel,
+  millimetersToCentimeters,
+  parseProductShippingProfileFormData,
+} from "../utils/productShippingProfile";
 
 const SHOPIFY_PRODUCT_CREATE_IN_PROGRESS_STATUS = "publishing";
 const SHOPIFY_PRODUCT_CREATE_CLAIMABLE_STATUSES = [
@@ -509,6 +518,7 @@ async function createShopifyProductFromDbProduct(product) {
             nodes {
               id
               price
+              inventoryItem { id }
             }
           }
         }
@@ -632,6 +642,20 @@ async function createShopifyProductFromDbProduct(product) {
         updateVariantPayload.userErrors
       )}`
     );
+  }
+
+  if (product.shippingWeightGrams) {
+    try {
+      await syncAndRecordShopifyVariantWeight({
+        productId: product.id,
+        shopDomain,
+        variantId: createdVariant.id,
+        inventoryItemId: createdVariant.inventoryItem?.id || null,
+        weightGrams: product.shippingWeightGrams,
+      });
+    } catch (error) {
+      console.error("Shopify weight sync after product creation failed:", error);
+    }
   }
 
   if (product.imageUrl) {
@@ -995,6 +1019,45 @@ export const action = async ({ request }) => {
       return json({ ok: false, error: "商品が見つかりません" }, { status: 404 });
     }
 
+    if (intent === "save-shipping-profile") {
+      const shippingProfile = parseProductShippingProfileFormData(formData, {
+        variantCount:
+          product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null),
+      });
+
+      if (!shippingProfile.ok) {
+        return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+      }
+
+      let shopDomain = product.shopDomain;
+      if (product.shopifyVariantId) {
+        shopDomain = shopDomain || (await resolveShopDomain());
+      }
+
+      await prisma.product.update({
+        where: { id: productId },
+        data: {
+          ...buildConfirmedShippingProfileData(shippingProfile.data, {
+            isShopifyLinked: Boolean(product.shopifyVariantId),
+          }),
+          shopifyVariantCount:
+            product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null),
+          ...(shopDomain ? { shopDomain } : {}),
+        },
+      });
+
+      if (product.shopifyVariantId) {
+        await syncAndRecordShopifyVariantWeight({
+          productId,
+          shopDomain,
+          variantId: product.shopifyVariantId,
+          weightGrams: shippingProfile.data.shippingWeightGrams,
+        });
+      }
+
+      return redirect(`/admin/products/${productId}`);
+    }
+
     if (intent === "apply-country-template") {
       const template = await resolveDeliveryPolicyTemplate(
         formData.get("countryPolicyTemplate"),
@@ -1229,6 +1292,18 @@ export const action = async ({ request }) => {
           );
         }
 
+        if (
+          productWithResolvedShopDomain.shopifyVariantId &&
+          productWithResolvedShopDomain.shippingWeightGrams
+        ) {
+          await syncAndRecordShopifyVariantWeight({
+            productId,
+            shopDomain,
+            variantId: productWithResolvedShopDomain.shopifyVariantId,
+            weightGrams: productWithResolvedShopDomain.shippingWeightGrams,
+          });
+        }
+
         await prisma.product.update({
           where: { id: productId },
           data: {
@@ -1288,6 +1363,7 @@ export const action = async ({ request }) => {
           approvalStatus: "approved",
           shopifyProductId: result.shopifyProductId,
           shopifyVariantId: result.shopifyVariantId,
+          shopifyVariantCount: 1,
           shopDomain: result.shopDomain,
         },
       });
@@ -1344,6 +1420,15 @@ export default function AdminProductDetail() {
     priceDebug,
   } = useLoaderData();
   const actionData = useActionData();
+  const [shippingMethod, setShippingMethod] = useState(
+    product.internationalShippingMethod || PRODUCT_SHIPPING_METHOD.UNCONFIGURED,
+  );
+
+  useEffect(() => {
+    setShippingMethod(
+      product.internationalShippingMethod || PRODUCT_SHIPPING_METHOD.UNCONFIGURED,
+    );
+  }, [product.id, product.internationalShippingMethod]);
   const priceState = priceDebug?.priceState || null;
   const priceApplyLogs = priceDebug?.priceApplyLogs || [];
   const publicReconnectMessage =
@@ -1628,6 +1713,151 @@ export default function AdminProductDetail() {
       ) : null}
 
       <div style={{ display: "grid", gap: "20px", marginTop: "20px" }}>
+        <div>
+          <h3>配送プロフィール</h3>
+          <div
+            style={{
+              marginTop: "10px",
+              padding: "14px",
+              borderRadius: "8px",
+              background: "#f9fafb",
+              border: "1px solid #e5e7eb",
+            }}
+          >
+            <p style={{ marginTop: 0 }}>
+              現在: {getProductShippingMethodLabel(product.internationalShippingMethod)}
+            </p>
+            <p style={{ color: "#6b7280", fontSize: "14px", lineHeight: 1.7 }}>
+              商品1点を発送できる状態に梱包した後の重量・サイズです。Shopifyの商品重量にも同期します。
+            </p>
+
+            <Form method="post" style={{ display: "grid", gap: "12px" }}>
+              <input type="hidden" name="intent" value="save-shipping-profile" />
+              <input type="hidden" name="productId" value={product.id} />
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                梱包後重量（g）
+                <input
+                  defaultValue={product.shippingWeightGrams ?? ""}
+                  min="1"
+                  name="shippingWeightGrams"
+                  placeholder="例: 350"
+                  required
+                  step="1"
+                  type="number"
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                />
+                <label
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    alignItems: "flex-start",
+                    fontWeight: 600,
+                  }}
+                >
+                  <input
+                    defaultChecked={Boolean(product.shippingWeightConfirmedAt)}
+                    name="shippingWeightConfirmed"
+                    required
+                    type="checkbox"
+                    value="1"
+                  />
+                  箱・封筒・緩衝材を含む梱包後重量であることを確認しました
+                </label>
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", fontWeight: 700 }}>
+                配送範囲
+                <select
+                  name="internationalShippingMethod"
+                  onChange={(event) => setShippingMethod(event.currentTarget.value)}
+                  required
+                  value={shippingMethod}
+                  style={{
+                    height: "40px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    padding: "0 10px",
+                  }}
+                >
+                  <option value={PRODUCT_SHIPPING_METHOD.UNCONFIGURED} disabled>
+                    配送範囲を選択してください
+                  </option>
+                  {PRODUCT_SHIPPING_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {shippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET ? (
+                <div style={{ display: "grid", gap: "8px" }}>
+                  <strong>梱包後サイズ（cm）</strong>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                      gap: "10px",
+                    }}
+                  >
+                    {[
+                      ["shippingLengthCm", "長さ", product.shippingLengthMm],
+                      ["shippingWidthCm", "幅", product.shippingWidthMm],
+                      ["shippingHeightCm", "厚さ", product.shippingHeightMm],
+                    ].map(([name, label, value]) => (
+                      <input
+                        aria-label={`梱包後の${label}`}
+                        defaultValue={millimetersToCentimeters(value)}
+                        key={name}
+                        min="0.1"
+                        name={name}
+                        placeholder={label}
+                        required
+                        step="0.1"
+                        type="number"
+                        style={{
+                          height: "40px",
+                          borderRadius: "8px",
+                          border: "1px solid #d1d5db",
+                          padding: "0 10px",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span style={{ color: "#6b7280", fontSize: "13px" }}>
+                    通常形状は14.8cm × 10.5cm以上、2kg以下、最長辺60cm以下、
+                    三辺合計90cm以下です。巻物形状と複数バリエーションは現在非対応です。
+                    設定変更後、チェックアウトへの反映に最大15分かかる場合があります。
+                  </span>
+                </div>
+              ) : null}
+
+              <button
+                type="submit"
+                style={{
+                  minHeight: "40px",
+                  padding: "0 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  justifySelf: "start",
+                }}
+              >
+                配送情報を保存
+              </button>
+            </Form>
+          </div>
+        </div>
+
         <div>
           <h3>EU販売審査</h3>
           <div

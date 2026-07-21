@@ -25,6 +25,8 @@ export default function App() {
         <Link to="/app/launch-monitor">公開監視</Link>
         <Link to="/app/seller-order-shadow">SellerOrder検証</Link>
         <Link to="/app/shopify-product-sync">Shopify商品同期</Link>
+        <Link to="/app/product-shipping">商品配送設定</Link>
+        <Link to="/app/international-shipping">国際配送状況</Link>
         <Link to="/app/withdrawals">撤回申請</Link>
         <Link to="/app/withdrawal-settings">撤回運用設定</Link>
         <Link to="/app/carrier-service">配送サービス</Link>

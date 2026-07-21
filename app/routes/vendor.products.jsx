@@ -226,7 +226,7 @@ export default function VendorProductsPage() {
                 <th>公開商品ID</th>
                 <th>商品URL</th>
                 <th>価格</th>
-                <th>配送先</th>
+                <th>配送</th>
                 <th>売上見込</th>
                 <th>状態</th>
                 <th>申請</th>
@@ -270,6 +270,14 @@ export default function VendorProductsPage() {
                       <span className="vendor-table__meta">
                         {product.deliveryPolicyDetail}
                       </span>
+                      <span className="vendor-table__meta">
+                        {product.shippingMethodLabel} / {product.shippingWeightLabel}
+                      </span>
+                      {product.shippingSizeLabel ? (
+                        <span className="vendor-table__meta">
+                          {product.shippingSizeLabel}
+                        </span>
+                      ) : null}
                     </td>
                     <td>{product.salesLabel}</td>
                     <td>

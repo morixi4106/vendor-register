@@ -50,6 +50,26 @@ test("createShopifyProductSnapshot normalizes REST product payload", () => {
   assert.equal(snapshot.description, "説明です");
 });
 
+test("createShopifyProductSnapshot converts Shopify variant weights upward to grams", () => {
+  const snapshot = createShopifyProductSnapshot(
+    productPayload({
+      variants: [
+        {
+          id: 456,
+          admin_graphql_api_id: "gid://shopify/ProductVariant/456",
+          price: "1200",
+          inventory_quantity: 4,
+          weight: 0.501,
+          weight_unit: "kg",
+        },
+      ],
+    }),
+  );
+
+  assert.equal(snapshot.shippingWeightGrams, 501);
+  assert.equal(snapshot.variantCount, 1);
+});
+
 test("sync preserves an existing local owner and pricing", async () => {
   const issues = createIssueDelegate();
   const existing = {
@@ -87,6 +107,101 @@ test("sync preserves an existing local owner and pricing", async () => {
   assert.equal(result.product.calculatedPrice, 900);
   assert.equal(updateArgs.data.name, "Shopify直登録商品");
   assert.equal("price" in updateArgs.data, false);
+});
+
+test("sync preserves a confirmed profile when Shopify echoes the same weight", async () => {
+  const issues = createIssueDelegate();
+  const existing = {
+    id: "product_1",
+    name: "旧名",
+    price: 500,
+    calculatedPrice: 900,
+    vendorStoreId: "store_existing",
+    shopifyVariantId: "gid://shopify/ProductVariant/456",
+    shippingWeightGrams: 500,
+    shippingWeightConfirmedAt: new Date("2026-07-01T00:00:00Z"),
+    shippingWeightSource: "MANUAL_CONFIRMED",
+    shopifyWeightSyncStatus: "SYNCED",
+  };
+  let updateArgs = null;
+  const prismaClient = {
+    product: {
+      findFirst: async () => existing,
+      update: async (args) => {
+        updateArgs = args;
+        return { ...existing, ...args.data };
+      },
+    },
+    shopifyProductSyncIssue: issues,
+  };
+
+  await syncShopifyProductPayload(
+    productPayload({
+      variants: [
+        {
+          id: 456,
+          admin_graphql_api_id: "gid://shopify/ProductVariant/456",
+          price: "1200",
+          inventory_quantity: 4,
+          grams: 500,
+        },
+      ],
+    }),
+    { prismaClient, shopDomain: "shop.myshopify.com" },
+  );
+
+  assert.equal(updateArgs.data.shippingWeightGrams, 500);
+  assert.equal("shippingWeightConfirmedAt" in updateArgs.data, false);
+  assert.equal("shippingWeightSource" in updateArgs.data, false);
+  assert.equal("shopifyWeightSyncStatus" in updateArgs.data, false);
+});
+
+test("sync invalidates a confirmed profile when Shopify changes the weight", async () => {
+  const issues = createIssueDelegate();
+  const existing = {
+    id: "product_1",
+    name: "旧名",
+    price: 500,
+    calculatedPrice: 900,
+    vendorStoreId: "store_existing",
+    shopifyVariantId: "gid://shopify/ProductVariant/456",
+    shippingWeightGrams: 500,
+    shippingWeightConfirmedAt: new Date("2026-07-01T00:00:00Z"),
+    shippingWeightSource: "MANUAL_CONFIRMED",
+    shopifyWeightSyncStatus: "SYNCED",
+  };
+  let updateArgs = null;
+  const prismaClient = {
+    product: {
+      findFirst: async () => existing,
+      update: async (args) => {
+        updateArgs = args;
+        return { ...existing, ...args.data };
+      },
+    },
+    shopifyProductSyncIssue: issues,
+  };
+
+  await syncShopifyProductPayload(
+    productPayload({
+      variants: [
+        {
+          id: 456,
+          admin_graphql_api_id: "gid://shopify/ProductVariant/456",
+          price: "1200",
+          inventory_quantity: 4,
+          grams: 600,
+        },
+      ],
+    }),
+    { prismaClient, shopDomain: "shop.myshopify.com" },
+  );
+
+  assert.equal(updateArgs.data.shippingWeightGrams, 600);
+  assert.equal(updateArgs.data.shippingWeightConfirmedAt, null);
+  assert.equal(updateArgs.data.shippingWeightSource, "SHOPIFY_UNVERIFIED");
+  assert.equal(updateArgs.data.shopifyWeightSyncStatus, "EXTERNAL_CHANGE");
+  assert.match(updateArgs.data.shopifyWeightSyncError, /再確認/);
 });
 
 test("sync imports a direct Shopify product when vendor handle resolves uniquely", async () => {

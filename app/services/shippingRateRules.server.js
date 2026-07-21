@@ -1,3 +1,18 @@
+import {
+  JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+  JAPAN_POST_AIR_PACKET_RATE_VERSION,
+  quoteJapanPostAirPacket,
+} from './japanPostAirPacket.server.js';
+import { INTERNATIONAL_SERVICE_STATUS } from './internationalShippingAvailability.server.js';
+import {
+  AIR_PACKET_MAX_DIMENSION_SUM_MM,
+  AIR_PACKET_MAX_LONGEST_SIDE_MM,
+  AIR_PACKET_MIN_LONG_SIDE_MM,
+  AIR_PACKET_MIN_SHORT_SIDE_MM,
+  SHIPPING_WEIGHT_SOURCE,
+  SHOPIFY_WEIGHT_SYNC_STATUS,
+} from '../utils/productShippingProfile.js';
+
 export const SHIPPING_RATE_RULES_SOURCE = 'vendor-register-shipping-rules';
 export const SHIPPING_RATE_RULES_VERSION = 'mvp_v2';
 
@@ -670,6 +685,14 @@ function normalizeLineWithRule(line, index, shippingAddress, config) {
     requiresShipping: normalizeBoolean(raw.requiresShipping ?? raw.requires_shipping, true),
     amountAfterItemDiscountBeforeOrderCoupon,
     grams: toNonNegativeNumber(raw.grams ?? raw.weightGrams),
+    shippingLengthMm: toNonNegativeNumber(raw.shippingLengthMm),
+    shippingWidthMm: toNonNegativeNumber(raw.shippingWidthMm),
+    shippingHeightMm: toNonNegativeNumber(raw.shippingHeightMm),
+    internationalShippingMethod: normalizeCode(raw.internationalShippingMethod),
+    shippingWeightConfirmed: normalizeBoolean(raw.shippingWeightConfirmed, false),
+    shippingWeightSource: normalizeCode(raw.shippingWeightSource),
+    shopifyVariantCount: toNonNegativeNumber(raw.shopifyVariantCount),
+    shopifyWeightSyncStatus: normalizeCode(raw.shopifyWeightSyncStatus),
     shipFromId:
       normalizeText(rule.shipFromId || raw.shipFromId || raw.ship_from_id) ||
       defaults.shipFromId,
@@ -1033,9 +1056,139 @@ function summarizeLine(line) {
     freeShippingEligible: line.freeShippingEligible,
     shippingPoint: line.shippingPoint,
     totalShippingPoint: line.totalShippingPoint,
+    grams: line.grams,
+    shippingLengthMm: line.shippingLengthMm,
+    shippingWidthMm: line.shippingWidthMm,
+    shippingHeightMm: line.shippingHeightMm,
+    internationalShippingMethod: line.internationalShippingMethod,
+    shippingWeightConfirmed: line.shippingWeightConfirmed,
+    shippingWeightSource: line.shippingWeightSource,
+    shopifyVariantCount: line.shopifyVariantCount,
+    shopifyWeightSyncStatus: line.shopifyWeightSyncStatus,
     amountAfterItemDiscountBeforeOrderCoupon:
       line.amountAfterItemDiscountBeforeOrderCoupon,
     appliedLineRuleId: line.appliedLineRuleId,
+  };
+}
+
+function calculateAirPacketGroup(group, countryCode) {
+  let fee = 0;
+  let packageCount = 0;
+  let unavailableReason = null;
+  const lineQuotes = [];
+
+  for (const line of group.lines) {
+    if (line.internationalShippingMethod !== 'AIR_PACKET') {
+      unavailableReason = 'international_shipping_not_enabled';
+      break;
+    }
+    if (
+      line.shippingWeightConfirmed !== true ||
+      line.shippingWeightSource !== SHIPPING_WEIGHT_SOURCE.MANUAL_CONFIRMED
+    ) {
+      unavailableReason = 'shipping_weight_unverified';
+      break;
+    }
+    if (Number(line.shopifyVariantCount) !== 1) {
+      unavailableReason = 'multiple_variants_unsupported';
+      break;
+    }
+    if (line.shopifyWeightSyncStatus !== SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED) {
+      unavailableReason = 'shopify_weight_sync_incomplete';
+      break;
+    }
+    if (
+      line.temperatureZone !== 'ambient' ||
+      ['cool', 'frozen', 'bulky'].includes(line.shippingClass)
+    ) {
+      unavailableReason = 'air_packet_shipping_class_unsupported';
+      break;
+    }
+
+    const dimensions = [
+      Number(line.shippingLengthMm),
+      Number(line.shippingWidthMm),
+      Number(line.shippingHeightMm),
+    ];
+    if (dimensions.some((value) => !Number.isFinite(value) || value <= 0)) {
+      unavailableReason = 'shipping_dimensions_missing';
+      break;
+    }
+    if (Math.max(...dimensions) > AIR_PACKET_MAX_LONGEST_SIDE_MM) {
+      unavailableReason = 'air_packet_longest_side_exceeded';
+      break;
+    }
+    if (
+      dimensions.reduce((total, value) => total + value, 0) >
+      AIR_PACKET_MAX_DIMENSION_SUM_MM
+    ) {
+      unavailableReason = 'air_packet_dimensions_exceeded';
+      break;
+    }
+    const sortedDimensions = [...dimensions].sort((left, right) => right - left);
+    if (
+      sortedDimensions[0] < AIR_PACKET_MIN_LONG_SIDE_MM ||
+      sortedDimensions[1] < AIR_PACKET_MIN_SHORT_SIDE_MM
+    ) {
+      unavailableReason = 'air_packet_minimum_dimensions_not_met';
+      break;
+    }
+
+    const quote = quoteJapanPostAirPacket({
+      countryCode,
+      weightGrams: line.grams,
+    });
+    if (!quote.ok) {
+      unavailableReason = quote.reason;
+      break;
+    }
+
+    const quantity = toPositiveInteger(line.quantity, 1);
+    fee += quote.amount * quantity;
+    packageCount += quantity;
+    lineQuotes.push({
+      lineId: line.lineId,
+      amountPerUnit: quote.amount,
+      quantity,
+      zone: quote.zone,
+      weightBandGrams: quote.weightBandGrams,
+      packedWeightGrams: Number(line.grams),
+      rateVersion: quote.rateVersion,
+      rateSource: quote.rateSource,
+    });
+  }
+
+  if (unavailableReason) {
+    return {
+      ...group,
+      mode: 'air_packet',
+      regionTier: `air_packet_zone_unknown`,
+      packageCount: 0,
+      totalShippingPoint: getTotalShippingPoint(group.lines),
+      totalWeightGrams: getTotalWeightGrams(group.lines),
+      fee: null,
+      originalFee: null,
+      isDeliverable: false,
+      isFreeShippingApplied: false,
+      messages: [...group.messages, unavailableReason],
+      lineQuotes,
+    };
+  }
+
+  const zone = lineQuotes[0]?.zone;
+  return {
+    ...group,
+    mode: 'air_packet',
+    regionTier: `air_packet_zone_${zone}`,
+    packageCount,
+    totalShippingPoint: getTotalShippingPoint(group.lines),
+    totalWeightGrams: getTotalWeightGrams(group.lines),
+    fee,
+    originalFee: fee,
+    isDeliverable: true,
+    isFreeShippingApplied: false,
+    messages: [...group.messages, JAPAN_POST_AIR_PACKET_RATE_VERSION],
+    lineQuotes,
   };
 }
 
@@ -1055,6 +1208,7 @@ function summarizeGroup(group) {
     temperatureZone: group.temperatureZone,
     leadTimeBucket: group.leadTimeBucket,
     messages: group.messages,
+    lineQuotes: group.lineQuotes || [],
     lines: group.lines.map(summarizeLine),
   };
 }
@@ -1087,9 +1241,15 @@ export function resolveShippingRate(input, config) {
     };
   }
 
-  const matchedOverride = normalizedConfig.rateOverrides.find((rule) =>
-    rateOverrideMatches(rule, { ...input, shippingAddress }, shippableLines),
+  const countryCode = normalizeCode(
+    shippingAddress.countryCode || shippingAddress.country || shippingAddress.country_code,
   );
+  const matchedOverride =
+    !countryCode || countryCode === 'JP'
+      ? normalizedConfig.rateOverrides.find((rule) =>
+          rateOverrideMatches(rule, { ...input, shippingAddress }, shippableLines),
+        )
+      : null;
 
   if (matchedOverride) {
     return {
@@ -1121,6 +1281,83 @@ export function resolveShippingRate(input, config) {
       adminBreakdown: {
         normalizedLines: normalizedLines.map(summarizeLine),
         matchedOverride,
+      },
+    };
+  }
+
+  if (countryCode && countryCode !== 'JP') {
+    const airPacketGroups = groupShipmentLines(shippableLines).map((group) =>
+      calculateAirPacketGroup(group, countryCode),
+    );
+    const unavailableGroup = airPacketGroups.find((group) => !group.isDeliverable);
+    const groups = airPacketGroups.map(summarizeGroup);
+
+    if (unavailableGroup) {
+      return {
+        isDeliverable: false,
+        totalShippingFee: null,
+        currencyCode: normalizedConfig.currencyCode,
+        rateSource: JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+        matchedRuleId: unavailableGroup.messages.at(-1) || 'air_packet_unavailable',
+        regionTier: unavailableGroup.regionTier,
+        shippableLineCount: shippableLines.length,
+        totalWeightGrams: getTotalWeightGrams(shippableLines),
+        totalShippingPoint: getTotalShippingPoint(shippableLines),
+        freeShippingEligibleSubtotal: getLineSubtotal(shippableLines, { eligibleOnly: true }),
+        isFreeShippingThresholdMet: false,
+        groups,
+        adminBreakdown: {
+          normalizedLines: normalizedLines.map(summarizeLine),
+          rateVersion: JAPAN_POST_AIR_PACKET_RATE_VERSION,
+          packingPolicy: 'one_packed_unit_per_air_packet',
+        },
+      };
+    }
+
+    if (
+      normalizeCode(input?.internationalServiceAvailabilityStatus) !==
+      INTERNATIONAL_SERVICE_STATUS.ACTIVE
+    ) {
+      return {
+        isDeliverable: false,
+        totalShippingFee: null,
+        currencyCode: normalizedConfig.currencyCode,
+        rateSource: JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+        matchedRuleId: 'international_service_unavailable',
+        regionTier: groups.map((group) => group.regionTier).join('+') || null,
+        shippableLineCount: shippableLines.length,
+        totalWeightGrams: getTotalWeightGrams(shippableLines),
+        totalShippingPoint: getTotalShippingPoint(shippableLines),
+        freeShippingEligibleSubtotal: getLineSubtotal(shippableLines, { eligibleOnly: true }),
+        isFreeShippingThresholdMet: false,
+        groups,
+        adminBreakdown: {
+          normalizedLines: normalizedLines.map(summarizeLine),
+          internationalServiceAvailabilityStatus:
+            input?.internationalServiceAvailabilityStatus ||
+            INTERNATIONAL_SERVICE_STATUS.UNKNOWN,
+          rateVersion: JAPAN_POST_AIR_PACKET_RATE_VERSION,
+        },
+      };
+    }
+
+    return {
+      isDeliverable: true,
+      totalShippingFee: groups.reduce((total, group) => total + group.fee, 0),
+      currencyCode: normalizedConfig.currencyCode,
+      rateSource: JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+      matchedRuleId: JAPAN_POST_AIR_PACKET_RATE_VERSION,
+      regionTier: groups.map((group) => group.regionTier).join('+'),
+      shippableLineCount: shippableLines.length,
+      totalWeightGrams: getTotalWeightGrams(shippableLines),
+      totalShippingPoint: getTotalShippingPoint(shippableLines),
+      freeShippingEligibleSubtotal: getLineSubtotal(shippableLines, { eligibleOnly: true }),
+      isFreeShippingThresholdMet: false,
+      groups,
+      adminBreakdown: {
+        normalizedLines: normalizedLines.map(summarizeLine),
+        rateVersion: JAPAN_POST_AIR_PACKET_RATE_VERSION,
+        packingPolicy: 'one_packed_unit_per_air_packet',
       },
     };
   }

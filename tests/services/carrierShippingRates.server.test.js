@@ -284,6 +284,9 @@ test('carrier shipping rates returns rates from Shipping V2 quote response', asy
   assert.equal(receivedQuoteRequest.shippingAddress.postalCode, '150-0001');
   assert.equal(infoLogs.some(([message]) => message === 'carrier shipping rates request:'), true);
   assert.equal(infoLogs.some(([message]) => message === 'carrier shipping rates response:'), true);
+  const serializedLogs = JSON.stringify(infoLogs);
+  assert.equal(serializedLogs.includes('150-0001'), false);
+  assert.equal(serializedLogs.includes('Shibuya'), false);
   const quoteResponseLog = infoLogs.find(
     ([message]) => message === 'carrier shipping rates quote response:',
   );
@@ -381,7 +384,7 @@ test('carrier shipping rates blocks EU checkout when the current product EU stat
     listShippingDiagnosticEvents({ limit: 10 }).some(
       (event) =>
         event.source === 'carrier' &&
-        event.message === 'eu_delivery_blocked' &&
+        event.message === 'international_delivery_blocked' &&
         event.details.policy.reason === 'eu_product_not_allowed',
     ),
     true,
@@ -435,6 +438,47 @@ test('validateCarrierEuDeliveryPolicy allows EU delivery only for approved selle
   assert.equal(result.productCount, 1);
 });
 
+test('carrier delivery policy enforces product country rules outside the EU', async () => {
+  const quoteRequest = buildCarrierShippingV2QuoteRequest(
+    createCarrierRequest({
+      rate: {
+        destination: {
+          country: 'CA',
+          zip: 'M5V 3L9',
+          city: 'Toronto',
+        },
+      },
+    }),
+  );
+  const result = await validateCarrierEuDeliveryPolicy({
+    quoteRequest,
+    prismaClient: {
+      product: {
+        async findMany() {
+          return [
+            {
+              id: 'prod_1',
+              shopifyProductId: 'gid://shopify/Product/9044842447011',
+              shopifyVariantId: 'gid://shopify/ProductVariant/111222333',
+              approvalStatus: 'approved',
+              productEuStatus: 'DISABLED',
+              countryPolicy: {
+                allowedCountries: ['JP', 'FR'],
+                blockedCountries: [],
+              },
+              vendorStore: { vendorAuth: { seller: null } },
+            },
+          ];
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.countryCode, 'CA');
+  assert.equal(result.reason, 'country_not_allowed');
+});
+
 test('carrier shipping rates GET loader does not parse a body', async () => {
   const logs = [];
   const loader = createCarrierShippingRatesLoader({
@@ -481,6 +525,36 @@ test('carrier shipping rates returns empty rates for empty body without throwing
   assert.equal(errors[0][1].rawBodyLength, 0);
 });
 
+test('carrier shipping rates fails closed when the request body cannot be read', async () => {
+  const errors = [];
+  let callCount = 0;
+  const action = createCarrierShippingRatesAction({
+    fetchShippingV2QuoteImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+    logInfo: () => {},
+    logError: (...args) => errors.push(args),
+  });
+  const response = await action({
+    request: {
+      method: 'POST',
+      url: 'http://localhost/carrier/shipping-rates',
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+      text: async () => {
+        throw new Error('stream interrupted');
+      },
+    },
+  });
+
+  assert.deepEqual(await response.json(), { rates: [] });
+  assert.equal(callCount, 0);
+  assert.equal(errors[0][0], 'carrier shipping rates body read failed:');
+  assert.equal(errors[0][1].error, 'stream interrupted');
+  assert.equal('url' in errors[0][1], false);
+  assert.equal('rawBody' in errors[0][1], false);
+});
+
 test('carrier shipping rates returns empty rates for invalid JSON without throwing', async () => {
   const errors = [];
   let callCount = 0;
@@ -505,12 +579,66 @@ test('carrier shipping rates returns empty rates for invalid JSON without throwi
   assert.deepEqual(await response.json(), { rates: [] });
   assert.equal(callCount, 0);
   assert.equal(errors[0][0], 'carrier shipping rates invalid json:');
-  assert.equal(errors[0][1].rawBodyPreview, '{nope');
+  assert.equal(errors[0][1].rawBodyLength, 5);
+  assert.equal('rawBodyPreview' in errors[0][1], false);
 });
 
 test('carrier shipping rates converts Shipping V2 amount to Shopify carrier subunits', () => {
   assert.equal(toShopifyCarrierSubunits(420), '42000');
   assert.equal(toShopifyCarrierSubunits('1000'), '100000');
+});
+
+test('carrier shipping rates labels international quotes as Air Packet', () => {
+  const response = buildCarrierRatesResponse({
+    quoteResponse: {
+      ok: true,
+      enabled: true,
+      result: {
+        isDeliverable: true,
+        totalShippingFee: 2040,
+        rateSource: 'japan_post_air_packet',
+      },
+    },
+    currency: 'JPY',
+  });
+
+  assert.equal(response.rates[0].service_name, '国際エアパケット');
+  assert.equal(
+    response.rates[0].service_code,
+    'shipping_v2_jp_air_packet_2026_06_01',
+  );
+  assert.equal(response.rates[0].description, '日本郵便の追跡付き国際配送');
+  assert.equal(response.rates[0].total_price, '204000');
+});
+
+test('carrier shipping rates encodes the Air Packet zone and weight bands for order audit', () => {
+  const response = buildCarrierRatesResponse({
+    quoteResponse: {
+      ok: true,
+      enabled: true,
+      result: {
+        isDeliverable: true,
+        totalShippingFee: 6040,
+        rateSource: 'japan_post_air_packet',
+      },
+      debug: {
+        groups: [
+          {
+            lineQuotes: [
+              { zone: 3, weightBandGrams: 800, quantity: 2 },
+              { zone: 3, weightBandGrams: 100, quantity: 1 },
+            ],
+          },
+        ],
+      },
+    },
+    currency: 'JPY',
+  });
+
+  assert.equal(
+    response.rates[0].service_code,
+    'shipping_v2_jp_air_packet_2026_06_01_z3_b1x1.8x2',
+  );
 });
 
 test('carrier shipping rates returns empty rates for quote errors and undeliverable quotes', async () => {

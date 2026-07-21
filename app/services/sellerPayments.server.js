@@ -7,6 +7,10 @@ import isoCountries from "i18n-iso-countries";
 import prisma from "../db.server.js";
 import { formatMoney } from "../utils/money.js";
 import { isMarketplaceSeller } from "../utils/sellerRoles.js";
+import {
+  JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+  JAPAN_POST_AIR_PACKET_RATE_VERSION,
+} from "./japanPostAirPacket.server.js";
 
 const require = createRequire(import.meta.url);
 const jaLocale = require("i18n-iso-countries/langs/ja.json");
@@ -3616,6 +3620,92 @@ function getShopifyOrderShippingAmount(payload, currencyCode) {
   }, 0);
 }
 
+function buildCarrierShippingRateSnapshot(payload, currencyCode) {
+  const shippingLines = Array.isArray(payload?.shipping_lines)
+    ? payload.shipping_lines
+    : [];
+  const airPacketLines = shippingLines.filter((shippingLine) => {
+    const code = normalizeLowercase(
+      shippingLine?.code || shippingLine?.source || shippingLine?.title,
+    );
+    return code.includes("shipping_v2_jp_air_packet_");
+  });
+
+  if (airPacketLines.length === 0) {
+    return null;
+  }
+
+  const bandQuantities = new Map();
+  const zones = new Set();
+
+  for (const shippingLine of airPacketLines) {
+    const code = normalizeLowercase(
+      shippingLine?.code || shippingLine?.source || shippingLine?.title,
+    );
+    const metadataMatch = code.match(
+      /_z([1-5])_b([0-9a-z]+x[0-9a-z]+(?:\.[0-9a-z]+x[0-9a-z]+)*)$/,
+    );
+
+    if (!metadataMatch) {
+      continue;
+    }
+
+    zones.add(Number.parseInt(metadataMatch[1], 36));
+    for (const token of metadataMatch[2].split('.')) {
+      const [bandToken, quantityToken] = token.split('x');
+      const bandUnits = Number.parseInt(bandToken, 36);
+      const quantity = Number.parseInt(quantityToken, 36);
+
+      if (
+        !Number.isInteger(bandUnits) ||
+        bandUnits <= 0 ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
+        continue;
+      }
+
+      const weightBandGrams = bandUnits * 100;
+      bandQuantities.set(
+        weightBandGrams,
+        (bandQuantities.get(weightBandGrams) || 0) + quantity,
+      );
+    }
+  }
+
+  const encodedQuoteMetadata =
+    zones.size === 1 && bandQuantities.size > 0
+      ? {
+          zone: Array.from(zones)[0],
+          weightBands: Array.from(bandQuantities.entries())
+            .sort(([left], [right]) => left - right)
+            .map(([weightBandGrams, quantity]) => ({
+              weightBandGrams,
+              quantity,
+            })),
+        }
+      : {};
+
+  return {
+    source: JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+    rateVersion: JAPAN_POST_AIR_PACKET_RATE_VERSION,
+    currencyCode,
+    chargedAmount: airPacketLines.reduce((total, shippingLine) => {
+      const amount =
+        shippingLine?.price_set?.shop_money?.amount ??
+        shippingLine?.price_set?.presentment_money?.amount ??
+        shippingLine?.price;
+      return total + moneyAmountToMinorUnits(amount, currencyCode);
+    }, 0),
+    serviceCodes: airPacketLines
+      .map((shippingLine) => normalizeText(shippingLine?.code || shippingLine?.source))
+      .filter(Boolean),
+    lineCount: airPacketLines.length,
+    snapshotSource: "shopify_shipping_lines",
+    ...encodedQuoteMetadata,
+  };
+}
+
 function normalizeDateValue(value) {
   const normalized = normalizeText(value);
 
@@ -3644,13 +3734,34 @@ function normalizeBuyerName(payload) {
   );
 }
 
-function buildMarketplaceOrderSnapshot({
+export function buildMarketplaceOrderSnapshot({
   payload,
   shopDomain,
   shopifyOrderId,
   shopifyOrderName,
   currencyCode,
 }) {
+  const rawShippingRateSnapshot = getShopifyOrderAttribute(
+    payload,
+    "shipping_v2_snapshot",
+  );
+  let shippingRateSnapshot = null;
+
+  if (rawShippingRateSnapshot) {
+    try {
+      const parsedSnapshot = JSON.parse(rawShippingRateSnapshot);
+      shippingRateSnapshot = isPlainObject(parsedSnapshot)
+        ? parsedSnapshot
+        : null;
+    } catch {
+      shippingRateSnapshot = {
+        invalid: true,
+      };
+    }
+  } else {
+    shippingRateSnapshot = buildCarrierShippingRateSnapshot(payload, currencyCode);
+  }
+
   return {
     shopDomain,
     shopifyOrderId,
@@ -3694,6 +3805,7 @@ function buildMarketplaceOrderSnapshot({
       lineItemCount: Array.isArray(payload?.line_items)
         ? payload.line_items.length
         : 0,
+      shippingRateSnapshot,
     },
   };
 }

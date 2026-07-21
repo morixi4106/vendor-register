@@ -29,6 +29,8 @@ function createFakePrisma({
   heartbeat = undefined,
   shadowChecks = undefined,
   productSyncIssues = undefined,
+  productShippingProfiles = undefined,
+  internationalShippingAvailability = undefined,
 } = {}) {
   const withdrawalCountQueue = [
     withdrawalCounts.openCount || 0,
@@ -80,9 +82,87 @@ function createFakePrisma({
       findMany: async () => productSyncIssues,
     };
   }
+  if (productShippingProfiles !== undefined) {
+    fakePrisma.product = {
+      findMany: async () => productShippingProfiles,
+    };
+  }
+  if (internationalShippingAvailability !== undefined) {
+    fakePrisma.internationalShippingCountryAvailability = {
+      findMany: async () => internationalShippingAvailability,
+    };
+  }
 
   return fakePrisma;
 }
+
+test("getProductionReadiness blocks an EU product without a valid international shipping profile", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      productShippingProfiles: [
+        {
+          id: "product_1",
+          name: "EU product",
+          shippingWeightGrams: 500,
+          shippingLengthMm: null,
+          shippingWidthMm: null,
+          shippingHeightMm: null,
+          internationalShippingMethod: "DOMESTIC_ONLY",
+          productEuStatus: "APPROVED_LOW_RISK",
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "eu_product_international_shipping_profiles",
+  );
+
+  assert.equal(check.status, "fail");
+  assert.equal(result.canGoLive, false);
+});
+
+test("getProductionReadiness accepts a valid Air Packet profile", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      productShippingProfiles: [
+        {
+          id: "product_1",
+          name: "EU product",
+          shippingWeightGrams: 500,
+          shippingLengthMm: 250,
+          shippingWidthMm: 180,
+          shippingHeightMm: 70,
+          internationalShippingMethod: "AIR_PACKET",
+          shippingWeightConfirmedAt: new Date("2026-07-21T00:00:00.000Z"),
+          shippingWeightSource: "MANUAL_CONFIRMED",
+          shopifyVariantCount: 1,
+          shopifyWeightSyncStatus: "SYNCED",
+          productEuStatus: "APPROVED_LOW_RISK",
+        },
+      ],
+      internationalShippingAvailability: [
+        {
+          countryCode: "FR",
+          status: "ACTIVE",
+          checkedAt: new Date(),
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "eu_product_international_shipping_profiles",
+  );
+
+  assert.equal(check.status, "pass");
+});
 
 function createActiveSeller({
   stripeAccount = true,

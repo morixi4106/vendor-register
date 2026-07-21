@@ -20,6 +20,81 @@ function clonePayload(payload) {
   return isPlainObject(payload) ? { ...payload } : {};
 }
 
+function normalizeCustomAttributes(value) {
+  return Array.isArray(value)
+    ? value
+        .filter(isPlainObject)
+        .map((attribute) => ({
+          key: normalizeText(attribute.key || attribute.name),
+          value: String(attribute.value ?? ''),
+        }))
+        .filter((attribute) => attribute.key)
+    : [];
+}
+
+export function buildShippingRateSnapshot(quoteResponse) {
+  if (!isPlainObject(quoteResponse) || quoteResponse.ok !== true) {
+    return null;
+  }
+
+  const allGroups = Array.isArray(quoteResponse?.debug?.groups)
+    ? quoteResponse.debug.groups
+    : [];
+  const groups = allGroups.slice(0, 20);
+
+  return {
+    version: normalizeText(
+      quoteResponse?.debug?.rateVersion || quoteResponse?.debug?.matchedRuleId,
+    ),
+    source: normalizeText(
+      quoteResponse?.result?.rateSource || quoteResponse?.debug?.rateSource,
+    ),
+    countryCode: normalizeText(quoteResponse?.debug?.countryCode),
+    currencyCode: normalizeText(quoteResponse?.result?.currencyCode),
+    totalShippingFee: toFiniteNumber(quoteResponse?.result?.totalShippingFee),
+    truncated: allGroups.length > groups.length,
+    groups: groups.map((group) => ({
+      mode: normalizeText(group?.mode),
+      regionTier: normalizeText(group?.regionTier),
+      packageCount: toFiniteNumber(group?.packageCount),
+      fee: toFiniteNumber(group?.fee),
+      lineQuotes: (Array.isArray(group?.lineQuotes) ? group.lineQuotes : [])
+        .slice(0, 20)
+        .map((lineQuote) => ({
+          amountPerUnit: toFiniteNumber(lineQuote?.amountPerUnit),
+          quantity: toFiniteNumber(lineQuote?.quantity),
+          zone: toFiniteNumber(lineQuote?.zone),
+          packedWeightGrams: toFiniteNumber(lineQuote?.packedWeightGrams),
+          weightBandGrams: toFiniteNumber(lineQuote?.weightBandGrams),
+          rateVersion: normalizeText(lineQuote?.rateVersion),
+          rateSource: normalizeText(lineQuote?.rateSource),
+        })),
+      lineQuotesTruncated:
+        Array.isArray(group?.lineQuotes) && group.lineQuotes.length > 20,
+    })),
+  };
+}
+
+function applyShippingRateSnapshot(payload, quoteResponse) {
+  const nextPayload = clonePayload(payload);
+  const snapshot = buildShippingRateSnapshot(quoteResponse);
+
+  if (!snapshot) {
+    return nextPayload;
+  }
+
+  const existingAttributes = normalizeCustomAttributes(nextPayload.customAttributes)
+    .filter((attribute) => attribute.key !== 'shipping_v2_snapshot');
+  nextPayload.customAttributes = [
+    ...existingAttributes,
+    {
+      key: 'shipping_v2_snapshot',
+      value: JSON.stringify(snapshot),
+    },
+  ];
+  return nextPayload;
+}
+
 function normalizeShippingAddress(shippingAddress) {
   if (!isPlainObject(shippingAddress)) {
     return {};
@@ -94,6 +169,30 @@ function buildShippingV2QuoteLine(line) {
 
   if (toFiniteNumber(line.grams ?? line.weightGrams) != null) {
     normalized.grams = toFiniteNumber(line.grams ?? line.weightGrams);
+  }
+
+  for (const key of ["shippingLengthMm", "shippingWidthMm", "shippingHeightMm"]) {
+    if (toFiniteNumber(line[key]) != null) {
+      normalized[key] = toFiniteNumber(line[key]);
+    }
+  }
+
+  for (const key of [
+    "internationalShippingMethod",
+    "shippingWeightSource",
+    "shopifyWeightSyncStatus",
+  ]) {
+    if (normalizeText(line[key])) {
+      normalized[key] = normalizeText(line[key]);
+    }
+  }
+
+  if (line.shippingWeightConfirmed != null) {
+    normalized.shippingWeightConfirmed = Boolean(line.shippingWeightConfirmed);
+  }
+
+  if (toFiniteNumber(line.shopifyVariantCount) != null) {
+    normalized.shopifyVariantCount = toFiniteNumber(line.shopifyVariantCount);
   }
 
   if (normalizeText(line.shipFromId) || normalizeText(line.ship_from_id)) {
@@ -277,7 +376,7 @@ export function applyShippingV2QuoteToPayload({
     });
   }
 
-  const nextPayload = clonePayload(payload);
+  const nextPayload = applyShippingRateSnapshot(payload, quoteResponse);
 
   nextPayload[shippingAmountField] = shippingAmount;
 

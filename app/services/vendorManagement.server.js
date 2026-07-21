@@ -7,6 +7,7 @@ import {
 } from "../utils/shopifyAdmin.server.js";
 import { formatMoney as formatCurrencyMoney } from "../utils/money.js";
 import { summarizeVendorDeliveryPolicy } from "../utils/productCountryPolicy.js";
+import { getProductShippingMethodLabel } from "../utils/productShippingProfile.js";
 import {
   buildCarrierTrackingUrl,
   getShippingCarrierById,
@@ -968,6 +969,18 @@ export function serializeVendorProduct(product) {
     deliveryPolicyLabel: deliveryPolicy.label,
     deliveryPolicyTone: deliveryPolicy.tone,
     deliveryPolicyDetail: deliveryPolicy.detail,
+    shippingMethodLabel: getProductShippingMethodLabel(
+      product.internationalShippingMethod,
+    ),
+    shippingWeightLabel: product.shippingWeightGrams
+      ? `${product.shippingWeightGrams}g`
+      : "重量未設定",
+    shippingSizeLabel:
+      product.shippingLengthMm &&
+      product.shippingWidthMm &&
+      product.shippingHeightMm
+        ? `${product.shippingLengthMm / 10} × ${product.shippingWidthMm / 10} × ${product.shippingHeightMm / 10}cm`
+        : null,
     shopifyProductId: product.shopifyProductId || null,
     url: product.url || null,
     updatedAtLabel: formatDateTime(product.updatedAt),

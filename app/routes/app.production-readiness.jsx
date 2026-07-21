@@ -770,6 +770,21 @@ function checkActionLinkForDisplay(check) {
         label: "商品同期を開く",
         to: "/app/shopify-product-sync",
       };
+    case "product_shipping_profiles_available":
+    case "approved_product_shipping_weight":
+    case "air_packet_product_profiles":
+    case "air_packet_single_variant_products":
+    case "air_packet_weight_sync":
+    case "eu_product_international_shipping_profiles":
+      return {
+        label: "商品配送設定を開く",
+        to: "/app/product-shipping",
+      };
+    case "air_packet_country_availability":
+      return {
+        label: "国際配送状況を開く",
+        to: "/app/international-shipping",
+      };
     case "withdrawal_open_requests":
       return {
         label: "未完了を見る",

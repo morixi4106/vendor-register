@@ -1,4 +1,8 @@
 import { json } from '@remix-run/node';
+import {
+  getInternationalShippingCountryAvailability,
+  INTERNATIONAL_SERVICE_STATUS,
+} from './internationalShippingAvailability.server.js';
 
 import {
   createShippingDiagnosticId,
@@ -145,6 +149,23 @@ function normalizeQuoteLine(line, index) {
     requiresShipping: (normalized.requiresShipping ?? normalized.requires_shipping) !== false,
     amountAfterItemDiscountBeforeOrderCoupon,
     grams,
+    shippingLengthMm: toNonNegativeNumber(
+      normalized.shippingLengthMm ?? normalized.shipping_length_mm,
+    ),
+    shippingWidthMm: toNonNegativeNumber(
+      normalized.shippingWidthMm ?? normalized.shipping_width_mm,
+    ),
+    shippingHeightMm: toNonNegativeNumber(
+      normalized.shippingHeightMm ?? normalized.shipping_height_mm,
+    ),
+    internationalShippingMethod: normalizeText(
+      normalized.internationalShippingMethod ||
+        normalized.international_shipping_method,
+    ),
+    shippingWeightConfirmed: normalized.shippingWeightConfirmed === true,
+    shippingWeightSource: normalizeText(normalized.shippingWeightSource),
+    shopifyVariantCount: toNonNegativeNumber(normalized.shopifyVariantCount),
+    shopifyWeightSyncStatus: normalizeText(normalized.shopifyWeightSyncStatus),
     shipFromId: normalizeText(normalized.shipFromId || normalized.ship_from_id),
     leadTimeBucket: normalizeText(normalized.leadTimeBucket || normalized.lead_time_bucket),
     shippingClass: normalizeText(normalized.shippingClass || normalized.shipping_class),
@@ -206,11 +227,6 @@ function summarizeQuoteRequest(body) {
     shopDomain: input.shopDomain,
     shippingAddress: {
       countryCode: input.shippingAddress.countryCode,
-      postalCode: input.shippingAddress.postalCode,
-      province: input.shippingAddress.province,
-      provinceCode: input.shippingAddress.provinceCode,
-      provinceName: input.shippingAddress.provinceName,
-      city: input.shippingAddress.city,
     },
     lineCount: input.lineCount,
     shippableLineCount: input.shippableLineCount,
@@ -222,6 +238,14 @@ function summarizeQuoteRequest(body) {
       amountAfterItemDiscountBeforeOrderCoupon:
         line.amountAfterItemDiscountBeforeOrderCoupon,
       grams: line.grams,
+      shippingLengthMm: line.shippingLengthMm,
+      shippingWidthMm: line.shippingWidthMm,
+      shippingHeightMm: line.shippingHeightMm,
+      internationalShippingMethod: line.internationalShippingMethod,
+      shippingWeightConfirmed: line.shippingWeightConfirmed,
+      shippingWeightSource: line.shippingWeightSource,
+      shopifyVariantCount: line.shopifyVariantCount,
+      shopifyWeightSyncStatus: line.shopifyWeightSyncStatus,
       shippingClass: line.shippingClass,
       temperatureZone: line.temperatureZone,
       shippingPoint: line.shippingPoint,
@@ -253,22 +277,21 @@ function recordQuoteDiagnostic({ requestId, level = 'info', message, details }) 
 }
 
 export function buildShippingQuoteResponse(body, options = {}) {
-  const input = normalizeShippingQuoteInput(body);
+  const input = {
+    ...normalizeShippingQuoteInput(body),
+    internationalServiceAvailabilityStatus:
+      options.internationalServiceAvailabilityStatus ||
+      body?.internationalServiceAvailabilityStatus ||
+      INTERNATIONAL_SERVICE_STATUS.UNKNOWN,
+  };
   const {
     countryCode,
     postalCode,
-    province,
-    provinceCode,
-    provinceName,
   } = input.shippingAddress;
   const debug = {
     source: SHIPPING_RATE_RULES_SOURCE,
     calculationVersion: SHIPPING_RATE_RULES_VERSION,
     countryCode,
-    postalCode,
-    province,
-    provinceCode,
-    provinceName,
     shippableLineCount: input.shippableLineCount,
   };
   const rawRuleConfig = Object.hasOwn(options, 'rawRuleConfig')
@@ -336,6 +359,7 @@ export function buildShippingQuoteResponse(body, options = {}) {
         isDeliverable: false,
         totalShippingFee: null,
         currencyCode: resolvedRate.currencyCode,
+        rateSource: resolvedRate.rateSource,
       },
       debug: {
         ...debug,
@@ -360,6 +384,7 @@ export function buildShippingQuoteResponse(body, options = {}) {
       isDeliverable: true,
       totalShippingFee: resolvedRate.totalShippingFee,
       currencyCode: resolvedRate.currencyCode,
+      rateSource: resolvedRate.rateSource,
     },
     debug: {
       ...debug,
@@ -393,7 +418,10 @@ export function createShippingQuoteLoader() {
   };
 }
 
-export function createShippingQuoteAction() {
+export function createShippingQuoteAction({
+  getInternationalShippingCountryAvailabilityImpl =
+    getInternationalShippingCountryAvailability,
+} = {}) {
   return async function action({ request }) {
     const requestId =
       request.headers.get('x-shipping-diagnostic-request-id') ||
@@ -422,7 +450,35 @@ export function createShippingQuoteAction() {
       );
     }
 
-    const payload = buildShippingQuoteResponse(body);
+    const normalizedInput = normalizeShippingQuoteInput(body);
+    let internationalServiceAvailabilityStatus = INTERNATIONAL_SERVICE_STATUS.UNKNOWN;
+
+    if (
+      normalizedInput.shippingAddress.countryCode &&
+      normalizedInput.shippingAddress.countryCode !== 'JP'
+    ) {
+      try {
+        const availability =
+          await getInternationalShippingCountryAvailabilityImpl({
+            countryCode: normalizedInput.shippingAddress.countryCode,
+          });
+        internationalServiceAvailabilityStatus = availability.status;
+      } catch (error) {
+        recordQuoteDiagnostic({
+          requestId,
+          level: 'error',
+          message: 'international_service_availability_lookup_failed',
+          details: {
+            countryCode: normalizedInput.shippingAddress.countryCode,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+    }
+
+    const payload = buildShippingQuoteResponse(body, {
+      internationalServiceAvailabilityStatus,
+    });
     const responseSummary = summarizeQuoteResponse(payload);
 
     recordQuoteDiagnostic({

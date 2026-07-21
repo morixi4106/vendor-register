@@ -2,6 +2,10 @@ import { json, redirect } from "@remix-run/node";
 import { Form, Link, Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
+import {
+  getProductShippingMethodLabel,
+  millimetersToCentimeters,
+} from "../utils/productShippingProfile.js";
 import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
 export const loader = async ({ request }) => {
@@ -64,6 +68,21 @@ export default function AdminProducts() {
           >
             <h3>{product.name}</h3>
             <p>価格: {formatMoney(product.price, product.costCurrency || "JPY")}</p>
+            <p>
+              配送: {getProductShippingMethodLabel(product.internationalShippingMethod)}
+              {product.shippingWeightGrams
+                ? ` / ${product.shippingWeightGrams}g`
+                : " / 重量未設定"}
+            </p>
+            {product.shippingLengthMm &&
+            product.shippingWidthMm &&
+            product.shippingHeightMm ? (
+              <p>
+                梱包後サイズ: {millimetersToCentimeters(product.shippingLengthMm)} ×{" "}
+                {millimetersToCentimeters(product.shippingWidthMm)} ×{" "}
+                {millimetersToCentimeters(product.shippingHeightMm)}cm
+              </p>
+            ) : null}
 
             <p style={{ marginTop: "10px", whiteSpace: "pre-wrap" }}>
               {product.description || "説明なし"}

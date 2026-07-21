@@ -3,6 +3,10 @@ import {
   normalizeShopDomain,
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server.js";
+import {
+  SHIPPING_WEIGHT_SOURCE,
+  SHOPIFY_WEIGHT_SYNC_STATUS,
+} from "../utils/productShippingProfile.js";
 
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 const DIRECT_IMPORT_FORMULA_VERSION = "shopify_direct_import_v1";
@@ -107,6 +111,47 @@ function getInventoryQuantity(payload) {
   return quantities.reduce((total, quantity) => total + Math.trunc(quantity), 0);
 }
 
+function convertWeightToGrams(value, unit) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  switch (String(unit || "GRAMS").trim().toUpperCase()) {
+    case "KILOGRAMS":
+    case "KG":
+      return Math.ceil(numeric * 1000);
+    case "OUNCES":
+    case "OZ":
+      return Math.ceil(numeric * 28.349523125);
+    case "POUNDS":
+    case "LB":
+    case "LBS":
+      return Math.ceil(numeric * 453.59237);
+    default:
+      return Math.ceil(numeric);
+  }
+}
+
+function getShippingWeightGrams(payload) {
+  const variant = getPrimaryVariant(payload);
+  const directGrams = Number(variant?.grams);
+
+  if (Number.isFinite(directGrams) && directGrams > 0) {
+    return Math.ceil(directGrams);
+  }
+
+  const measurementWeight = variant?.inventoryItem?.measurement?.weight;
+  if (measurementWeight) {
+    return convertWeightToGrams(measurementWeight.value, measurementWeight.unit);
+  }
+
+  return convertWeightToGrams(
+    variant?.weight,
+    variant?.weight_unit || variant?.weightUnit,
+  );
+}
+
 function getImageUrl(payload) {
   return normalizeText(
     payload?.image?.src ||
@@ -142,6 +187,7 @@ export function createShopifyProductSnapshot(payload) {
     imageUrl: getImageUrl(payload),
     price: getVariantPrice(payload),
     inventoryQuantity: getInventoryQuantity(payload),
+    shippingWeightGrams: getShippingWeightGrams(payload),
     variantId: normalizeShopifyGid(
       "ProductVariant",
       variant?.admin_graphql_api_id || variant?.id,
@@ -381,6 +427,7 @@ export async function syncShopifyProductPayload(
       category: snapshot.productType || existingProduct.category,
       shopifyProductId: snapshot.id,
       shopifyVariantId: snapshot.variantId || existingProduct.shopifyVariantId,
+      shopifyVariantCount: snapshot.variantCount,
       shopDomain,
     };
 
@@ -408,6 +455,26 @@ export async function syncShopifyProductPayload(
       updateData.inventoryQuantity = snapshot.inventoryQuantity;
       updateData.inventorySyncedAt = new Date();
       updateData.inventorySyncError = null;
+    }
+
+    if (snapshot.shippingWeightGrams != null) {
+      const currentWeight = Number(existingProduct.shippingWeightGrams);
+      const hasCurrentWeight = Number.isInteger(currentWeight) && currentWeight > 0;
+      const weightChanged =
+        hasCurrentWeight && currentWeight !== snapshot.shippingWeightGrams;
+
+      updateData.shippingWeightGrams = snapshot.shippingWeightGrams;
+      if (!hasCurrentWeight || weightChanged) {
+        updateData.shippingWeightConfirmedAt = null;
+        updateData.shippingWeightSource = SHIPPING_WEIGHT_SOURCE.SHOPIFY_UNVERIFIED;
+        updateData.shopifyWeightSyncStatus = weightChanged
+          ? SHOPIFY_WEIGHT_SYNC_STATUS.EXTERNAL_CHANGE
+          : SHOPIFY_WEIGHT_SYNC_STATUS.UNVERIFIED;
+        updateData.shopifyWeightSyncedAt = null;
+        updateData.shopifyWeightSyncError = weightChanged
+          ? "Shopifyで重量が変更されたため、梱包後重量の再確認が必要です。"
+          : null;
+      }
     }
 
     const product = await prismaClient.product.update({
@@ -493,6 +560,16 @@ export async function syncShopifyProductPayload(
       inventorySyncedAt:
         snapshot.inventoryQuantity == null ? null : now,
       inventorySyncError: null,
+      shippingWeightGrams: snapshot.shippingWeightGrams,
+      shippingWeightConfirmedAt: null,
+      shippingWeightSource: snapshot.shippingWeightGrams
+        ? SHIPPING_WEIGHT_SOURCE.SHOPIFY_UNVERIFIED
+        : SHIPPING_WEIGHT_SOURCE.UNSET,
+      shopifyVariantCount: snapshot.variantCount,
+      shopifyWeightSyncStatus: snapshot.shippingWeightGrams
+        ? SHOPIFY_WEIGHT_SYNC_STATUS.UNVERIFIED
+        : SHOPIFY_WEIGHT_SYNC_STATUS.NOT_LINKED,
+      internationalShippingMethod: "UNCONFIGURED",
     },
   });
 
@@ -531,6 +608,7 @@ function graphQlProductToPayload(product) {
       admin_graphql_api_id: variant.id,
       price: variant.price,
       inventory_quantity: variant.inventoryQuantity,
+      inventoryItem: variant.inventoryItem,
     })),
   };
 }
@@ -569,7 +647,14 @@ export async function reconcileShopifyProductCatalog(
                 preview { image { url } }
               }
               variants(first: 100) {
-                nodes { id price inventoryQuantity }
+                nodes {
+                  id
+                  price
+                  inventoryQuantity
+                  inventoryItem {
+                    measurement { weight { value unit } }
+                  }
+                }
               }
             }
             pageInfo { hasNextPage endCursor }

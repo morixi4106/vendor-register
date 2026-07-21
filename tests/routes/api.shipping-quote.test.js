@@ -45,6 +45,7 @@ test('api.shipping-quote returns a JP default quote in the Shipping V2 response 
     isDeliverable: true,
     totalShippingFee: 870,
     currencyCode: 'JPY',
+    rateSource: 'shipment_groups',
   });
 });
 
@@ -98,6 +99,14 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
           requiresShipping: true,
           amountAfterItemDiscountBeforeOrderCoupon: 165000,
           grams: null,
+          shippingLengthMm: null,
+          shippingWidthMm: null,
+          shippingHeightMm: null,
+          internationalShippingMethod: null,
+          shippingWeightConfirmed: false,
+          shippingWeightSource: null,
+          shopifyVariantCount: null,
+          shopifyWeightSyncStatus: null,
           shipFromId: null,
           leadTimeBucket: null,
           shippingClass: null,
@@ -116,7 +125,11 @@ test('api.shipping-quote normalizes Shopify quote input for diagnostics', () => 
 
 test('api.shipping-quote returns a different default quote for US addresses', async () => {
   clearShippingDiagnosticEvents();
-  const action = createShippingQuoteAction();
+  const action = createShippingQuoteAction({
+    getInternationalShippingCountryAvailabilityImpl: async () => ({
+      status: 'ACTIVE',
+    }),
+  });
   const response = await action({
     request: new Request('http://localhost/api/shipping-quote', {
       method: 'POST',
@@ -126,6 +139,26 @@ test('api.shipping-quote returns a different default quote for US addresses', as
       },
       body: JSON.stringify(
         createQuoteRequest({
+          orderLike: {
+            lines: [
+              {
+                productId: 'gid://shopify/Product/1',
+                variantId: 'gid://shopify/ProductVariant/1',
+                quantity: 1,
+                requiresShipping: true,
+                grams: 500,
+                shippingLengthMm: 250,
+                shippingWidthMm: 180,
+                shippingHeightMm: 70,
+                internationalShippingMethod: 'AIR_PACKET',
+                shippingWeightConfirmed: true,
+                shippingWeightSource: 'MANUAL_CONFIRMED',
+                shopifyVariantCount: 1,
+                shopifyWeightSyncStatus: 'SYNCED',
+                amountAfterItemDiscountBeforeOrderCoupon: 4200,
+              },
+            ],
+          },
           shippingAddress: {
             country: 'US',
             countryCode: 'US',
@@ -140,16 +173,16 @@ test('api.shipping-quote returns a different default quote for US addresses', as
 
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
-  assert.equal(payload.result.totalShippingFee, 2500);
+  assert.equal(payload.result.totalShippingFee, 2040);
   const event = listShippingDiagnosticEvents({ limit: 1 })[0];
 
   assert.equal(event.requestId, 'carrier_test_1');
   assert.equal(event.message, 'quote_returned');
   assert.equal(event.details.request.calculationVersion, 'mvp_v2');
-  assert.equal(event.details.response.debug.rateSource, 'shipment_groups');
-  assert.equal(event.details.response.debug.regionTier, 'us');
-  assert.equal(event.details.response.debug.groups[0].mode, 'parcel');
-  assert.equal(event.details.response.debug.groups[0].fee, 2500);
+  assert.equal(event.details.response.debug.rateSource, 'japan_post_air_packet');
+  assert.equal(event.details.response.debug.regionTier, 'air_packet_zone_4');
+  assert.equal(event.details.response.debug.groups[0].mode, 'air_packet');
+  assert.equal(event.details.response.debug.groups[0].fee, 2040);
 });
 
 test('api.shipping-quote returns pending_address when address is incomplete', () => {
@@ -232,17 +265,12 @@ test('api.shipping-quote can use configured province and variant rules', () => {
 
 test('api.shipping-quote returns undeliverable when configured with no matching rule', () => {
   const payload = buildShippingQuoteResponse(
-    createQuoteRequest({
-      shippingAddress: {
-        country: 'ZA',
-        postalCode: '8001',
-      },
-    }),
+    createQuoteRequest(),
     {
       ruleConfig: {
         feeMatrix: {
           parcel: {
-            international: null,
+            honshu: null,
           },
         },
       },

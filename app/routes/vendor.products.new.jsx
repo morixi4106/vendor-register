@@ -10,6 +10,10 @@ import {
 } from "../services/vendorManagement.server";
 import { normalizeProductCategory } from "../utils/productCategories";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
+import {
+  buildConfirmedShippingProfileData,
+  parseProductShippingProfileFormData,
+} from "../utils/productShippingProfile";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
 
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
@@ -126,6 +130,11 @@ export const action = async ({ request }) => {
     );
     const euSaleRequested = false;
     const productEuStatus = "DISABLED";
+    const shippingProfile = parseProductShippingProfileFormData(formData);
+
+    if (!shippingProfile.ok) {
+      return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+    }
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -188,6 +197,7 @@ export const action = async ({ request }) => {
         },
         priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
         priceSyncError: null,
+        ...buildConfirmedShippingProfileData(shippingProfile.data),
       },
     });
 

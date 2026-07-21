@@ -11,7 +11,12 @@ import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { normalizeProductCategory } from "../utils/productCategories";
 import { PRICE_SYNC_STATUS } from "../utils/priceSyncStatus";
+import {
+  buildConfirmedShippingProfileData,
+  parseProductShippingProfileFormData,
+} from "../utils/productShippingProfile";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
+import { syncAndRecordShopifyVariantWeight } from "../services/shopifyInventoryWeight.server";
 
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
@@ -176,6 +181,14 @@ export const action = async ({ request, params }) => {
       String(product.productEuStatus || "DISABLED").toUpperCase() !== "DISABLED";
     const euSaleRequested = hadEuReview;
     const productEuStatus = hadEuReview ? "PENDING_REVIEW" : "DISABLED";
+    const shippingProfile = parseProductShippingProfileFormData(formData, {
+      variantCount:
+        product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null),
+    });
+
+    if (!shippingProfile.ok) {
+      return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+    }
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
       return json(
@@ -236,6 +249,11 @@ export const action = async ({ request, params }) => {
       },
       priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
       priceSyncError: null,
+      ...buildConfirmedShippingProfileData(shippingProfile.data, {
+        isShopifyLinked: Boolean(product.shopifyVariantId),
+      }),
+      shopifyVariantCount:
+        product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null),
     };
 
     if (product.shopifyProductId) {
@@ -334,6 +352,15 @@ export const action = async ({ request, params }) => {
           shopDomain,
         },
       });
+
+      if (product.shopifyVariantId) {
+        await syncAndRecordShopifyVariantWeight({
+          productId,
+          shopDomain,
+          variantId: product.shopifyVariantId,
+          weightGrams: shippingProfile.data.shippingWeightGrams,
+        });
+      }
 
       try {
         await syncVendorCollectionByStoreId(product.vendorStoreId, { shopDomain });

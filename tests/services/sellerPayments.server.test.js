@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   approvePayoutRun,
   backfillSellerOrderShadowChecks,
+  buildMarketplaceOrderSnapshot,
   calculateSellerPayoutableLedgerBalance,
   calculateSellerSalesCreditAvailability,
   authorizeSalesCreditOffset,
@@ -32,6 +33,76 @@ import {
   SALES_CREDIT_PAYMENT_RISK_CLASSES,
   syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
+
+test("buildMarketplaceOrderSnapshot preserves Carrier Service Air Packet rate provenance", () => {
+  const snapshot = buildMarketplaceOrderSnapshot({
+    payload: {
+      id: 1001,
+      order_number: 1001,
+      total_price: "2500",
+      subtotal_price: "1620",
+      total_discounts: "0",
+      total_tax: "0",
+      shipping_lines: [
+        {
+          code: "shipping_v2_jp_air_packet_2026_06_01",
+          price: "880",
+        },
+      ],
+      line_items: [],
+    },
+    shopDomain: "example.myshopify.com",
+    shopifyOrderId: "gid://shopify/Order/1001",
+    shopifyOrderName: "#1001",
+    currencyCode: "jpy",
+  });
+
+  assert.deepEqual(snapshot.metadataJson.shippingRateSnapshot, {
+    source: "japan_post_air_packet",
+    rateVersion: "2026-06-01",
+    currencyCode: "jpy",
+    chargedAmount: 880,
+    serviceCodes: ["shipping_v2_jp_air_packet_2026_06_01"],
+    lineCount: 1,
+    snapshotSource: "shopify_shipping_lines",
+  });
+});
+
+test("buildMarketplaceOrderSnapshot restores encoded Carrier Service zone and bands", () => {
+  const snapshot = buildMarketplaceOrderSnapshot({
+    payload: {
+      id: 1002,
+      order_number: 1002,
+      total_price: "6920",
+      subtotal_price: "880",
+
+      total_discounts: "0",
+      total_tax: "0",
+      shipping_lines: [
+        {
+          code: "shipping_v2_jp_air_packet_2026_06_01_z3_b1x1.8x2",
+          price: "6040",
+        },
+      ],
+      line_items: [],
+    },
+    shopDomain: "example.myshopify.com",
+    shopifyOrderId: "gid://shopify/Order/1002",
+    shopifyOrderName: "#1002",
+    currencyCode: "jpy",
+  });
+
+  assert.equal(snapshot.metadataJson.shippingRateSnapshot.zone, 3);
+  assert.deepEqual(snapshot.metadataJson.shippingRateSnapshot.weightBands, [
+    { weightBandGrams: 100, quantity: 1 },
+    { weightBandGrams: 800, quantity: 2 },
+  ]);
+  assert.equal(snapshot.metadataJson.shippingRateSnapshot.chargedAmount, 6040);
+  assert.equal(
+    snapshot.metadataJson.shippingRateSnapshot.rateVersion,
+    "2026-06-01",
+  );
+});
 
 const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskClass:

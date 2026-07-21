@@ -11,17 +11,25 @@ import {
 import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
 import prisma from '../db.server.js';
 import {
-  EU_COUNTRY_CODES,
   evaluateCartDeliveryEligibility,
 } from '../utils/deliveryEligibility.js';
 import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
+import {
+  JAPAN_POST_AIR_PACKET_RATE_SOURCE,
+  JAPAN_POST_AIR_PACKET_RATE_VERSION,
+} from './japanPostAirPacket.server.js';
 
 const CARRIER_SERVICE_NAME = 'Shipping V2';
 // Keep carrier labels ASCII-encoded in source to avoid mojibake in deploy/log pipelines.
 const CARRIER_SERVICE_DISPLAY_NAME = '\u5730\u57df\u5225\u914d\u9001';
 const CARRIER_SERVICE_CODE = 'shipping_v2';
+const AIR_PACKET_SERVICE_CODE = `${CARRIER_SERVICE_CODE}_jp_air_packet_${JAPAN_POST_AIR_PACKET_RATE_VERSION.replaceAll('-', '_')}`;
 const CARRIER_SERVICE_DESCRIPTION =
   '\u914d\u9001\u5148\u306b\u57fa\u3065\u304f\u9001\u6599';
+const AIR_PACKET_SERVICE_DISPLAY_NAME =
+  '\u56fd\u969b\u30a8\u30a2\u30d1\u30b1\u30c3\u30c8';
+const AIR_PACKET_SERVICE_DESCRIPTION =
+  '\u65e5\u672c\u90f5\u4fbf\u306e\u8ffd\u8de1\u4ed8\u304d\u56fd\u969b\u914d\u9001';
 const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
 
 const CARRIER_SERVICES_QUERY = `#graphql
@@ -307,6 +315,15 @@ export async function resolveCarrierFulfillmentOwnership({
       shopifyProductId: true,
       shopifyVariantId: true,
       vendorStoreId: true,
+      shippingWeightGrams: true,
+      shippingLengthMm: true,
+      shippingWidthMm: true,
+      shippingHeightMm: true,
+      internationalShippingMethod: true,
+      shippingWeightConfirmedAt: true,
+      shippingWeightSource: true,
+      shopifyVariantCount: true,
+      shopifyWeightSyncStatus: true,
       vendorStore: {
         select: {
           id: true,
@@ -349,8 +366,22 @@ export async function resolveCarrierFulfillmentOwnership({
     }
 
     const vendorStoreId = vendorStoreIds[0];
+    const matchedProduct = matches.find(
+      (product) => getProductVendorStoreId(product) === vendorStoreId,
+    );
     resolvedLines.push({
       ...line,
+      grams: matchedProduct?.shippingWeightGrams || line.grams,
+      shippingLengthMm: matchedProduct?.shippingLengthMm || null,
+      shippingWidthMm: matchedProduct?.shippingWidthMm || null,
+      shippingHeightMm: matchedProduct?.shippingHeightMm || null,
+      internationalShippingMethod:
+        matchedProduct?.internationalShippingMethod || "UNCONFIGURED",
+      shippingWeightConfirmed: Boolean(matchedProduct?.shippingWeightConfirmedAt),
+      shippingWeightSource: matchedProduct?.shippingWeightSource || "UNSET",
+      shopifyVariantCount: matchedProduct?.shopifyVariantCount ?? null,
+      shopifyWeightSyncStatus:
+        matchedProduct?.shopifyWeightSyncStatus || "NOT_LINKED",
       shipFromId: vendorStoreId,
       directShipGroup: vendorStoreId,
       shippingClass: line.shippingClass || 'direct',
@@ -370,7 +401,7 @@ export async function resolveCarrierFulfillmentOwnership({
   };
 }
 
-export async function validateCarrierEuDeliveryPolicy({
+export async function validateCarrierInternationalDeliveryPolicy({
   quoteRequest,
   prismaClient = prisma,
 } = {}) {
@@ -379,7 +410,7 @@ export async function validateCarrierEuDeliveryPolicy({
       quoteRequest?.shippingAddress?.country,
   );
 
-  if (!countryCode || !EU_COUNTRY_CODES.has(countryCode)) {
+  if (!countryCode || countryCode === 'JP') {
     return {
       ok: true,
       reason: null,
@@ -483,6 +514,7 @@ export async function validateCarrierEuDeliveryPolicy({
       return {
         ok: false,
         reason: blocker.reason,
+        checked: true,
         countryCode,
         productId: blocker.productId,
         shopifyProductId: blocker.shopifyProductId,
@@ -510,6 +542,11 @@ export async function validateCarrierEuDeliveryPolicy({
     productCount: products.length,
   };
 }
+
+// Kept as a compatibility alias for existing imports while the policy now
+// covers every international destination, not only EU countries.
+export const validateCarrierEuDeliveryPolicy =
+  validateCarrierInternationalDeliveryPolicy;
 
 function toMajorCurrencyAmountFromCarrierPrice(price) {
   const numeric = toFiniteNumber(price);
@@ -560,14 +597,55 @@ function getQuoteShippingAmount(quoteResponse) {
   return amount == null ? null : amount;
 }
 
+function buildAirPacketServiceCode(quoteResponse) {
+  const groups = Array.isArray(quoteResponse?.debug?.groups)
+    ? quoteResponse.debug.groups
+    : [];
+  const bandQuantities = new Map();
+  const zones = new Set();
+
+  for (const group of groups) {
+    const lineQuotes = Array.isArray(group?.lineQuotes) ? group.lineQuotes : [];
+
+    for (const lineQuote of lineQuotes) {
+      const zone = toPositiveInteger(lineQuote?.zone);
+      const weightBandGrams = toPositiveInteger(lineQuote?.weightBandGrams);
+      const quantity = toPositiveInteger(lineQuote?.quantity);
+
+      if (!zone || !weightBandGrams || !quantity || weightBandGrams % 100 !== 0) {
+        continue;
+      }
+
+      zones.add(zone);
+      const bandUnits = weightBandGrams / 100;
+      bandQuantities.set(
+        bandUnits,
+        (bandQuantities.get(bandUnits) || 0) + quantity,
+      );
+    }
+  }
+
+  if (zones.size !== 1 || bandQuantities.size === 0) {
+    return AIR_PACKET_SERVICE_CODE;
+  }
+
+  const [zone] = zones;
+  const bands = Array.from(bandQuantities.entries())
+    .sort(([left], [right]) => left - right)
+    .map(
+      ([bandUnits, quantity]) =>
+        `${bandUnits.toString(36)}x${quantity.toString(36)}`,
+    )
+    .join('.');
+
+  return `${AIR_PACKET_SERVICE_CODE}_z${zone.toString(36)}_b${bands}`;
+}
+
 function summarizeCarrierDestination(destination) {
   const normalized = isPlainObject(destination) ? destination : {};
 
   return {
     country: normalizeText(normalized.country || normalized.country_code || normalized.countryCode),
-    postalCode: normalizeText(normalized.zip || normalized.postal_code || normalized.postalCode),
-    province: normalizeText(normalized.province || normalized.prefecture),
-    city: normalizeText(normalized.city),
   };
 }
 
@@ -575,11 +653,7 @@ function summarizeCarrierItems(items) {
   return (Array.isArray(items) ? items : []).map((item) => ({
     productId: normalizeText(item?.product_id),
     variantId: normalizeText(item?.variant_id),
-    skuId: normalizeText(item?.sku),
-    vendor: normalizeText(item?.vendor),
-    title: normalizeText(item?.name || item?.title),
     quantity: toPositiveInteger(item?.quantity) || 1,
-    price: toMajorCurrencyAmountFromCarrierPrice(item?.price),
     grams: toFiniteNumber(item?.grams),
     requiresShipping: item?.requires_shipping !== false,
   }));
@@ -591,18 +665,17 @@ function summarizeQuoteRequest(quoteRequest) {
     : [];
 
   return {
-    shippingAddress: quoteRequest?.shippingAddress || null,
+    shippingAddress: {
+      countryCode:
+        normalizeCountryCode(quoteRequest?.shippingAddress?.countryCode) || null,
+    },
     shopDomain: quoteRequest?.shopDomain || null,
     lineCount: lines.length,
     lines: lines.map((line) => ({
       productId: line.productId || null,
       variantId: line.variantId || null,
-      skuId: line.skuId || null,
-      vendor: line.vendor || null,
       quantity: line.quantity || null,
       requiresShipping: line.requiresShipping !== false,
-      amountAfterItemDiscountBeforeOrderCoupon:
-        line.amountAfterItemDiscountBeforeOrderCoupon ?? null,
       grams: line.grams ?? null,
     })),
   };
@@ -659,7 +732,6 @@ function summarizeQuoteResponse(quoteResponse) {
     totalShippingFee: quoteResponse?.result?.totalShippingFee ?? null,
     currencyCode: quoteResponse?.result?.currencyCode ?? null,
     shippingGroups: summarizeQuoteGroups(quoteResponse?.debug?.groups),
-    debug: quoteResponse?.debug ?? null,
   };
 }
 
@@ -705,15 +777,23 @@ export function buildCarrierRatesResponse({ quoteResponse, currency }) {
   }
 
   const totalPrice = toShopifyCarrierSubunits(getQuoteShippingAmount(quoteResponse));
+  const isAirPacket =
+    quoteResponse?.result?.rateSource === JAPAN_POST_AIR_PACKET_RATE_SOURCE;
 
   return {
     rates: [
       {
-        service_name: CARRIER_SERVICE_DISPLAY_NAME,
-        service_code: CARRIER_SERVICE_CODE,
+        service_name: isAirPacket
+          ? AIR_PACKET_SERVICE_DISPLAY_NAME
+          : CARRIER_SERVICE_DISPLAY_NAME,
+        service_code: isAirPacket
+          ? buildAirPacketServiceCode(quoteResponse)
+          : CARRIER_SERVICE_CODE,
         total_price: totalPrice,
         currency: normalizeText(currency)?.toUpperCase() || 'JPY',
-        description: CARRIER_SERVICE_DESCRIPTION,
+        description: isAirPacket
+          ? AIR_PACKET_SERVICE_DESCRIPTION
+          : CARRIER_SERVICE_DESCRIPTION,
       },
     ],
   };
@@ -725,7 +805,6 @@ function buildRequestDebugInfo({ request, rawBody }) {
     url: request.url,
     contentType: request.headers.get('content-type') || '',
     rawBodyLength: rawBody.length,
-    rawBodyPreview: rawBody.slice(0, 200),
   };
 }
 
@@ -768,7 +847,30 @@ export function createCarrierShippingRatesAction({
 } = {}) {
   return async function action({ request }) {
     const requestId = createShippingDiagnosticId('carrier');
-    const rawBody = await request.text();
+    let rawBody;
+
+    try {
+      rawBody = await request.text();
+    } catch (error) {
+      const details = {
+        method: request?.method || 'POST',
+        contentType: request?.headers?.get?.('content-type') || '',
+        error: error instanceof Error ? error.message : String(error),
+      };
+
+      logError?.('carrier shipping rates body read failed:', {
+        requestId,
+        ...details,
+      });
+      recordCarrierDiagnostic({
+        requestId,
+        level: 'error',
+        message: 'body_read_failed',
+        details,
+      });
+      return json({ rates: [] });
+    }
+
     const debugInfo = buildRequestDebugInfo({ request, rawBody });
 
     logInfo?.('carrier shipping rates request:', { requestId, ...debugInfo });
@@ -881,22 +983,23 @@ export function createCarrierShippingRatesAction({
     });
 
     try {
-      const euDeliveryPolicy = await validateCarrierEuDeliveryPolicy({
-        quoteRequest,
-        prismaClient,
-      });
+      const internationalDeliveryPolicy =
+        await validateCarrierInternationalDeliveryPolicy({
+          quoteRequest,
+          prismaClient,
+        });
 
-      if (!euDeliveryPolicy.ok) {
-        logInfo?.('carrier shipping rates blocked by eu delivery policy:', {
+      if (!internationalDeliveryPolicy.ok) {
+        logInfo?.('carrier shipping rates blocked by delivery policy:', {
           requestId,
-          ...euDeliveryPolicy,
+          ...internationalDeliveryPolicy,
         });
         recordCarrierDiagnostic({
           requestId,
           level: 'warn',
-          message: 'eu_delivery_blocked',
+          message: 'international_delivery_blocked',
           details: {
-            policy: euDeliveryPolicy,
+            policy: internationalDeliveryPolicy,
             quoteRequest: quoteRequestSummary,
           },
         });

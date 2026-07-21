@@ -82,6 +82,17 @@ model Product {
   inventoryQuantity               Int?
   inventorySyncedAt               DateTime?
   inventorySyncError              String?
+  shippingWeightGrams             Int?
+  shippingLengthMm                Int?
+  shippingWidthMm                 Int?
+  shippingHeightMm                Int?
+  internationalShippingMethod     String    @default("UNCONFIGURED")
+  shippingWeightConfirmedAt       DateTime?
+  shippingWeightSource            String    @default("UNSET")
+  shopifyVariantCount             Int?
+  shopifyWeightSyncStatus         String    @default("NOT_LINKED")
+  shopifyWeightSyncedAt           DateTime?
+  shopifyWeightSyncError          String?
   productEuStatus                 String    @default("DISABLED")
   euSaleRequested                 Boolean   @default(false)
   regulatorySelfCertificationJson Json?
@@ -96,7 +107,25 @@ model Product {
   @@unique([shopDomain, shopifyVariantId])
   @@index([shopifyProductId])
   @@index([shopifyVariantId])
+  @@index([internationalShippingMethod, approvalStatus])
+  @@index([shopifyWeightSyncStatus, approvalStatus])
   @@index([productEuStatus, updatedAt])
+}
+
+model InternationalShippingCountryAvailability {
+  id          String    @id @default(cuid())
+  countryCode String
+  service     String    @default("JAPAN_POST_AIR_PACKET")
+  status      String    @default("UNKNOWN")
+  sourceUrl   String?
+  note        String?
+  checkedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([countryCode, service])
+  @@index([service, status, checkedAt])
+  @@map("international_shipping_country_availabilities")
 }
 
 model ShopifyProductSyncIssue {
