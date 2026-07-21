@@ -36,6 +36,25 @@ const DRAFT_ORDER_CREATE_MUTATION = `#graphql
   }
 `;
 
+const DRAFT_ORDER_PREPARE_MUTATION = `#graphql
+  mutation draftOrderPrepareForBuyerCheckout($id: ID!) {
+    draftOrderPrepareForBuyerCheckout(
+      id: $id
+      bypassCartValidations: true
+      allowDiscountCodesInCheckout: false
+    ) {
+      draftOrder {
+        id
+        invoiceUrl
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -698,10 +717,34 @@ export function createDraftOrderCheckout({
 
     const draftOrder = mutationPayload?.draftOrder;
     const draftOrderId = normalizeText(draftOrder?.id);
-    const invoiceUrl = normalizeText(draftOrder?.invoiceUrl);
 
-    if (!draftOrderId || !invoiceUrl) {
-      throw new Error('draftOrderCreate did not return draftOrder.id and draftOrder.invoiceUrl');
+    if (!draftOrderId) {
+      throw new Error('draftOrderCreate did not return draftOrder.id');
+    }
+
+    const { data: prepareData } = await shopifyGraphQLWithOfflineSessionImpl({
+      shopDomain: normalized.shopDomain,
+      apiVersion: String(apiVersion),
+      query: DRAFT_ORDER_PREPARE_MUTATION,
+      variables: { id: draftOrderId },
+    });
+    const preparePayload = prepareData?.draftOrderPrepareForBuyerCheckout;
+    const prepareUserErrors = Array.isArray(preparePayload?.userErrors)
+      ? preparePayload.userErrors
+      : [];
+
+    if (prepareUserErrors.length > 0) {
+      throw buildDraftOrderCreateError(prepareUserErrors);
+    }
+
+    const preparedDraftOrder = preparePayload?.draftOrder;
+    const preparedDraftOrderId = normalizeText(preparedDraftOrder?.id);
+    const invoiceUrl = normalizeText(preparedDraftOrder?.invoiceUrl);
+
+    if (preparedDraftOrderId !== draftOrderId || !invoiceUrl) {
+      throw new Error(
+        'draftOrderPrepareForBuyerCheckout did not return the prepared draft order',
+      );
     }
 
     return {

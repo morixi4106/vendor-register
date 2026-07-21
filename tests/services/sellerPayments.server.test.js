@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -40,6 +41,39 @@ process.env.CROSS_BORDER_SELLER_SETTLEMENT_ENABLED = "false";
 process.env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED = "true";
 process.env.SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE =
   "unit-test-approval";
+
+function attachApprovedRecipientSnapshot(payoutRun) {
+  const payoutRecipient =
+    payoutRun.sellerPayoutRecipient || payoutRun.seller?.payoutRecipient;
+  const snapshot = {
+    snapshotVersion: "payout-recipient-approval-v1",
+    transferMethod: payoutRun.transferMethod,
+    payoutRecipientId: payoutRecipient.id,
+    provider: payoutRecipient.provider || null,
+    status: payoutRecipient.status || null,
+    countryCode: payoutRecipient.countryCode?.toUpperCase() || null,
+    currencyCode: String(
+      payoutRun.currencyCode || payoutRecipient.currencyCode || "jpy",
+    ).toLowerCase(),
+    accountHolderName: payoutRecipient.accountHolderName || null,
+    wiseRecipientId: payoutRecipient.wiseRecipientId || null,
+    wiseRecipientHash: payoutRecipient.wiseRecipientHash || null,
+    accountSummary: payoutRecipient.accountSummary || null,
+    longAccountSummary: payoutRecipient.longAccountSummary || null,
+    recipientUpdatedAt: payoutRecipient.updatedAt || null,
+  };
+
+  Object.assign(payoutRun, {
+    sellerPayoutRecipientId: payoutRecipient.id,
+    approvedTransferMethod: payoutRun.transferMethod,
+    approvedPayoutRecipientId: payoutRecipient.id,
+    approvedRecipientHash: createHash("sha256")
+      .update(JSON.stringify(snapshot))
+      .digest("hex"),
+    approvedRecipientSnapshotJson: snapshot,
+    approvedCurrencyCode: payoutRun.currencyCode,
+  });
+}
 
 test("buildMarketplaceOrderSnapshot preserves Carrier Service Air Packet rate provenance", () => {
   const snapshot = buildMarketplaceOrderSnapshot({
@@ -141,10 +175,7 @@ function assertShopifyProductLookupWhere(
     assert.equal(variantClause, undefined);
   }
 
-  assert.deepEqual(where?.AND?.[1]?.OR, [
-    { shopDomain },
-    { shopDomain: null },
-  ]);
+  assert.deepEqual(where?.AND?.[1]?.OR, [{ shopDomain }, { shopDomain: null }]);
 }
 
 function createSellerOrderShadowFakeModels(state) {
@@ -217,7 +248,10 @@ function createSellerOrderShadowFakeModels(state) {
               return false;
             }
 
-            if (where?.shopifyOrderId && check.shopifyOrderId !== where.shopifyOrderId) {
+            if (
+              where?.shopifyOrderId &&
+              check.shopifyOrderId !== where.shopifyOrderId
+            ) {
               return false;
             }
 
@@ -1324,6 +1358,7 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
             vendorStore: {
               id: "store_1",
               storeName: "Test Store",
+              isTestStore: true,
               seller: null,
               vendorAuth: {
                 id: "vendor_1",
@@ -1389,6 +1424,195 @@ test("processShopifyOrderPaidSettlement records a seller payable ledger entry", 
   );
   assert.equal(state.ledgerEntries[0].metadataJson.vendorHandle, "vendor");
   assert.equal(state.ledgerEntries[0].metadataJson.lineItems[0].amount, 26848);
+});
+
+test("processShopifyOrderPaidSettlement isolates production marketplace orders without checkout evidence", async () => {
+  let ledgerCreated = false;
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create() {
+        ledgerCreated = true;
+        throw new Error(
+          "an unverified marketplace order must not reach the ledger",
+        );
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_governed",
+            name: "Governed Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/920",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_governed",
+            complianceProfile: { legalSellerType: "VENDOR" },
+            vendorStore: {
+              id: "store_governed",
+              storeName: "Governed Store",
+              isTestStore: false,
+              isPlatformStore: false,
+              seller: {
+                id: "seller_governed",
+                status: "active",
+                stripeAccount: null,
+              },
+              vendorAuth: null,
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1200,
+        admin_graphql_api_id: "gid://shopify/Order/1200",
+        name: "#1200",
+        currency: "JPY",
+        line_items: [{ id: 1, product_id: 920, price: "2500", quantity: 1 }],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        MARKETPLACE_GOVERNANCE_GATE_ENABLED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE: "approval-1",
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "marketplace_order_governance_review_required");
+  assert.equal(
+    result.governanceReasons.includes("checkout_reference_missing"),
+    true,
+  );
+  assert.equal(ledgerCreated, false);
+});
+
+test("processShopifyOrderPaidSettlement accepts complete production marketplace checkout evidence", async () => {
+  const sellerAgreementHash = "b".repeat(64);
+  const buyerTermsHash = "a".repeat(64);
+  const checkoutReference = "checkout:governed-1201";
+  const state = { ledgerEntries: [] };
+  const fakePrisma = {
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return { id: "ledger_governed", ...data };
+      },
+    },
+    marketplaceCheckoutEvidence: {
+      async findUnique({ where }) {
+        assert.equal(where.checkoutReference, checkoutReference);
+        return {
+          checkoutReference,
+          shopDomain: "b30ize-1a.myshopify.com",
+          shopifyOrderId: "gid://shopify/Order/1201",
+          status: "PREPARED",
+          sellerAgreementVersion: "seller-2026-07",
+          sellerAgreementHash,
+          sellerAgreementUrl: "https://example.com/seller-agreement",
+          buyerTermsVersion: "buyer-2026-07",
+          buyerTermsHash,
+          buyerTermsUrl: "https://example.com/buyer-terms",
+          buyerTermsLocale: "ja-JP",
+          presentedAt: new Date("2026-07-22T00:00:00Z"),
+          sellerSnapshotsJson: [
+            {
+              sellerId: "seller_governed",
+              snapshot: {
+                sellerAgreementSnapshotJson: {
+                  version: "seller-2026-07",
+                  documentHash: sellerAgreementHash,
+                },
+              },
+            },
+          ],
+          productSnapshotsJson: [
+            {
+              productId: "product_governed",
+              sellerId: "seller_governed",
+              snapshot: { approvalStatus: "approved" },
+            },
+          ],
+        };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_governed",
+            name: "Governed Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/921",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_governed",
+            complianceProfile: { legalSellerType: "VENDOR" },
+            vendorStore: {
+              id: "store_governed",
+              storeName: "Governed Store",
+              isTestStore: false,
+              isPlatformStore: false,
+              seller: {
+                id: "seller_governed",
+                status: "active",
+                stripeAccount: null,
+              },
+              vendorAuth: null,
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1201,
+        admin_graphql_api_id: "gid://shopify/Order/1201",
+        name: "#1201",
+        currency: "JPY",
+        note_attributes: [
+          { name: "checkout_reference", value: checkoutReference },
+        ],
+        line_items: [{ id: 1, product_id: 921, price: "2500", quantity: 1 }],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        MARKETPLACE_GOVERNANCE_GATE_ENABLED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_CONFIRMED: "true",
+        SHOPIFY_MARKETPLACE_PAYMENTS_WRITTEN_APPROVAL_REFERENCE: "approval-1",
+        SELLER_AGREEMENT_VERSION: "seller-2026-07",
+        SELLER_AGREEMENT_DOCUMENT_HASH: sellerAgreementHash,
+        SELLER_AGREEMENT_URL: "https://example.com/seller-agreement",
+        BUYER_TERMS_VERSION: "buyer-2026-07",
+        BUYER_TERMS_DOCUMENT_HASH: buyerTermsHash,
+        BUYER_TERMS_URL: "https://example.com/buyer-terms",
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(state.ledgerEntries.length, 1);
+  assert.equal(state.ledgerEntries[0].sellerId, "seller_governed");
 });
 
 test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", async () => {
@@ -1471,6 +1695,7 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
             vendorStore: {
               id: "store_1",
               storeName: "Shadow Store",
+              isTestStore: true,
               seller: null,
               vendorAuth: {
                 id: "vendor_1",
@@ -1560,7 +1785,10 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   assert.equal(line.shopifyVariantId, "gid://shopify/ProductVariant/912");
   assert.equal(line.quantity, 2);
   assert.equal(line.netAmount, 1900);
-  assert.equal(line.complianceSnapshotJson.conditionStatus, "CHECKOUT_CAPTURED");
+  assert.equal(
+    line.complianceSnapshotJson.conditionStatus,
+    "CHECKOUT_CAPTURED",
+  );
 
   assert.equal(
     state.checkoutEvidenceByReference.get("checkout:evidence-1101").status,
@@ -1587,6 +1815,7 @@ test("processShopifyOrderPaidSettlement prefers Shopify variant mapping over pro
   const makeVendorStore = ({ storeId, sellerId, handle }) => ({
     id: storeId,
     storeName: handle,
+    isTestStore: true,
     seller: null,
     vendorAuth: {
       id: `vendor_${sellerId}`,
@@ -1816,10 +2045,7 @@ test("backfillSellerOrderShadowChecks creates a shadow check from an existing le
   assert.equal(createdCheck.status, "matched");
   assert.equal(createdCheck.shopDomain, "b30ize-1a.myshopify.com");
   assert.equal(createdCheck.legacyLedgerAmount, 1900);
-  assert.equal(
-    createdCheck.sellerOrderCalculatedAmount,
-    1900,
-  );
+  assert.equal(createdCheck.sellerOrderCalculatedAmount, 1900);
 });
 
 test("backfillSellerOrderShadowChecks records a failed check when products cannot be matched", async () => {
@@ -1973,6 +2199,7 @@ test("processShopifyOrderPaidSettlement reads Shopify transaction risk when the 
             vendorStore: {
               id: "store_1",
               storeName: "Test Store",
+              isTestStore: true,
               seller: {
                 id: "seller_1",
                 status: "active",
@@ -2139,6 +2366,7 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
             shopifyProductId: "gid://shopify/Product/911",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStore: {
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_target",
                 handle: "target",
@@ -2199,7 +2427,10 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
   assert.equal(result.salesCreditCapture.ok, true);
   assert.equal(state.salesCreditOffset.status, "captured");
   assert.equal(state.ledgerEntries.length, 2);
-  assert.equal(state.ledgerEntries[0].entryType, "sales_credit_offset_captured");
+  assert.equal(
+    state.ledgerEntries[0].entryType,
+    "sales_credit_offset_captured",
+  );
   assert.equal(state.ledgerEntries[0].sellerId, "seller_buyer");
   assert.equal(state.ledgerEntries[0].direction, "debit");
   assert.equal(state.ledgerEntries[0].amount, 1000);
@@ -2216,8 +2447,14 @@ test("processShopifyOrderPaidSettlement captures sales credit and credits the ta
     state.ledgerEntries[1].metadataJson.salesCreditPaymentRiskRateBps,
     10000,
   );
-  assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetAmount, 1000);
-  assert.equal(state.ledgerEntries[1].metadataJson.salesCreditOffsetId, "sco_1");
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.salesCreditOffsetAmount,
+    1000,
+  );
+  assert.equal(
+    state.ledgerEntries[1].metadataJson.salesCreditOffsetId,
+    "sco_1",
+  );
 });
 
 test("processShopifyOrderPaidSettlement refuses sales credit custom attribute mismatches", async () => {
@@ -2270,6 +2507,7 @@ test("processShopifyOrderPaidSettlement refuses sales credit custom attribute mi
             shopifyProductId: "gid://shopify/Product/911",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStore: {
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_target",
                 handle: "target",
@@ -2350,6 +2588,7 @@ test("processShopifyOrderPaidSettlement allows a pending seller without a Stripe
             shopifyProductId: "gid://shopify/Product/911",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStore: {
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_1",
                 handle: "vendor",
@@ -2508,7 +2747,9 @@ test("processShopifyOrderPaidSettlement retries a missing shadow write for dupli
     env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
   });
   const existingSellerOrder = Array.from(state.sellerOrders.values())[0];
-  const existingSellerOrderLine = Array.from(state.sellerOrderLines.values())[0];
+  const existingSellerOrderLine = Array.from(
+    state.sellerOrderLines.values(),
+  )[0];
   Object.assign(existingSellerOrder, {
     sellerRefundAmount: 300,
     paymentStatus: "partially_refunded",
@@ -2579,6 +2820,7 @@ test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", as
             shopifyProductId: "gid://shopify/Product/1",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStore: {
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_1",
                 handle: "vendor-1",
@@ -2599,6 +2841,7 @@ test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", as
             shopifyProductId: "gid://shopify/Product/2",
             shopDomain: "b30ize-1a.myshopify.com",
             vendorStore: {
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_2",
                 handle: "vendor-2",
@@ -2669,6 +2912,7 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
             vendorStoreId: "store_1",
             vendorStore: {
               id: "store_1",
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_1",
                 handle: "vendor-1",
@@ -2688,6 +2932,7 @@ test("processShopifyOrderPaidSettlement records a shadow check for unsupported m
             vendorStoreId: "store_2",
             vendorStore: {
               id: "store_2",
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_2",
                 handle: "vendor-2",
@@ -2779,6 +3024,7 @@ test("processShopifyOrderPaidSettlement can process active and pending multi-sel
             vendorStoreId: "store_1",
             vendorStore: {
               id: "store_1",
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_1",
                 handle: "vendor-1",
@@ -2798,6 +3044,7 @@ test("processShopifyOrderPaidSettlement can process active and pending multi-sel
             vendorStoreId: "store_2",
             vendorStore: {
               id: "store_2",
+              isTestStore: true,
               vendorAuth: {
                 id: "vendor_2",
                 handle: "vendor-2",
@@ -4318,7 +4565,10 @@ test("processShopifyDisputeSettlement can hold multi-seller disputes behind a fl
     ],
   );
   assert.equal(state.ledgerEntries[0].entryType, "dispute_created");
-  assert.equal(state.ledgerEntries[0].metadataJson.multiSellerDisputeSettlement, true);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.multiSellerDisputeSettlement,
+    true,
+  );
   assert.equal(state.sellers.seller_1.status, "review");
   assert.equal(state.sellers.seller_2.status, "review");
   assert.equal(state.statusHistory.length, 2);
@@ -4439,7 +4689,10 @@ test("processShopifyDisputeSettlement can release multi-seller dispute holds beh
   );
   assert.equal(state.ledgerEntries[0].entryType, "dispute_funds_reinstated");
   assert.equal(state.ledgerEntries[0].direction, "credit");
-  assert.equal(state.ledgerEntries[0].metadataJson.multiSellerDisputeSettlement, true);
+  assert.equal(
+    state.ledgerEntries[0].metadataJson.multiSellerDisputeSettlement,
+    true,
+  );
   assert.deepEqual(
     state.sellerOrderUpdates.map((update) => update.data.riskStatus),
     ["normal", "normal"],
@@ -5497,7 +5750,7 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
         assert.deepEqual(data, {
           sellerId: "seller_1",
           sellerStripeAccountId: "ssa_1",
-          sellerPayoutRecipientId: null,
+          sellerPayoutRecipientId: "spr_manual",
           stripeAccountId: "acct_123",
           amount: 900,
           currencyCode: "jpy",
@@ -5593,7 +5846,7 @@ test("createPayoutRun allows manual settlement without a Stripe account", async 
         assert.deepEqual(data, {
           sellerId: "seller_1",
           sellerStripeAccountId: null,
-          sellerPayoutRecipientId: null,
+          sellerPayoutRecipientId: "spr_manual",
           stripeAccountId: null,
           amount: 1200,
           currencyCode: "jpy",
@@ -6106,7 +6359,10 @@ test("payout runs require approval and execute on the connected account only whe
         return state.payoutRun;
       },
       async updateMany({ where, data }) {
-        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+        if (
+          state.payoutRun.id !== where.id ||
+          state.payoutRun.status !== where.status
+        ) {
           return { count: 0 };
         }
         state.payoutRun = { ...state.payoutRun, ...data };
@@ -6200,6 +6456,7 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
       },
     },
   };
+  attachApprovedRecipientSnapshot(state.payoutRun);
   const fakePrisma = {
     async $transaction(callback) {
       return callback(this);
@@ -6216,7 +6473,10 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
         return state.payoutRun;
       },
       async updateMany({ where, data }) {
-        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+        if (
+          state.payoutRun.id !== where.id ||
+          state.payoutRun.status !== where.status
+        ) {
           return { count: 0 };
         }
         state.payoutRun = { ...state.payoutRun, ...data };
@@ -6239,6 +6499,20 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
       },
     },
   };
+
+  state.payoutRun.sellerPayoutRecipient.accountHolderName = "Changed Recipient";
+  const changedRecipientResult = await markPayoutRunManuallyPaid(
+    {
+      payoutRunId: "pr_manual",
+      executedBy: "admin_user",
+    },
+    { prismaClient: fakePrisma },
+  );
+  assert.deepEqual(changedRecipientResult, {
+    ok: false,
+    reason: "payout_recipient_changed",
+  });
+  state.payoutRun.sellerPayoutRecipient.accountHolderName = "Test Store";
 
   const claimResult = await markPayoutRunManuallyPaid(
     {
@@ -6339,6 +6613,7 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
       },
     },
   };
+  attachApprovedRecipientSnapshot(state.payoutRun);
   const fakePrisma = {
     payoutRun: {
       async findUnique() {
@@ -6352,7 +6627,10 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
         return state.payoutRun;
       },
       async updateMany({ where, data }) {
-        if (state.payoutRun.id !== where.id || state.payoutRun.status !== where.status) {
+        if (
+          state.payoutRun.id !== where.id ||
+          state.payoutRun.status !== where.status
+        ) {
           return { count: 0 };
         }
         state.payoutRun = { ...state.payoutRun, ...data };
@@ -6529,6 +6807,106 @@ test("syncWisePayoutRunStatus records payout_paid only after Wise completion", a
   assert.equal(state.ledgerEntries[0].direction, "debit");
   assert.equal(state.ledgerEntries[0].stripeObjectId, "987654");
   assert.equal(state.ledgerEntries[0].metadataJson.transferMethod, "wise_api");
+});
+
+test("syncWisePayoutRunStatus restores a returned Wise payout exactly once", async () => {
+  const env = {
+    WISE_API_TOKEN: "wise-token",
+    WISE_PROFILE_ID: "30000000",
+    WISE_API_BASE_URL: "https://api.wise-sandbox.com",
+    WISE_SOURCE_CURRENCY: "JPY",
+  };
+  const state = {
+    ledgerEntries: [
+      {
+        id: "ledger_paid",
+        payoutRunId: "pr_wise_returned",
+        entryType: "payout_paid",
+        direction: "debit",
+        amount: 9900,
+      },
+    ],
+    payoutRun: {
+      id: "pr_wise_returned",
+      sellerId: "seller_1",
+      sellerStripeAccountId: null,
+      stripeAccountId: null,
+      amount: 9900,
+      currencyCode: "jpy",
+      status: "executed",
+      transferMethod: "wise_api",
+      wiseTransferId: "987654",
+      wiseTransferStatus: "outgoing_payment_sent",
+      wisePayloadJson: null,
+      executedAt: new Date("2026-07-01T00:00:00Z"),
+      executedBy: "admin_user",
+      returnedAt: null,
+    },
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    payoutRun: {
+      async findUnique() {
+        return state.payoutRun;
+      },
+      async update({ data }) {
+        state.payoutRun = { ...state.payoutRun, ...data };
+        return state.payoutRun;
+      },
+    },
+    ledgerEntry: {
+      async findFirst({ where }) {
+        return (
+          state.ledgerEntries.find(
+            (entry) =>
+              entry.payoutRunId === where.payoutRunId &&
+              entry.entryType === where.entryType,
+          ) || null
+        );
+      },
+      async create({ data }) {
+        const entry = {
+          id: `ledger_${state.ledgerEntries.length + 1}`,
+          ...data,
+        };
+        state.ledgerEntries.push(entry);
+        return entry;
+      },
+    },
+  };
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return { id: 987654, status: "funds_refunded" };
+    },
+  });
+
+  const first = await syncWisePayoutRunStatus(
+    { payoutRunId: state.payoutRun.id },
+    { prismaClient: fakePrisma, fetchImpl, env },
+  );
+  const second = await syncWisePayoutRunStatus(
+    { payoutRunId: state.payoutRun.id },
+    { prismaClient: fakePrisma, fetchImpl, env },
+  );
+
+  assert.equal(first.ok, true);
+  assert.equal(first.ledgerEntryCreated, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.ledgerEntryCreated, false);
+  assert.equal(state.payoutRun.status, "returned");
+  assert.equal(
+    state.ledgerEntries.filter((entry) => entry.entryType === "payout_returned")
+      .length,
+    1,
+  );
+  const returnedEntry = state.ledgerEntries.find(
+    (entry) => entry.entryType === "payout_returned",
+  );
+  assert.equal(returnedEntry.direction, "credit");
+  assert.equal(returnedEntry.amount, 9900);
 });
 
 test("executePayoutRun refuses to create a payout above connected account available balance", async () => {

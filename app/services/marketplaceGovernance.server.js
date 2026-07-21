@@ -56,11 +56,15 @@ function normalizeText(value) {
 }
 
 function normalizeUpper(value) {
-  return String(value ?? "").trim().toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
 }
 
 function normalizeLower(value) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeBoolean(value) {
@@ -83,12 +87,38 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+async function runSerializableGovernanceTransaction(
+  prismaClient,
+  callback,
+  { maxAttempts = 3 } = {},
+) {
+  if (typeof prismaClient?.$transaction !== "function") {
+    return callback(prismaClient);
+  }
+
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      return await prismaClient.$transaction(callback, {
+        isolationLevel: "Serializable",
+      });
+    } catch (error) {
+      if (error?.code !== "P2034" || attempt >= maxAttempts) throw error;
+    }
+  }
+  throw new Error("Serializable settlement transaction retry exhausted.");
+}
+
 function hasText(value) {
   return Boolean(normalizeText(value));
 }
 
 function hashValue(value) {
-  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(String(value || ""))
+    .digest("hex");
 }
 
 function parseJsonObject(value) {
@@ -311,9 +341,12 @@ export function evaluateSellerGovernanceReadiness(
   if (profile && !SELLER_ENTITY_TYPES.includes(profile.entityType)) {
     reasons.push("entity_type_missing");
   }
-  if (profile && !hasText(profile.legalName)) reasons.push("legal_name_missing");
-  if (profile && !hasText(profile.countryCode)) reasons.push("legal_country_missing");
-  if (profile && !hasText(profile.address1)) reasons.push("legal_address_missing");
+  if (profile && !hasText(profile.legalName))
+    reasons.push("legal_name_missing");
+  if (profile && !hasText(profile.countryCode))
+    reasons.push("legal_country_missing");
+  if (profile && !hasText(profile.address1))
+    reasons.push("legal_address_missing");
   if (profile && !profile.antisocialDeclarationAt) {
     reasons.push("antisocial_declaration_missing");
   }
@@ -334,7 +367,11 @@ export function evaluateSellerGovernanceReadiness(
 
   if (requirePayoutReadiness) {
     if (seller?.settlementControl?.payoutHold) reasons.push("payout_hold");
-    if (normalizeNonNegativeInteger(seller?.settlementControl?.directInvoiceBalance) > 0) {
+    if (
+      normalizeNonNegativeInteger(
+        seller?.settlementControl?.directInvoiceBalance,
+      ) > 0
+    ) {
       reasons.push("direct_invoice_balance_due");
     }
   }
@@ -353,13 +390,18 @@ export function evaluateProductGovernanceReadiness(product) {
   const profile = product?.complianceProfile || null;
 
   if (!product?.id) reasons.push("product_missing");
-  if (product?.approvalStatus !== "approved") reasons.push("product_not_approved");
-  if (!hasText(product?.shopifyProductId)) reasons.push("shopify_product_missing");
+  if (product?.approvalStatus !== "approved")
+    reasons.push("product_not_approved");
+  if (!hasText(product?.shopifyProductId))
+    reasons.push("shopify_product_missing");
   if (!profile) reasons.push("product_compliance_missing");
   if (profile && profile.approvalStatus !== "APPROVED") {
     reasons.push("product_compliance_not_approved");
   }
-  if (profile && !PRODUCT_CONDITION_STATUSES.includes(profile.conditionStatus)) {
+  if (
+    profile &&
+    !PRODUCT_CONDITION_STATUSES.includes(profile.conditionStatus)
+  ) {
     reasons.push("product_condition_missing");
   }
   if (profile && !hasText(profile.countryOfOriginCode)) {
@@ -383,7 +425,9 @@ export function calculateGovernedPayoutAvailability(
   settlementControl = null,
 ) {
   const balance = Math.max(0, Math.trunc(Number(ledgerBalance) || 0));
-  const reserveAmount = normalizeNonNegativeInteger(settlementControl?.reserveAmount);
+  const reserveAmount = normalizeNonNegativeInteger(
+    settlementControl?.reserveAmount,
+  );
   const directInvoiceBalance = normalizeNonNegativeInteger(
     settlementControl?.directInvoiceBalance,
   );
@@ -403,13 +447,20 @@ export function calculateGovernedPayoutAvailability(
 
 export function buildSellerGovernanceSnapshot(
   seller,
-  { agreementVersion = "UNCONFIGURED", buyerTermsVersion = "UNCONFIGURED" } = {},
+  {
+    agreementVersion = "UNCONFIGURED",
+    agreementDocumentHash = null,
+    buyerTermsVersion = "UNCONFIGURED",
+  } = {},
 ) {
   const profile = seller?.complianceProfile || null;
   const acceptance = asArray(seller?.agreementAcceptances).find(
     (entry) =>
       entry.agreementType === SELLER_AGREEMENT_TYPE &&
       entry.version === agreementVersion &&
+      (!agreementDocumentHash ||
+        normalizeLower(entry.documentHash) ===
+          normalizeLower(agreementDocumentHash)) &&
       !entry.revokedAt,
   );
   const store = seller?.vendor?.vendorStore || seller?.vendorStore || null;
@@ -460,7 +511,10 @@ export function buildProductComplianceSnapshot(product) {
   };
 }
 
-export function sellerComplianceProfileFromFormData(formData, { admin = false } = {}) {
+export function sellerComplianceProfileFromFormData(
+  formData,
+  { admin = false } = {},
+) {
   const entityType = normalizeUpper(formData.get("entityType"));
   const reviewStatus = admin
     ? normalizeUpper(formData.get("reviewStatus")) || "DRAFT"
@@ -501,7 +555,10 @@ export function sellerComplianceProfileFromFormData(formData, { admin = false } 
   };
 }
 
-export function productComplianceProfileFromFormData(formData, { admin = false } = {}) {
+export function productComplianceProfileFromFormData(
+  formData,
+  { admin = false } = {},
+) {
   const conditionStatus = normalizeUpper(formData.get("conditionStatus"));
   const approvalStatus = admin
     ? normalizeUpper(formData.get("complianceApprovalStatus")) || "DRAFT"
@@ -532,7 +589,9 @@ export function productComplianceProfileFromFormData(formData, { admin = false }
     approvalStatus: PRODUCT_COMPLIANCE_STATUSES.includes(approvalStatus)
       ? approvalStatus
       : "DRAFT",
-    reviewNotes: admin ? normalizeText(formData.get("complianceReviewNotes")) : null,
+    reviewNotes: admin
+      ? normalizeText(formData.get("complianceReviewNotes"))
+      : null,
   };
 }
 
@@ -546,7 +605,9 @@ export async function getVendorGovernanceSettings(
       complianceProfile: true,
       agreementAcceptances: { orderBy: { acceptedAt: "desc" } },
       settlementControl: true,
-      vendor: { include: { vendorStore: { include: { returnAddresses: true } } } },
+      vendor: {
+        include: { vendorStore: { include: { returnAddresses: true } } },
+      },
     },
   });
   if (!seller) return null;
@@ -570,7 +631,9 @@ export async function upsertSellerComplianceProfile(
   { sellerId, values, reviewedBy = null },
   { prismaClient = prisma } = {},
 ) {
-  const seller = await prismaClient.seller.findUnique({ where: { id: sellerId } });
+  const seller = await prismaClient.seller.findUnique({
+    where: { id: sellerId },
+  });
   if (!seller) return { ok: false, reason: "seller_not_found" };
   const now = new Date();
   const data = {
@@ -687,7 +750,9 @@ export async function upsertProductComplianceProfile(
   { productId, values, reviewedBy = null },
   { prismaClient = prisma } = {},
 ) {
-  const product = await prismaClient.product.findUnique({ where: { id: productId } });
+  const product = await prismaClient.product.findUnique({
+    where: { id: productId },
+  });
   if (!product) return { ok: false, reason: "product_not_found" };
   const now = new Date();
   const data = {
@@ -703,19 +768,28 @@ export async function upsertProductComplianceProfile(
   return { ok: true, profile };
 }
 
-export async function getMarketplaceGovernanceDashboard(
-  { prismaClient = prisma, env = process.env } = {},
-) {
+export async function getMarketplaceGovernanceDashboard({
+  prismaClient = prisma,
+  env = process.env,
+} = {}) {
   const configuration = getMarketplaceGovernanceConfiguration(env);
   const agreementVersion = configuration.sellerAgreementVersion;
-  const [sellers, products, productReadinessCandidates, cases, criticalCaseCount] = await Promise.all([
+  const [
+    sellers,
+    products,
+    productReadinessCandidates,
+    cases,
+    criticalCaseCount,
+  ] = await Promise.all([
     prismaClient.seller.findMany({
       orderBy: { updatedAt: "desc" },
       include: {
         complianceProfile: true,
         agreementAcceptances: { orderBy: { acceptedAt: "desc" } },
         settlementControl: true,
-        vendor: { include: { vendorStore: { include: { returnAddresses: true } } } },
+        vendor: {
+          include: { vendorStore: { include: { returnAddresses: true } } },
+        },
       },
     }),
     prismaClient.product.findMany({
@@ -787,7 +861,8 @@ export async function getMarketplaceGovernanceDashboard(
       sellerCount: sellerRows.length,
       sellerReadyCount: sellerRows.filter((row) => row.readiness.ready).length,
       productCount: productRows.length,
-      productReadyCount: productRows.filter((row) => row.readiness.ready).length,
+      productReadyCount: productRows.filter((row) => row.readiness.ready)
+        .length,
       openCaseCount: await prismaClient.marketplaceOperationalCase.count({
         where: { status: { notIn: ["RESOLVED", "CLOSED"] } },
       }),
@@ -796,7 +871,10 @@ export async function getMarketplaceGovernanceDashboard(
 }
 
 function createCaseNumber(now = new Date()) {
-  const stamp = now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  const stamp = now
+    .toISOString()
+    .replace(/[-:TZ.]/g, "")
+    .slice(0, 14);
   return `CASE-${stamp}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
@@ -815,7 +893,9 @@ export async function createMarketplaceOperationalCase(
   }
   const detailsJson = parseJsonObject(values.detailsJson) || {};
   if (caseType === "SELLER_DISCLOSURE") {
-    const legalBasis = normalizeText(values.legalBasis || detailsJson.legalBasis);
+    const legalBasis = normalizeText(
+      values.legalBasis || detailsJson.legalBasis,
+    );
     const claimantIdentityStatus = normalizeUpper(
       values.claimantIdentityStatus || detailsJson.claimantIdentityStatus,
     );
@@ -871,7 +951,18 @@ export async function createMarketplaceOperationalCase(
 }
 
 export async function updateMarketplaceOperationalCase(
-  { caseId, status, responsibilitySellerId, responsibilityStatus, confirmedSellerLiabilityAmount, platformLiabilityAmount, resolutionType, resolutionNotes, evidenceJson, decisionReasonCode },
+  {
+    caseId,
+    status,
+    responsibilitySellerId,
+    responsibilityStatus,
+    confirmedSellerLiabilityAmount,
+    platformLiabilityAmount,
+    resolutionType,
+    resolutionNotes,
+    evidenceJson,
+    decisionReasonCode,
+  },
   { prismaClient = prisma, actor = "admin", actorMetadata = null } = {},
 ) {
   const current = await prismaClient.marketplaceOperationalCase.findUnique({
@@ -887,7 +978,8 @@ export async function updateMarketplaceOperationalCase(
     normalizeText(responsibilitySellerId) || current.responsibilitySellerId;
   const nextResponsibilityStatus =
     normalizeUpper(responsibilityStatus) || current.responsibilityStatus;
-  const nextEvidenceJson = parseJsonObject(evidenceJson) || current.evidenceJson;
+  const nextEvidenceJson =
+    parseJsonObject(evidenceJson) || current.evidenceJson;
   const nextResolutionNotes =
     normalizeText(resolutionNotes) || current.resolutionNotes;
   const nextDecisionReasonCode =
@@ -947,7 +1039,9 @@ export async function updateMarketplaceOperationalCase(
         responsibilitySellerId: nextResponsibilitySellerId,
         responsibilityStatus: nextResponsibilityStatus,
         confirmedSellerLiabilityAmount: nextLiabilityAmount,
-        platformLiabilityAmount: normalizeNonNegativeInteger(platformLiabilityAmount),
+        platformLiabilityAmount: normalizeNonNegativeInteger(
+          platformLiabilityAmount,
+        ),
         resolutionType: normalizeText(resolutionType),
         resolutionNotes: nextResolutionNotes,
         evidenceJson: nextEvidenceJson,
@@ -958,7 +1052,9 @@ export async function updateMarketplaceOperationalCase(
         responsibilityConfirmedBy: isResponsibilityConfirmation
           ? current.responsibilityConfirmedBy || actor
           : current.responsibilityConfirmedBy,
-        resolvedAt: ["RESOLVED", "CLOSED"].includes(nextStatus) ? new Date() : null,
+        resolvedAt: ["RESOLVED", "CLOSED"].includes(nextStatus)
+          ? new Date()
+          : null,
       },
     });
     await tx.marketplaceOperationalCaseEvent.create({
@@ -1018,17 +1114,33 @@ async function sellerParticipatesInOperationalCase(
 }
 
 export async function createSettlementAdjustment(
-  { sellerId, caseId = null, originalAdjustmentId = null, adjustmentType, direction = "debit", amount, currencyCode = "jpy", reason, createdBy = "admin", createdByJson = null },
+  {
+    sellerId,
+    caseId = null,
+    originalAdjustmentId = null,
+    adjustmentType,
+    direction = "debit",
+    amount,
+    currencyCode = "jpy",
+    reason,
+    createdBy = "admin",
+    createdByJson = null,
+  },
   { prismaClient = prisma } = {},
 ) {
   const normalizedType = normalizeUpper(adjustmentType);
   const normalizedAmount = normalizePositiveInteger(amount);
   const normalizedReason = normalizeText(reason);
-  const normalizedDirection = normalizeLower(direction) === "credit" ? "credit" : "debit";
+  const normalizedDirection =
+    normalizeLower(direction) === "credit" ? "credit" : "debit";
   const normalizedCaseId = normalizeText(caseId);
   const normalizedOriginalAdjustmentId = normalizeText(originalAdjustmentId);
   const normalizedCurrency = normalizeLower(currencyCode) || "jpy";
-  if (!SETTLEMENT_ADJUSTMENT_TYPES.includes(normalizedType) || !normalizedAmount || !normalizedReason) {
+  if (
+    !SETTLEMENT_ADJUSTMENT_TYPES.includes(normalizedType) ||
+    !normalizedAmount ||
+    !normalizedReason
+  ) {
     return { ok: false, reason: "invalid_adjustment" };
   }
   if (normalizedType === "SET_OFF" && normalizedDirection !== "debit") {
@@ -1040,121 +1152,141 @@ export async function createSettlementAdjustment(
   if (!normalizedCaseId) {
     return { ok: false, reason: "case_required" };
   }
-  const adjustment = await prismaClient.$transaction(async (tx) => {
-    const seller = await tx.seller.findUnique({
-      where: { id: sellerId },
-      include: { settlementControl: true, complianceProfile: true },
-    });
-    if (!seller) return { error: "seller_not_found" };
-    if (normalizeUpper(seller.complianceProfile?.countryCode) !== "JP") {
-      return { error: "unsupported_settlement_country" };
-    }
-
-    const caseEntry = normalizedCaseId
-      ? await tx.marketplaceOperationalCase.findUnique({
-          where: { id: normalizedCaseId },
-          include: { settlementAdjustments: true },
-        })
-      : null;
-    if (normalizedCaseId && !caseEntry) return { error: "case_not_found" };
-    if (caseEntry && normalizeLower(caseEntry.currencyCode) !== normalizedCurrency) {
-      return { error: "case_currency_mismatch" };
-    }
-
-    if (
-      normalizedDirection === "debit" &&
-      ["SET_OFF", "DIRECT_INVOICE"].includes(normalizedType)
-    ) {
-      const responsibilityConfirmed =
-        caseEntry &&
-        caseEntry.responsibilitySellerId === sellerId &&
-        ["SELLER", "SHARED"].includes(caseEntry.responsibilityStatus) &&
-        [
-          "RESPONSIBILITY_CONFIRMED",
-          "ACTION_REQUIRED",
-          "RESOLVED",
-          "CLOSED",
-        ].includes(caseEntry.status);
-      if (!responsibilityConfirmed) {
-        return { error: "responsibility_not_confirmed" };
-      }
-
-      const committedLiability = asArray(caseEntry.settlementAdjustments)
-        .filter(
-          (entry) =>
-            entry.direction === "debit" &&
-            ["SET_OFF", "DIRECT_INVOICE"].includes(entry.adjustmentType) &&
-            ["PENDING", "APPROVED", "APPLIED"].includes(entry.status),
-        )
-        .reduce((total, entry) => total + normalizeNonNegativeInteger(entry.amount), 0);
-      if (
-        committedLiability + normalizedAmount >
-        normalizeNonNegativeInteger(caseEntry.confirmedSellerLiabilityAmount)
-      ) {
-        return { error: "liability_amount_exceeded" };
-      }
-    }
-
-    if (
-      normalizedType === "SET_OFF" &&
-      normalizedDirection === "debit" &&
-      !seller.settlementControl?.futureSetoffEnabled
-    ) {
-      return { error: "future_setoff_not_authorized" };
-    }
-
-    if (normalizedType === "RESERVE" && normalizedOriginalAdjustmentId) {
-      return { error: "original_adjustment_not_allowed" };
-    }
-    if (normalizedType === "RELEASE") {
-      if (!normalizedOriginalAdjustmentId) {
-        return { error: "original_reserve_required" };
-      }
-      const original = await tx.sellerSettlementAdjustment.findUnique({
-        where: { id: normalizedOriginalAdjustmentId },
-        include: { releaseAdjustments: true },
+  const adjustment = await runSerializableGovernanceTransaction(
+    prismaClient,
+    async (tx) => {
+      const seller = await tx.seller.findUnique({
+        where: { id: sellerId },
+        include: { settlementControl: true, complianceProfile: true },
       });
-      if (
-        !original ||
-        original.adjustmentType !== "RESERVE" ||
-        original.status !== "APPLIED" ||
-        original.sellerId !== sellerId ||
-        original.caseId !== normalizedCaseId ||
-        normalizeLower(original.currencyCode) !== normalizedCurrency
-      ) {
-        return { error: "original_reserve_invalid" };
+      if (!seller) return { error: "seller_not_found" };
+      if (normalizeUpper(seller.complianceProfile?.countryCode) !== "JP") {
+        return { error: "unsupported_settlement_country" };
       }
-      const releasedAmount = asArray(original.releaseAdjustments)
-        .filter((entry) => ["PENDING", "APPROVED", "APPLYING", "APPLIED"].includes(entry.status))
-        .reduce((total, entry) => total + normalizeNonNegativeInteger(entry.amount), 0);
-      if (releasedAmount + normalizedAmount > original.amount) {
-        return { error: "reserve_release_amount_exceeded" };
-      }
-    }
 
-    return tx.sellerSettlementAdjustment.create({
-      data: {
-        sellerId,
-        caseId: normalizedCaseId,
-        originalAdjustmentId:
-          normalizedType === "RELEASE" ? normalizedOriginalAdjustmentId : null,
-        adjustmentType: normalizedType,
-        direction:
-          normalizedType === "RELEASE"
-            ? "credit"
-            : normalizedType === "RESERVE"
-              ? "debit"
-              : normalizedDirection,
-        amount: normalizedAmount,
-        currencyCode: normalizedCurrency,
-        reason: normalizedReason,
-        metadataJson: {
-          createdBy: normalizeText(createdBy),
-          createdByJson,
+      const caseEntry = normalizedCaseId
+        ? await tx.marketplaceOperationalCase.findUnique({
+            where: { id: normalizedCaseId },
+            include: { settlementAdjustments: true },
+          })
+        : null;
+      if (normalizedCaseId && !caseEntry) return { error: "case_not_found" };
+      if (
+        caseEntry &&
+        normalizeLower(caseEntry.currencyCode) !== normalizedCurrency
+      ) {
+        return { error: "case_currency_mismatch" };
+      }
+
+      if (
+        normalizedDirection === "debit" &&
+        ["SET_OFF", "DIRECT_INVOICE"].includes(normalizedType)
+      ) {
+        const responsibilityConfirmed =
+          caseEntry &&
+          caseEntry.responsibilitySellerId === sellerId &&
+          ["SELLER", "SHARED"].includes(caseEntry.responsibilityStatus) &&
+          [
+            "RESPONSIBILITY_CONFIRMED",
+            "ACTION_REQUIRED",
+            "RESOLVED",
+            "CLOSED",
+          ].includes(caseEntry.status);
+        if (!responsibilityConfirmed) {
+          return { error: "responsibility_not_confirmed" };
+        }
+
+        const committedLiability = asArray(caseEntry.settlementAdjustments)
+          .filter(
+            (entry) =>
+              entry.direction === "debit" &&
+              ["SET_OFF", "DIRECT_INVOICE"].includes(entry.adjustmentType) &&
+              ["PENDING", "APPROVED", "APPLYING", "APPLIED"].includes(
+                entry.status,
+              ),
+          )
+          .reduce(
+            (total, entry) => total + normalizeNonNegativeInteger(entry.amount),
+            0,
+          );
+        if (
+          committedLiability + normalizedAmount >
+          normalizeNonNegativeInteger(caseEntry.confirmedSellerLiabilityAmount)
+        ) {
+          return { error: "liability_amount_exceeded" };
+        }
+      }
+
+      if (
+        normalizedType === "SET_OFF" &&
+        normalizedDirection === "debit" &&
+        !seller.settlementControl?.futureSetoffEnabled
+      ) {
+        return { error: "future_setoff_not_authorized" };
+      }
+
+      if (normalizedType === "RESERVE" && normalizedOriginalAdjustmentId) {
+        return { error: "original_adjustment_not_allowed" };
+      }
+      if (normalizedType === "RELEASE") {
+        if (!normalizedOriginalAdjustmentId) {
+          return { error: "original_reserve_required" };
+        }
+        const original = await tx.sellerSettlementAdjustment.findUnique({
+          where: { id: normalizedOriginalAdjustmentId },
+          include: { releaseAdjustments: true },
+        });
+        if (
+          !original ||
+          original.adjustmentType !== "RESERVE" ||
+          original.status !== "APPLIED" ||
+          original.sellerId !== sellerId ||
+          original.caseId !== normalizedCaseId ||
+          normalizeLower(original.currencyCode) !== normalizedCurrency
+        ) {
+          return { error: "original_reserve_invalid" };
+        }
+        const releasedAmount = asArray(original.releaseAdjustments)
+          .filter((entry) =>
+            ["PENDING", "APPROVED", "APPLYING", "APPLIED"].includes(
+              entry.status,
+            ),
+          )
+          .reduce(
+            (total, entry) => total + normalizeNonNegativeInteger(entry.amount),
+            0,
+          );
+        if (releasedAmount + normalizedAmount > original.amount) {
+          return { error: "reserve_release_amount_exceeded" };
+        }
+      }
+
+      return tx.sellerSettlementAdjustment.create({
+        data: {
+          sellerId,
+          caseId: normalizedCaseId,
+          originalAdjustmentId:
+            normalizedType === "RELEASE"
+              ? normalizedOriginalAdjustmentId
+              : null,
+          adjustmentType: normalizedType,
+          direction:
+            normalizedType === "RELEASE"
+              ? "credit"
+              : normalizedType === "RESERVE"
+                ? "debit"
+                : normalizedDirection,
+          amount: normalizedAmount,
+          currencyCode: normalizedCurrency,
+          reason: normalizedReason,
+          metadataJson: {
+            createdBy: normalizeText(createdBy),
+            createdByJson,
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
   if (adjustment?.error) return { ok: false, reason: adjustment.error };
   return { ok: true, adjustment };
 }
@@ -1163,7 +1295,7 @@ export async function applySettlementAdjustment(
   { adjustmentId, actor = "admin", actorMetadata = null },
   { prismaClient = prisma, env = process.env } = {},
 ) {
-  return prismaClient.$transaction(async (tx) => {
+  return runSerializableGovernanceTransaction(prismaClient, async (tx) => {
     const adjustment = await tx.sellerSettlementAdjustment.findUnique({
       where: { id: adjustmentId },
       include: { seller: { include: { complianceProfile: true } } },
@@ -1176,7 +1308,10 @@ export async function applySettlementAdjustment(
       adjustment.metadataJson?.createdBy ||
         adjustment.metadataJson?.createdByJson?.actorKey,
     );
-    if (adjustmentCreator && adjustmentCreator === actor) {
+    if (!adjustmentCreator) {
+      return { ok: false, reason: "adjustment_creator_missing" };
+    }
+    if (adjustmentCreator === actor) {
       return { ok: false, reason: "adjustment_maker_checker_required" };
     }
     if (
@@ -1212,7 +1347,8 @@ export async function applySettlementAdjustment(
         original.status !== "APPLIED" ||
         original.sellerId !== adjustment.sellerId ||
         original.caseId !== adjustment.caseId ||
-        normalizeLower(original.currencyCode) !== normalizeLower(adjustment.currencyCode)
+        normalizeLower(original.currencyCode) !==
+          normalizeLower(adjustment.currencyCode)
       ) {
         return { ok: false, reason: "original_reserve_invalid" };
       }
@@ -1222,7 +1358,10 @@ export async function applySettlementAdjustment(
             entry.id !== adjustment.id &&
             ["APPROVED", "APPLYING", "APPLIED"].includes(entry.status),
         )
-        .reduce((total, entry) => total + normalizeNonNegativeInteger(entry.amount), 0);
+        .reduce(
+          (total, entry) => total + normalizeNonNegativeInteger(entry.amount),
+          0,
+        );
       if (otherReleasedAmount + adjustment.amount > original.amount) {
         return { ok: false, reason: "reserve_release_amount_exceeded" };
       }
@@ -1256,11 +1395,12 @@ export async function applySettlementAdjustment(
             entry.id !== adjustment.id &&
             entry.direction === "debit" &&
             ["SET_OFF", "DIRECT_INVOICE"].includes(entry.adjustmentType) &&
-            ["PENDING", "APPROVED", "APPLIED"].includes(entry.status),
+            ["PENDING", "APPROVED", "APPLYING", "APPLIED"].includes(
+              entry.status,
+            ),
         )
         .reduce(
-          (total, entry) =>
-            total + normalizeNonNegativeInteger(entry.amount),
+          (total, entry) => total + normalizeNonNegativeInteger(entry.amount),
           0,
         );
       if (
@@ -1388,6 +1528,11 @@ export async function applySettlementAdjustment(
         },
       });
     }
-    return { ok: true, adjustment: updated, ledgerEntry, settlementControl: controlChange };
+    return {
+      ok: true,
+      adjustment: updated,
+      ledgerEntry,
+      settlementControl: controlChange,
+    };
   });
 }

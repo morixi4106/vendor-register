@@ -1,55 +1,61 @@
-import { redirect } from "@remix-run/node";
-import prisma from "../db.server";
-import { buildVendorCollectionUrl } from "../utils/vendorCollectionHandles";
+import prisma from "../db.server.js";
+import { authenticate } from "../shopify.server.js";
+import VendorStorefrontPage from "./vendor.$handle.jsx";
+import {
+  createVendorStorefrontAction,
+  createVendorStorefrontLoader,
+} from "../services/vendorStorefront.server.js";
 
-export async function loader({ params }) {
-  const handleOrStoreId = String(params.handle || "").trim();
+const storefrontLoader = createVendorStorefrontLoader();
+const storefrontAction = createVendorStorefrontAction();
 
-  if (!handleOrStoreId) {
-    throw new Response("Not Found", { status: 404 });
+async function authenticateAppProxy(request) {
+  const { session } = await authenticate.public.appProxy(request);
+  if (!session?.shop) {
+    throw new Response("Unauthorized", { status: 401 });
   }
+  return session.shop;
+}
+
+async function resolveCanonicalHandle(handleOrStoreId) {
+  const value = String(handleOrStoreId || "").trim();
+  if (!value) return null;
 
   const vendor = await prisma.vendor.findUnique({
-    where: { handle: handleOrStoreId },
+    where: { handle: value },
     select: { handle: true, status: true },
   });
-
-  if (vendor?.status === "active") {
-    const collectionUrl = buildVendorCollectionUrl(vendor.handle);
-
-    if (collectionUrl) {
-      throw redirect(collectionUrl);
-    }
-  }
+  if (vendor?.status === "active") return vendor.handle;
 
   const store = await prisma.vendorStore.findUnique({
-    where: { id: handleOrStoreId },
+    where: { id: value },
     select: {
-      vendorAuth: {
-        select: {
-          handle: true,
-          status: true,
-        },
-      },
+      vendorAuth: { select: { handle: true, status: true } },
     },
   });
-  const canonicalHandle = String(store?.vendorAuth?.handle || "").trim();
 
-  if (canonicalHandle && store?.vendorAuth?.status === "active") {
-    const collectionUrl = buildVendorCollectionUrl(canonicalHandle);
-
-    if (collectionUrl) {
-      throw redirect(collectionUrl);
-    }
-  }
-
-  throw new Response("Not Found", { status: 404 });
+  return store?.vendorAuth?.status === "active"
+    ? store.vendorAuth.handle
+    : null;
 }
 
-export async function action() {
-  throw new Response("Not Found", { status: 404 });
+async function withCanonicalHandle(args, handler) {
+  await authenticateAppProxy(args.request);
+  const handle = await resolveCanonicalHandle(args.params.handle);
+  if (!handle) throw new Response("Not Found", { status: 404 });
+
+  return handler({
+    ...args,
+    params: { ...args.params, handle },
+  });
 }
 
-export default function VendorCollectionRedirectPage() {
-  return null;
+export function loader(args) {
+  return withCanonicalHandle(args, storefrontLoader);
 }
+
+export function action(args) {
+  return withCanonicalHandle(args, storefrontAction);
+}
+
+export default VendorStorefrontPage;

@@ -3,7 +3,10 @@ import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/re
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
-import { buildVendorCollectionUrl } from "../utils/vendorCollectionHandles";
+import {
+  buildVendorCollectionUrl,
+  buildVendorProxyStorefrontUrl,
+} from "../utils/vendorCollectionHandles";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
 export const loader = async ({ request, params }) => {
@@ -70,7 +73,9 @@ export default function VendorDetailPage() {
   const isSyncing =
     navigation.state === "submitting" &&
     navigation.formData?.get("intent") === "sync-collection";
-  const collectionUrl = buildVendorCollectionUrl(store.vendorAuth?.handle);
+  const collectionUrl = store.isPlatformStore || store.isTestStore
+    ? buildVendorCollectionUrl(store.vendorAuth?.handle)
+    : buildVendorProxyStorefrontUrl(store.vendorAuth?.handle);
 
   return (
     <div style={{ padding: "24px", maxWidth: "960px" }}>
@@ -96,7 +101,7 @@ export default function VendorDetailPage() {
         <DetailRow label="備考" value={store.note || "-"} />
         <DetailRow label="年齢確認" value={store.ageCheck} />
         <DetailRow label="Vendor handle" value={store.vendorAuth?.handle || "-"} />
-        <DetailRow label="Shopify Collection" value={collectionUrl || "-"} />
+        <DetailRow label="購入者向けページ" value={collectionUrl || "-"} />
         <DetailRow
           label="登録日時"
           value={new Date(store.createdAt).toLocaleString("ja-JP")}

@@ -20,6 +20,10 @@ api_version = "2026-04"
   uri = "/webhooks/products/create"
 
   [[webhooks.subscriptions]]
+  topics = [ "products/update" ]
+  uri = "/webhooks/products/update"
+
+  [[webhooks.subscriptions]]
   topics = [ "products/delete" ]
   uri = "/webhooks/products/delete"
 
@@ -49,8 +53,14 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_publications,write_publications"
-optional_scopes = ["read_draft_orders"]
+scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_publications,write_publications"
+
+[product.metafields.app.marketplace_checkout_policy]
+type = "single_line_text_field"
+name = "Marketplace checkout policy"
+description = "Internal checkout routing policy managed by vendor-register."
+access.admin = "merchant_read"
+access.storefront = "none"
 
 [auth]
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/auth/callback" ]

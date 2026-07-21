@@ -1,6 +1,6 @@
 import {
   buildVendorCollectionHandle,
-  buildVendorCollectionUrl,
+  buildVendorProxyStorefrontUrl,
 } from "./vendorCollectionHandles.js";
 
 export function serializePublicStore(store) {
@@ -14,7 +14,7 @@ export function serializePublicStore(store) {
     id: store.id,
     handle,
     collectionHandle,
-    collectionUrl: buildVendorCollectionUrl(handle),
+    collectionUrl: buildVendorProxyStorefrontUrl(handle),
     storeName: store.storeName,
     category: store.category,
     country: store.country,

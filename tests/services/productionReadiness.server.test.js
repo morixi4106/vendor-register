@@ -19,6 +19,8 @@ const REQUIRED_SCOPE_STRING = [
   "write_merchant_managed_fulfillment_orders",
   "read_publications",
   "write_publications",
+  "read_draft_orders",
+  "write_draft_orders",
   "read_shopify_payments_disputes",
 ].join(",");
 
@@ -501,6 +503,7 @@ test("getProductionReadiness treats write grants as satisfying paired Shopify re
     "read_locations",
     "write_merchant_managed_fulfillment_orders",
     "write_publications",
+    "write_draft_orders",
     "read_shopify_payments_disputes",
   ].join(",");
 

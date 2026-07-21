@@ -143,7 +143,7 @@ export default function VendorStorefrontPage() {
       `}</style>
 
       <div className="storefront-shell">
-        <Link className="storefront-back" to="/vendors">
+        <Link className="storefront-back" to="/">
           店舗一覧へ戻る
         </Link>
 

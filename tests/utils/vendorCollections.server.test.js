@@ -16,6 +16,8 @@ function createVendor({ products, storeOverrides = {} }) {
     vendorStore: {
       id: "store_1",
       storeName: "Test Store",
+      isPlatformStore: true,
+      isTestStore: false,
       category: "Cosmetics",
       country: "Japan",
       address: "Tokyo",
@@ -404,4 +406,91 @@ test("syncVendorCollection omits blank collection metafields", async () => {
   );
   assert.equal(metafields.every((metafield) => metafield.value.trim()), true);
   assert.equal(metafields.some((metafield) => metafield.key === "vendor_note"), false);
+});
+
+test("syncVendorCollection removes third-party collections and products from Online Store", async () => {
+  const unpublishedIds = [];
+  const vendor = createVendor({
+    storeOverrides: {
+      isPlatformStore: false,
+      isTestStore: false,
+    },
+    products: [
+      {
+        id: "product_1",
+        name: "Vendor Product",
+        approvalStatus: "approved",
+        shopifyProductId: "gid://shopify/Product/1",
+        shopDomain: "shop-a.myshopify.com",
+      },
+    ],
+  });
+
+  const result = await syncVendorCollection({
+    vendorHandle: "vendor",
+    configuredPublicationId: "gid://shopify/Publication/1",
+    prismaClient: createPrisma(vendor),
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query, variables, shopDomain }) => {
+      if (query.includes("CurrentAppInstallationAccessScopes")) {
+        return {
+          data: {
+            currentAppInstallation: {
+              accessScopes: [
+                { handle: "read_products" },
+                { handle: "write_products" },
+                { handle: "read_publications" },
+                { handle: "write_publications" },
+              ],
+            },
+          },
+          shopDomain,
+        };
+      }
+      if (query.includes("FindVendorCollection")) {
+        return { data: { collections: { nodes: [] } }, shopDomain };
+      }
+      if (query.includes("CreateVendorCollection")) {
+        return {
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/1",
+                handle: "vendor-vendor",
+                products: { nodes: [{ id: "gid://shopify/Product/1" }] },
+              },
+              userErrors: [],
+            },
+          },
+          shopDomain,
+        };
+      }
+      if (query.includes("SetVendorCollectionMetafields")) {
+        return {
+          data: { metafieldsSet: { metafields: [], userErrors: [] } },
+          shopDomain,
+        };
+      }
+      if (query.includes("UnpublishVendorResource")) {
+        unpublishedIds.push(variables.id);
+        return {
+          data: {
+            publishableUnpublish: {
+              publishable: { availablePublicationsCount: { count: 0 } },
+              userErrors: [],
+            },
+          },
+          shopDomain,
+        };
+      }
+      throw new Error(`Unexpected query: ${query}`);
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.storefrontMode, "APP_PROXY_DRAFT_ORDER");
+  assert.equal(result.collection.url, "/apps/vendors/vendor");
+  assert.deepEqual(unpublishedIds, [
+    "gid://shopify/Product/1",
+    "gid://shopify/Collection/1",
+  ]);
 });

@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import crypto from "node:crypto";
 
 import { reconcileShopifyProductCatalog } from "../services/shopifyProductSync.server.js";
+import { backfillMarketplaceCheckoutPolicies } from "../services/marketplaceCheckoutGate.server.js";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server.js";
 
 export async function action({ request }) {
@@ -28,14 +29,16 @@ export async function action({ request }) {
       process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN || null,
     );
     const result = await reconcileShopifyProductCatalog(shopDomain, { limit });
+    const checkoutPolicies = await backfillMarketplaceCheckoutPolicies(shopDomain);
 
     return json({
-      ok: true,
+      ok: checkoutPolicies.ok,
       shopDomain,
       scanned: result.scanned,
       created: result.created,
       updated: result.updated,
       unresolved: result.unresolved,
+      checkoutPolicies,
     });
   } catch (error) {
     console.error("Internal Shopify product catalog sync failed:", error);

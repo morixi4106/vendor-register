@@ -1,23 +1,23 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 
-import { json, redirect } from '@remix-run/node';
+import { json, redirect } from "@remix-run/node";
 
-import prisma from '../db.server.js';
-import { draftOrderCheckout } from './draftOrderCheckout.server.js';
+import prisma from "../db.server.js";
+import { draftOrderCheckout } from "./draftOrderCheckout.server.js";
 import {
   authorizeSalesCreditOffset,
   markSalesCreditOffsetCheckoutCreated,
   releaseSalesCreditOffset,
-} from './sellerPayments.server.js';
-import { vendorAdminSessionCookie } from './vendorManagement.server.js';
-import { shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
+} from "./sellerPayments.server.js";
+import { vendorAdminSessionCookie } from "./vendorManagement.server.js";
+import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 import {
   BUYER_IMPORT_WARNING_VERSION,
   evaluateCartDeliveryEligibility,
-} from '../utils/deliveryEligibility.js';
-import { normalizeProductCategory } from '../utils/productCategories.js';
-import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
-import { hashPrivateIdentifier } from '../utils/privacyHash.server.js';
+} from "../utils/deliveryEligibility.js";
+import { normalizeProductCategory } from "../utils/productCategories.js";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
+import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 import {
   buildProductComplianceSnapshot,
   buildSellerGovernanceSnapshot,
@@ -33,67 +33,66 @@ import {
   getSellerAgreementReadinessOptions,
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
-} from './marketplaceGovernance.server.js';
+} from "./marketplaceGovernance.server.js";
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
-  '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
+  "注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。";
 const GENERIC_SHIPPING_ERROR_MESSAGE =
-  '送料の計算に失敗しました。配送先を確認して、もう一度お試しください。';
+  "送料の計算に失敗しました。配送先を確認して、もう一度お試しください。";
 const CHECKOUT_UNAVAILABLE_MESSAGE =
-  '購入設定を確認できませんでした。時間をおいて、もう一度お試しください。';
+  "購入設定を確認できませんでした。時間をおいて、もう一度お試しください。";
 const INVALID_SELECTION_MESSAGE =
-  '選択した商品を確認できませんでした。もう一度商品を選び直してください。';
-const INVALID_CART_MESSAGE = '商品を1点以上選択してください。';
-const INVALID_QUANTITY_MESSAGE = '商品の数量を確認してください。';
+  "選択した商品を確認できませんでした。もう一度商品を選び直してください。";
+const INVALID_CART_MESSAGE = "商品を1点以上選択してください。";
+const INVALID_QUANTITY_MESSAGE = "商品の数量を確認してください。";
 const UNAVAILABLE_PRODUCT_MESSAGE =
-  '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
+  "選択した商品は購入できません。内容を確認して、もう一度お試しください。";
 const OUT_OF_STOCK_MESSAGE =
-  '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
-const INVALID_EMAIL_MESSAGE = 'メールアドレスの形式を確認してください。';
+  "選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。";
+const INVALID_EMAIL_MESSAGE = "メールアドレスの形式を確認してください。";
 const SALES_CREDIT_UNAVAILABLE_MESSAGE =
-  '売上金を利用できません。利用額と登録メールアドレスを確認してください。';
+  "売上金を利用できません。利用額と登録メールアドレスを確認してください。";
 const SALES_CREDIT_SELF_PURCHASE_MESSAGE =
-  '自分の商品には売上金を利用できません。';
-const SALES_CREDIT_LIMIT_MESSAGE =
-  '売上金は商品代金まで利用できます。';
+  "自分の商品には売上金を利用できません。";
+const SALES_CREDIT_LIMIT_MESSAGE = "売上金は商品代金まで利用できます。";
 const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
-  'この商品では売上金を利用できません。ほかの支払い方法で購入してください。';
+  "この商品では売上金を利用できません。ほかの支払い方法で購入してください。";
 const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
-  '複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。';
-const VARIANT_REQUIRED_ERROR = 'variant_required';
-const PUBLIC_CHECKOUT_SOURCE = 'vendor_storefront';
+  "複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。";
+const VARIANT_REQUIRED_ERROR = "variant_required";
+const PUBLIC_CHECKOUT_SOURCE = "vendor_storefront";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
-const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = 'jpy';
+const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = "jpy";
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
-  'MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED',
-  'MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED',
-  'MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED',
-  'MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED',
-  'MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED',
-  'VENDOR_ORDERS_USE_SELLER_ORDERS',
+  "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED",
+  "MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED",
+  "MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED",
+  "MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED",
+  "MULTI_SELLER_SHOPIFY_DISPUTE_SETTLEMENT_ENABLED",
+  "VENDOR_ORDERS_USE_SELLER_ORDERS",
 ];
 const SALES_CREDIT_ALLOWED_CATEGORY_NAMES = new Set([
-  'ファッション',
-  'レディース服',
-  'メンズ服',
-  '着物・浴衣',
-  '靴・鞄',
-  '雑貨・小物',
-  'アクセサリー',
-  'ハンドメイド',
-  '日用品',
+  "ファッション",
+  "レディース服",
+  "メンズ服",
+  "着物・浴衣",
+  "靴・鞄",
+  "雑貨・小物",
+  "アクセサリー",
+  "ハンドメイド",
+  "日用品",
 ]);
 const SALES_CREDIT_RESTRICTED_CATEGORY_KEYWORDS = [
-  'ギフトカード',
-  '金券',
-  'チケット',
-  'プリペイド',
-  '商品券',
-  'カード',
-  'フィギュア',
-  '電子機器',
-  'サプリ',
+  "ギフトカード",
+  "金券",
+  "チケット",
+  "プリペイド",
+  "商品券",
+  "カード",
+  "フィギュア",
+  "電子機器",
+  "サプリ",
 ];
 
 const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
@@ -133,11 +132,11 @@ const VARIANT_FOR_CHECKOUT_QUERY = `#graphql
 `;
 
 function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeText(value) {
-  const normalized = String(value || '').trim();
+  const normalized = String(value || "").trim();
   return normalized || null;
 }
 
@@ -147,10 +146,12 @@ function normalizeEmail(value) {
 }
 
 function normalizeBooleanInput(value) {
-  if (typeof value === 'boolean') return value;
+  if (typeof value === "boolean") return value;
   if (value == null) return false;
 
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+  return ["1", "true", "yes", "on"].includes(
+    String(value).trim().toLowerCase(),
+  );
 }
 
 function getMissingMultiSellerStorefrontCheckoutFlags(env = process.env) {
@@ -206,7 +207,7 @@ function isValidEmail(value) {
 }
 
 function parseQuantityInput(value) {
-  const normalized = String(value ?? '').trim();
+  const normalized = String(value ?? "").trim();
 
   if (!normalized) {
     return {
@@ -234,7 +235,7 @@ function parseQuantityInput(value) {
 }
 
 function parsePositiveIntegerInput(value) {
-  const normalized = String(value ?? '').trim();
+  const normalized = String(value ?? "").trim();
 
   if (!normalized) {
     return null;
@@ -249,11 +250,7 @@ function parsePositiveIntegerInput(value) {
   return numeric;
 }
 
-function normalizeSalesCreditRequest({
-  enabled,
-  amount,
-  idempotencyKey,
-} = {}) {
+function normalizeSalesCreditRequest({ enabled, amount, idempotencyKey } = {}) {
   const isEnabled = normalizeBooleanInput(enabled);
   const normalizedAmount = parsePositiveIntegerInput(amount);
 
@@ -303,7 +300,8 @@ function buildServerTrustedCheckoutLine(product, quantity) {
     normalizeText(product.vendorHandle) ||
     normalizeText(product.vendor);
   const directShipGroup =
-    normalizeText(product.vendorStoreId) || normalizeText(product.directShipGroup);
+    normalizeText(product.vendorStoreId) ||
+    normalizeText(product.directShipGroup);
 
   return {
     lineId: product.id,
@@ -335,20 +333,22 @@ function buildServerTrustedCheckoutLine(product, quantity) {
 
 function getRequestedShopifyProductGid(item) {
   return (
-    normalizeShopifyGid(item?.shopifyProductGid, 'Product') ||
-    normalizeShopifyGid(item?.shopifyProductId, 'Product')
+    normalizeShopifyGid(item?.shopifyProductGid, "Product") ||
+    normalizeShopifyGid(item?.shopifyProductId, "Product")
   );
 }
 
 function getRequestedShopifyVariantGid(item) {
   return (
-    normalizeShopifyGid(item?.shopifyVariantGid, 'ProductVariant') ||
-    normalizeShopifyGid(item?.shopifyVariantId, 'ProductVariant')
+    normalizeShopifyGid(item?.shopifyVariantGid, "ProductVariant") ||
+    normalizeShopifyGid(item?.shopifyVariantId, "ProductVariant")
   );
 }
 
 function hasRequestedShopifyReference(item) {
-  return Boolean(getRequestedShopifyProductGid(item) || getRequestedShopifyVariantGid(item));
+  return Boolean(
+    getRequestedShopifyProductGid(item) || getRequestedShopifyVariantGid(item),
+  );
 }
 
 function buildCheckoutMetadata(
@@ -356,10 +356,10 @@ function buildCheckoutMetadata(
   checkoutSource = PUBLIC_CHECKOUT_SOURCE,
   { isMultiSeller = false } = {},
 ) {
-  const tags = [checkoutSource.replaceAll('_', '-')];
+  const tags = [checkoutSource.replaceAll("_", "-")];
 
   if (isMultiSeller) {
-    tags.push('multi-seller');
+    tags.push("multi-seller");
     return { tags };
   }
 
@@ -409,21 +409,27 @@ function evaluateMultiSellerCheckoutCountryPolicy({
       sellerIds: Array.from(
         new Set(
           selectedProducts
-            .map(({ vendorContext }) => normalizeText(vendorContext?.vendor?.sellerId))
+            .map(({ vendorContext }) =>
+              normalizeText(vendorContext?.vendor?.sellerId),
+            )
             .filter(Boolean),
         ),
       ),
       vendorIds: Array.from(
         new Set(
           selectedProducts
-            .map(({ vendorContext }) => normalizeText(vendorContext?.vendor?.id))
+            .map(({ vendorContext }) =>
+              normalizeText(vendorContext?.vendor?.id),
+            )
             .filter(Boolean),
         ),
       ),
       vendorHandles: Array.from(
         new Set(
           selectedProducts
-            .map(({ vendorContext }) => normalizeText(vendorContext?.vendor?.handle))
+            .map(({ vendorContext }) =>
+              normalizeText(vendorContext?.vendor?.handle),
+            )
             .filter(Boolean),
         ),
       ),
@@ -447,10 +453,10 @@ function buildCheckoutCustomAttributes(
 ) {
   const attributes = isMultiSeller
     ? [
-        { key: 'seller_of_record', value: 'marketplace_seller' },
-        { key: 'marketplace_order_mode', value: 'multi_seller' },
+        { key: "seller_of_record", value: "marketplace_seller" },
+        { key: "marketplace_order_mode", value: "multi_seller" },
         {
-          key: 'seller_count',
+          key: "seller_count",
           value: String(
             new Set(
               selectedProducts
@@ -463,9 +469,9 @@ function buildCheckoutCustomAttributes(
         },
       ]
     : [
-        { key: 'seller_name', value: vendorContext.vendor.storeName },
-        { key: 'seller_country', value: vendorContext.store.country || '' },
-        { key: 'seller_of_record', value: 'marketplace_seller' },
+        { key: "seller_name", value: vendorContext.vendor.storeName },
+        { key: "seller_country", value: vendorContext.store.country || "" },
+        { key: "seller_of_record", value: "marketplace_seller" },
       ];
 
   const sellerAgreementVersion = getCurrentSellerAgreementVersion(env);
@@ -476,51 +482,57 @@ function buildCheckoutCustomAttributes(
   const buyerTermsDocumentHash = getCurrentBuyerTermsDocumentHash(env);
   const buyerTermsUrl = getCurrentBuyerTermsUrl(env);
   if (
-    sellerAgreementVersion !== 'UNCONFIGURED' ||
-    buyerTermsVersion !== 'UNCONFIGURED'
+    sellerAgreementVersion !== "UNCONFIGURED" ||
+    buyerTermsVersion !== "UNCONFIGURED"
   ) {
     attributes.push({
-      key: 'marketplace_governance_snapshot_version',
-      value: 'marketplace-governance-v1',
+      key: "marketplace_governance_snapshot_version",
+      value: "marketplace-governance-v1",
     });
-    if (sellerAgreementVersion !== 'UNCONFIGURED') {
+    if (sellerAgreementVersion !== "UNCONFIGURED") {
       attributes.push({
-        key: 'seller_agreement_version',
+        key: "seller_agreement_version",
         value: sellerAgreementVersion,
       });
     }
     if (sellerAgreementDocumentHash) {
       attributes.push({
-        key: 'seller_agreement_hash',
+        key: "seller_agreement_hash",
         value: sellerAgreementDocumentHash,
       });
     }
     if (sellerAgreementUrl) {
-      attributes.push({ key: 'seller_agreement_url', value: sellerAgreementUrl });
-    }
-    if (buyerTermsVersion !== 'UNCONFIGURED') {
       attributes.push({
-        key: 'buyer_terms_version',
+        key: "seller_agreement_url",
+        value: sellerAgreementUrl,
+      });
+    }
+    if (buyerTermsVersion !== "UNCONFIGURED") {
+      attributes.push({
+        key: "buyer_terms_version",
         value: buyerTermsVersion,
       });
     }
     if (buyerTermsDocumentHash) {
-      attributes.push({ key: 'buyer_terms_hash', value: buyerTermsDocumentHash });
+      attributes.push({
+        key: "buyer_terms_hash",
+        value: buyerTermsDocumentHash,
+      });
     }
     if (buyerTermsUrl) {
-      attributes.push({ key: 'buyer_terms_url', value: buyerTermsUrl });
+      attributes.push({ key: "buyer_terms_url", value: buyerTermsUrl });
     }
     attributes.push(
       {
-        key: 'buyer_terms_locale',
-        value: normalizeText(env.BUYER_TERMS_LOCALE) || 'ja-JP',
+        key: "buyer_terms_locale",
+        value: normalizeText(env.BUYER_TERMS_LOCALE) || "ja-JP",
       },
       {
-        key: 'buyer_terms_presented_at',
+        key: "buyer_terms_presented_at",
         value: (presentedAt || new Date()).toISOString(),
       },
       {
-        key: 'checkout_reference',
+        key: "checkout_reference",
         value: checkoutReference || `checkout:${randomUUID()}`,
       },
     );
@@ -528,8 +540,11 @@ function buildCheckoutCustomAttributes(
 
   if (countryPolicy?.requiresWarning) {
     attributes.push(
-      { key: 'buyer_import_warning_version', value: countryPolicy.acceptance.warningVersion },
-      { key: 'buyer_import_responsibility_accepted', value: 'true' },
+      {
+        key: "buyer_import_warning_version",
+        value: countryPolicy.acceptance.warningVersion,
+      },
+      { key: "buyer_import_responsibility_accepted", value: "true" },
     );
   }
 
@@ -537,23 +552,17 @@ function buildCheckoutCustomAttributes(
 }
 
 async function recordMarketplaceCheckoutEvidence(
-  {
-    checkoutReference,
-    shopDomain,
-    presentedAt,
-    selectedProducts,
-    env,
-  },
+  { checkoutReference, shopDomain, presentedAt, selectedProducts, env },
   { prismaClient = prisma } = {},
 ) {
   if (!prismaClient?.marketplaceCheckoutEvidence?.create) {
-    throw new Error('Marketplace checkout evidence storage is unavailable.');
+    throw new Error("Marketplace checkout evidence storage is unavailable.");
   }
 
   const governanceConfiguration = getMarketplaceGovernanceConfiguration(env);
   if (!governanceConfiguration.ready) {
     throw new Error(
-      `Marketplace governance configuration is incomplete: ${governanceConfiguration.reasons.join(',')}`,
+      `Marketplace governance configuration is incomplete: ${governanceConfiguration.reasons.join(",")}`,
     );
   }
 
@@ -563,7 +572,9 @@ async function recordMarketplaceCheckoutEvidence(
 
   for (const { product } of selectedProducts) {
     const seller =
-      product.vendorStore?.seller || product.vendorStore?.vendorAuth?.seller || null;
+      product.vendorStore?.seller ||
+      product.vendorStore?.vendorAuth?.seller ||
+      null;
     if (!seller?.id || sellerSnapshots.has(seller.id)) continue;
     sellerSnapshots.set(seller.id, {
       sellerId: seller.id,
@@ -573,7 +584,12 @@ async function recordMarketplaceCheckoutEvidence(
           ...seller,
           vendorStore: product.vendorStore,
         },
-        { agreementVersion: sellerAgreementVersion, buyerTermsVersion },
+        {
+          agreementVersion: sellerAgreementVersion,
+          agreementDocumentHash:
+            governanceConfiguration.sellerAgreementDocumentHash,
+          buyerTermsVersion,
+        },
       ),
     });
   }
@@ -598,7 +614,7 @@ async function recordMarketplaceCheckoutEvidence(
       buyerTermsVersion,
       buyerTermsHash: governanceConfiguration.buyerTermsDocumentHash,
       buyerTermsUrl: governanceConfiguration.buyerTermsUrl,
-      buyerTermsLocale: normalizeText(env.BUYER_TERMS_LOCALE) || 'ja-JP',
+      buyerTermsLocale: normalizeText(env.BUYER_TERMS_LOCALE) || "ja-JP",
       presentedAt,
       sellerSnapshotsJson: Array.from(sellerSnapshots.values()),
       productSnapshotsJson: productSnapshots,
@@ -607,17 +623,15 @@ async function recordMarketplaceCheckoutEvidence(
 }
 
 export async function expireStaleMarketplaceCheckoutEvidence(
-  {
-    olderThan = new Date(Date.now() - 24 * 60 * 60 * 1000),
-  } = {},
+  { olderThan = new Date(Date.now() - 24 * 60 * 60 * 1000) } = {},
   { prismaClient = prisma } = {},
 ) {
   if (!prismaClient?.marketplaceCheckoutEvidence?.updateMany) {
-    return { ok: false, reason: 'checkout_evidence_storage_unavailable' };
+    return { ok: false, reason: "checkout_evidence_storage_unavailable" };
   }
   const result = await prismaClient.marketplaceCheckoutEvidence.updateMany({
-    where: { status: 'PREPARED', createdAt: { lt: olderThan } },
-    data: { status: 'EXPIRED' },
+    where: { status: "PREPARED", createdAt: { lt: olderThan } },
+    data: { status: "EXPIRED" },
   });
   return { ok: true, expiredCount: result.count };
 }
@@ -626,12 +640,15 @@ async function markMarketplaceCheckoutEvidenceFailed(
   checkoutReference,
   { prismaClient = prisma } = {},
 ) {
-  if (!checkoutReference || !prismaClient?.marketplaceCheckoutEvidence?.updateMany) {
+  if (
+    !checkoutReference ||
+    !prismaClient?.marketplaceCheckoutEvidence?.updateMany
+  ) {
     return null;
   }
   return prismaClient.marketplaceCheckoutEvidence.updateMany({
-    where: { checkoutReference, status: 'PREPARED' },
-    data: { status: 'FAILED' },
+    where: { checkoutReference, status: "PREPARED" },
+    data: { status: "FAILED" },
   });
 }
 
@@ -662,12 +679,12 @@ function getSalesCreditRawProductCategory(product, vendorContext) {
 function evaluateSalesCreditProductRisk(product, vendorContext) {
   const category = getSalesCreditProductCategory(product, vendorContext);
   const rawCategory = getSalesCreditRawProductCategory(product, vendorContext);
-  const comparable = `${category || ''} ${normalizeText(product?.name) || ''}`;
+  const comparable = `${category || ""} ${normalizeText(product?.name) || ""}`;
 
   if (product?.salesCreditEligible === false) {
     return {
       ok: false,
-      reason: 'local_product_required',
+      reason: "local_product_required",
       category,
       rawCategory,
     };
@@ -676,7 +693,7 @@ function evaluateSalesCreditProductRisk(product, vendorContext) {
   if (!category) {
     return {
       ok: false,
-      reason: rawCategory ? 'category_unsupported' : 'category_required',
+      reason: rawCategory ? "category_unsupported" : "category_required",
       category: null,
       rawCategory,
     };
@@ -690,7 +707,7 @@ function evaluateSalesCreditProductRisk(product, vendorContext) {
   ) {
     return {
       ok: false,
-      reason: 'restricted_category',
+      reason: "restricted_category",
       category,
       rawCategory,
     };
@@ -732,14 +749,14 @@ async function getAuthenticatedSalesCreditSeller({
   email,
   prismaClient = prisma,
 }) {
-  const cookieHeader = request?.headers?.get?.('Cookie');
+  const cookieHeader = request?.headers?.get?.("Cookie");
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
   if (!sessionToken) {
     return null;
   }
 
-  if (typeof prismaClient.vendorAdminSession?.findUnique !== 'function') {
+  if (typeof prismaClient.vendorAdminSession?.findUnique !== "function") {
     return null;
   }
 
@@ -773,19 +790,19 @@ async function getAuthenticatedSalesCreditSeller({
 
 function buildSalesCreditAppliedDiscount(amount) {
   return {
-    title: 'Sales credit',
-    description: 'Monthly settlement offset',
+    title: "Sales credit",
+    description: "Monthly settlement offset",
     value: amount,
-    valueType: 'FIXED_AMOUNT',
+    valueType: "FIXED_AMOUNT",
   };
 }
 
 function buildSalesCreditCustomAttributes({ offset, amount, buyerSellerId }) {
   return [
-    { key: 'sales_credit_offset_id', value: offset.id },
-    { key: 'sales_credit_offset_amount', value: String(amount) },
-    { key: 'sales_credit_buyer_seller_id', value: buyerSellerId },
-    { key: 'sales_credit_mode', value: 'monthly_settlement_offset' },
+    { key: "sales_credit_offset_id", value: offset.id },
+    { key: "sales_credit_offset_amount", value: String(amount) },
+    { key: "sales_credit_buyer_seller_id", value: buyerSellerId },
+    { key: "sales_credit_mode", value: "monthly_settlement_offset" },
   ];
 }
 
@@ -871,7 +888,7 @@ async function prepareCheckoutSalesCredit({
       checkoutReference,
       idempotencyKey,
       metadataJson: {
-        salesCreditMode: 'monthly_settlement_offset',
+        salesCreditMode: "monthly_settlement_offset",
         checkoutLockMinutes: 30,
         currencyCode,
         itemSubtotalAmount: subtotal,
@@ -920,7 +937,7 @@ async function prepareCheckoutSalesCredit({
 async function releaseCheckoutSalesCreditOffset({
   salesCreditOffset,
   prismaClient = prisma,
-  reason = 'checkout_failed',
+  reason = "checkout_failed",
 }) {
   if (!salesCreditOffset?.id) {
     return null;
@@ -935,7 +952,7 @@ async function releaseCheckoutSalesCreditOffset({
       { prismaClient },
     );
   } catch (error) {
-    console.error('sales credit offset release failed:', error);
+    console.error("sales credit offset release failed:", error);
     return null;
   }
 }
@@ -960,7 +977,7 @@ async function markCheckoutSalesCreditOffsetCreated({
       { prismaClient },
     );
   } catch (error) {
-    console.error('sales credit offset checkout mark failed:', error);
+    console.error("sales credit offset checkout mark failed:", error);
     return null;
   }
 }
@@ -977,7 +994,7 @@ export async function recordBuyerWarningAcceptance({
   }
   if (!prismaClient?.buyerWarningAcceptance?.create) {
     if (throwOnFailure) {
-      throw new Error('Buyer warning acceptance storage is unavailable.');
+      throw new Error("Buyer warning acceptance storage is unavailable.");
     }
     return null;
   }
@@ -989,44 +1006,47 @@ export async function recordBuyerWarningAcceptance({
         selectedCountry: normalizeCountryCode(acceptance.selectedCountry),
         shippingCountry: normalizeCountryCode(acceptance.shippingCountry),
         productIds: acceptance.productIds || [],
-        warningVersion: acceptance.warningVersion || BUYER_IMPORT_WARNING_VERSION,
+        warningVersion:
+          acceptance.warningVersion || BUYER_IMPORT_WARNING_VERSION,
         importResponsibilityAccepted: Boolean(
           acceptance.importResponsibilityAccepted,
         ),
         ipAddress: null,
         userAgent: null,
         ipHash: hashPrivateIdentifier(
-          normalizeText(request?.headers?.get?.('cf-connecting-ip')) ||
-            normalizeText(request?.headers?.get?.('x-forwarded-for'))?.split(',')[0],
+          normalizeText(request?.headers?.get?.("cf-connecting-ip")) ||
+            normalizeText(request?.headers?.get?.("x-forwarded-for"))?.split(
+              ",",
+            )[0],
         ),
         userAgentHash: hashPrivateIdentifier(
-          normalizeText(request?.headers?.get?.('user-agent')),
+          normalizeText(request?.headers?.get?.("user-agent")),
         ),
         metadataJson: acceptance.metadataJson || null,
       },
     });
   } catch (error) {
-    console.error('buyer warning acceptance record failed:', error);
+    console.error("buyer warning acceptance record failed:", error);
     if (throwOnFailure) throw error;
     return null;
   }
 }
 
 function buildNotFoundResponse() {
-  return new Response('Not Found', { status: 404 });
+  return new Response("Not Found", { status: 404 });
 }
 
 function buildMethodNotAllowedResponse() {
   return json(
     {
       ok: false,
-      reason: 'method_not_allowed',
-      errors: ['Method not allowed'],
+      reason: "method_not_allowed",
+      errors: ["Method not allowed"],
     },
     {
       status: 405,
       headers: {
-        Allow: 'POST',
+        Allow: "POST",
       },
     },
   );
@@ -1053,8 +1073,8 @@ function buildInvalidPayloadResponse(fieldErrors) {
   return json(
     {
       ok: false,
-      reason: 'invalid_payload',
-      error: '入力内容を確認してください。',
+      reason: "invalid_payload",
+      error: "入力内容を確認してください。",
       fieldErrors,
     },
     { status: 400 },
@@ -1065,7 +1085,7 @@ function buildJsonInvalidPayloadResponse(errors) {
   return json(
     {
       ok: false,
-      reason: 'invalid_payload',
+      reason: "invalid_payload",
       errors,
     },
     { status: 400 },
@@ -1076,7 +1096,7 @@ function buildInternalErrorResponse(message, status = 500) {
   return json(
     {
       ok: false,
-      reason: 'internal_error',
+      reason: "internal_error",
       error: message,
     },
     { status },
@@ -1084,11 +1104,11 @@ function buildInternalErrorResponse(message, status = 500) {
 }
 
 function buildPublicCheckoutErrorResponse(error) {
-  if (error?.reason === 'shipping_quote_failed') {
+  if (error?.reason === "shipping_quote_failed") {
     return buildInternalErrorResponse(GENERIC_SHIPPING_ERROR_MESSAGE, 422);
   }
 
-  if (error?.reason === 'invalid_payload' && Array.isArray(error?.errors)) {
+  if (error?.reason === "invalid_payload" && Array.isArray(error?.errors)) {
     return buildInvalidPayloadResponse({
       ...buildDefaultFieldErrors(),
       cart: GENERIC_CHECKOUT_ERROR_MESSAGE,
@@ -1099,12 +1119,12 @@ function buildPublicCheckoutErrorResponse(error) {
 }
 
 function buildPublicApiCheckoutErrorResponse(error) {
-  if (error?.reason === 'shipping_quote_failed') {
+  if (error?.reason === "shipping_quote_failed") {
     return buildInternalErrorResponse(GENERIC_SHIPPING_ERROR_MESSAGE, 422);
   }
 
-  if (error?.reason === 'invalid_payload' && Array.isArray(error?.errors)) {
-    return buildJsonInvalidPayloadResponse(['入力内容を確認してください。']);
+  if (error?.reason === "invalid_payload" && Array.isArray(error?.errors)) {
+    return buildJsonInvalidPayloadResponse(["入力内容を確認してください。"]);
   }
 
   return buildInternalErrorResponse(GENERIC_CHECKOUT_ERROR_MESSAGE);
@@ -1139,7 +1159,7 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
     },
   });
 
-  if (!vendor || vendor.status !== 'active' || !vendor.vendorStore) {
+  if (!vendor || vendor.status !== "active" || !vendor.vendorStore) {
     return null;
   }
 
@@ -1150,7 +1170,7 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
       storeName: vendor.storeName,
       managementEmail: vendor.managementEmail || null,
       sellerId: vendor.seller?.id || null,
-      euSellerStatus: vendor.seller?.euSellerStatus || 'DISABLED',
+      euSellerStatus: vendor.seller?.euSellerStatus || "DISABLED",
     },
     store: {
       id: vendor.vendorStore.id,
@@ -1171,7 +1191,8 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
   if (!store || !vendor) {
     if (
       fallbackVendorContext &&
-      normalizeText(product?.vendorStoreId) === normalizeText(fallbackVendorContext.store?.id)
+      normalizeText(product?.vendorStoreId) ===
+        normalizeText(fallbackVendorContext.store?.id)
     ) {
       return fallbackVendorContext;
     }
@@ -1179,7 +1200,7 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
     return null;
   }
 
-  if (vendor.status && vendor.status !== 'active') {
+  if (vendor.status && vendor.status !== "active") {
     return null;
   }
 
@@ -1190,7 +1211,7 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
       storeName: vendor.storeName,
       managementEmail: vendor.managementEmail || null,
       sellerId: seller?.id || null,
-      euSellerStatus: seller?.euSellerStatus || 'DISABLED',
+      euSellerStatus: seller?.euSellerStatus || "DISABLED",
     },
     store: {
       id: store.id,
@@ -1204,7 +1225,10 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
 }
 
 async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
-  const vendorContext = await getActiveVendorContextByHandle(handle, prismaClient);
+  const vendorContext = await getActiveVendorContextByHandle(
+    handle,
+    prismaClient,
+  );
 
   if (!vendorContext) {
     return null;
@@ -1213,9 +1237,9 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
   const products = await prismaClient.product.findMany({
     where: {
       vendorStoreId: vendorContext.store.id,
-      approvalStatus: 'approved',
+      approvalStatus: "approved",
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
   });
 
   return {
@@ -1228,14 +1252,16 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
       return {
         id: product.id,
         name: product.name,
-        description: product.description || '',
+        description: product.description || "",
         imageUrl: product.imageUrl || null,
         price,
-        inventoryQuantity: normalizeInventoryQuantity(product.inventoryQuantity),
+        inventoryQuantity: normalizeInventoryQuantity(
+          product.inventoryQuantity,
+        ),
         shopDomain,
         shopifyProductId: normalizeText(product.shopifyProductId),
-        approvalStatus: product.approvalStatus || 'approved',
-        productEuStatus: product.productEuStatus || 'DISABLED',
+        approvalStatus: product.approvalStatus || "approved",
+        productEuStatus: product.productEuStatus || "DISABLED",
         countryPolicy: product.countryPolicy || null,
         euSaleRequested: Boolean(product.euSaleRequested),
         isPurchasable: Boolean(shopDomain && price > 0),
@@ -1244,7 +1270,10 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
   };
 }
 
-async function resolveVendorStoreShopDomain({ vendorStoreId, prismaClient = prisma }) {
+async function resolveVendorStoreShopDomain({
+  vendorStoreId,
+  prismaClient = prisma,
+}) {
   const products = await prismaClient.product.findMany({
     where: {
       vendorStoreId,
@@ -1257,7 +1286,11 @@ async function resolveVendorStoreShopDomain({ vendorStoreId, prismaClient = pris
     },
   });
   const shopDomains = Array.from(
-    new Set(products.map((product) => normalizeShopDomain(product.shopDomain)).filter(Boolean)),
+    new Set(
+      products
+        .map((product) => normalizeShopDomain(product.shopDomain))
+        .filter(Boolean),
+    ),
   );
 
   return shopDomains.length === 1 ? shopDomains[0] : null;
@@ -1268,11 +1301,17 @@ function buildShopifyOnlyProductFromVariant({ variant, product, quantity }) {
   const productTitle = normalizeText(product?.title);
   const variantTitle = normalizeText(variant?.title);
   const title =
-    variantTitle && variantTitle !== 'Default Title' && productTitle
+    variantTitle && variantTitle !== "Default Title" && productTitle
       ? `${productTitle} - ${variantTitle}`
       : productTitle || variantTitle;
 
-  if (!normalizeText(variant?.id) || !normalizeText(product?.id) || !title || !Number.isFinite(price) || price <= 0) {
+  if (
+    !normalizeText(variant?.id) ||
+    !normalizeText(product?.id) ||
+    !title ||
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
     return null;
   }
 
@@ -1331,7 +1370,9 @@ async function fetchShopifyCheckoutProduct({
     },
   });
   const product = data?.product;
-  const variants = Array.isArray(product?.variants?.nodes) ? product.variants.nodes : [];
+  const variants = Array.isArray(product?.variants?.nodes)
+    ? product.variants.nodes
+    : [];
 
   if (variants.length !== 1) {
     return {
@@ -1476,11 +1517,11 @@ function normalizeStorefrontCheckoutSubmission(formData) {
   let hasInvalidQuantity = false;
 
   for (const [key, value] of formData.entries()) {
-    if (!key.startsWith('quantity:')) {
+    if (!key.startsWith("quantity:")) {
       continue;
     }
 
-    const productId = normalizeText(key.slice('quantity:'.length));
+    const productId = normalizeText(key.slice("quantity:".length));
     const quantity = parseQuantityInput(value);
 
     if (!productId) {
@@ -1500,24 +1541,24 @@ function normalizeStorefrontCheckoutSubmission(formData) {
     }
   }
 
-  const firstName = normalizeText(formData.get('firstName'));
-  const lastName = normalizeText(formData.get('lastName'));
-  const email = normalizeEmail(formData.get('email'));
-  const phone = normalizeText(formData.get('phone'));
-  const address1 = normalizeText(formData.get('address1'));
-  const address2 = normalizeText(formData.get('address2'));
-  const city = normalizeText(formData.get('city'));
-  const province = normalizeText(formData.get('province'));
-  const postalCode = normalizeText(formData.get('postalCode'));
-  const country = normalizeText(formData.get('country'));
-  const note = normalizeText(formData.get('note'));
+  const firstName = normalizeText(formData.get("firstName"));
+  const lastName = normalizeText(formData.get("lastName"));
+  const email = normalizeEmail(formData.get("email"));
+  const phone = normalizeText(formData.get("phone"));
+  const address1 = normalizeText(formData.get("address1"));
+  const address2 = normalizeText(formData.get("address2"));
+  const city = normalizeText(formData.get("city"));
+  const province = normalizeText(formData.get("province"));
+  const postalCode = normalizeText(formData.get("postalCode"));
+  const country = normalizeText(formData.get("country"));
+  const note = normalizeText(formData.get("note"));
   const importResponsibilityAccepted = normalizeBooleanInput(
-    formData.get('importResponsibilityAccepted'),
+    formData.get("importResponsibilityAccepted"),
   );
   const salesCreditRequest = normalizeSalesCreditRequest({
-    enabled: formData.get('useSalesCredit'),
-    amount: formData.get('salesCreditAmount'),
-    idempotencyKey: formData.get('salesCreditIdempotencyKey'),
+    enabled: formData.get("useSalesCredit"),
+    amount: formData.get("salesCreditAmount"),
+    idempotencyKey: formData.get("salesCreditIdempotencyKey"),
   });
 
   if (hasInvalidQuantity) {
@@ -1531,41 +1572,41 @@ function normalizeStorefrontCheckoutSubmission(formData) {
   }
 
   if (!firstName) {
-    fieldErrors.firstName = '名を入力してください。';
+    fieldErrors.firstName = "名を入力してください。";
   }
 
   if (!lastName) {
-    fieldErrors.lastName = '姓を入力してください。';
+    fieldErrors.lastName = "姓を入力してください。";
   }
 
   if (!email) {
-    fieldErrors.email = 'メールアドレスを入力してください。';
+    fieldErrors.email = "メールアドレスを入力してください。";
   } else if (!isValidEmail(email)) {
     fieldErrors.email = INVALID_EMAIL_MESSAGE;
   }
 
   if (!phone) {
-    fieldErrors.phone = '電話番号を入力してください。';
+    fieldErrors.phone = "電話番号を入力してください。";
   }
 
   if (!address1) {
-    fieldErrors.address1 = '住所を入力してください。';
+    fieldErrors.address1 = "住所を入力してください。";
   }
 
   if (!city) {
-    fieldErrors.city = '市区町村を入力してください。';
+    fieldErrors.city = "市区町村を入力してください。";
   }
 
   if (!province) {
-    fieldErrors.province = '都道府県を入力してください。';
+    fieldErrors.province = "都道府県を入力してください。";
   }
 
   if (!postalCode) {
-    fieldErrors.postalCode = '郵便番号を入力してください。';
+    fieldErrors.postalCode = "郵便番号を入力してください。";
   }
 
   if (!country) {
-    fieldErrors.country = '国コードを入力してください。';
+    fieldErrors.country = "国コードを入力してください。";
   }
 
   if (Object.values(fieldErrors).some(Boolean)) {
@@ -1626,7 +1667,7 @@ function normalizePublicCheckoutSubmission(body) {
   if (!isPlainObject(body)) {
     return {
       ok: false,
-      errors: ['リクエスト形式を確認してください。'],
+      errors: ["リクエスト形式を確認してください。"],
     };
   }
 
@@ -1643,14 +1684,22 @@ function normalizePublicCheckoutSubmission(body) {
       : {};
   const firstName = normalizeText(customer.firstName || body.firstName);
   const lastName = normalizeText(customer.lastName || body.lastName);
-  const email = normalizeEmail(customer.email || body.email || body.customerEmail);
+  const email = normalizeEmail(
+    customer.email || body.email || body.customerEmail,
+  );
   const phone = normalizeText(customer.phone || body.phone);
   const address1 = normalizeText(shippingAddress.address1);
   const address2 = normalizeText(shippingAddress.address2);
   const city = normalizeText(shippingAddress.city);
-  const province = normalizeText(shippingAddress.province || shippingAddress.prefecture);
-  const postalCode = normalizeText(shippingAddress.postalCode || shippingAddress.zip);
-  const country = normalizeText(shippingAddress.country || shippingAddress.countryCode);
+  const province = normalizeText(
+    shippingAddress.province || shippingAddress.prefecture,
+  );
+  const postalCode = normalizeText(
+    shippingAddress.postalCode || shippingAddress.zip,
+  );
+  const country = normalizeText(
+    shippingAddress.country || shippingAddress.countryCode,
+  );
   const note = normalizeText(body.note);
   const importResponsibilityAccepted = normalizeBooleanInput(
     body.importResponsibilityAccepted ||
@@ -1680,12 +1729,17 @@ function normalizePublicCheckoutSubmission(body) {
       item?.localProductId || item?.lineId || item?.productId || item?.id,
     );
     const shopifyProductId =
-      normalizeText(item?.shopifyProductGid) || normalizeText(item?.shopifyProductId);
+      normalizeText(item?.shopifyProductGid) ||
+      normalizeText(item?.shopifyProductId);
     const shopifyVariantId =
-      normalizeText(item?.shopifyVariantGid) || normalizeText(item?.shopifyVariantId);
+      normalizeText(item?.shopifyVariantGid) ||
+      normalizeText(item?.shopifyVariantId);
     const quantity = parseQuantityInput(item?.quantity ?? item?.qty);
 
-    if ((!productId && !shopifyProductId && !shopifyVariantId) || !quantity.isValid) {
+    if (
+      (!productId && !shopifyProductId && !shopifyVariantId) ||
+      !quantity.isValid
+    ) {
       hasInvalidItem = true;
       continue;
     }
@@ -1701,11 +1755,11 @@ function normalizePublicCheckoutSubmission(body) {
   }
 
   if (!vendorHandle) {
-    errors.push('店舗情報を確認できませんでした。');
+    errors.push("店舗情報を確認できませんでした。");
   }
 
   if (hasInvalidItem) {
-    errors.push('商品と数量を確認してください。');
+    errors.push("商品と数量を確認してください。");
   } else if (items.length === 0) {
     errors.push(INVALID_CART_MESSAGE);
   }
@@ -1715,41 +1769,41 @@ function normalizePublicCheckoutSubmission(body) {
   }
 
   if (!firstName) {
-    errors.push('名を入力してください。');
+    errors.push("名を入力してください。");
   }
 
   if (!lastName) {
-    errors.push('姓を入力してください。');
+    errors.push("姓を入力してください。");
   }
 
   if (!email) {
-    errors.push('メールアドレスを入力してください。');
+    errors.push("メールアドレスを入力してください。");
   } else if (!isValidEmail(email)) {
     errors.push(INVALID_EMAIL_MESSAGE);
   }
 
   if (!phone) {
-    errors.push('電話番号を入力してください。');
+    errors.push("電話番号を入力してください。");
   }
 
   if (!address1) {
-    errors.push('住所を入力してください。');
+    errors.push("住所を入力してください。");
   }
 
   if (!city) {
-    errors.push('市区町村を入力してください。');
+    errors.push("市区町村を入力してください。");
   }
 
   if (!province) {
-    errors.push('都道府県を入力してください。');
+    errors.push("都道府県を入力してください。");
   }
 
   if (!postalCode) {
-    errors.push('郵便番号を入力してください。');
+    errors.push("郵便番号を入力してください。");
   }
 
   if (!country) {
-    errors.push('国コードを入力してください。');
+    errors.push("国コードを入力してください。");
   }
 
   if (errors.length > 0) {
@@ -1802,7 +1856,8 @@ async function buildServerTrustedCheckoutPayload({
   env = process.env,
 }) {
   const resolvedVendorContext =
-    vendorContext || (await getActiveVendorContextByHandle(vendorHandle, prismaClient));
+    vendorContext ||
+    (await getActiveVendorContextByHandle(vendorHandle, prismaClient));
 
   if (!resolvedVendorContext) {
     return {
@@ -1822,7 +1877,7 @@ async function buildServerTrustedCheckoutPayload({
       ...(multiSellerStorefrontEnabled
         ? {}
         : { vendorStoreId: resolvedVendorContext.store.id }),
-      approvalStatus: 'approved',
+      approvalStatus: "approved",
     },
     select: {
       id: true,
@@ -1857,6 +1912,7 @@ async function buildServerTrustedCheckoutPayload({
           category: true,
           note: true,
           isTestStore: true,
+          isPlatformStore: true,
           returnAddresses: true,
           vendorAuth: {
             select: {
@@ -1868,24 +1924,24 @@ async function buildServerTrustedCheckoutPayload({
               seller: {
                 select: {
                   id: true,
-                   status: true,
-                   euSellerStatus: true,
-                   complianceProfile: true,
-                   agreementAcceptances: true,
-                   settlementControl: true,
-                 },
+                  status: true,
+                  euSellerStatus: true,
+                  complianceProfile: true,
+                  agreementAcceptances: true,
+                  settlementControl: true,
+                },
               },
             },
           },
           seller: {
             select: {
               id: true,
-               status: true,
-               euSellerStatus: true,
-               complianceProfile: true,
-               agreementAcceptances: true,
-               settlementControl: true,
-             },
+              status: true,
+              euSellerStatus: true,
+              complianceProfile: true,
+              agreementAcceptances: true,
+              settlementControl: true,
+            },
           },
         },
       },
@@ -1893,16 +1949,26 @@ async function buildServerTrustedCheckoutPayload({
   });
 
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
-  const governanceConfiguration = governanceGateEnabled
+  const requiresMarketplaceGovernance = products.some(
+    (product) =>
+      product.vendorStore?.isTestStore !== true &&
+      product.vendorStore?.isPlatformStore !== true &&
+      String(
+        product.complianceProfile?.legalSellerType || "VENDOR",
+      ).toUpperCase() !== "PLATFORM",
+  );
+  const governanceConfiguration = requiresMarketplaceGovernance
     ? getMarketplaceGovernanceConfiguration(env)
     : null;
-  const shopifyPaymentsApproval = governanceGateEnabled
+  const shopifyPaymentsApproval = requiresMarketplaceGovernance
     ? getShopifyMarketplacePaymentsApproval(env)
     : null;
 
   if (
-    governanceGateEnabled &&
-    (!governanceConfiguration?.ready || !shopifyPaymentsApproval?.ready)
+    requiresMarketplaceGovernance &&
+    (!governanceGateEnabled ||
+      !governanceConfiguration?.ready ||
+      !shopifyPaymentsApproval?.ready)
   ) {
     return {
       ok: false,
@@ -1911,7 +1977,7 @@ async function buildServerTrustedCheckoutPayload({
   }
 
   if (products.length !== uniqueProductIds.length) {
-    if (governanceGateEnabled) {
+    if (requiresMarketplaceGovernance) {
       return {
         ok: false,
         error: UNAVAILABLE_PRODUCT_MESSAGE,
@@ -1928,7 +1994,9 @@ async function buildServerTrustedCheckoutPayload({
     });
   }
 
-  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsById = new Map(
+    products.map((product) => [product.id, product]),
+  );
   const selectedProducts = [];
 
   for (const item of submission.items) {
@@ -1962,7 +2030,9 @@ async function buildServerTrustedCheckoutPayload({
       };
     }
 
-    const inventoryQuantity = normalizeInventoryQuantity(product.inventoryQuantity);
+    const inventoryQuantity = normalizeInventoryQuantity(
+      product.inventoryQuantity,
+    );
 
     if (inventoryQuantity === null || inventoryQuantity < item.quantity) {
       return {
@@ -1983,7 +2053,14 @@ async function buildServerTrustedCheckoutPayload({
       };
     }
 
-    if (governanceGateEnabled) {
+    const productRequiresMarketplaceGovernance =
+      product.vendorStore?.isTestStore !== true &&
+      product.vendorStore?.isPlatformStore !== true &&
+      String(
+        product.complianceProfile?.legalSellerType || "VENDOR",
+      ).toUpperCase() !== "PLATFORM";
+
+    if (productRequiresMarketplaceGovernance) {
       const seller =
         product.vendorStore?.seller ||
         product.vendorStore?.vendorAuth?.seller ||
@@ -2049,7 +2126,11 @@ async function buildServerTrustedCheckoutPayload({
   }
 
   const shopDomains = Array.from(
-    new Set(selectedProducts.map(({ product }) => normalizeShopDomain(product.shopDomain)).filter(Boolean)),
+    new Set(
+      selectedProducts
+        .map(({ product }) => normalizeShopDomain(product.shopDomain))
+        .filter(Boolean),
+    ),
   );
 
   if (shopDomains.length !== 1) {
@@ -2079,18 +2160,19 @@ async function buildServerTrustedCheckoutPayload({
     };
   }
 
-  const salesCredit = isMultiSellerCheckout && submission.salesCredit
-    ? {
-        ok: false,
-        error: MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE,
-      }
-    : await prepareCheckoutSalesCredit({
-        request,
-        submission,
-        vendorContext: resolvedVendorContext,
-        selectedProducts,
-        prismaClient,
-      });
+  const salesCredit =
+    isMultiSellerCheckout && submission.salesCredit
+      ? {
+          ok: false,
+          error: MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE,
+        }
+      : await prepareCheckoutSalesCredit({
+          request,
+          submission,
+          vendorContext: resolvedVendorContext,
+          selectedProducts,
+          prismaClient,
+        });
 
   if (!salesCredit.ok) {
     return {
@@ -2102,7 +2184,7 @@ async function buildServerTrustedCheckoutPayload({
   const checkoutReference = `checkout:${randomUUID()}`;
   const termsPresentedAt = new Date();
 
-  if (governanceGateEnabled) {
+  if (requiresMarketplaceGovernance) {
     try {
       await expireStaleMarketplaceCheckoutEvidence({}, { prismaClient });
       await recordMarketplaceCheckoutEvidence(
@@ -2116,7 +2198,7 @@ async function buildServerTrustedCheckoutPayload({
         { prismaClient },
       );
     } catch (error) {
-      console.error('marketplace checkout evidence write failed:', error);
+      console.error("marketplace checkout evidence write failed:", error);
       return {
         ok: false,
         error: CHECKOUT_UNAVAILABLE_MESSAGE,
@@ -2124,9 +2206,13 @@ async function buildServerTrustedCheckoutPayload({
     }
   }
 
-  const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource, {
-    isMultiSeller: isMultiSellerCheckout,
-  });
+  const metadata = buildCheckoutMetadata(
+    resolvedVendorContext,
+    checkoutSource,
+    {
+      isMultiSeller: isMultiSellerCheckout,
+    },
+  );
   const customAttributes = [
     ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy, {
       isMultiSeller: isMultiSellerCheckout,
@@ -2141,7 +2227,7 @@ async function buildServerTrustedCheckoutPayload({
   return {
     ok: true,
     salesCreditOffset: salesCredit.offset,
-    checkoutReference: governanceGateEnabled ? checkoutReference : null,
+    checkoutReference: requiresMarketplaceGovernance ? checkoutReference : null,
     payload: {
       orderLike: {
         lines: selectedProducts.map(({ product, quantity }) =>
@@ -2256,11 +2342,12 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
   };
 }
 
-export function createVendorStorefrontLoader({
-  prismaClient = prisma,
-} = {}) {
+export function createVendorStorefrontLoader({ prismaClient = prisma } = {}) {
   return async function loader({ params }) {
-    const storefront = await getVendorStorefrontByHandle(params.handle, prismaClient);
+    const storefront = await getVendorStorefrontByHandle(
+      params.handle,
+      prismaClient,
+    );
 
     if (!storefront) {
       throw buildNotFoundResponse();
@@ -2277,7 +2364,10 @@ export function createVendorStorefrontAction({
   env = process.env,
 } = {}) {
   return async function action({ request, params }) {
-    const vendorContext = await getActiveVendorContextByHandle(params.handle, prismaClient);
+    const vendorContext = await getActiveVendorContextByHandle(
+      params.handle,
+      prismaClient,
+    );
 
     if (!vendorContext) {
       throw buildNotFoundResponse();
@@ -2299,10 +2389,12 @@ export function createVendorStorefrontAction({
 
     try {
       const result = await draftOrderCheckoutImpl(checkoutInput.payload);
-      const invoiceUrl = normalizeText(result?.invoiceUrl || result?.draftOrder?.invoiceUrl);
+      const invoiceUrl = normalizeText(
+        result?.invoiceUrl || result?.draftOrder?.invoiceUrl,
+      );
 
       if (!invoiceUrl) {
-        throw new Error('draftOrderCheckout did not return invoiceUrl');
+        throw new Error("draftOrderCheckout did not return invoiceUrl");
       }
 
       await markCheckoutSalesCreditOffsetCreated({
@@ -2325,13 +2417,16 @@ export function createVendorStorefrontAction({
         checkoutInput.checkoutReference,
         { prismaClient },
       ).catch((evidenceError) => {
-        console.error('marketplace checkout evidence failure mark failed:', evidenceError);
+        console.error(
+          "marketplace checkout evidence failure mark failed:",
+          evidenceError,
+        );
       });
       await releaseCheckoutSalesCreditOffset({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,
       });
-      console.error('vendor storefront checkout error:', error);
+      console.error("vendor storefront checkout error:", error);
       return buildPublicCheckoutErrorResponse(error);
     }
   };
@@ -2344,7 +2439,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
   env = process.env,
 } = {}) {
   return async function action({ request }) {
-    if (request.method !== 'POST') {
+    if (request.method !== "POST") {
       return buildMethodNotAllowedResponse();
     }
 
@@ -2353,7 +2448,9 @@ export function createPublicVendorDraftOrderCheckoutAction({
     try {
       body = await request.json();
     } catch {
-      return buildJsonInvalidPayloadResponse(['リクエスト形式を確認してください。']);
+      return buildJsonInvalidPayloadResponse([
+        "リクエスト形式を確認してください。",
+      ]);
     }
 
     const checkoutInput = await buildDraftOrderCheckoutInputFromPublicRequest({
@@ -2400,13 +2497,16 @@ export function createPublicVendorDraftOrderCheckoutAction({
         checkoutInput.checkoutReference,
         { prismaClient },
       ).catch((evidenceError) => {
-        console.error('marketplace checkout evidence failure mark failed:', evidenceError);
+        console.error(
+          "marketplace checkout evidence failure mark failed:",
+          evidenceError,
+        );
       });
       await releaseCheckoutSalesCreditOffset({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,
       });
-      console.error('public vendor checkout api error:', error);
+      console.error("public vendor checkout api error:", error);
       return buildPublicApiCheckoutErrorResponse(error);
     }
   };

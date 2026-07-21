@@ -506,6 +506,8 @@ async function shopifyGraphQL(shopDomain, query, variables = {}) {
 }
 
 async function createShopifyProductFromDbProduct(product) {
+  const { resolveMarketplaceCheckoutPolicy } =
+    await import("../services/marketplaceCheckoutGate.server.js");
   const createMutation = `
     mutation CreateProduct($product: ProductCreateInput!) {
       productCreate(product: $product) {
@@ -544,6 +546,11 @@ async function createShopifyProductFromDbProduct(product) {
       key: "cost_currency",
       type: "single_line_text_field",
       value: product.costCurrency || "JPY",
+    },
+    {
+      key: "marketplace_checkout_policy",
+      type: "single_line_text_field",
+      value: resolveMarketplaceCheckoutPolicy(product),
     },
   ];
 
@@ -1012,6 +1019,7 @@ export const action = async ({ request }) => {
       include: {
         vendorStore: true,
         countryPolicy: true,
+        complianceProfile: true,
       },
     });
 
@@ -1310,6 +1318,13 @@ export const action = async ({ request }) => {
             approvalStatus: "approved",
             shopDomain,
           },
+        });
+
+        const { syncMarketplaceCheckoutPolicyForProduct } =
+          await import("../services/marketplaceCheckoutGate.server.js");
+        await syncMarketplaceCheckoutPolicyForProduct({
+          localProductId: productId,
+          shopDomain,
         });
 
         await ensureApprovedProductPublished(productId);

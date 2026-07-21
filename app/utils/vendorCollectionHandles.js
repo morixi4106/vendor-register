@@ -17,3 +17,9 @@ export function buildVendorCollectionUrl(vendorHandle) {
 
   return handle ? `/collections/${handle}` : null;
 }
+
+export function buildVendorProxyStorefrontUrl(vendorHandle) {
+  const handle = normalizeVendorCollectionSlug(vendorHandle);
+
+  return handle ? `/apps/vendors/${handle}` : null;
+}

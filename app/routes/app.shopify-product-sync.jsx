@@ -23,6 +23,10 @@ import {
   reconcileShopifyProductCatalog,
   resolveShopifyProductSyncIssue,
 } from "../services/shopifyProductSync.server.js";
+import {
+  backfillMarketplaceCheckoutPolicies,
+  syncMarketplaceCheckoutPolicyForProduct,
+} from "../services/marketplaceCheckoutGate.server.js";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -61,9 +65,13 @@ export const action = async ({ request }) => {
       const result = await reconcileShopifyProductCatalog(session.shop, {
         limit: 250,
       });
+      const checkoutPolicies = await backfillMarketplaceCheckoutPolicies(
+        session.shop,
+      );
       return json({
-        ok: true,
+        ok: checkoutPolicies.ok,
         message: `確認 ${result.scanned}件 / 新規 ${result.created}件 / 更新 ${result.updated}件 / 要確認 ${result.unresolved}件`,
+        checkoutPolicies,
       });
     } catch (error) {
       console.error("Shopify product catalog reconciliation failed:", error);
@@ -99,6 +107,11 @@ export const action = async ({ request }) => {
         { status: 400 },
       );
     }
+
+    await syncMarketplaceCheckoutPolicyForProduct({
+      localProductId: result.product.id,
+      shopDomain: result.product.shopDomain || session.shop,
+    });
 
     return redirect("/app/shopify-product-sync");
   }

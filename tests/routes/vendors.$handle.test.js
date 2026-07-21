@@ -45,6 +45,10 @@ function createProducts() {
       vendorStoreId: 'store_1',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
   ];
 }

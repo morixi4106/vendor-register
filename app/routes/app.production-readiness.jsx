@@ -10,15 +10,75 @@ import {
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const { getProductionReadiness } =
     await import("../services/productionReadiness.server.js");
+  const { getMarketplaceCheckoutGateStatus } =
+    await import("../services/marketplaceCheckoutGate.server.js");
 
-  return json(await getProductionReadiness());
+  const readiness = await getProductionReadiness();
+  let checkoutGate;
+
+  try {
+    checkoutGate = {
+      available: true,
+      ...(await getMarketplaceCheckoutGateStatus(session.shop)),
+    };
+  } catch (error) {
+    console.error("Marketplace checkout gate status failed:", error);
+    checkoutGate = {
+      available: false,
+      exists: false,
+      active: false,
+      message:
+        "Online Storeの公開権限と商品同期状態を確認してください。",
+    };
+  }
+
+  return json({ ...readiness, checkoutGate });
 };
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "register_carrier");
+
+  if (intent === "activate_checkout_gate") {
+    try {
+      const { reconcileShopifyProductCatalog } =
+        await import("../services/shopifyProductSync.server.js");
+      const { activateMarketplaceCheckoutGate } =
+        await import("../services/marketplaceCheckoutGate.server.js");
+
+      const catalog = await reconcileShopifyProductCatalog(session.shop, {
+        limit: 1000,
+      });
+      const result = await activateMarketplaceCheckoutGate(session.shop);
+
+      return json({
+        checkoutGate: {
+          ok: true,
+          catalog,
+          result,
+        },
+      });
+    } catch (error) {
+      console.error("Marketplace checkout gate activation failed:", error);
+      return json(
+        {
+          checkoutGate: {
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : "チェックアウトゲートの有効化に失敗しました。",
+          },
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const { getCarrierCallbackUrl, upsertShippingV2CarrierService } =
     await import("../services/carrierShippingRates.server.js");
   const appUrl = process.env.APP_URL;
@@ -54,7 +114,12 @@ export default function ProductionReadinessPage() {
   const data = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
-  const isCarrierSubmitting = navigation.state === "submitting";
+  const submittingIntent = navigation.formData?.get("intent");
+  const isCarrierSubmitting =
+    navigation.state === "submitting" && submittingIntent === "register_carrier";
+  const isCheckoutGateSubmitting =
+    navigation.state === "submitting" &&
+    submittingIntent === "activate_checkout_gate";
   const displayChecks = data.checks.map((check) =>
     decorateCheckForDisplay(check, data),
   );
@@ -334,6 +399,55 @@ export default function ProductionReadinessPage() {
       <section className="readiness-card">
         <div className="readiness-tool">
           <div className="readiness-tool__body">
+            <h2 className="readiness-tool__title">
+              第三者商品の公開境界
+            </h2>
+            <p className="readiness-tool__text">
+              運営直販商品だけをOnline Storeへ公開し、店舗別精算が必要な商品はApp ProxyとDraft Orderの購入導線に限定します。
+            </p>
+            <p className="readiness-tool__text">
+              状態: {data.checkoutGate?.active ? "有効" : "無効"}
+              {!data.checkoutGate?.available && data.checkoutGate?.message
+                ? ` / ${data.checkoutGate.message}`
+                : ""}
+            </p>
+          </div>
+          <Form method="post">
+            <input
+              type="hidden"
+              name="intent"
+              value="activate_checkout_gate"
+            />
+            <button
+              className="readiness-button"
+              type="submit"
+              disabled={isCheckoutGateSubmitting}
+            >
+              {isCheckoutGateSubmitting
+                ? "商品同期・公開境界を確認中"
+                : "商品同期と公開境界を適用"}
+            </button>
+          </Form>
+        </div>
+        {actionData?.checkoutGate ? (
+          <div
+            className={`readiness-result ${
+              actionData.checkoutGate.ok ? "" : "readiness-result--error"
+            }`}
+          >
+            {actionData.checkoutGate.ok
+              ? `公開境界を適用しました。更新: ${
+                  actionData.checkoutGate.result?.backfill?.changedCount ?? 0
+                }件`
+              : actionData.checkoutGate.message ||
+                "公開境界の適用に失敗しました。"}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="readiness-card">
+        <div className="readiness-tool">
+          <div className="readiness-tool__body">
             <h2 className="readiness-tool__title">配送サービス再登録</h2>
             <p className="readiness-tool__text">
               アプリを再インストールした後は、Shopify側の配送サービス登録が外れることがあります。
@@ -341,6 +455,7 @@ export default function ProductionReadinessPage() {
             </p>
           </div>
           <Form method="post">
+            <input type="hidden" name="intent" value="register_carrier" />
             <button
               className="readiness-button"
               type="submit"

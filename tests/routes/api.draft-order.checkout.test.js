@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-chars';
-
 import {
   createDraftOrderCheckout,
   createDraftOrderCheckoutLoader,
@@ -10,6 +8,8 @@ import {
 import { SALES_CREDIT_PAYMENT_RISK_CLASSES } from '../../app/services/sellerPayments.server.js';
 import { vendorAdminSessionCookie } from '../../app/services/vendorManagement.server.js';
 import { createPublicVendorDraftOrderCheckoutAction } from '../../app/services/vendorStorefront.server.js';
+
+process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-chars';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -43,6 +43,8 @@ function createVendorStoreRelation({
 }) {
   return {
     id,
+    isTestStore: true,
+    isPlatformStore: false,
     storeName,
     ownerName: `${storeName} Owner`,
     country,
@@ -113,6 +115,10 @@ function createProducts() {
       vendorStoreId: 'store_1',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
     {
       id: 'prod_pending',
@@ -130,6 +136,10 @@ function createProducts() {
       vendorStoreId: 'store_1',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
     {
       id: 'prod_other',
@@ -147,6 +157,10 @@ function createProducts() {
       vendorStoreId: 'store_2',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
   ];
 }
@@ -1574,16 +1588,26 @@ test('api.draft-order.checkout prepares Shopify fallback shipping once without c
         },
       };
     },
-    shopifyGraphQLWithOfflineSessionImpl: async () => ({
-      data: {
-        draftOrderCreate: {
-          draftOrder: {
-            id: 'gid://shopify/DraftOrder/1',
-            invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query }) => ({
+      data: query.includes('draftOrderPrepareForBuyerCheckout')
+        ? {
+            draftOrderPrepareForBuyerCheckout: {
+              draftOrder: {
+                id: 'gid://shopify/DraftOrder/1',
+                invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+              },
+              userErrors: [],
+            },
+          }
+        : {
+            draftOrderCreate: {
+              draftOrder: {
+                id: 'gid://shopify/DraftOrder/1',
+                invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+              },
+              userErrors: [],
+            },
           },
-          userErrors: [],
-        },
-      },
     }),
   });
   const action = createPublicVendorDraftOrderCheckoutAction({

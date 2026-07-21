@@ -47,6 +47,10 @@ function createProducts() {
       vendorStoreId: 'store_1',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
     {
       id: 'prod_pending',
@@ -63,6 +67,10 @@ function createProducts() {
       vendorStoreId: 'store_1',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
     {
       id: 'prod_other',
@@ -79,6 +87,10 @@ function createProducts() {
       vendorStoreId: 'store_2',
       productEuStatus: 'DISABLED',
       countryPolicy: null,
+      vendorStore: {
+        isTestStore: true,
+        isPlatformStore: false,
+      },
     },
   ];
 }

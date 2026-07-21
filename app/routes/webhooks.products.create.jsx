@@ -1,6 +1,10 @@
 import { authenticate } from "../shopify.server";
 import { Resend } from "resend";
 import { syncShopifyProductPayload } from "../services/shopifyProductSync.server.js";
+import {
+  enforceUnresolvedShopifyProductPublicationBoundary,
+  syncMarketplaceCheckoutPolicyForProduct,
+} from "../services/marketplaceCheckoutGate.server.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -18,6 +22,15 @@ export const action = async ({ request }) => {
       shop,
       productId: payload?.admin_graphql_api_id || payload?.id,
       reason: syncResult.reason,
+    });
+    await enforceUnresolvedShopifyProductPublicationBoundary({
+      shopDomain: shop,
+      shopifyProductId: payload?.admin_graphql_api_id || payload?.id,
+    });
+  } else {
+    await syncMarketplaceCheckoutPolicyForProduct({
+      localProductId: syncResult.product.id,
+      shopDomain: shop,
     });
   }
 

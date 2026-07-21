@@ -326,6 +326,19 @@ export const action = async ({ request, params }) => {
         });
       }
 
+      const { buildMarketplaceCheckoutPolicyMetafield } =
+        await import("../services/marketplaceCheckoutGate.server.js");
+      metafields.push(
+        buildMarketplaceCheckoutPolicyMetafield({
+          ownerId: product.shopifyProductId,
+          product: {
+            ...product,
+            vendorStore: product.vendorStore,
+            complianceProfile: product.complianceProfile,
+          },
+        }),
+      );
+
       const { data: metafieldsResult } = await shopifyGraphQL(
         shopDomain,
         `

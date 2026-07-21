@@ -69,9 +69,28 @@ function createDraftOrderCreateResponse(overrides = {}) {
   };
 }
 
+function createDraftOrderPrepareResponse(overrides = {}) {
+  return {
+    data: {
+      draftOrderPrepareForBuyerCheckout: {
+        draftOrder: {
+          id: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+          ...overrides.draftOrder,
+        },
+        userErrors: [],
+        ...overrides.payload,
+      },
+    },
+    shopDomain: 'shop-a.myshopify.com',
+  };
+}
+
 test('draftOrderCheckout uses prepared shippingAmount and preserves vendor metadata', async () => {
   let prepareCallCount = 0;
+  let graphQLCallCount = 0;
   let receivedGraphQLInput = null;
+  let prepareMutation = null;
   const checkout = createDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async (input) => {
       prepareCallCount += 1;
@@ -88,7 +107,12 @@ test('draftOrderCheckout uses prepared shippingAmount and preserves vendor metad
         },
       };
     },
-    shopifyGraphQLWithOfflineSessionImpl: async ({ variables }) => {
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query, variables }) => {
+      graphQLCallCount += 1;
+      if (query.includes('draftOrderPrepareForBuyerCheckout')) {
+        prepareMutation = query;
+        return createDraftOrderPrepareResponse();
+      }
       receivedGraphQLInput = variables.input;
       return createDraftOrderCreateResponse();
     },
@@ -97,6 +121,9 @@ test('draftOrderCheckout uses prepared shippingAmount and preserves vendor metad
   const result = await checkout(buildValidCheckoutRequest());
 
   assert.equal(prepareCallCount, 1);
+  assert.equal(graphQLCallCount, 2);
+  assert.match(prepareMutation, /bypassCartValidations:\s*true/);
+  assert.match(prepareMutation, /allowDiscountCodesInCheckout:\s*false/);
   assert.equal(receivedGraphQLInput.shippingLine.price, 420);
   assert.deepEqual(receivedGraphQLInput.tags, [
     'vendor-storefront',
@@ -161,7 +188,10 @@ test('draftOrderCheckout does not generate shipping_v2_snapshot locally after pr
         shippingAmount: 460,
       },
     }),
-    shopifyGraphQLWithOfflineSessionImpl: async ({ variables }) => {
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query, variables }) => {
+      if (query.includes('draftOrderPrepareForBuyerCheckout')) {
+        return createDraftOrderPrepareResponse();
+      }
       receivedGraphQLInput = variables.input;
       return createDraftOrderCreateResponse();
     },
@@ -183,13 +213,49 @@ test('draftOrderCheckout treats Shopify GraphQL userErrors as sanitized failures
         shippingAmount: 420,
       },
     }),
-    shopifyGraphQLWithOfflineSessionImpl: async () =>
-      createDraftOrderCreateResponse({
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query }) => {
+      if (query.includes('draftOrderPrepareForBuyerCheckout')) {
+        return createDraftOrderPrepareResponse();
+      }
+      return createDraftOrderCreateResponse({
         draftOrder: null,
         payload: {
           userErrors: [{ field: ['input', 'lineItems'], message: 'Variant is invalid' }],
         },
-      }),
+      });
+    },
+  });
+
+  await assert.rejects(
+    () => checkout(buildValidCheckoutRequest()),
+    (error) =>
+      error?.reason === 'checkout_failed' &&
+      error?.publicMessage === GENERIC_CHECKOUT_ERROR_MESSAGE &&
+      Array.isArray(error?.userErrors),
+  );
+});
+
+test('draftOrderCheckout treats prepare userErrors as sanitized failures', async () => {
+  const checkout = createDraftOrderCheckout({
+    prepareShippingV2WriterPayloadImpl: async (input) => ({
+      applied: true,
+      reason: null,
+      payload: {
+        ...input.payload,
+        shippingAmount: 420,
+      },
+    }),
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query }) => {
+      if (!query.includes('draftOrderPrepareForBuyerCheckout')) {
+        return createDraftOrderCreateResponse();
+      }
+      return createDraftOrderPrepareResponse({
+        draftOrder: null,
+        payload: {
+          userErrors: [{ field: ['id'], message: 'Draft order is invalid' }],
+        },
+      });
+    },
   });
 
   await assert.rejects(

@@ -862,46 +862,54 @@ model SellerSettlementAdjustment {
 }
 
 model PayoutRun {
-  id                        String    @id @default(cuid())
-  sellerId                  String
-  sellerStripeAccountId     String?
-  sellerPayoutRecipientId   String?
-  stripeAccountId           String?
-  amount                    Int
-  currencyCode              String    @default("jpy")
-  status                    String    @default("draft")
-  transferMethod            String    @default("manual_bank_transfer")
-  stripePayoutId            String?   @unique
-  wiseQuoteId               String?
-  wiseTransferId            String?   @unique
-  wiseTransferStatus        String?
-  wiseCustomerTransactionId String?   @unique
-  wiseSourceCurrency        String?
-  wiseTargetCurrency        String?
-  wiseSourceAmount          Decimal?  @db.Decimal(18, 6)
-  wiseTargetAmount          Decimal?  @db.Decimal(18, 6)
-  wiseFeeAmount             Decimal?  @db.Decimal(18, 6)
-  wiseRate                  Decimal?  @db.Decimal(18, 10)
-  wiseFailureCode           String?
-  wiseFailureMessage        String?
-  wisePayloadJson           Json?
-  externalTransferId        String?
-  transferMemo              String?
-  createdBy                 String?
-  createdByJson             Json?
-  approvedAt                DateTime?
-  approvedBy                String?
-  approvedByJson            Json?
-  processingAt              DateTime?
-  processingBy              String?
-  processingByJson          Json?
-  executedAt                DateTime?
-  executedBy                String?
-  executedByJson            Json?
-  failureCode               String?
-  failureMessage            String?
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+  id                            String    @id @default(cuid())
+  sellerId                      String
+  sellerStripeAccountId         String?
+  sellerPayoutRecipientId       String?
+  stripeAccountId               String?
+  amount                        Int
+  currencyCode                  String    @default("jpy")
+  status                        String    @default("draft")
+  transferMethod                String    @default("manual_bank_transfer")
+  approvedTransferMethod        String?
+  approvedPayoutRecipientId     String?
+  approvedRecipientHash         String?
+  approvedRecipientSnapshotJson Json?
+  approvedCurrencyCode          String?
+  stripePayoutId                String?   @unique
+  wiseQuoteId                   String?
+  wiseTransferId                String?   @unique
+  wiseTransferStatus            String?
+  wiseCustomerTransactionId     String?   @unique
+  wiseSourceCurrency            String?
+  wiseTargetCurrency            String?
+  wiseSourceAmount              Decimal?  @db.Decimal(18, 6)
+  wiseTargetAmount              Decimal?  @db.Decimal(18, 6)
+  wiseFeeAmount                 Decimal?  @db.Decimal(18, 6)
+  wiseRate                      Decimal?  @db.Decimal(18, 10)
+  wiseFailureCode               String?
+  wiseFailureMessage            String?
+  wisePayloadJson               Json?
+  externalTransferId            String?
+  transferMemo                  String?
+  createdBy                     String?
+  createdByJson                 Json?
+  approvedAt                    DateTime?
+  approvedBy                    String?
+  approvedByJson                Json?
+  processingAt                  DateTime?
+  processingBy                  String?
+  processingByJson              Json?
+  executedAt                    DateTime?
+  executedBy                    String?
+  executedByJson                Json?
+  failureCode                   String?
+  failureMessage                String?
+  reconciliationRequiredAt      DateTime?
+  reconciliationReason          String?
+  returnedAt                    DateTime?
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
 
   seller                Seller                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   sellerStripeAccount   SellerStripeAccount?   @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
@@ -912,6 +920,7 @@ model PayoutRun {
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
   @@index([sellerPayoutRecipientId, createdAt])
+  @@index([status, reconciliationRequiredAt])
   @@index([wiseTransferStatus, updatedAt])
   @@map("payout_runs")
 }

@@ -111,6 +111,8 @@ const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "write_merchant_managed_fulfillment_orders",
   "read_publications",
   "write_publications",
+  "read_draft_orders",
+  "write_draft_orders",
   "read_shopify_payments_disputes",
 ];
 
@@ -120,6 +122,7 @@ const WRITE_SCOPES_THAT_SATISFY_READ_SCOPES = {
     "write_merchant_managed_fulfillment_orders",
   read_products: "write_products",
   read_publications: "write_publications",
+  read_draft_orders: "write_draft_orders",
   read_shipping: "write_shipping",
 };
 

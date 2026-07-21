@@ -103,9 +103,11 @@ export const action = async ({ request, params }) => {
             ? "Wise送金を開始しました。完了確認後に台帳へ反映します。"
             : "Wise送金が完了し、台帳へ反映しました。"
           : intent === "syncWise"
-            ? result.pending
-              ? "Wise送金ステータスを更新しました。"
-              : "Wise送金の完了を確認し、台帳へ反映しました。"
+            ? result.returned
+              ? "Wiseからの資金返還を確認し、売上台帳へ戻しました。"
+              : result.pending
+                ? "Wise送金ステータスを更新しました。"
+                : "Wise送金の完了を確認し、台帳へ反映しました。"
             : result.pending
               ? "手動送金を処理中にしました。実際の振込後、送金IDを記録して完了してください。"
               : "手動送金の完了を記録し、台帳へ反映しました。",
@@ -245,8 +247,7 @@ export default function AdminPayoutRunDetailPage() {
                     <span className="payout-detail__test-badge">テスト</span>
                   </>
                 ) : null}{" "}
-                /{" "}
-                {formatMoney(payoutRun.amount, payoutRun.currencyCode)} /{" "}
+                / {formatMoney(payoutRun.amount, payoutRun.currencyCode)} /{" "}
                 {payoutRun.statusLabel}
               </p>
             </div>
@@ -305,14 +306,16 @@ export default function AdminPayoutRunDetailPage() {
           </section>
         ) : null}
 
-        {payoutRun.status === "processing" &&
+        {["processing", "reconciliation_required"].includes(payoutRun.status) &&
         payoutRun.transferMethod === "wise_api" ? (
           <section className="payout-detail__card">
             <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
               Wiseステータス確認
             </h2>
             <p className="payout-detail__subtitle">
-              Wise送金は処理中です。ステータスを確認し、完了していれば台帳へ反映します。
+              {payoutRun.status === "reconciliation_required"
+                ? "送金結果が確定していません。Wise側の同じtransfer IDを確認してください。新しい送金は作成せず、ステータス確認だけを実行します。"
+                : "Wise送金は処理中です。ステータスを確認し、完了していれば台帳へ反映します。"}
             </p>
             <Form method="post">
               <input type="hidden" name="intent" value="syncWise" />
@@ -327,7 +330,8 @@ export default function AdminPayoutRunDetailPage() {
           </section>
         ) : null}
 
-        {payoutRun.status === "approved" ? (
+        {payoutRun.status === "approved" &&
+        payoutRun.transferMethod === "manual_bank_transfer" ? (
           <section className="payout-detail__card">
             <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
               手動送金を開始
@@ -361,13 +365,26 @@ export default function AdminPayoutRunDetailPage() {
               <input type="hidden" name="intent" value="markPaid" />
               <label>
                 送金ID / 振込受付番号
-                <input className="payout-detail__input" name="externalTransferId" required placeholder="例: bank_20260516_001" />
+                <input
+                  className="payout-detail__input"
+                  name="externalTransferId"
+                  required
+                  placeholder="例: bank_20260516_001"
+                />
               </label>
               <label>
                 メモ
-                <textarea className="payout-detail__textarea" name="transferMemo" placeholder="例: 2026年5月分の手動振込" />
+                <textarea
+                  className="payout-detail__textarea"
+                  name="transferMemo"
+                  placeholder="例: 2026年5月分の手動振込"
+                />
               </label>
-              <button type="submit" className="payout-detail__button" disabled={isMarkingPaid}>
+              <button
+                type="submit"
+                className="payout-detail__button"
+                disabled={isMarkingPaid}
+              >
                 {isMarkingPaid ? "完了処理中..." : "送金完了を記録"}
               </button>
             </Form>
@@ -497,6 +514,20 @@ function createPayoutRunErrorMessage(reason) {
       return "操作担当者の監査情報が不足しています。この出金予定は実行せず、作り直してください。";
     case "payout_maker_checker_required":
       return "作成者と承認者を分ける必要があります。別の担当者が操作してください。";
+    case "payout_approval_snapshot_missing":
+      return "承認時の送金方法・受取先記録がありません。この出金予定は実行せず、作り直してください。";
+    case "payout_transfer_method_changed":
+    case "payout_currency_changed":
+    case "payout_recipient_changed":
+      return "承認後に送金条件または受取先が変更されています。再実行せず、出金予定を作り直してください。";
+    case "payout_processing_owner_mismatch":
+      return "処理を開始した担当者と完了担当者が一致しません。処理状況を確認してください。";
+    case "external_transfer_id_required":
+      return "実際の振込後に、金融機関の送金IDを入力してください。";
+    case "external_transfer_id_duplicate":
+      return "この送金IDは別の出金記録ですでに使用されています。";
+    case "wise_transfer_reconciliation_required":
+      return "Wiseの結果を確定できません。資金状況をWise側で照合するまで再送金しないでください。";
     case "seller_payout_restricted":
       return "この出店者は制限中または禁止中のため、出金対象外です。";
     case "wise_payout_not_enabled":

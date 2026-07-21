@@ -1,6 +1,6 @@
 import {
   buildVendorCollectionHandle,
-  buildVendorCollectionUrl,
+  buildVendorProxyStorefrontUrl,
 } from "./vendorCollectionHandles.js";
 import {
   buildDeliveryRestrictionSummary,
@@ -122,13 +122,13 @@ export function serializePublicVendorStorefront({
       handle,
       storeName: vendor?.storeName || store?.storeName || "",
       collectionHandle: buildVendorCollectionHandle(handle),
-      collectionUrl: buildVendorCollectionUrl(handle),
+      collectionUrl: buildVendorProxyStorefrontUrl(handle),
     },
     store: {
       id: store.id,
       handle,
       collectionHandle: buildVendorCollectionHandle(handle),
-      collectionUrl: buildVendorCollectionUrl(handle),
+      collectionUrl: buildVendorProxyStorefrontUrl(handle),
       storeName: store.storeName || vendor?.storeName || "",
       country: store.country || null,
       category: store.category || null,

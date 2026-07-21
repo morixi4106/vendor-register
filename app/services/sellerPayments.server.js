@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 
 import Stripe from "stripe";
@@ -15,9 +15,12 @@ import {
   buildProductComplianceSnapshot,
   buildSellerGovernanceSnapshot,
   calculateGovernedPayoutAvailability,
+  createMarketplaceOperationalCase,
   evaluateSellerSettlementExecutionReadiness,
   evaluateSellerGovernanceReadiness,
+  getMarketplaceGovernanceConfiguration,
   getSellerAgreementReadinessOptions,
+  getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
 
@@ -66,7 +69,9 @@ export const PAYOUT_RUN_STATUSES = [
   "draft",
   "approved",
   "processing",
+  "reconciliation_required",
   "executed",
+  "returned",
   "failed",
 ];
 
@@ -109,6 +114,7 @@ export const LEDGER_ENTRY_TYPES = [
   "case_adjustment",
   "payout_created",
   "payout_paid",
+  "payout_returned",
   "payout_failed",
   "sales_credit_offset_captured",
   "sales_credit_offset_refund_reversal",
@@ -214,10 +220,7 @@ function normalizeLowercase(value) {
   return normalized ? normalized.toLowerCase() : null;
 }
 
-const SHOPIFY_ORDER_SETTLEMENT_SELLER_STATUSES = new Set([
-  "pending",
-  "active",
-]);
+const SHOPIFY_ORDER_SETTLEMENT_SELLER_STATUSES = new Set(["pending", "active"]);
 
 function canSellerReceiveShopifyOrderSettlement(seller) {
   return SHOPIFY_ORDER_SETTLEMENT_SELLER_STATUSES.has(
@@ -567,8 +570,9 @@ function isMultiSellerShopifyRefundSettlementEnabled(env = process.env) {
 
 function isMultiSellerShopifyCancelledSettlementEnabled(env = process.env) {
   return (
-    normalizeLowercase(env.MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED) ===
-    "true"
+    normalizeLowercase(
+      env.MULTI_SELLER_SHOPIFY_CANCELLED_SETTLEMENT_ENABLED,
+    ) === "true"
   );
 }
 
@@ -582,9 +586,9 @@ function isMultiSellerShopifyDisputeSettlementEnabled(env = process.env) {
 function hasSellerOrderShadowModels(prismaClient) {
   return Boolean(
     prismaClient?.marketplaceOrder?.upsert &&
-      prismaClient?.sellerOrder?.upsert &&
-      prismaClient?.sellerOrderLine?.upsert &&
-      prismaClient?.sellerOrderShadowCheck?.create,
+    prismaClient?.sellerOrder?.upsert &&
+    prismaClient?.sellerOrderLine?.upsert &&
+    prismaClient?.sellerOrderShadowCheck?.create,
   );
 }
 
@@ -811,8 +815,12 @@ function createPayoutRunStatusLabel(status) {
       return "承認済み";
     case "processing":
       return "送金処理中";
+    case "reconciliation_required":
+      return "照合確認が必要";
     case "executed":
       return "実行済み";
+    case "returned":
+      return "返金済み";
     case "failed":
       return "失敗";
     default:
@@ -934,13 +942,80 @@ function serializePayoutRecipientSummary(payoutRecipient) {
   };
 }
 
+function buildPayoutApprovalRecipientSnapshot(
+  payoutRecipient,
+  { transferMethod, currencyCode } = {},
+) {
+  if (!payoutRecipient) return null;
+  return {
+    snapshotVersion: "payout-recipient-approval-v1",
+    transferMethod: normalizeText(transferMethod),
+    payoutRecipientId: payoutRecipient.id,
+    provider: payoutRecipient.provider || null,
+    status: payoutRecipient.status || null,
+    countryCode: normalizeUppercase(payoutRecipient.countryCode),
+    currencyCode:
+      normalizeLowercase(currencyCode || payoutRecipient.currencyCode) ||
+      DEFAULT_ORDER_CURRENCY,
+    accountHolderName: normalizeText(payoutRecipient.accountHolderName),
+    wiseRecipientId: normalizeText(payoutRecipient.wiseRecipientId),
+    wiseRecipientHash: normalizeText(payoutRecipient.wiseRecipientHash),
+    accountSummary: normalizeText(payoutRecipient.accountSummary),
+    longAccountSummary: normalizeText(payoutRecipient.longAccountSummary),
+    recipientUpdatedAt: payoutRecipient.updatedAt || null,
+  };
+}
+
+function hashPayoutApprovalRecipientSnapshot(snapshot) {
+  if (!snapshot) return null;
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+}
+
+function validatePayoutApprovalExecutionSnapshot(payoutRun, payoutRecipient) {
+  if (
+    !payoutRun?.approvedTransferMethod ||
+    !payoutRun?.approvedCurrencyCode ||
+    !payoutRun?.approvedRecipientHash ||
+    !payoutRun?.approvedRecipientSnapshotJson
+  ) {
+    return { ok: false, reason: "payout_approval_snapshot_missing" };
+  }
+  if (payoutRun.transferMethod !== payoutRun.approvedTransferMethod) {
+    return { ok: false, reason: "payout_transfer_method_changed" };
+  }
+  if (
+    normalizeLowercase(payoutRun.currencyCode) !==
+    normalizeLowercase(payoutRun.approvedCurrencyCode)
+  ) {
+    return { ok: false, reason: "payout_currency_changed" };
+  }
+  if (payoutRun.approvedPayoutRecipientId !== payoutRecipient?.id) {
+    return { ok: false, reason: "payout_recipient_changed" };
+  }
+
+  const currentSnapshot = buildPayoutApprovalRecipientSnapshot(
+    payoutRecipient,
+    {
+      transferMethod: payoutRun.transferMethod,
+      currencyCode: payoutRun.currencyCode,
+    },
+  );
+  if (
+    hashPayoutApprovalRecipientSnapshot(currentSnapshot) !==
+    payoutRun.approvedRecipientHash
+  ) {
+    return { ok: false, reason: "payout_recipient_changed" };
+  }
+  return { ok: true, snapshot: currentSnapshot };
+}
+
 function isActivePayoutRecipient(payoutRecipient) {
   return Boolean(
     payoutRecipient &&
-      payoutRecipient.status === "active" &&
-      (payoutRecipient.wiseRecipientId ||
-        payoutRecipient.accountHolderName ||
-        payoutRecipient.accountSummary),
+    payoutRecipient.status === "active" &&
+    (payoutRecipient.wiseRecipientId ||
+      payoutRecipient.accountHolderName ||
+      payoutRecipient.accountSummary),
   );
 }
 
@@ -1200,12 +1275,10 @@ export async function getAdminSellerDetail(
         seller.euSellerStatus || "DISABLED",
       ),
       phoneVerifiedAt: seller.phoneVerifiedAt || null,
-      documentVerificationStatus:
+      documentVerificationStatus: seller.documentVerificationStatus || "NONE",
+      documentVerificationStatusLabel: createDocumentVerificationStatusLabel(
         seller.documentVerificationStatus || "NONE",
-      documentVerificationStatusLabel:
-        createDocumentVerificationStatusLabel(
-          seller.documentVerificationStatus || "NONE",
-        ),
+      ),
       documentVerifiedAt: seller.documentVerifiedAt || null,
       documentVerifiedBy: seller.documentVerifiedBy || null,
       verificationNameMatched: Boolean(seller.verificationNameMatched),
@@ -2083,8 +2156,7 @@ export async function getSellerPaymentsPageData(
           status: vendor.seller.status,
           statusLabel: createSellerStatusLabel(vendor.seller.status),
           statusReason: vendor.seller.statusReason || null,
-          verificationStatus:
-            vendor.seller.sellerVerificationStatus || "NONE",
+          verificationStatus: vendor.seller.sellerVerificationStatus || "NONE",
           verificationStatusLabel: createSellerVerificationStatusLabel(
             vendor.seller.sellerVerificationStatus || "NONE",
           ),
@@ -2092,9 +2164,7 @@ export async function getSellerPaymentsPageData(
           euSellerStatusLabel: createSellerEuStatusLabel(
             vendor.seller.euSellerStatus || "DISABLED",
           ),
-          payoutVerification: getSellerPayoutVerificationState(
-            vendor.seller,
-          ),
+          payoutVerification: getSellerPayoutVerificationState(vendor.seller),
         }
       : null,
     stripeAccount: serializeStripeAccountSummary(vendor.seller?.stripeAccount),
@@ -2560,7 +2630,9 @@ function getShopifyOrderAttribute(payload, key) {
     ...(Array.isArray(payload?.custom_attributes)
       ? payload.custom_attributes
       : []),
-    ...(Array.isArray(payload?.customAttributes) ? payload.customAttributes : []),
+    ...(Array.isArray(payload?.customAttributes)
+      ? payload.customAttributes
+      : []),
   ];
 
   for (const attribute of candidates) {
@@ -3110,7 +3182,10 @@ function getSellerOrderPaymentStatusAfterRefund({
   const normalizedPaidAmount = clampInteger(paidAmount);
   const normalizedRefundAmount = clampInteger(refundAmount);
 
-  if (normalizedPaidAmount > 0 && normalizedRefundAmount >= normalizedPaidAmount) {
+  if (
+    normalizedPaidAmount > 0 &&
+    normalizedRefundAmount >= normalizedPaidAmount
+  ) {
     return "refunded";
   }
 
@@ -3122,13 +3197,7 @@ function getSellerOrderPaymentStatusAfterRefund({
 }
 
 async function updateSellerOrderShadowForRefund(
-  {
-    shopDomain,
-    shopifyOrderId,
-    sellerId,
-    matchedLines,
-    settlementAmount,
-  },
+  { shopDomain, shopifyOrderId, sellerId, matchedLines, settlementAmount },
   { prismaClient = prisma } = {},
 ) {
   if (
@@ -3163,7 +3232,8 @@ async function updateSellerOrderShadowForRefund(
 
   const lineIdCandidates = uniqueValues(
     (Array.isArray(matchedLines) ? matchedLines : []).flatMap(
-      ({ refundLineItem }) => getShopifyRefundLineItemIdCandidates(refundLineItem),
+      ({ refundLineItem }) =>
+        getShopifyRefundLineItemIdCandidates(refundLineItem),
     ),
   );
   const sellerOrderLines =
@@ -3187,7 +3257,9 @@ async function updateSellerOrderShadowForRefund(
   );
   let updatedLineCount = 0;
 
-  for (const { refundLineItem } of Array.isArray(matchedLines) ? matchedLines : []) {
+  for (const { refundLineItem } of Array.isArray(matchedLines)
+    ? matchedLines
+    : []) {
     const matchedLine = getShopifyRefundLineItemIdCandidates(refundLineItem)
       .map((candidate) => sellerOrderLineByShopifyLineItemId.get(candidate))
       .find(Boolean);
@@ -3210,7 +3282,8 @@ async function updateSellerOrderShadowForRefund(
   }
 
   const nextRefundAmount =
-    clampInteger(sellerOrder.sellerRefundAmount) + clampInteger(settlementAmount);
+    clampInteger(sellerOrder.sellerRefundAmount) +
+    clampInteger(settlementAmount);
   const paidAmount =
     clampInteger(sellerOrder.sellerPayableAmount) ||
     clampInteger(sellerOrder.sellerNetAmount);
@@ -3237,12 +3310,7 @@ async function updateSellerOrderShadowForRefund(
 }
 
 async function updateSellerOrderShadowForCancellation(
-  {
-    shopDomain,
-    shopifyOrderId,
-    sellerId,
-    settlementAmount,
-  },
+  { shopDomain, shopifyOrderId, sellerId, settlementAmount },
   { prismaClient = prisma } = {},
 ) {
   if (
@@ -3274,7 +3342,8 @@ async function updateSellerOrderShadowForCancellation(
   }
 
   const nextRefundAmount =
-    clampInteger(sellerOrder.sellerRefundAmount) + clampInteger(settlementAmount);
+    clampInteger(sellerOrder.sellerRefundAmount) +
+    clampInteger(settlementAmount);
   const paidAmount =
     clampInteger(sellerOrder.sellerPayableAmount) ||
     clampInteger(sellerOrder.sellerNetAmount);
@@ -3305,12 +3374,7 @@ async function updateSellerOrderShadowForCancellation(
 }
 
 async function updateSellerOrderShadowRiskStatus(
-  {
-    shopDomain,
-    shopifyOrderId,
-    sellerId,
-    riskStatus,
-  },
+  { shopDomain, shopifyOrderId, sellerId, riskStatus },
   { prismaClient = prisma } = {},
 ) {
   if (
@@ -3519,7 +3583,9 @@ function allocateAmountByWeight(totalAmount, weightedItems) {
 
   return allocations
     .sort((a, b) => a.index - b.index)
-    .map(({ remainder: _remainder, index: _index, ...allocation }) => allocation);
+    .map(
+      ({ remainder: _remainder, index: _index, ...allocation }) => allocation,
+    );
 }
 
 function compareProductMatchPriority(a, b, shopDomain) {
@@ -3669,8 +3735,8 @@ function buildCarrierShippingRateSnapshot(payload, currencyCode) {
     }
 
     zones.add(Number.parseInt(metadataMatch[1], 36));
-    for (const token of metadataMatch[2].split('.')) {
-      const [bandToken, quantityToken] = token.split('x');
+    for (const token of metadataMatch[2].split(".")) {
+      const [bandToken, quantityToken] = token.split("x");
       const bandUnits = Number.parseInt(bandToken, 36);
       const quantity = Number.parseInt(quantityToken, 36);
 
@@ -3716,7 +3782,9 @@ function buildCarrierShippingRateSnapshot(payload, currencyCode) {
       return total + moneyAmountToMinorUnits(amount, currencyCode);
     }, 0),
     serviceCodes: airPacketLines
-      .map((shippingLine) => normalizeText(shippingLine?.code || shippingLine?.source))
+      .map((shippingLine) =>
+        normalizeText(shippingLine?.code || shippingLine?.source),
+      )
       .filter(Boolean),
     lineCount: airPacketLines.length,
     snapshotSource: "shopify_shipping_lines",
@@ -3777,7 +3845,10 @@ export function buildMarketplaceOrderSnapshot({
       };
     }
   } else {
-    shippingRateSnapshot = buildCarrierShippingRateSnapshot(payload, currencyCode);
+    shippingRateSnapshot = buildCarrierShippingRateSnapshot(
+      payload,
+      currencyCode,
+    );
   }
 
   return {
@@ -3815,7 +3886,9 @@ export function buildMarketplaceOrderSnapshot({
     currencyCode,
     financialStatus: normalizeLowercase(payload?.financial_status),
     fulfillmentStatus: normalizeLowercase(payload?.fulfillment_status),
-    processedAt: normalizeDateValue(payload?.processed_at || payload?.created_at),
+    processedAt: normalizeDateValue(
+      payload?.processed_at || payload?.created_at,
+    ),
     cancelledAt: normalizeDateValue(payload?.cancelled_at),
     metadataJson: {
       source: "shopify_order_paid_shadow",
@@ -3848,22 +3921,20 @@ function buildSellerOrderShadowBuckets({
       product?.vendorStoreId || product?.vendorStore?.id,
     );
     const breakdown = getShopifyLineAmountBreakdown(lineItem, currencyCode);
-    const bucket =
-      bucketsBySellerId.get(sellerId) ||
-      {
-        sellerId,
-        vendorStoreId,
-        vendorId: normalizeText(vendor?.id),
-        vendorHandle: normalizeText(vendor?.handle),
-        sellerSubtotalAmount: 0,
-        sellerDiscountAmount: 0,
-        sellerTaxAmount: 0,
-        sellerNetItemAmount: 0,
-        sellerNetAmount: 0,
-        sellerPayableAmount: 0,
-        salesCreditOffsetAmount: 0,
-        lines: [],
-      };
+    const bucket = bucketsBySellerId.get(sellerId) || {
+      sellerId,
+      vendorStoreId,
+      vendorId: normalizeText(vendor?.id),
+      vendorHandle: normalizeText(vendor?.handle),
+      sellerSubtotalAmount: 0,
+      sellerDiscountAmount: 0,
+      sellerTaxAmount: 0,
+      sellerNetItemAmount: 0,
+      sellerNetAmount: 0,
+      sellerPayableAmount: 0,
+      salesCreditOffsetAmount: 0,
+      lines: [],
+    };
 
     bucket.sellerSubtotalAmount += breakdown.lineSubtotalAmount;
     bucket.sellerDiscountAmount += breakdown.discountAmount;
@@ -3921,7 +3992,9 @@ function buildSellerOrderShadowStatus({
     (total, bucket) => total + bucket.sellerPayableAmount,
     0,
   );
-  const sellerIds = uniqueValues(sellerBuckets.map((bucket) => bucket.sellerId));
+  const sellerIds = uniqueValues(
+    sellerBuckets.map((bucket) => bucket.sellerId),
+  );
 
   if (
     ledgerEntry.sellerId &&
@@ -3950,15 +4023,13 @@ function buildShopifyOrderPaidSettlementBuckets(matchedLines) {
     }
 
     const vendor = getProductVendor(matchedLine?.product);
-    const bucket =
-      bucketsBySellerId.get(sellerId) ||
-      {
-        seller,
-        sellerId,
-        vendor,
-        amount: 0,
-        matchedLines: [],
-      };
+    const bucket = bucketsBySellerId.get(sellerId) || {
+      seller,
+      sellerId,
+      vendor,
+      amount: 0,
+      matchedLines: [],
+    };
 
     bucket.amount += clampInteger(matchedLine?.amount);
     bucket.matchedLines.push(matchedLine);
@@ -3968,16 +4039,14 @@ function buildShopifyOrderPaidSettlementBuckets(matchedLines) {
   return Array.from(bucketsBySellerId.values());
 }
 
-async function createSellerOrderShadowFailureCheck(
-  {
-    prismaClient,
-    shopDomain,
-    shopifyOrderId,
-    shopifyOrderName,
-    currencyCode = DEFAULT_ORDER_CURRENCY,
-    error,
-  },
-) {
+async function createSellerOrderShadowFailureCheck({
+  prismaClient,
+  shopDomain,
+  shopifyOrderId,
+  shopifyOrderName,
+  currencyCode = DEFAULT_ORDER_CURRENCY,
+  error,
+}) {
   if (!prismaClient?.sellerOrderShadowCheck?.create) {
     return null;
   }
@@ -3989,7 +4058,8 @@ async function createSellerOrderShadowFailureCheck(
         shopifyOrderId,
         shopifyOrderName,
         status: SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED,
-        currencyCode: normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
+        currencyCode:
+          normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
         errorMessage:
           normalizeText(error?.message) || "seller_order_shadow_failed",
       },
@@ -4055,8 +4125,7 @@ async function recordShopifyOrderSellerOrderShadow(
     const checkoutReference =
       getShopifyOrderAttribute(payload, "checkout_reference") || null;
     const checkoutEvidence =
-      checkoutReference &&
-      prismaClient?.marketplaceCheckoutEvidence?.findUnique
+      checkoutReference && prismaClient?.marketplaceCheckoutEvidence?.findUnique
         ? await prismaClient.marketplaceCheckoutEvidence.findUnique({
             where: { checkoutReference },
           })
@@ -4067,16 +4136,20 @@ async function recordShopifyOrderSellerOrderShadow(
       "UNRECORDED";
     const buyerTermsVersion =
       checkoutEvidence?.buyerTermsVersion ||
-      getShopifyOrderAttribute(payload, "buyer_terms_version") || null;
+      getShopifyOrderAttribute(payload, "buyer_terms_version") ||
+      null;
     const buyerTermsHash =
       checkoutEvidence?.buyerTermsHash ||
-      getShopifyOrderAttribute(payload, "buyer_terms_hash") || null;
+      getShopifyOrderAttribute(payload, "buyer_terms_hash") ||
+      null;
     const buyerTermsUrl =
       checkoutEvidence?.buyerTermsUrl ||
-      getShopifyOrderAttribute(payload, "buyer_terms_url") || null;
+      getShopifyOrderAttribute(payload, "buyer_terms_url") ||
+      null;
     const buyerTermsLocale =
       checkoutEvidence?.buyerTermsLocale ||
-      getShopifyOrderAttribute(payload, "buyer_terms_locale") || null;
+      getShopifyOrderAttribute(payload, "buyer_terms_locale") ||
+      null;
     const buyerTermsPresentedAt =
       normalizeDateValue(checkoutEvidence?.presentedAt) ||
       normalizeDateValue(
@@ -4084,11 +4157,11 @@ async function recordShopifyOrderSellerOrderShadow(
       );
     const buyerTermsEvidenceComplete = Boolean(
       buyerTermsVersion &&
-        /^[a-f0-9]{64}$/i.test(buyerTermsHash || "") &&
-        buyerTermsUrl &&
-        buyerTermsLocale &&
-        buyerTermsPresentedAt &&
-        checkoutReference,
+      /^[a-f0-9]{64}$/i.test(buyerTermsHash || "") &&
+      buyerTermsUrl &&
+      buyerTermsLocale &&
+      buyerTermsPresentedAt &&
+      checkoutReference,
     );
     Object.assign(marketplaceData, {
       buyerTermsVersion,
@@ -4109,14 +4182,16 @@ async function recordShopifyOrderSellerOrderShadow(
     const capturedSellerSnapshotById = new Map(
       (Array.isArray(checkoutEvidence?.sellerSnapshotsJson)
         ? checkoutEvidence.sellerSnapshotsJson
-        : [])
+        : []
+      )
         .filter((entry) => normalizeText(entry?.sellerId) && entry?.snapshot)
         .map((entry) => [normalizeText(entry.sellerId), entry.snapshot]),
     );
     const capturedProductSnapshotById = new Map(
       (Array.isArray(checkoutEvidence?.productSnapshotsJson)
         ? checkoutEvidence.productSnapshotsJson
-        : [])
+        : []
+      )
         .filter((entry) => normalizeText(entry?.productId) && entry?.snapshot)
         .map((entry) => [normalizeText(entry.productId), entry.snapshot]),
     );
@@ -4140,14 +4215,17 @@ async function recordShopifyOrderSellerOrderShadow(
             })
           : [],
         prismaClient?.sellerAgreementAcceptance?.findMany
-          ? prismaClient.sellerAgreementAcceptance.findMany({
-              where: {
-                sellerId: { in: sellerIds },
-                agreementType: "SELLER_MASTER",
-                version: agreementVersion,
-                revokedAt: null,
-              },
-            })
+          ? checkoutEvidence?.sellerAgreementHash
+            ? prismaClient.sellerAgreementAcceptance.findMany({
+                where: {
+                  sellerId: { in: sellerIds },
+                  agreementType: "SELLER_MASTER",
+                  version: agreementVersion,
+                  documentHash: checkoutEvidence.sellerAgreementHash,
+                  revokedAt: null,
+                },
+              })
+            : []
           : [],
         prismaClient?.productComplianceProfile?.findMany
           ? prismaClient.productComplianceProfile.findMany({
@@ -4180,6 +4258,7 @@ async function recordShopifyOrderSellerOrderShadow(
             },
             {
               agreementVersion,
+              agreementDocumentHash: checkoutEvidence?.sellerAgreementHash,
               buyerTermsVersion,
             },
           ),
@@ -4291,8 +4370,7 @@ async function recordShopifyOrderSellerOrderShadow(
             : null;
           const governedLine = {
             ...line,
-            legalSellerSnapshotJson:
-              governanceSnapshot.legalSellerSnapshotJson,
+            legalSellerSnapshotJson: governanceSnapshot.legalSellerSnapshotJson,
             complianceSnapshotJson: complianceSnapshot,
             sellerAgreementVersion: agreementVersion,
           };
@@ -4328,7 +4406,9 @@ async function recordShopifyOrderSellerOrderShadow(
         currencyCode: normalizedCurrencyCode,
         legacyLedgerAmount: ledgerEntry?.amount ?? null,
         sellerOrderCalculatedAmount: calculatedAmount,
-        legacySellerIdsJson: ledgerEntry?.sellerId ? [ledgerEntry.sellerId] : [],
+        legacySellerIdsJson: ledgerEntry?.sellerId
+          ? [ledgerEntry.sellerId]
+          : [],
         sellerOrderSellerIdsJson: sellerIds,
         differencesJson: {
           legacyLedgerEntryId: ledgerEntry?.id || null,
@@ -4368,9 +4448,11 @@ async function recordShopifyOrderSellerOrderShadow(
   }
 }
 
-async function findLatestSellerOrderShadowCheck(
-  { prismaClient, shopDomain, shopifyOrderId },
-) {
+async function findLatestSellerOrderShadowCheck({
+  prismaClient,
+  shopDomain,
+  shopifyOrderId,
+}) {
   if (!prismaClient?.sellerOrderShadowCheck?.findFirst) {
     return null;
   }
@@ -4678,7 +4760,8 @@ function buildSyntheticShopifyLineItemFromLedgerLine({
 }) {
   const lineAmount = clampInteger(line?.amount);
   const quantity = toPositiveInteger(line?.quantity) || 1;
-  const unitAmount = quantity > 0 ? Math.ceil(lineAmount / quantity) : lineAmount;
+  const unitAmount =
+    quantity > 0 ? Math.ceil(lineAmount / quantity) : lineAmount;
   const discountAmount = Math.max(0, unitAmount * quantity - lineAmount);
   const shopifyLineItemId =
     normalizeShopifyGid("LineItem", line?.shopifyLineItemId) ||
@@ -4688,15 +4771,23 @@ function buildSyntheticShopifyLineItemFromLedgerLine({
   return {
     id: shopifyLineItemId,
     admin_graphql_api_id: shopifyLineItemId,
-    product_id: normalizeText(line?.shopifyProductId || product?.shopifyProductId),
-    variant_id: normalizeText(line?.shopifyVariantId || product?.shopifyVariantId),
+    product_id: normalizeText(
+      line?.shopifyProductId || product?.shopifyProductId,
+    ),
+    variant_id: normalizeText(
+      line?.shopifyVariantId || product?.shopifyVariantId,
+    ),
     title: normalizeText(line?.localProductName || product?.name),
     sku: normalizeText(line?.sku),
     price: decimalAmountFromMinorUnits(unitAmount, currencyCode),
     quantity,
     discount_allocations:
       discountAmount > 0
-        ? [{ amount: decimalAmountFromMinorUnits(discountAmount, currencyCode) }]
+        ? [
+            {
+              amount: decimalAmountFromMinorUnits(discountAmount, currencyCode),
+            },
+          ]
         : [],
     tax_lines: [],
     properties: [
@@ -4723,18 +4814,16 @@ function buildSalesCreditOffsetFromLedger(ledgerEntry) {
   };
 }
 
-async function createSellerOrderShadowBackfillFailureCheck(
-  {
-    prismaClient,
-    ledgerEntry,
-    shopDomain,
-    shopifyOrderId,
-    shopifyOrderName,
-    currencyCode,
-    reason,
-    differences = {},
-  },
-) {
+async function createSellerOrderShadowBackfillFailureCheck({
+  prismaClient,
+  ledgerEntry,
+  shopDomain,
+  shopifyOrderId,
+  shopifyOrderName,
+  currencyCode,
+  reason,
+  differences = {},
+}) {
   if (!prismaClient?.sellerOrderShadowCheck?.create) {
     return null;
   }
@@ -4742,7 +4831,8 @@ async function createSellerOrderShadowBackfillFailureCheck(
   return prismaClient.sellerOrderShadowCheck.create({
     data: {
       shopDomain: shopDomain || "unknown",
-      shopifyOrderId: shopifyOrderId || `ledger:${ledgerEntry?.id || "unknown"}`,
+      shopifyOrderId:
+        shopifyOrderId || `ledger:${ledgerEntry?.id || "unknown"}`,
       shopifyOrderName,
       status: SELLER_ORDER_SHADOW_CHECK_STATUSES.FAILED,
       currencyCode: normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
@@ -4782,10 +4872,7 @@ export async function backfillSellerOrderShadowChecks(
     };
   }
 
-  const normalizedLimit = Math.min(
-    Math.max(clampInteger(limit, 100), 1),
-    300,
-  );
+  const normalizedLimit = Math.min(Math.max(clampInteger(limit, 100), 1), 300);
   const normalizedDays = Math.min(Math.max(clampInteger(days, 30), 1), 365);
   const shouldRetryFailed = normalizeBooleanInput(retryFailed);
   const since = subtractDays(now, normalizedDays);
@@ -5114,6 +5201,278 @@ export async function backfillSellerOrderShadowChecks(
   };
 }
 
+function isProductionThirdPartyMarketplaceProduct(product) {
+  if (product?.vendorStore?.isTestStore === true) return false;
+  if (product?.vendorStore?.isPlatformStore === true) return false;
+  return (
+    normalizeUppercase(product?.complianceProfile?.legalSellerType) !==
+    "PLATFORM"
+  );
+}
+
+function getMarketplaceOrderGovernanceScope(matchedLines) {
+  const governedLines = matchedLines.filter(({ product }) =>
+    isProductionThirdPartyMarketplaceProduct(product),
+  );
+
+  return {
+    requiresMarketplaceGovernance: governedLines.length > 0,
+    sellerIds: uniqueValues(
+      governedLines.map(({ product }) => getProductSeller(product)?.id),
+    ),
+    productIds: uniqueValues(
+      governedLines.map(({ product }) => normalizeText(product?.id)),
+    ),
+  };
+}
+
+function validateMarketplaceCheckoutEvidence({
+  checkoutEvidence,
+  checkoutReference,
+  shopDomain,
+  shopifyOrderId,
+  sellerIds,
+  productIds,
+  env,
+}) {
+  const reasons = [];
+  const configuration = getMarketplaceGovernanceConfiguration(env);
+  const paymentsApproval = getShopifyMarketplacePaymentsApproval(env);
+
+  if (!isMarketplaceGovernanceGateEnabled(env)) {
+    reasons.push("marketplace_governance_gate_disabled");
+  }
+  if (!paymentsApproval.ready) reasons.push(...paymentsApproval.reasons);
+  if (!configuration.ready) reasons.push(...configuration.reasons);
+  if (!checkoutReference) reasons.push("checkout_reference_missing");
+  if (!checkoutEvidence) reasons.push("checkout_evidence_missing");
+
+  if (checkoutEvidence) {
+    if (
+      normalizeText(checkoutEvidence.checkoutReference) !== checkoutReference
+    ) {
+      reasons.push("checkout_reference_mismatch");
+    }
+    if (normalizeLowercase(checkoutEvidence.shopDomain) !== shopDomain) {
+      reasons.push("checkout_shop_mismatch");
+    }
+    if (!["PREPARED", "ORDER_CAPTURED"].includes(checkoutEvidence.status)) {
+      reasons.push("checkout_evidence_inactive");
+    }
+    if (
+      checkoutEvidence.shopifyOrderId &&
+      normalizeText(checkoutEvidence.shopifyOrderId) !== shopifyOrderId
+    ) {
+      reasons.push("checkout_order_mismatch");
+    }
+    if (
+      checkoutEvidence.sellerAgreementVersion !==
+      configuration.sellerAgreementVersion
+    ) {
+      reasons.push("seller_agreement_version_mismatch");
+    }
+    if (
+      normalizeLowercase(checkoutEvidence.sellerAgreementHash) !==
+      configuration.sellerAgreementDocumentHash
+    ) {
+      reasons.push("seller_agreement_hash_mismatch");
+    }
+    if (
+      checkoutEvidence.sellerAgreementUrl !== configuration.sellerAgreementUrl
+    ) {
+      reasons.push("seller_agreement_url_mismatch");
+    }
+    if (
+      checkoutEvidence.buyerTermsVersion !== configuration.buyerTermsVersion
+    ) {
+      reasons.push("buyer_terms_version_mismatch");
+    }
+    if (
+      normalizeLowercase(checkoutEvidence.buyerTermsHash) !==
+      configuration.buyerTermsDocumentHash
+    ) {
+      reasons.push("buyer_terms_hash_mismatch");
+    }
+    if (checkoutEvidence.buyerTermsUrl !== configuration.buyerTermsUrl) {
+      reasons.push("buyer_terms_url_mismatch");
+    }
+    if (!normalizeText(checkoutEvidence.buyerTermsLocale)) {
+      reasons.push("buyer_terms_locale_missing");
+    }
+    if (!normalizeDateValue(checkoutEvidence.presentedAt)) {
+      reasons.push("buyer_terms_presented_at_missing");
+    }
+
+    const sellerSnapshots = Array.isArray(checkoutEvidence.sellerSnapshotsJson)
+      ? checkoutEvidence.sellerSnapshotsJson
+      : [];
+    const sellerSnapshotById = new Map(
+      sellerSnapshots
+        .filter((entry) => normalizeText(entry?.sellerId))
+        .map((entry) => [normalizeText(entry.sellerId), entry]),
+    );
+    for (const sellerId of sellerIds) {
+      const entry = sellerSnapshotById.get(sellerId);
+      const agreement = entry?.snapshot?.sellerAgreementSnapshotJson;
+      if (!entry?.snapshot) {
+        reasons.push(`seller_snapshot_missing:${sellerId}`);
+        continue;
+      }
+      if (
+        agreement?.missing === true ||
+        agreement?.version !== configuration.sellerAgreementVersion ||
+        normalizeLowercase(agreement?.documentHash) !==
+          configuration.sellerAgreementDocumentHash
+      ) {
+        reasons.push(`seller_agreement_snapshot_invalid:${sellerId}`);
+      }
+    }
+
+    const productSnapshots = Array.isArray(
+      checkoutEvidence.productSnapshotsJson,
+    )
+      ? checkoutEvidence.productSnapshotsJson
+      : [];
+    const productSnapshotById = new Map(
+      productSnapshots
+        .filter((entry) => normalizeText(entry?.productId))
+        .map((entry) => [normalizeText(entry.productId), entry]),
+    );
+    for (const productId of productIds) {
+      const entry = productSnapshotById.get(productId);
+      if (!entry?.snapshot || !normalizeText(entry?.sellerId)) {
+        reasons.push(`product_snapshot_missing:${productId}`);
+      }
+    }
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reasons: uniqueValues(reasons),
+    checkoutEvidence,
+    configuration,
+    paymentsApproval,
+  };
+}
+
+async function recordMarketplaceOrderGovernanceReview(
+  {
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    currencyCode,
+    sellerIds,
+    productIds,
+    checkoutReference,
+    reasons,
+  },
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.marketplaceOperationalCase?.findFirst) return null;
+  const summary = `Shopify order governance review: ${shopDomain}/${shopifyOrderId}`;
+  const existing = await prismaClient.marketplaceOperationalCase.findFirst({
+    where: {
+      caseType: "COMPLIANCE",
+      summary,
+      status: { notIn: ["RESOLVED", "CLOSED"] },
+    },
+  });
+  if (existing) return existing;
+
+  const created = await createMarketplaceOperationalCase(
+    {
+      caseType: "COMPLIANCE",
+      priority: "CRITICAL",
+      currencyCode,
+      summary,
+      detailsJson: {
+        reason: "marketplace_order_governance_review_required",
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        checkoutReference,
+        sellerIds,
+        productIds,
+        governanceReasons: reasons,
+        settlementWritten: false,
+      },
+    },
+    {
+      prismaClient,
+      actor: "orders.paid.governance",
+      actorMetadata: { source: "shopify_orders_paid_webhook" },
+    },
+  );
+  return created?.case || null;
+}
+
+async function evaluateMarketplaceOrderGovernance(
+  {
+    payload,
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    currencyCode,
+    matchedLines,
+  },
+  { prismaClient = prisma, env = process.env } = {},
+) {
+  const scope = getMarketplaceOrderGovernanceScope(matchedLines);
+  if (!scope.requiresMarketplaceGovernance) {
+    return { ok: true, required: false, reasons: [] };
+  }
+
+  const checkoutReference =
+    getShopifyOrderAttribute(payload, "checkout_reference") || null;
+  const checkoutEvidence =
+    checkoutReference && prismaClient?.marketplaceCheckoutEvidence?.findUnique
+      ? await prismaClient.marketplaceCheckoutEvidence.findUnique({
+          where: { checkoutReference },
+        })
+      : null;
+  const validation = validateMarketplaceCheckoutEvidence({
+    checkoutEvidence,
+    checkoutReference,
+    shopDomain,
+    shopifyOrderId,
+    sellerIds: scope.sellerIds,
+    productIds: scope.productIds,
+    env,
+  });
+
+  if (!validation.ok) {
+    const operationalCase = await recordMarketplaceOrderGovernanceReview(
+      {
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        sellerIds: scope.sellerIds,
+        productIds: scope.productIds,
+        checkoutReference,
+        reasons: validation.reasons,
+      },
+      { prismaClient },
+    ).catch(() => null);
+    return {
+      ok: false,
+      required: true,
+      reason: "marketplace_order_governance_review_required",
+      reasons: validation.reasons,
+      checkoutReference,
+      operationalCaseId: operationalCase?.id || null,
+    };
+  }
+
+  return {
+    ok: true,
+    required: true,
+    reasons: [],
+    checkoutReference,
+    checkoutEvidence,
+  };
+}
+
 export async function processShopifyOrderPaidSettlement(
   { payload, shop },
   {
@@ -5271,10 +5630,17 @@ export async function processShopifyOrderPaidSettlement(
       shopifyVariantId: true,
       shopDomain: true,
       vendorStoreId: true,
+      complianceProfile: {
+        select: {
+          legalSellerType: true,
+        },
+      },
       vendorStore: {
         select: {
           id: true,
           storeName: true,
+          isTestStore: true,
+          isPlatformStore: true,
           seller: {
             select: {
               id: true,
@@ -5341,6 +5707,30 @@ export async function processShopifyOrderPaidSettlement(
     return {
       ok: false,
       reason: "shopify_order_seller_missing",
+    };
+  }
+
+  const governance = await evaluateMarketplaceOrderGovernance(
+    {
+      payload,
+      shopDomain,
+      shopifyOrderId,
+      shopifyOrderName,
+      currencyCode,
+      matchedLines,
+    },
+    { prismaClient, env },
+  );
+
+  if (!governance.ok) {
+    return {
+      ok: false,
+      reason: governance.reason,
+      governanceReasons: governance.reasons,
+      checkoutReference: governance.checkoutReference,
+      operationalCaseId: governance.operationalCaseId,
+      sellerIds,
+      unmatchedProductIds: unmatchedProductIds.filter(Boolean),
     };
   }
 
@@ -5808,7 +6198,8 @@ export async function processShopifyRefundSettlement(
   const unmatchedProductIds = [];
 
   for (const refundLineItem of refundLineItems) {
-    const candidates = getShopifyRefundLineProductMatchCandidates(refundLineItem);
+    const candidates =
+      getShopifyRefundLineProductMatchCandidates(refundLineItem);
     const product = candidates
       .map((candidate) => productMap.get(candidate))
       .find(Boolean);
@@ -5962,7 +6353,9 @@ export async function processShopifyRefundSettlement(
               lineItems: bucket.matchedLines.map(
                 ({ refundLineItem, product, amount }) => ({
                   shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
-                  shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
+                  shopifyLineItemId: normalizeText(
+                    refundLineItem?.line_item_id,
+                  ),
                   shopifyProductId: normalizeText(product.shopifyProductId),
                   localProductId: product.id,
                   localProductName: product.name,
@@ -6039,7 +6432,9 @@ export async function processShopifyRefundSettlement(
     seller.id,
   );
   const salesCreditOffset = getSalesCreditOffsetFromPaidEntries(
-    orderLedgerEntries.filter((entry) => entry?.entryType === "shopify_order_paid"),
+    orderLedgerEntries.filter(
+      (entry) => entry?.entryType === "shopify_order_paid",
+    ),
   );
   const salesCreditRefundAmount = clampInteger(salesCreditOffset?.amount);
   const cashRemainingAmount = Math.max(
@@ -6097,15 +6492,17 @@ export async function processShopifyRefundSettlement(
           salesCreditOffsetReversed: shouldReverseSalesCredit,
           matchedLineCount: matchedLines.length,
           unmatchedProductIds: unmatchedProductIds.filter(Boolean),
-          lineItems: matchedLines.map(({ refundLineItem, product, amount }) => ({
-            shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
-            shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
-            shopifyProductId: normalizeText(product.shopifyProductId),
-            localProductId: product.id,
-            localProductName: product.name,
-            quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
-            amount,
-          })),
+          lineItems: matchedLines.map(
+            ({ refundLineItem, product, amount }) => ({
+              shopifyRefundLineItemId: normalizeText(refundLineItem?.id),
+              shopifyLineItemId: normalizeText(refundLineItem?.line_item_id),
+              shopifyProductId: normalizeText(product.shopifyProductId),
+              localProductId: product.id,
+              localProductName: product.name,
+              quantity: toPositiveInteger(refundLineItem?.quantity) || 0,
+              amount,
+            }),
+          ),
         },
         occurredAt,
       },
@@ -6919,11 +7316,11 @@ export async function processShopifyDisputeSettlement(
   }
 
   const ledgerEntry = await createLedgerEntry(
-      {
-        sellerId,
-        sellerStripeAccountId:
-          singleSellerPaidEntry?.sellerStripeAccountId || null,
-        stripeAccountId: singleSellerPaidEntry?.stripeAccountId || null,
+    {
+      sellerId,
+      sellerStripeAccountId:
+        singleSellerPaidEntry?.sellerStripeAccountId || null,
+      stripeAccountId: singleSellerPaidEntry?.stripeAccountId || null,
       entryType: "dispute_created",
       stripeObjectId: shopifyDisputeId,
       amount: settlementAmount,
@@ -7531,12 +7928,16 @@ export async function handleStripeWebhook(
   }
 
   const stripeObject = event?.data?.object || {};
-  const safeMetadata = ["orderId", "sellerId", "vendorId", "payoutRunId"]
-    .reduce((result, key) => {
-      const value = normalizeText(stripeObject?.metadata?.[key]);
-      if (value) result[key] = value;
-      return result;
-    }, {});
+  const safeMetadata = [
+    "orderId",
+    "sellerId",
+    "vendorId",
+    "payoutRunId",
+  ].reduce((result, key) => {
+    const value = normalizeText(stripeObject?.metadata?.[key]);
+    if (value) result[key] = value;
+    return result;
+  }, {});
   const payloadJson = {
     schemaVersion: 1,
     eventId: normalizeText(event.id),
@@ -7675,7 +8076,9 @@ export async function getPayoutRunDetail(
       payoutRun.transferMethod,
     ),
     sellerStoreName: payoutRun.seller.vendor.storeName,
-    sellerIsTestStore: Boolean(payoutRun.seller.vendor.vendorStore?.isTestStore),
+    sellerIsTestStore: Boolean(
+      payoutRun.seller.vendor.vendorStore?.isTestStore,
+    ),
     stripeAccount: serializeStripeAccountSummary(
       payoutRun.seller.stripeAccount,
     ),
@@ -7697,6 +8100,7 @@ const SELLER_PAYOUT_LEDGER_ENTRY_SIGNS = {
   ledger_adjustment: 1,
   case_adjustment: -1,
   payout_paid: -1,
+  payout_returned: 1,
   sales_credit_offset_captured: -1,
   sales_credit_offset_refund_reversal: 1,
 };
@@ -7709,6 +8113,7 @@ const SELLER_SALES_CREDIT_ENTRY_SIGNS = {
 const IMMEDIATE_MATURE_SALES_CREDIT_ENTRY_TYPES = new Set([
   "sales_credit_offset_refund_reversal",
   "dispute_funds_reinstated",
+  "payout_returned",
 ]);
 
 const SALES_CREDIT_OFFSET_LOCK_STATUSES = new Set(["authorized"]);
@@ -7716,6 +8121,7 @@ const SALES_CREDIT_PAYOUT_LOCK_STATUSES = new Set([
   "draft",
   "approved",
   "processing",
+  "reconciliation_required",
 ]);
 
 function getLedgerEntryMetadata(entry) {
@@ -8309,12 +8715,7 @@ export async function captureSalesCreditOffset(
 }
 
 export async function markSalesCreditOffsetCheckoutCreated(
-  {
-    offsetId,
-    draftOrderId = null,
-    invoiceUrl = null,
-    metadataJson = null,
-  },
+  { offsetId, draftOrderId = null, invoiceUrl = null, metadataJson = null },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
   const normalizedOffsetId = normalizeText(offsetId);
@@ -8528,9 +8929,10 @@ async function getReservedPayoutRunAmount(
   const runs = await prismaClient.payoutRun.findMany({
     where: {
       sellerId: normalizeText(sellerId),
-      currencyCode:
-        normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
-      status: { in: ["draft", "approved", "processing"] },
+      currencyCode: normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY,
+      status: {
+        in: ["draft", "approved", "processing", "reconciliation_required"],
+      },
       ...(excludePayoutRunId
         ? { id: { not: normalizeText(excludePayoutRunId) } }
         : {}),
@@ -8544,13 +8946,22 @@ async function getReservedPayoutRunAmount(
   );
 }
 
-function runSerializableTransaction(prismaClient, callback) {
+async function runSerializableTransaction(prismaClient, callback) {
   if (typeof prismaClient?.$transaction !== "function") {
     return callback(prismaClient);
   }
-  return prismaClient.$transaction(callback, {
-    isolationLevel: "Serializable",
-  });
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await prismaClient.$transaction(callback, {
+        isolationLevel: "Serializable",
+      });
+    } catch (error) {
+      if (error?.code !== "P2034" || attempt === 3) throw error;
+    }
+  }
+
+  throw new Error("Serializable transaction retry exhausted.");
 }
 
 async function getSellerPayoutAvailability(
@@ -8627,17 +9038,15 @@ function buildSellerOrderReversalOverageRepairCandidates(seller, currencyCode) {
       continue;
     }
 
-    const group =
-      groups.get(shopifyOrderId) ||
-      {
-        sellerId: seller.id,
-        shopifyOrderId,
-        shopifyOrderName: "",
-        paidAmount: 0,
-        reversedAmount: 0,
-        repairedAmount: 0,
-        latestLedgerEntry: null,
-      };
+    const group = groups.get(shopifyOrderId) || {
+      sellerId: seller.id,
+      shopifyOrderId,
+      shopifyOrderName: "",
+      paidAmount: 0,
+      reversedAmount: 0,
+      repairedAmount: 0,
+      latestLedgerEntry: null,
+    };
 
     if (!group.shopifyOrderName) {
       group.shopifyOrderName = getLedgerEntryShopifyOrderName(entry);
@@ -8792,7 +9201,8 @@ export async function repairSellerNegativeLedgerBalance(
   const normalizedCurrency =
     normalizeLowercase(currencyCode) || DEFAULT_ORDER_CURRENCY;
   const normalizedRepairScope =
-    normalizeText(repairScope) || LEDGER_REPAIR_SCOPE_NEGATIVE_PAYOUTABLE_BALANCE;
+    normalizeText(repairScope) ||
+    LEDGER_REPAIR_SCOPE_NEGATIVE_PAYOUTABLE_BALANCE;
   const normalizedShopifyOrderId = normalizeText(shopifyOrderId);
 
   if (!normalizedSellerId) {
@@ -8851,7 +9261,8 @@ export async function repairSellerNegativeLedgerBalance(
       }
 
       const orderEntries = entries.filter(
-        (entry) => getLedgerEntryShopifyOrderId(entry) === normalizedShopifyOrderId,
+        (entry) =>
+          getLedgerEntryShopifyOrderId(entry) === normalizedShopifyOrderId,
       );
       const paidAmount = orderEntries
         .filter((entry) => entry?.entryType === "shopify_order_paid")
@@ -8874,7 +9285,8 @@ export async function repairSellerNegativeLedgerBalance(
       repairMetadata = {
         shopifyOrderId: normalizedShopifyOrderId,
         shopifyOrderName:
-          orderEntries.map(getLedgerEntryShopifyOrderName).find(Boolean) || null,
+          orderEntries.map(getLedgerEntryShopifyOrderName).find(Boolean) ||
+          null,
         paidAmount,
         reversedAmount,
         alreadyRepairedAmount: repairedAmount,
@@ -8951,7 +9363,11 @@ export async function repairSellerNegativeLedgerBalance(
 
 async function assertPayoutEligibleSeller(
   sellerId,
-  { prismaClient = prisma, env = process.env, seller: providedSeller = null } = {},
+  {
+    prismaClient = prisma,
+    env = process.env,
+    seller: providedSeller = null,
+  } = {},
 ) {
   const seller =
     providedSeller ||
@@ -9104,82 +9520,84 @@ export async function createPayoutRun(
   }
 
   try {
-    return await runSerializableTransaction(
-      prismaClient,
-      async (tx) => {
-        const eligibility = await assertPayoutEligibleSeller(sellerId, {
-          prismaClient: tx,
-          env,
-        });
-        if (!eligibility.ok) return eligibility;
+    return await runSerializableTransaction(prismaClient, async (tx) => {
+      const eligibility = await assertPayoutEligibleSeller(sellerId, {
+        prismaClient: tx,
+        env,
+      });
+      if (!eligibility.ok) return eligibility;
 
-        const availability = await getSellerPayoutAvailability(
-          {
-            seller: eligibility.seller,
-            currencyCode: normalizedCurrency,
-          },
-          { prismaClient: tx },
-        );
+      const availability = await getSellerPayoutAvailability(
+        {
+          seller: eligibility.seller,
+          currencyCode: normalizedCurrency,
+        },
+        { prismaClient: tx },
+      );
 
-        if (availability.availableAmount < normalizedAmount) {
-          const governanceReducedAvailability =
-            availability.availableAmount < availability.unreservedLedgerBalance;
-          return {
-            ok: false,
-            reason:
-              availability.reservedPayoutAmount > 0
-                ? "insufficient_unreserved_ledger_balance"
-                : governanceReducedAvailability
-                  ? "insufficient_governed_balance"
-                  : "insufficient_ledger_balance",
-            availableLedgerBalance: availability.ledgerBalance,
-            unreservedLedgerBalance: availability.unreservedLedgerBalance,
-            reservedPayoutAmount: availability.reservedPayoutAmount,
-            governedAvailableAmount: availability.availableAmount,
-            reserveAmount: availability.reserveAmount,
-            directInvoiceBalance: availability.directInvoiceBalance,
-            requestedAmount: normalizedAmount,
-            currencyCode: normalizedCurrency,
-          };
-        }
-
-        const payoutRecipient =
-          payoutProvider === "wise" ? eligibility.seller.payoutRecipient : null;
-        if (
-          payoutProvider === "wise" &&
-          (!payoutRecipient ||
-            payoutRecipient.provider !== "wise" ||
-            payoutRecipient.status !== "active" ||
-            !payoutRecipient.wiseRecipientId)
-        ) {
-          return { ok: false, reason: "wise_recipient_missing" };
-        }
-
-        const payoutRun = await tx.payoutRun.create({
-          data: {
-            sellerId: eligibility.seller.id,
-            sellerStripeAccountId: eligibility.seller.stripeAccount?.id || null,
-            sellerPayoutRecipientId: payoutRecipient?.id || null,
-            stripeAccountId:
-              eligibility.seller.stripeAccount?.stripeAccountId || null,
-            amount: normalizedAmount,
-            currencyCode: normalizedCurrency,
-            status: "draft",
-            transferMethod:
-              payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
-            createdBy: normalizeText(createdBy),
-            createdByJson,
-          },
-        });
-
+      if (availability.availableAmount < normalizedAmount) {
+        const governanceReducedAvailability =
+          availability.availableAmount < availability.unreservedLedgerBalance;
         return {
-          ok: true,
-          payoutRun,
+          ok: false,
+          reason:
+            availability.reservedPayoutAmount > 0
+              ? "insufficient_unreserved_ledger_balance"
+              : governanceReducedAvailability
+                ? "insufficient_governed_balance"
+                : "insufficient_ledger_balance",
           availableLedgerBalance: availability.ledgerBalance,
+          unreservedLedgerBalance: availability.unreservedLedgerBalance,
           reservedPayoutAmount: availability.reservedPayoutAmount,
+          governedAvailableAmount: availability.availableAmount,
+          reserveAmount: availability.reserveAmount,
+          directInvoiceBalance: availability.directInvoiceBalance,
+          requestedAmount: normalizedAmount,
+          currencyCode: normalizedCurrency,
         };
-      },
-    );
+      }
+
+      const payoutRecipient = eligibility.seller.payoutRecipient || null;
+      if (
+        payoutProvider === "wise" &&
+        (!payoutRecipient ||
+          payoutRecipient.provider !== "wise" ||
+          payoutRecipient.status !== "active" ||
+          !payoutRecipient.wiseRecipientId)
+      ) {
+        return { ok: false, reason: "wise_recipient_missing" };
+      }
+      if (
+        payoutProvider === "manual" &&
+        !isActivePayoutRecipient(payoutRecipient)
+      ) {
+        return { ok: false, reason: "manual_recipient_missing" };
+      }
+
+      const payoutRun = await tx.payoutRun.create({
+        data: {
+          sellerId: eligibility.seller.id,
+          sellerStripeAccountId: eligibility.seller.stripeAccount?.id || null,
+          sellerPayoutRecipientId: payoutRecipient?.id || null,
+          stripeAccountId:
+            eligibility.seller.stripeAccount?.stripeAccountId || null,
+          amount: normalizedAmount,
+          currencyCode: normalizedCurrency,
+          status: "draft",
+          transferMethod:
+            payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
+          createdBy: normalizeText(createdBy),
+          createdByJson,
+        },
+      });
+
+      return {
+        ok: true,
+        payoutRun,
+        availableLedgerBalance: availability.ledgerBalance,
+        reservedPayoutAmount: availability.reservedPayoutAmount,
+      };
+    });
   } catch (error) {
     if (error?.code === "P2034") {
       return { ok: false, reason: "payout_reservation_conflict" };
@@ -9201,7 +9619,8 @@ export async function approvePayoutRun(
           sellerPayoutRecipient: true,
         },
       });
-      if (!payoutRun?.seller) return { ok: false, reason: "payout_run_not_found" };
+      if (!payoutRun?.seller)
+        return { ok: false, reason: "payout_run_not_found" };
       if (payoutRun.status !== "draft") {
         return { ok: false, reason: "payout_run_not_approvable" };
       }
@@ -9213,6 +9632,19 @@ export async function approvePayoutRun(
       }
       if (normalizeLowercase(payoutRun.currencyCode) !== "jpy") {
         return { ok: false, reason: "unsupported_settlement_currency" };
+      }
+
+      const payoutRecipient =
+        payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
+      if (!isActivePayoutRecipient(payoutRecipient)) {
+        return { ok: false, reason: "payout_recipient_missing" };
+      }
+      if (
+        payoutRun.transferMethod === "wise_api" &&
+        (payoutRecipient.provider !== "wise" ||
+          !payoutRecipient.wiseRecipientId)
+      ) {
+        return { ok: false, reason: "wise_recipient_missing" };
       }
 
       const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
@@ -9239,6 +9671,16 @@ export async function approvePayoutRun(
           requestedAmount: payoutRun.amount,
         };
       }
+      const approvedRecipientSnapshot = buildPayoutApprovalRecipientSnapshot(
+        payoutRecipient,
+        {
+          transferMethod: payoutRun.transferMethod,
+          currencyCode: payoutRun.currencyCode,
+        },
+      );
+      const approvedRecipientHash = hashPayoutApprovalRecipientSnapshot(
+        approvedRecipientSnapshot,
+      );
       const claimed = await tx.payoutRun.updateMany({
         where: { id: payoutRunId, status: "draft" },
         data: {
@@ -9246,6 +9688,11 @@ export async function approvePayoutRun(
           approvedAt: new Date(),
           approvedBy,
           approvedByJson,
+          approvedTransferMethod: payoutRun.transferMethod,
+          approvedPayoutRecipientId: payoutRecipient.id,
+          approvedRecipientHash,
+          approvedRecipientSnapshotJson: approvedRecipientSnapshot,
+          approvedCurrencyCode: payoutRun.currencyCode,
         },
       });
       if (claimed.count !== 1) {
@@ -9253,7 +9700,9 @@ export async function approvePayoutRun(
       }
       return {
         ok: true,
-        payoutRun: await tx.payoutRun.findUnique({ where: { id: payoutRunId } }),
+        payoutRun: await tx.payoutRun.findUnique({
+          where: { id: payoutRunId },
+        }),
       };
     });
   } catch (error) {
@@ -9276,7 +9725,8 @@ async function claimPayoutRunForExecution(
         sellerPayoutRecipient: true,
       },
     });
-    if (!payoutRun?.seller) return { ok: false, reason: "payout_run_not_found" };
+    if (!payoutRun?.seller)
+      return { ok: false, reason: "payout_run_not_found" };
     if (payoutRun.status !== "approved") {
       return { ok: false, reason: "payout_run_not_executable" };
     }
@@ -9292,6 +9742,9 @@ async function claimPayoutRunForExecution(
     if (normalizeLowercase(payoutRun.currencyCode) !== "jpy") {
       return { ok: false, reason: "unsupported_settlement_currency" };
     }
+    if (transferMethod !== payoutRun.transferMethod) {
+      return { ok: false, reason: "payout_transfer_method_changed" };
+    }
     const payoutRecipient =
       payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
     if (
@@ -9303,6 +9756,11 @@ async function claimPayoutRunForExecution(
     ) {
       return { ok: false, reason: "wise_recipient_missing" };
     }
+    const approvalSnapshot = validatePayoutApprovalExecutionSnapshot(
+      payoutRun,
+      payoutRecipient,
+    );
+    if (!approvalSnapshot.ok) return approvalSnapshot;
     const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
       prismaClient: tx,
       env,
@@ -9333,7 +9791,6 @@ async function claimPayoutRunForExecution(
         processingAt,
         processingBy: executedBy,
         processingByJson: executedByJson,
-        transferMethod,
       },
     });
     if (claimed.count !== 1) {
@@ -9341,7 +9798,12 @@ async function claimPayoutRunForExecution(
     }
     return {
       ok: true,
-      payoutRun: { ...payoutRun, status: "processing", processingAt, processingBy: executedBy },
+      payoutRun: {
+        ...payoutRun,
+        status: "processing",
+        processingAt,
+        processingBy: executedBy,
+      },
       seller: eligibility.seller,
     };
   });
@@ -9374,19 +9836,22 @@ export async function markPayoutRunManuallyPaid(
     };
   }
 
-  if (!['approved', 'processing'].includes(payoutRun.status)) {
+  if (!["approved", "processing"].includes(payoutRun.status)) {
     return {
       ok: false,
       reason: "payout_run_not_executable",
     };
   }
-  if (payoutRun.status === 'approved') {
+  if (payoutRun.transferMethod !== "manual_bank_transfer") {
+    return { ok: false, reason: "payout_transfer_method_mismatch" };
+  }
+  if (payoutRun.status === "approved") {
     const claimed = await claimPayoutRunForExecution(
       {
         payoutRunId,
         executedBy,
         executedByJson,
-        transferMethod: 'manual_bank_transfer',
+        transferMethod: "manual_bank_transfer",
       },
       { prismaClient, env },
     );
@@ -9399,10 +9864,10 @@ export async function markPayoutRunManuallyPaid(
   const normalizedTransferMemo = normalizeText(transferMemo);
 
   if (payoutRun.processingBy && payoutRun.processingBy !== executedBy) {
-    return { ok: false, reason: 'payout_processing_owner_mismatch' };
+    return { ok: false, reason: "payout_processing_owner_mismatch" };
   }
   if (!normalizedExternalTransferId) {
-    return { ok: false, reason: 'external_transfer_id_required' };
+    return { ok: false, reason: "external_transfer_id_required" };
   }
 
   return runSerializableTransaction(prismaClient, async (tx) => {
@@ -9411,13 +9876,13 @@ export async function markPayoutRunManuallyPaid(
         id: payoutRun.id,
         status: "processing",
         processingBy: payoutRun.processingBy || executedBy,
+        transferMethod: "manual_bank_transfer",
       },
       data: {
         status: "executed",
         executedAt: now,
         executedBy,
         executedByJson,
-        transferMethod: "manual_bank_transfer",
         externalTransferId: normalizedExternalTransferId,
         transferMemo: normalizedTransferMemo,
         failureCode: null,
@@ -9459,15 +9924,19 @@ export async function markPayoutRunManuallyPaid(
       payoutRun: updated,
       externalTransferId: normalizedExternalTransferId,
     };
+  }).catch((error) => {
+    if (error?.code === "P2002") {
+      return { ok: false, reason: "external_transfer_id_duplicate" };
+    }
+    throw error;
   });
 }
 
 const WISE_TRANSFER_COMPLETED_STATUSES = new Set(["outgoing_payment_sent"]);
-const WISE_TRANSFER_FAILED_STATUSES = new Set([
+const WISE_TRANSFER_RECONCILIATION_STATUSES = new Set([
   "bounced_back",
   "cancelled",
   "charged_back",
-  "funds_refunded",
 ]);
 
 function toNullableNumber(value) {
@@ -9540,6 +10009,8 @@ async function markWisePayoutRunCompleted(
         failureMessage: null,
         wiseFailureCode: null,
         wiseFailureMessage: null,
+        reconciliationRequiredAt: null,
+        reconciliationReason: null,
       },
     });
 
@@ -9584,36 +10055,113 @@ async function markWisePayoutRunCompleted(
   });
 }
 
-async function markWisePayoutRunFailed(
-  { payoutRun, transferStatus, failureCode = null, failureMessage = null },
+async function markWisePayoutRunReconciliationRequired(
+  {
+    payoutRun,
+    transferStatus,
+    failureCode = null,
+    failureMessage = null,
+    transferPayload = null,
+  },
   { prismaClient = prisma } = {},
 ) {
   const updated = await prismaClient.payoutRun.update({
     where: { id: payoutRun.id },
     data: {
-      status: "failed",
-      wiseTransferStatus: transferStatus,
+      status: "reconciliation_required",
+      reconciliationRequiredAt:
+        payoutRun.reconciliationRequiredAt || new Date(),
+      reconciliationReason:
+        normalizeText(failureCode) || transferStatus || "wise_result_unknown",
+      wiseTransferStatus: transferStatus || payoutRun.wiseTransferStatus,
       wiseFailureCode: normalizeText(failureCode) || transferStatus,
       wiseFailureMessage: normalizeText(failureMessage),
       failureCode: normalizeText(failureCode) || transferStatus,
       failureMessage: normalizeText(failureMessage),
+      wisePayloadJson: mergeWisePayload(payoutRun.wisePayloadJson, {
+        reconciliationTransfer: transferPayload,
+      }),
     },
   });
-
-  await setSellerReviewStatus(
-    {
-      sellerId: payoutRun.sellerId,
-      reason: SELLER_REVIEW_REASON_PAYOUT_FAILED,
-      changedBy: "wise.transfer.failed",
-    },
-    { prismaClient },
-  );
-
   return {
     ok: false,
-    reason: "wise_transfer_failed",
+    reason: "wise_transfer_reconciliation_required",
+    reconciliationRequired: true,
     payoutRun: updated,
   };
+}
+
+async function markWisePayoutRunReturned(
+  { payoutRun, transferStatus, transferPayload = null },
+  { prismaClient = prisma } = {},
+) {
+  const now = new Date();
+  return runSerializableTransaction(prismaClient, async (tx) => {
+    const latest = await tx.payoutRun.findUnique({
+      where: { id: payoutRun.id },
+    });
+    if (!latest) return { ok: false, reason: "payout_run_not_found" };
+
+    const paidEntry = await tx.ledgerEntry.findFirst({
+      where: { payoutRunId: latest.id, entryType: "payout_paid" },
+    });
+    const existingReturnedEntry = await tx.ledgerEntry.findFirst({
+      where: { payoutRunId: latest.id, entryType: "payout_returned" },
+    });
+    let returnedEntry = existingReturnedEntry;
+
+    if (paidEntry && !returnedEntry) {
+      returnedEntry = await createLedgerEntry(
+        {
+          sellerId: latest.sellerId,
+          sellerStripeAccountId: latest.sellerStripeAccountId,
+          payoutRunId: latest.id,
+          stripeAccountId: latest.stripeAccountId,
+          entryType: "payout_returned",
+          stripeObjectId:
+            normalizeWiseTransferId(latest.wiseTransferId) || latest.id,
+          amount: latest.amount,
+          currencyCode: latest.currencyCode,
+          direction: "credit",
+          description: "Wise seller settlement returned",
+          metadataJson: {
+            transferMethod: "wise_api",
+            wiseTransferId: normalizeWiseTransferId(latest.wiseTransferId),
+            wiseTransferStatus: transferStatus,
+            originalPayoutLedgerEntryId: paidEntry.id,
+          },
+          occurredAt: now,
+        },
+        { prismaClient: tx },
+      );
+    }
+
+    const updated = await tx.payoutRun.update({
+      where: { id: latest.id },
+      data: {
+        status: "returned",
+        returnedAt: latest.returnedAt || now,
+        wiseTransferStatus: transferStatus,
+        wisePayloadJson: mergeWisePayload(latest.wisePayloadJson, {
+          refundedTransfer: transferPayload,
+        }),
+        reconciliationRequiredAt: null,
+        reconciliationReason: null,
+        failureCode: null,
+        failureMessage: null,
+        wiseFailureCode: null,
+        wiseFailureMessage: null,
+      },
+    });
+
+    return {
+      ok: true,
+      returned: true,
+      payoutRun: updated,
+      ledgerEntry: returnedEntry,
+      ledgerEntryCreated: Boolean(paidEntry && !existingReturnedEntry),
+    };
+  });
 }
 
 async function applyWiseTransferStatus(
@@ -9632,13 +10180,25 @@ async function applyWiseTransferStatus(
     );
   }
 
-  if (WISE_TRANSFER_FAILED_STATUSES.has(transferStatus)) {
-    return markWisePayoutRunFailed(
+  if (transferStatus === "funds_refunded") {
+    return markWisePayoutRunReturned(
+      {
+        payoutRun,
+        transferStatus,
+        transferPayload,
+      },
+      { prismaClient },
+    );
+  }
+
+  if (WISE_TRANSFER_RECONCILIATION_STATUSES.has(transferStatus)) {
+    return markWisePayoutRunReconciliationRequired(
       {
         payoutRun,
         transferStatus,
         failureCode: transferStatus,
-        failureMessage: `Wise transfer ended with status ${transferStatus}.`,
+        failureMessage: `Wise transfer requires reconciliation after status ${transferStatus}.`,
+        transferPayload,
       },
       { prismaClient },
     );
@@ -9648,6 +10208,8 @@ async function applyWiseTransferStatus(
     where: { id: payoutRun.id },
     data: {
       status: "processing",
+      reconciliationRequiredAt: null,
+      reconciliationReason: null,
       wiseTransferStatus: transferStatus,
       wisePayloadJson: mergeWisePayload(payoutRun.wisePayloadJson, {
         latestTransfer: transferPayload,
@@ -9741,8 +10303,6 @@ export async function executeWisePayoutRun(
   const preparedPayoutRun = await prismaClient.payoutRun.update({
     where: { id: payoutRun.id },
     data: {
-      transferMethod: "wise_api",
-      sellerPayoutRecipientId: payoutRecipient.id,
       wiseCustomerTransactionId: customerTransactionId,
       wiseSourceCurrency: sourceCurrency,
       wiseTargetCurrency: targetCurrency,
@@ -9799,6 +10359,21 @@ export async function executeWisePayoutRun(
       throw new Error("Wise transfer response did not include an id.");
     }
 
+    const transferCreatedPayoutRun = await prismaClient.payoutRun.update({
+      where: { id: payoutRun.id },
+      data: {
+        status: "processing",
+        wiseTransferId: transferId,
+        externalTransferId: transferId,
+        wiseTransferStatus:
+          getWiseTransferStatus(transfer) || "incoming_payment_waiting",
+        wisePayloadJson: mergeWisePayload(preparedPayoutRun.wisePayloadJson, {
+          quote,
+          transfer,
+        }),
+      },
+    });
+
     const funding = await fundWiseTransfer(
       { transferId, config },
       { fetchImpl },
@@ -9810,18 +10385,15 @@ export async function executeWisePayoutRun(
       where: { id: payoutRun.id },
       data: {
         status: "processing",
-        executedAt: new Date(),
-        executedBy,
-        executedByJson,
-        transferMethod: "wise_api",
-        wiseTransferId: transferId,
         wiseTransferStatus: transferStatus,
-        externalTransferId: transferId,
-        wisePayloadJson: mergeWisePayload(preparedPayoutRun.wisePayloadJson, {
-          quote,
-          transfer,
-          funding,
-        }),
+        wisePayloadJson: mergeWisePayload(
+          transferCreatedPayoutRun.wisePayloadJson,
+          {
+            quote,
+            transfer,
+            funding,
+          },
+        ),
       },
     });
 
@@ -9837,22 +10409,19 @@ export async function executeWisePayoutRun(
   } catch (error) {
     const code = normalizeText(error?.code) || "wise_api_error";
     const message = error instanceof Error ? error.message : String(error);
-    const updated = await prismaClient.payoutRun.update({
+    const latest = await prismaClient.payoutRun.findUnique({
       where: { id: payoutRun.id },
-      data: {
-        status: "failed",
-        failureCode: code,
-        failureMessage: normalizeText(message),
-        wiseFailureCode: code,
-        wiseFailureMessage: normalizeText(message),
-      },
     });
-
-    return {
-      ok: false,
-      reason: "wise_payout_execution_failed",
-      payoutRun: updated,
-    };
+    return markWisePayoutRunReconciliationRequired(
+      {
+        payoutRun: latest || payoutRun,
+        transferStatus:
+          latest?.wiseTransferStatus || payoutRun.wiseTransferStatus || null,
+        failureCode: code,
+        failureMessage: message,
+      },
+      { prismaClient },
+    );
   }
 }
 

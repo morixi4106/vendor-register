@@ -1,35 +1,36 @@
-import { json } from '@remix-run/node';
+import { json } from "@remix-run/node";
 
 import {
   buildShippingV2QuoteRequest,
   fetchShippingV2Quote,
-} from './shippingV2Writer.server.js';
+} from "./shippingV2Writer.server.js";
 import {
   createShippingDiagnosticId,
   recordShippingDiagnosticEvent,
-} from './shippingDiagnostics.server.js';
-import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from '../utils/shopifyAdmin.server.js';
-import prisma from '../db.server.js';
+} from "./shippingDiagnostics.server.js";
 import {
-  evaluateCartDeliveryEligibility,
-} from '../utils/deliveryEligibility.js';
-import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
+  normalizeShopDomain,
+  shopifyGraphQLWithOfflineSession,
+} from "../utils/shopifyAdmin.server.js";
+import prisma from "../db.server.js";
+import { evaluateCartDeliveryEligibility } from "../utils/deliveryEligibility.js";
+import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 import {
   JAPAN_POST_AIR_PACKET_RATE_SOURCE,
   JAPAN_POST_AIR_PACKET_RATE_VERSION,
-} from './japanPostAirPacket.server.js';
+} from "./japanPostAirPacket.server.js";
 
-const CARRIER_SERVICE_NAME = 'Shipping V2';
+const CARRIER_SERVICE_NAME = "Shipping V2";
 // Keep carrier labels ASCII-encoded in source to avoid mojibake in deploy/log pipelines.
-const CARRIER_SERVICE_DISPLAY_NAME = '\u5730\u57df\u5225\u914d\u9001';
-const CARRIER_SERVICE_CODE = 'shipping_v2';
-const AIR_PACKET_SERVICE_CODE = `${CARRIER_SERVICE_CODE}_jp_air_packet_${JAPAN_POST_AIR_PACKET_RATE_VERSION.replaceAll('-', '_')}`;
+const CARRIER_SERVICE_DISPLAY_NAME = "\u5730\u57df\u5225\u914d\u9001";
+const CARRIER_SERVICE_CODE = "shipping_v2";
+const AIR_PACKET_SERVICE_CODE = `${CARRIER_SERVICE_CODE}_jp_air_packet_${JAPAN_POST_AIR_PACKET_RATE_VERSION.replaceAll("-", "_")}`;
 const CARRIER_SERVICE_DESCRIPTION =
-  '\u914d\u9001\u5148\u306b\u57fa\u3065\u304f\u9001\u6599';
+  "\u914d\u9001\u5148\u306b\u57fa\u3065\u304f\u9001\u6599";
 const AIR_PACKET_SERVICE_DISPLAY_NAME =
-  '\u56fd\u969b\u30a8\u30a2\u30d1\u30b1\u30c3\u30c8';
+  "\u56fd\u969b\u30a8\u30a2\u30d1\u30b1\u30c3\u30c8";
 const AIR_PACKET_SERVICE_DESCRIPTION =
-  '\u65e5\u672c\u90f5\u4fbf\u306e\u8ffd\u8de1\u4ed8\u304d\u56fd\u969b\u914d\u9001';
+  "\u65e5\u672c\u90f5\u4fbf\u306e\u8ffd\u8de1\u4ed8\u304d\u56fd\u969b\u914d\u9001";
 const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
 
 const CARRIER_SERVICES_QUERY = `#graphql
@@ -83,11 +84,11 @@ const CARRIER_SERVICE_UPDATE_MUTATION = `#graphql
 `;
 
 function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeText(value) {
-  const normalized = String(value || '').trim();
+  const normalized = String(value || "").trim();
   return normalized || null;
 }
 
@@ -97,7 +98,7 @@ function normalizeCountryCode(value) {
 }
 
 function toFiniteNumber(value) {
-  if (value == null || value === '') {
+  if (value == null || value === "") {
     return null;
   }
 
@@ -137,7 +138,7 @@ function normalizeShopifyProductGid(value) {
     return null;
   }
 
-  if (normalized.startsWith('gid://shopify/Product/')) {
+  if (normalized.startsWith("gid://shopify/Product/")) {
     return normalized;
   }
 
@@ -155,7 +156,7 @@ function normalizeShopifyVariantGid(value) {
     return null;
   }
 
-  if (normalized.startsWith('gid://shopify/ProductVariant/')) {
+  if (normalized.startsWith("gid://shopify/ProductVariant/")) {
     return normalized;
   }
 
@@ -234,14 +235,24 @@ function productMatchesCarrierReference(product, reference) {
     (shopifyProductId &&
       (shopifyProductId === reference.productId ||
         shopifyProductId === reference.productGid)) ||
-      (shopifyVariantId &&
-        (shopifyVariantId === reference.variantId ||
-          shopifyVariantId === reference.variantGid)),
+    (shopifyVariantId &&
+      (shopifyVariantId === reference.variantId ||
+        shopifyVariantId === reference.variantGid)),
   );
 }
 
 function getProductVendorStoreId(product) {
   return normalizeText(product?.vendorStoreId || product?.vendorStore?.id);
+}
+
+function isProductionThirdPartyCarrierProduct(product) {
+  if (product?.vendorStore?.isTestStore === true) return false;
+  if (product?.vendorStore?.isPlatformStore === true) return false;
+  return (
+    normalizeText(
+      product?.complianceProfile?.legalSellerType,
+    )?.toUpperCase() !== "PLATFORM"
+  );
 }
 
 function findCarrierLineProducts(products, line) {
@@ -255,8 +266,8 @@ function findCarrierLineProducts(products, line) {
     const shopifyVariantId = normalizeText(product?.shopifyVariantId);
     return Boolean(
       shopifyVariantId &&
-        (shopifyVariantId === reference.variantId ||
-          shopifyVariantId === reference.variantGid),
+      (shopifyVariantId === reference.variantId ||
+        shopifyVariantId === reference.variantGid),
     );
   });
 
@@ -277,7 +288,8 @@ export async function resolveCarrierFulfillmentOwnership({
     ? quoteRequest.orderLike.lines
     : [];
   const shippableLines = lines.filter(
-    (line) => line?.requiresShipping !== false && Number(line?.quantity || 0) > 0,
+    (line) =>
+      line?.requiresShipping !== false && Number(line?.quantity || 0) > 0,
   );
 
   if (shippableLines.length === 0) {
@@ -297,7 +309,7 @@ export async function resolveCarrierFulfillmentOwnership({
   if (productWhereClauses.length === 0) {
     return {
       ok: false,
-      reason: 'missing_product_reference',
+      reason: "missing_product_reference",
       quoteRequest,
     };
   }
@@ -306,9 +318,7 @@ export async function resolveCarrierFulfillmentOwnership({
   const products = await prismaClient.product.findMany({
     where: {
       OR: productWhereClauses,
-      ...(shopDomain
-        ? { shopDomain: { in: [shopDomain, null] } }
-        : {}),
+      ...(shopDomain ? { shopDomain: { in: [shopDomain, null] } } : {}),
     },
     select: {
       id: true,
@@ -324,15 +334,22 @@ export async function resolveCarrierFulfillmentOwnership({
       shippingWeightSource: true,
       shopifyVariantCount: true,
       shopifyWeightSyncStatus: true,
+      complianceProfile: {
+        select: {
+          legalSellerType: true,
+        },
+      },
       vendorStore: {
         select: {
           id: true,
+          isTestStore: true,
           isPlatformStore: true,
         },
       },
     },
   });
   const resolvedLines = [];
+  const governedProductIds = new Set();
 
   for (const line of lines) {
     if (line?.requiresShipping === false || Number(line?.quantity || 0) <= 0) {
@@ -348,7 +365,7 @@ export async function resolveCarrierFulfillmentOwnership({
     if (vendorStoreIds.length === 0) {
       return {
         ok: false,
-        reason: 'unmanaged_product',
+        reason: "unmanaged_product",
         productId: normalizeText(line?.productId),
         variantId: normalizeText(line?.variantId),
         quoteRequest,
@@ -357,7 +374,7 @@ export async function resolveCarrierFulfillmentOwnership({
     if (vendorStoreIds.length > 1) {
       return {
         ok: false,
-        reason: 'ambiguous_product_owner',
+        reason: "ambiguous_product_owner",
         productId: normalizeText(line?.productId),
         variantId: normalizeText(line?.variantId),
         vendorStoreIds,
@@ -369,6 +386,9 @@ export async function resolveCarrierFulfillmentOwnership({
     const matchedProduct = matches.find(
       (product) => getProductVendorStoreId(product) === vendorStoreId,
     );
+    if (isProductionThirdPartyCarrierProduct(matchedProduct)) {
+      governedProductIds.add(matchedProduct.id);
+    }
     resolvedLines.push({
       ...line,
       grams: matchedProduct?.shippingWeightGrams || line.grams,
@@ -377,14 +397,16 @@ export async function resolveCarrierFulfillmentOwnership({
       shippingHeightMm: matchedProduct?.shippingHeightMm || null,
       internationalShippingMethod:
         matchedProduct?.internationalShippingMethod || "UNCONFIGURED",
-      shippingWeightConfirmed: Boolean(matchedProduct?.shippingWeightConfirmedAt),
+      shippingWeightConfirmed: Boolean(
+        matchedProduct?.shippingWeightConfirmedAt,
+      ),
       shippingWeightSource: matchedProduct?.shippingWeightSource || "UNSET",
       shopifyVariantCount: matchedProduct?.shopifyVariantCount ?? null,
       shopifyWeightSyncStatus:
         matchedProduct?.shopifyWeightSyncStatus || "NOT_LINKED",
       shipFromId: vendorStoreId,
       directShipGroup: vendorStoreId,
-      shippingClass: line.shippingClass || 'direct',
+      shippingClass: line.shippingClass || "direct",
     });
   }
 
@@ -398,6 +420,8 @@ export async function resolveCarrierFulfillmentOwnership({
       },
     },
     matchedProductCount: products.length,
+    requiresMarketplaceCheckout: governedProductIds.size > 0,
+    governedProductCount: governedProductIds.size,
   };
 }
 
@@ -410,7 +434,7 @@ export async function validateCarrierInternationalDeliveryPolicy({
       quoteRequest?.shippingAddress?.country,
   );
 
-  if (!countryCode || countryCode === 'JP') {
+  if (!countryCode || countryCode === "JP") {
     return {
       ok: true,
       reason: null,
@@ -428,7 +452,7 @@ export async function validateCarrierInternationalDeliveryPolicy({
   if (productReferences.length === 0) {
     return {
       ok: false,
-      reason: 'missing_product_reference',
+      reason: "missing_product_reference",
       checked: true,
       countryCode,
       productCount: 0,
@@ -485,13 +509,15 @@ export async function validateCarrierInternationalDeliveryPolicy({
 
   const missingReference = productReferences.find(
     (reference) =>
-      !products.some((product) => productMatchesCarrierReference(product, reference)),
+      !products.some((product) =>
+        productMatchesCarrierReference(product, reference),
+      ),
   );
 
   if (missingReference) {
     return {
       ok: false,
-      reason: 'unmanaged_product',
+      reason: "unmanaged_product",
       countryCode,
       checked: true,
       productId: missingReference.productId,
@@ -565,7 +591,12 @@ function normalizeCarrierItem(item, index) {
   const lineAmount = price == null ? null : price * quantity;
 
   return {
-    lineId: normalizeText(item?.id || item?.line_item_id || item?.variant_id || `carrier-line-${index}`),
+    lineId: normalizeText(
+      item?.id ||
+        item?.line_item_id ||
+        item?.variant_id ||
+        `carrier-line-${index}`,
+    ),
     productId: normalizeText(item?.product_id),
     variantId: normalizeText(item?.variant_id),
     skuId: normalizeText(item?.sku),
@@ -588,7 +619,9 @@ export function buildCarrierShippingV2QuoteRequest(carrierRequest) {
   return buildShippingV2QuoteRequest({
     lines: items.map(normalizeCarrierItem),
     shippingAddress: destination,
-    shopDomain: normalizeShopDomain(rate.shop_domain || carrierRequest?.shop_domain),
+    shopDomain: normalizeShopDomain(
+      rate.shop_domain || carrierRequest?.shop_domain,
+    ),
   });
 }
 
@@ -612,7 +645,12 @@ function buildAirPacketServiceCode(quoteResponse) {
       const weightBandGrams = toPositiveInteger(lineQuote?.weightBandGrams);
       const quantity = toPositiveInteger(lineQuote?.quantity);
 
-      if (!zone || !weightBandGrams || !quantity || weightBandGrams % 100 !== 0) {
+      if (
+        !zone ||
+        !weightBandGrams ||
+        !quantity ||
+        weightBandGrams % 100 !== 0
+      ) {
         continue;
       }
 
@@ -636,7 +674,7 @@ function buildAirPacketServiceCode(quoteResponse) {
       ([bandUnits, quantity]) =>
         `${bandUnits.toString(36)}x${quantity.toString(36)}`,
     )
-    .join('.');
+    .join(".");
 
   return `${AIR_PACKET_SERVICE_CODE}_z${zone.toString(36)}_b${bands}`;
 }
@@ -645,7 +683,9 @@ function summarizeCarrierDestination(destination) {
   const normalized = isPlainObject(destination) ? destination : {};
 
   return {
-    country: normalizeText(normalized.country || normalized.country_code || normalized.countryCode),
+    country: normalizeText(
+      normalized.country || normalized.country_code || normalized.countryCode,
+    ),
   };
 }
 
@@ -667,7 +707,8 @@ function summarizeQuoteRequest(quoteRequest) {
   return {
     shippingAddress: {
       countryCode:
-        normalizeCountryCode(quoteRequest?.shippingAddress?.countryCode) || null,
+        normalizeCountryCode(quoteRequest?.shippingAddress?.countryCode) ||
+        null,
     },
     shopDomain: quoteRequest?.shopDomain || null,
     lineCount: lines.length,
@@ -718,7 +759,9 @@ function summarizeQuoteGroups(groups) {
     leadTimeBucket: group?.leadTimeBucket || null,
     messages: Array.isArray(group?.messages) ? group.messages : [],
     lineCount: Array.isArray(group?.lines) ? group.lines.length : 0,
-    lines: (Array.isArray(group?.lines) ? group.lines : []).map(summarizeQuoteLine),
+    lines: (Array.isArray(group?.lines) ? group.lines : []).map(
+      summarizeQuoteLine,
+    ),
   }));
 }
 
@@ -737,23 +780,26 @@ function summarizeQuoteResponse(quoteResponse) {
 
 export function getCarrierRatesEmptyReason(quoteResponse) {
   if (!isPlainObject(quoteResponse) || quoteResponse.ok !== true) {
-    return 'invalid_quote_response';
+    return "invalid_quote_response";
   }
 
-  if (quoteResponse.enabled === false || quoteResponse.reason === 'shipping_v2_disabled') {
-    return 'shipping_v2_disabled';
+  if (
+    quoteResponse.enabled === false ||
+    quoteResponse.reason === "shipping_v2_disabled"
+  ) {
+    return "shipping_v2_disabled";
   }
 
   if (quoteResponse.result?.isPendingAddress === true) {
-    return 'pending_address';
+    return "pending_address";
   }
 
   if (quoteResponse.result?.isDeliverable === false) {
-    return 'undeliverable';
+    return "undeliverable";
   }
 
   if (!toShopifyCarrierSubunits(getQuoteShippingAmount(quoteResponse))) {
-    return 'missing_total_shipping_fee';
+    return "missing_total_shipping_fee";
   }
 
   return null;
@@ -776,7 +822,9 @@ export function buildCarrierRatesResponse({ quoteResponse, currency }) {
     return { rates: [] };
   }
 
-  const totalPrice = toShopifyCarrierSubunits(getQuoteShippingAmount(quoteResponse));
+  const totalPrice = toShopifyCarrierSubunits(
+    getQuoteShippingAmount(quoteResponse),
+  );
   const isAirPacket =
     quoteResponse?.result?.rateSource === JAPAN_POST_AIR_PACKET_RATE_SOURCE;
 
@@ -790,7 +838,7 @@ export function buildCarrierRatesResponse({ quoteResponse, currency }) {
           ? buildAirPacketServiceCode(quoteResponse)
           : CARRIER_SERVICE_CODE,
         total_price: totalPrice,
-        currency: normalizeText(currency)?.toUpperCase() || 'JPY',
+        currency: normalizeText(currency)?.toUpperCase() || "JPY",
         description: isAirPacket
           ? AIR_PACKET_SERVICE_DESCRIPTION
           : CARRIER_SERVICE_DESCRIPTION,
@@ -803,30 +851,37 @@ function buildRequestDebugInfo({ request, rawBody }) {
   return {
     method: request.method,
     url: request.url,
-    contentType: request.headers.get('content-type') || '',
+    contentType: request.headers.get("content-type") || "",
     rawBodyLength: rawBody.length,
   };
 }
 
-function recordCarrierDiagnostic({ requestId, level = 'info', message, details }) {
+function recordCarrierDiagnostic({
+  requestId,
+  level = "info",
+  message,
+  details,
+}) {
   recordShippingDiagnosticEvent({
     requestId,
-    source: 'carrier',
+    source: "carrier",
     level,
     message,
     details,
   });
 }
 
-function logCarrierRequest({ logInfo, message, request, rawBody = '' }) {
+function logCarrierRequest({ logInfo, message, request, rawBody = "" }) {
   logInfo?.(message, buildRequestDebugInfo({ request, rawBody }));
 }
 
-export function createCarrierShippingRatesLoader({ logInfo = console.log } = {}) {
+export function createCarrierShippingRatesLoader({
+  logInfo = console.log,
+} = {}) {
   return async function loader({ request }) {
     logCarrierRequest({
       logInfo,
-      message: 'carrier shipping rates health check:',
+      message: "carrier shipping rates health check:",
       request,
     });
 
@@ -846,26 +901,26 @@ export function createCarrierShippingRatesAction({
   logError = console.error,
 } = {}) {
   return async function action({ request }) {
-    const requestId = createShippingDiagnosticId('carrier');
+    const requestId = createShippingDiagnosticId("carrier");
     let rawBody;
 
     try {
       rawBody = await request.text();
     } catch (error) {
       const details = {
-        method: request?.method || 'POST',
-        contentType: request?.headers?.get?.('content-type') || '',
+        method: request?.method || "POST",
+        contentType: request?.headers?.get?.("content-type") || "",
         error: error instanceof Error ? error.message : String(error),
       };
 
-      logError?.('carrier shipping rates body read failed:', {
+      logError?.("carrier shipping rates body read failed:", {
         requestId,
         ...details,
       });
       recordCarrierDiagnostic({
         requestId,
-        level: 'error',
-        message: 'body_read_failed',
+        level: "error",
+        message: "body_read_failed",
         details,
       });
       return json({ rates: [] });
@@ -873,19 +928,22 @@ export function createCarrierShippingRatesAction({
 
     const debugInfo = buildRequestDebugInfo({ request, rawBody });
 
-    logInfo?.('carrier shipping rates request:', { requestId, ...debugInfo });
+    logInfo?.("carrier shipping rates request:", { requestId, ...debugInfo });
     recordCarrierDiagnostic({
       requestId,
-      message: 'request_received',
+      message: "request_received",
       details: debugInfo,
     });
 
     if (!rawBody) {
-      logError?.('carrier shipping rates empty body:', { requestId, ...debugInfo });
+      logError?.("carrier shipping rates empty body:", {
+        requestId,
+        ...debugInfo,
+      });
       recordCarrierDiagnostic({
         requestId,
-        level: 'warn',
-        message: 'empty_body',
+        level: "warn",
+        message: "empty_body",
         details: debugInfo,
       });
       return json({ rates: [] });
@@ -896,15 +954,15 @@ export function createCarrierShippingRatesAction({
     try {
       body = JSON.parse(rawBody);
     } catch (error) {
-      logError?.('carrier shipping rates invalid json:', {
+      logError?.("carrier shipping rates invalid json:", {
         requestId,
         ...debugInfo,
         error: error instanceof Error ? error.message : String(error),
       });
       recordCarrierDiagnostic({
         requestId,
-        level: 'warn',
-        message: 'invalid_json',
+        level: "warn",
+        message: "invalid_json",
         details: {
           ...debugInfo,
           error: error instanceof Error ? error.message : String(error),
@@ -927,14 +985,14 @@ export function createCarrierShippingRatesAction({
         prismaClient,
       });
     } catch (error) {
-      logError?.('carrier shipping rates ownership lookup failed:', {
+      logError?.("carrier shipping rates ownership lookup failed:", {
         requestId,
         error: error instanceof Error ? error.message : String(error),
       });
       recordCarrierDiagnostic({
         requestId,
-        level: 'error',
-        message: 'ownership_lookup_failed',
+        level: "error",
+        message: "ownership_lookup_failed",
         details: {
           error: error instanceof Error ? error.message : String(error),
         },
@@ -943,15 +1001,15 @@ export function createCarrierShippingRatesAction({
     }
 
     if (!ownershipResolution.ok) {
-      logInfo?.('carrier shipping rates blocked by product ownership:', {
+      logInfo?.("carrier shipping rates blocked by product ownership:", {
         requestId,
         ...ownershipResolution,
         quoteRequest: undefined,
       });
       recordCarrierDiagnostic({
         requestId,
-        level: 'warn',
-        message: 'product_ownership_unresolved',
+        level: "warn",
+        message: "product_ownership_unresolved",
         details: {
           reason: ownershipResolution.reason,
           productId: ownershipResolution.productId || null,
@@ -962,20 +1020,38 @@ export function createCarrierShippingRatesAction({
       return json({ rates: [] });
     }
 
+    if (ownershipResolution.requiresMarketplaceCheckout) {
+      logInfo?.("carrier shipping rates blocked for marketplace checkout:", {
+        requestId,
+        reason: "third_party_standard_checkout_not_supported",
+        governedProductCount: ownershipResolution.governedProductCount,
+      });
+      recordCarrierDiagnostic({
+        requestId,
+        level: "warn",
+        message: "marketplace_checkout_required",
+        details: {
+          reason: "third_party_standard_checkout_not_supported",
+          governedProductCount: ownershipResolution.governedProductCount,
+        },
+      });
+      return json({ rates: [] });
+    }
+
     quoteRequest = ownershipResolution.quoteRequest;
     const quoteRequestSummary = summarizeQuoteRequest(quoteRequest);
 
-    logInfo?.('carrier shipping rates parsed payload:', {
+    logInfo?.("carrier shipping rates parsed payload:", {
       requestId,
       ...parsedSummary,
     });
-    logInfo?.('carrier shipping rates quote request:', {
+    logInfo?.("carrier shipping rates quote request:", {
       requestId,
       ...quoteRequestSummary,
     });
     recordCarrierDiagnostic({
       requestId,
-      message: 'payload_normalized',
+      message: "payload_normalized",
       details: {
         parsed: parsedSummary,
         quoteRequest: quoteRequestSummary,
@@ -990,14 +1066,14 @@ export function createCarrierShippingRatesAction({
         });
 
       if (!internationalDeliveryPolicy.ok) {
-        logInfo?.('carrier shipping rates blocked by delivery policy:', {
+        logInfo?.("carrier shipping rates blocked by delivery policy:", {
           requestId,
           ...internationalDeliveryPolicy,
         });
         recordCarrierDiagnostic({
           requestId,
-          level: 'warn',
-          message: 'international_delivery_blocked',
+          level: "warn",
+          message: "international_delivery_blocked",
           details: {
             policy: internationalDeliveryPolicy,
             quoteRequest: quoteRequestSummary,
@@ -1014,21 +1090,25 @@ export function createCarrierShippingRatesAction({
         quoteResponse,
         currency: rate.currency,
       });
-      const emptyRatesReason = ratesResponse.rates.length === 0
-        ? getCarrierRatesEmptyReason(quoteResponse) || 'empty_rates'
-        : null;
+      const emptyRatesReason =
+        ratesResponse.rates.length === 0
+          ? getCarrierRatesEmptyReason(quoteResponse) || "empty_rates"
+          : null;
       const quoteResponseSummary = summarizeQuoteResponse(quoteResponse);
 
-      logInfo?.('carrier shipping rates quote response:', {
+      logInfo?.("carrier shipping rates quote response:", {
         requestId,
         emptyRatesReason,
         ...quoteResponseSummary,
       });
-      logInfo?.('carrier shipping rates response:', { requestId, ...ratesResponse });
+      logInfo?.("carrier shipping rates response:", {
+        requestId,
+        ...ratesResponse,
+      });
       recordCarrierDiagnostic({
         requestId,
-        level: emptyRatesReason ? 'warn' : 'info',
-        message: emptyRatesReason ? 'empty_rates' : 'rates_returned',
+        level: emptyRatesReason ? "warn" : "info",
+        message: emptyRatesReason ? "empty_rates" : "rates_returned",
         details: {
           emptyRatesReason,
           quoteResponse: quoteResponseSummary,
@@ -1037,7 +1117,7 @@ export function createCarrierShippingRatesAction({
       });
       return json(ratesResponse);
     } catch (error) {
-      logError?.('carrier shipping rates quote_error:', {
+      logError?.("carrier shipping rates quote_error:", {
         requestId,
         ...debugInfo,
         quoteRequest: quoteRequestSummary,
@@ -1045,8 +1125,8 @@ export function createCarrierShippingRatesAction({
       });
       recordCarrierDiagnostic({
         requestId,
-        level: 'error',
-        message: 'quote_error',
+        level: "error",
+        message: "quote_error",
         details: {
           quoteRequest: quoteRequestSummary,
           error: error instanceof Error ? error.message : String(error),
@@ -1061,10 +1141,10 @@ export function getCarrierCallbackUrl(appUrl) {
   const normalizedAppUrl = normalizeText(appUrl || process.env.APP_URL);
 
   if (!normalizedAppUrl) {
-    throw new Error('APP_URL is required to register the CarrierService');
+    throw new Error("APP_URL is required to register the CarrierService");
   }
 
-  return `${normalizedAppUrl.replace(/\/+$/, '')}/carrier/shipping-rates`;
+  return `${normalizedAppUrl.replace(/\/+$/, "")}/carrier/shipping-rates`;
 }
 
 function getCarrierUserErrors(payload, key) {
@@ -1076,7 +1156,9 @@ function assertNoCarrierUserErrors(payload, key) {
   const errors = getCarrierUserErrors(payload, key);
 
   if (errors.length > 0) {
-    throw new Error(`CarrierService registration failed: ${JSON.stringify(errors)}`);
+    throw new Error(
+      `CarrierService registration failed: ${JSON.stringify(errors)}`,
+    );
   }
 }
 
@@ -1095,7 +1177,9 @@ export async function upsertShippingV2CarrierService({
   const services = Array.isArray(listResult.data?.carrierServices?.nodes)
     ? listResult.data.carrierServices.nodes
     : [];
-  const existing = services.find((service) => service?.name === CARRIER_SERVICE_NAME);
+  const existing = services.find(
+    (service) => service?.name === CARRIER_SERVICE_NAME,
+  );
 
   if (existing) {
     const updateResult = await shopifyGraphQLWithOfflineSessionImpl({
@@ -1113,11 +1197,11 @@ export async function upsertShippingV2CarrierService({
       },
     });
 
-    assertNoCarrierUserErrors(updateResult.data, 'carrierServiceUpdate');
+    assertNoCarrierUserErrors(updateResult.data, "carrierServiceUpdate");
 
     return {
       ok: true,
-      operation: 'updated',
+      operation: "updated",
       carrierService: updateResult.data?.carrierServiceUpdate?.carrierService,
       callbackUrl,
     };
@@ -1137,11 +1221,11 @@ export async function upsertShippingV2CarrierService({
     },
   });
 
-  assertNoCarrierUserErrors(createResult.data, 'carrierServiceCreate');
+  assertNoCarrierUserErrors(createResult.data, "carrierServiceCreate");
 
   return {
     ok: true,
-    operation: 'created',
+    operation: "created",
     carrierService: createResult.data?.carrierServiceCreate?.carrierService,
     callbackUrl,
   };

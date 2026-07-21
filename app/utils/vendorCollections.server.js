@@ -6,6 +6,7 @@ import {
 import {
   buildVendorCollectionHandle,
   buildVendorCollectionUrl,
+  buildVendorProxyStorefrontUrl,
 } from "./vendorCollectionHandles.js";
 
 import { SHOPIFY_API_VERSION } from "./shopifyApiVersion.js";
@@ -139,6 +140,22 @@ const PUBLICATIONS_QUERY = `
 const PUBLISH_RESOURCE_MUTATION = `
   mutation PublishVendorResource($id: ID!, $input: [PublicationInput!]!) {
     publishablePublish(id: $id, input: $input) {
+      publishable {
+        availablePublicationsCount {
+          count
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const UNPUBLISH_RESOURCE_MUTATION = `
+  mutation UnpublishVendorResource($id: ID!, $input: [PublicationInput!]!) {
+    publishableUnpublish(id: $id, input: $input) {
       publishable {
         availablePublicationsCount {
           count
@@ -584,6 +601,48 @@ async function publishVendorProducts({
   };
 }
 
+async function unpublishVendorResources({
+  resourceIds,
+  publicationId,
+  source,
+  shopDomain,
+  shopifyGraphQLWithOfflineSessionImpl,
+}) {
+  const normalizedResourceIds = unique(resourceIds);
+  const unpublishedResourceIds = [];
+  const errors = [];
+
+  for (const resourceId of normalizedResourceIds) {
+    try {
+      const { data } = await shopifyGraphQLWithOfflineSessionImpl({
+        shopDomain,
+        apiVersion: SHOPIFY_API_VERSION,
+        query: UNPUBLISH_RESOURCE_MUTATION,
+        variables: {
+          id: resourceId,
+          input: [{ publicationId }],
+        },
+      });
+      assertNoUserErrors(data, "publishableUnpublish");
+      unpublishedResourceIds.push(resourceId);
+    } catch (error) {
+      errors.push({
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    reason: errors.length > 0 ? "resource_unpublish_failed" : undefined,
+    publicationId,
+    source,
+    resourceIds: unpublishedResourceIds,
+    errors,
+  };
+}
+
 export async function syncVendorCollection({
   vendorStoreId,
   vendorHandle,
@@ -606,8 +665,13 @@ export async function syncVendorCollection({
   }
 
   const store = vendor.vendorStore;
+  const usesStandardShopifyStorefront = Boolean(
+    store.isPlatformStore || store.isTestStore,
+  );
   const collectionHandle = buildVendorCollectionHandle(vendor.handle);
-  const collectionUrl = buildVendorCollectionUrl(vendor.handle);
+  const collectionUrl = usesStandardShopifyStorefront
+    ? buildVendorCollectionUrl(vendor.handle)
+    : buildVendorProxyStorefrontUrl(vendor.handle);
 
   if (!collectionHandle) {
     return {
@@ -671,6 +735,64 @@ export async function syncVendorCollection({
     };
   }
 
+  const missingPublicationScopes = getMissingScopes(
+    grantedScopes,
+    REQUIRED_PUBLICATION_SCOPES,
+  );
+  let governedPublication = null;
+  let governedProductBoundary = null;
+
+  if (!usesStandardShopifyStorefront) {
+    if (missingPublicationScopes.length > 0) {
+      return {
+        ok: false,
+        reason: "missing_scope",
+        missingScopes: missingPublicationScopes,
+        grantedScopes,
+        shopDomain: resolvedShopDomain,
+        collectionHandle,
+        collectionUrl,
+        unsyncedProducts,
+      };
+    }
+
+    governedPublication = await findPublicationId({
+      shopDomain: resolvedShopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+      configuredPublicationId,
+    });
+    if (!governedPublication.publicationId) {
+      return {
+        ok: false,
+        reason: "publication_not_found",
+        shopDomain: resolvedShopDomain,
+        collectionHandle,
+        collectionUrl,
+        unsyncedProducts,
+      };
+    }
+
+    // Close the standard storefront path before changing collection membership.
+    governedProductBoundary = await unpublishVendorResources({
+      resourceIds: productIds,
+      publicationId: governedPublication.publicationId,
+      source: governedPublication.source,
+      shopDomain: resolvedShopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+    });
+    if (!governedProductBoundary.ok) {
+      return {
+        ok: false,
+        reason: governedProductBoundary.reason,
+        shopDomain: resolvedShopDomain,
+        collectionHandle,
+        collectionUrl,
+        unsyncedProducts,
+        productPublish: governedProductBoundary,
+      };
+    }
+  }
+
   let collection = await findVendorCollection({
     collectionHandle,
     shopDomain: resolvedShopDomain,
@@ -731,37 +853,46 @@ export async function syncVendorCollection({
         shopifyGraphQLWithOfflineSessionImpl,
       });
 
-  const missingPublicationScopes = getMissingScopes(
-    grantedScopes,
-    REQUIRED_PUBLICATION_SCOPES,
-  );
-  const publishResult =
-    missingPublicationScopes.length === 0
-      ? await publishVendorCollection({
-          collectionId: collection.id,
-          shopDomain: resolvedShopDomain,
-          shopifyGraphQLWithOfflineSessionImpl,
-          configuredPublicationId,
-        })
-      : {
-          ok: false,
-          reason: "missing_scope",
-          missingScopes: missingPublicationScopes,
-        };
-  const productPublishResult =
-    publishResult.ok && publishResult.publicationId
-      ? await publishVendorProducts({
-          productIds,
-          publicationId: publishResult.publicationId,
-          source: publishResult.source,
-          shopDomain: resolvedShopDomain,
-          shopifyGraphQLWithOfflineSessionImpl,
-        })
-      : {
-          ok: false,
-          reason: publishResult.reason || "collection_publish_failed",
-          missingScopes: publishResult.missingScopes,
-        };
+  let publishResult;
+  let productPublishResult;
+
+  if (missingPublicationScopes.length > 0) {
+    publishResult = {
+      ok: false,
+      reason: "missing_scope",
+      missingScopes: missingPublicationScopes,
+    };
+    productPublishResult = { ...publishResult };
+  } else if (usesStandardShopifyStorefront) {
+    publishResult = await publishVendorCollection({
+      collectionId: collection.id,
+      shopDomain: resolvedShopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+      configuredPublicationId,
+    });
+    productPublishResult =
+      publishResult.ok && publishResult.publicationId
+        ? await publishVendorProducts({
+            productIds,
+            publicationId: publishResult.publicationId,
+            source: publishResult.source,
+            shopDomain: resolvedShopDomain,
+            shopifyGraphQLWithOfflineSessionImpl,
+          })
+        : {
+            ok: false,
+            reason: publishResult.reason || "collection_publish_failed",
+          };
+  } else {
+    publishResult = await unpublishVendorResources({
+      resourceIds: [collection.id],
+      publicationId: governedPublication.publicationId,
+      source: governedPublication.source,
+      shopDomain: resolvedShopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+    });
+    productPublishResult = governedProductBoundary;
+  }
 
   return {
     ok: true,
@@ -777,6 +908,9 @@ export async function syncVendorCollection({
     productSync,
     publish: publishResult,
     productPublish: productPublishResult,
+    storefrontMode: usesStandardShopifyStorefront
+      ? "SHOPIFY_STANDARD"
+      : "APP_PROXY_DRAFT_ORDER",
     missingScopes: missingPublicationScopes,
   };
 }

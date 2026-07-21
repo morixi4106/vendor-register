@@ -114,7 +114,9 @@ test("governance configuration requires published contract URLs and a SHA-256", 
   });
 
   assert.equal(incomplete.ready, false);
-  assert.ok(incomplete.reasons.includes("agreement_document_hash_unconfigured"));
+  assert.ok(
+    incomplete.reasons.includes("agreement_document_hash_unconfigured"),
+  );
   assert.ok(incomplete.reasons.includes("agreement_url_unconfigured"));
   assert.ok(incomplete.reasons.includes("buyer_terms_url_unconfigured"));
 
@@ -321,7 +323,10 @@ test("order snapshots preserve seller contract and product compliance versions",
     sellerSnapshot.sellerAgreementSnapshotJson.version,
     "seller-2026-01",
   );
-  assert.equal(sellerSnapshot.legalSellerSnapshotJson.legalName, "Example Seller Ltd.");
+  assert.equal(
+    sellerSnapshot.legalSellerSnapshotJson.legalName,
+    "Example Seller Ltd.",
+  );
   assert.equal(productSnapshot.conditionStatus, "NEW");
   assert.equal(productSnapshot.countryOfOriginCode, "JP");
 });
@@ -448,7 +453,8 @@ test("case liability cannot be lowered below committed adjustments", async () =>
           responsibilityStatus: "SELLER",
           responsibilitySellerId: "seller_1",
           evidenceJson: { inspectionReportId: "inspection_1" },
-          resolutionNotes: "Evidence reviewed and seller responsibility confirmed.",
+          resolutionNotes:
+            "Evidence reviewed and seller responsibility confirmed.",
           decisionReasonCode: "SELLER_CAUSED_DAMAGE",
           settlementAdjustments: [
             {
@@ -519,6 +525,7 @@ test("reserve adjustments change payout controls without creating a ledger debit
           currencyCode: "jpy",
           status: "PENDING",
           reason: "temporary reserve",
+          metadataJson: { createdBy: "finance-preparer@example.com" },
           approvedAt: null,
           approvedBy: null,
           seller: {
