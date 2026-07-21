@@ -11,6 +11,16 @@ import {
   JAPAN_POST_AIR_PACKET_RATE_SOURCE,
   JAPAN_POST_AIR_PACKET_RATE_VERSION,
 } from "./japanPostAirPacket.server.js";
+import {
+  buildProductComplianceSnapshot,
+  buildSellerGovernanceSnapshot,
+  calculateGovernedPayoutAvailability,
+  evaluateSellerGovernanceReadiness,
+  getCurrentBuyerTermsVersion,
+  getCurrentSellerAgreementVersion,
+  getSellerAgreementReadinessOptions,
+  isMarketplaceGovernanceGateEnabled,
+} from "./marketplaceGovernance.server.js";
 
 const require = createRequire(import.meta.url);
 const jaLocale = require("i18n-iso-countries/langs/ja.json");
@@ -1124,11 +1134,18 @@ export async function getAdminSellerDetail(
     include: {
       vendor: {
         include: {
-          vendorStore: true,
+          vendorStore: {
+            include: {
+              returnAddresses: true,
+            },
+          },
         },
       },
       stripeAccount: true,
       payoutRecipient: true,
+      complianceProfile: true,
+      agreementAcceptances: true,
+      settlementControl: true,
       statusHistory: {
         orderBy: [{ createdAt: "desc" }],
         take: 20,
@@ -4027,6 +4044,88 @@ async function recordShopifyOrderSellerOrderShadow(
     const sellerIds = uniqueValues(
       sellerBuckets.map((bucket) => bucket.sellerId),
     );
+    const productIds = uniqueValues(
+      sellerBuckets.flatMap((bucket) =>
+        bucket.lines.map((line) => line.productId).filter(Boolean),
+      ),
+    );
+    const agreementVersion =
+      getShopifyOrderAttribute(payload, "seller_agreement_version") ||
+      getCurrentSellerAgreementVersion(env);
+    const buyerTermsVersion =
+      getShopifyOrderAttribute(payload, "buyer_terms_version") ||
+      getCurrentBuyerTermsVersion(env);
+    const sourceSellerById = new Map();
+    const sourceProductById = new Map();
+    for (const { product } of matchedLines) {
+      const sourceSeller = getProductSeller(product);
+      if (sourceSeller?.id) {
+        sourceSellerById.set(sourceSeller.id, {
+          ...sourceSeller,
+          vendorStore: product?.vendorStore || sourceSeller.vendorStore || null,
+        });
+      }
+      if (product?.id) sourceProductById.set(product.id, product);
+    }
+    const [sellerProfiles, agreementAcceptances, productProfiles] =
+      await Promise.all([
+        prismaClient?.sellerComplianceProfile?.findMany
+          ? prismaClient.sellerComplianceProfile.findMany({
+              where: { sellerId: { in: sellerIds } },
+            })
+          : [],
+        prismaClient?.sellerAgreementAcceptance?.findMany
+          ? prismaClient.sellerAgreementAcceptance.findMany({
+              where: {
+                sellerId: { in: sellerIds },
+                agreementType: "SELLER_MASTER",
+                version: agreementVersion,
+                revokedAt: null,
+              },
+            })
+          : [],
+        prismaClient?.productComplianceProfile?.findMany
+          ? prismaClient.productComplianceProfile.findMany({
+              where: { productId: { in: productIds } },
+            })
+          : [],
+      ]);
+    const sellerProfileById = new Map(
+      sellerProfiles.map((profile) => [profile.sellerId, profile]),
+    );
+    const agreementsBySellerId = new Map();
+    for (const acceptance of agreementAcceptances) {
+      const current = agreementsBySellerId.get(acceptance.sellerId) || [];
+      current.push(acceptance);
+      agreementsBySellerId.set(acceptance.sellerId, current);
+    }
+    const productProfileById = new Map(
+      productProfiles.map((profile) => [profile.productId, profile]),
+    );
+    const sellerSnapshotById = new Map(
+      sellerIds.map((sellerId) => [
+        sellerId,
+        buildSellerGovernanceSnapshot({
+          ...sourceSellerById.get(sellerId),
+          id: sellerId,
+          complianceProfile: sellerProfileById.get(sellerId) || null,
+          agreementAcceptances: agreementsBySellerId.get(sellerId) || [],
+        }, {
+          agreementVersion,
+          buyerTermsVersion,
+        }),
+      ]),
+    );
+    const productSnapshotById = new Map(
+      productIds.map((productId) => [
+        productId,
+        buildProductComplianceSnapshot({
+          ...sourceProductById.get(productId),
+          id: productId,
+          complianceProfile: productProfileById.get(productId) || null,
+        }),
+      ]),
+    );
     const marketplaceOrder = await prismaClient.marketplaceOrder.upsert({
       where: {
         shopDomain_shopifyOrderId: {
@@ -4041,6 +4140,12 @@ async function recordShopifyOrderSellerOrderShadow(
 
     if (writeSellerOrders && !multiSellerDetected) {
       for (const bucket of sellerBuckets) {
+        const governanceSnapshot = sellerSnapshotById.get(bucket.sellerId) || {
+          governanceSnapshotVersion: null,
+          buyerTermsVersion,
+          legalSellerSnapshotJson: null,
+          sellerAgreementSnapshotJson: null,
+        };
         const sellerOrderData = {
           marketplaceOrderId: marketplaceOrder.id,
           shopifyOrderId,
@@ -4060,6 +4165,12 @@ async function recordShopifyOrderSellerOrderShadow(
           fulfillmentStatus: "unfulfilled",
           settlementStatus: "shadow",
           riskStatus: "normal",
+          governanceSnapshotVersion:
+            governanceSnapshot.governanceSnapshotVersion,
+          legalSellerSnapshotJson: governanceSnapshot.legalSellerSnapshotJson,
+          sellerAgreementSnapshotJson:
+            governanceSnapshot.sellerAgreementSnapshotJson,
+          buyerTermsVersion: governanceSnapshot.buyerTermsVersion,
           metadataJson: {
             vendorId: bucket.vendorId,
             vendorHandle: bucket.vendorHandle,
@@ -4083,6 +4194,16 @@ async function recordShopifyOrderSellerOrderShadow(
         writtenSellerOrders.push(sellerOrder);
 
         for (const line of bucket.lines) {
+          const complianceSnapshot = line.productId
+            ? productSnapshotById.get(line.productId) || null
+            : null;
+          const governedLine = {
+            ...line,
+            legalSellerSnapshotJson:
+              governanceSnapshot.legalSellerSnapshotJson,
+            complianceSnapshotJson: complianceSnapshot,
+            sellerAgreementVersion: agreementVersion,
+          };
           await prismaClient.sellerOrderLine.upsert({
             where: {
               sellerOrderId_shopifyLineItemId: {
@@ -4090,9 +4211,9 @@ async function recordShopifyOrderSellerOrderShadow(
                 shopifyLineItemId: line.shopifyLineItemId,
               },
             },
-            update: line,
+            update: governedLine,
             create: {
-              ...line,
+              ...governedLine,
               sellerOrderId: sellerOrder.id,
             },
           });
@@ -8673,6 +8794,34 @@ async function assertPayoutEligibleSeller(
     };
   }
 
+  if (seller.settlementControl?.payoutHold) {
+    return {
+      ok: false,
+      reason: "seller_payout_hold",
+      holdReason: seller.settlementControl.holdReason || null,
+    };
+  }
+
+  if (isMarketplaceGovernanceGateEnabled()) {
+    const governanceReadiness = evaluateSellerGovernanceReadiness(
+      {
+        ...seller,
+        vendorStore: seller.vendor.vendorStore,
+      },
+      getSellerAgreementReadinessOptions(process.env, {
+        requirePayoutReadiness: true,
+      }),
+    );
+
+    if (!governanceReadiness.ready) {
+      return {
+        ok: false,
+        reason: "seller_governance_required",
+        governanceReasons: governanceReadiness.reasons,
+      };
+    }
+  }
+
   const payoutVerification = getSellerPayoutVerificationState(seller);
 
   if (!payoutVerification.complete) {
@@ -8722,11 +8871,23 @@ export async function createPayoutRun(
     { prismaClient },
   );
 
-  if (availableLedgerBalance < normalizedAmount) {
+  const governedAvailability = calculateGovernedPayoutAvailability(
+    availableLedgerBalance,
+    eligibility.seller.settlementControl,
+  );
+
+  if (governedAvailability.availableAmount < normalizedAmount) {
+    const governanceReducedAvailability =
+      governedAvailability.availableAmount < availableLedgerBalance;
     return {
       ok: false,
-      reason: "insufficient_ledger_balance",
+      reason: governanceReducedAvailability
+        ? "insufficient_governed_balance"
+        : "insufficient_ledger_balance",
       availableLedgerBalance,
+      governedAvailableAmount: governedAvailability.availableAmount,
+      reserveAmount: governedAvailability.reserveAmount,
+      directInvoiceBalance: governedAvailability.directInvoiceBalance,
       requestedAmount: normalizedAmount,
       currencyCode: normalizedCurrency,
     };

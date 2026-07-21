@@ -603,6 +603,15 @@ function createPayoutRunErrorMessage(result) {
         result.availableLedgerBalance,
         result.currencyCode,
       )} / 作成額: ${formatMoney(result.requestedAmount, result.currencyCode)}`;
+    case "insufficient_governed_balance":
+      return `留保額または未精算の直接請求を差し引くと、出金可能残高が不足します。出金可能: ${formatMoney(
+        result.governedAvailableAmount,
+        result.currencyCode,
+      )} / 作成額: ${formatMoney(result.requestedAmount, result.currencyCode)}`;
+    case "seller_payout_hold":
+      return "管理者判断により、この店舗の出金を保留しています。";
+    case "seller_governance_required":
+      return "事業者情報、契約、返品先などの出金前確認が完了していません。";
     case "invalid_amount":
       return "出金額が不正です。1以上の整数で入力してください。";
     case "seller_not_active":

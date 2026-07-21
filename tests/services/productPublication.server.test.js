@@ -140,3 +140,40 @@ test("ensureApprovedProductPublished fails when product publish did not complete
     },
   );
 });
+
+test("ensureApprovedProductPublished blocks governance-incomplete products when the gate is enabled", async () => {
+  const product = {
+    id: "product_1",
+    approvalStatus: "approved",
+    shopifyProductId: "gid://shopify/Product/1",
+    shopDomain: "shop-a.myshopify.com",
+    vendorStoreId: "store_1",
+    complianceProfile: null,
+    vendorStore: {
+      id: "store_1",
+      isTestStore: false,
+      returnAddresses: [],
+      seller: null,
+      vendorAuth: null,
+    },
+  };
+
+  await assert.rejects(
+    ensureApprovedProductPublished(product.id, {
+      prismaClient: createPrismaClient(product),
+      syncVendorCollectionByStoreIdImpl: async () => {
+        throw new Error("must not sync");
+      },
+      env: {
+        MARKETPLACE_GOVERNANCE_GATE_ENABLED: "true",
+        SELLER_AGREEMENT_VERSION: "seller-2026-01",
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof ProductPublicationError);
+      assert.equal(error.details.reason, "marketplace_governance_incomplete");
+      assert.ok(error.details.productReasons.includes("product_compliance_missing"));
+      return true;
+    },
+  );
+});

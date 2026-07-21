@@ -17,6 +17,14 @@ import {
 } from '../utils/deliveryEligibility.js';
 import { normalizeProductCategory } from '../utils/productCategories.js';
 import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
+import {
+  evaluateProductGovernanceReadiness,
+  evaluateSellerGovernanceReadiness,
+  getCurrentBuyerTermsVersion,
+  getCurrentSellerAgreementVersion,
+  getSellerAgreementReadinessOptions,
+  isMarketplaceGovernanceGateEnabled,
+} from './marketplaceGovernance.server.js';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -420,7 +428,7 @@ function evaluateMultiSellerCheckoutCountryPolicy({
 function buildCheckoutCustomAttributes(
   vendorContext,
   countryPolicy,
-  { isMultiSeller = false, selectedProducts = [] } = {},
+  { isMultiSeller = false, selectedProducts = [], env = process.env } = {},
 ) {
   const attributes = isMultiSeller
     ? [
@@ -444,6 +452,30 @@ function buildCheckoutCustomAttributes(
         { key: 'seller_country', value: vendorContext.store.country || '' },
         { key: 'seller_of_record', value: 'marketplace_seller' },
       ];
+
+  const sellerAgreementVersion = getCurrentSellerAgreementVersion(env);
+  const buyerTermsVersion = getCurrentBuyerTermsVersion(env);
+  if (
+    sellerAgreementVersion !== 'UNCONFIGURED' ||
+    buyerTermsVersion !== 'UNCONFIGURED'
+  ) {
+    attributes.push({
+      key: 'marketplace_governance_snapshot_version',
+      value: 'marketplace-governance-v1',
+    });
+    if (sellerAgreementVersion !== 'UNCONFIGURED') {
+      attributes.push({
+        key: 'seller_agreement_version',
+        value: sellerAgreementVersion,
+      });
+    }
+    if (buyerTermsVersion !== 'UNCONFIGURED') {
+      attributes.push({
+        key: 'buyer_terms_version',
+        value: buyerTermsVersion,
+      });
+    }
+  }
 
   if (countryPolicy?.requiresWarning) {
     attributes.push(
@@ -1160,6 +1192,7 @@ async function buildShopifyFallbackCheckoutPayload({
   prismaClient = prisma,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
   checkoutSource = PUBLIC_CHECKOUT_SOURCE,
+  env = process.env,
 }) {
   if (!submission.items.every(hasRequestedShopifyReference)) {
     return {
@@ -1243,7 +1276,9 @@ async function buildShopifyFallbackCheckoutPayload({
 
   const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
   const customAttributes = [
-    ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy),
+    ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy, {
+      env,
+    }),
     ...salesCredit.customAttributes,
   ];
 
@@ -1651,6 +1686,7 @@ async function buildServerTrustedCheckoutPayload({
       shopifyWeightSyncStatus: true,
       productEuStatus: true,
       countryPolicy: true,
+      complianceProfile: true,
       vendorStore: {
         select: {
           id: true,
@@ -1659,6 +1695,8 @@ async function buildServerTrustedCheckoutPayload({
           country: true,
           category: true,
           note: true,
+          isTestStore: true,
+          returnAddresses: true,
           vendorAuth: {
             select: {
               id: true,
@@ -1669,25 +1707,39 @@ async function buildServerTrustedCheckoutPayload({
               seller: {
                 select: {
                   id: true,
-                  status: true,
-                  euSellerStatus: true,
-                },
+                   status: true,
+                   euSellerStatus: true,
+                   complianceProfile: true,
+                   agreementAcceptances: true,
+                   settlementControl: true,
+                 },
               },
             },
           },
           seller: {
             select: {
               id: true,
-              status: true,
-              euSellerStatus: true,
-            },
+               status: true,
+               euSellerStatus: true,
+               complianceProfile: true,
+               agreementAcceptances: true,
+               settlementControl: true,
+             },
           },
         },
       },
     },
   });
 
+  const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
+
   if (products.length !== uniqueProductIds.length) {
+    if (governanceGateEnabled) {
+      return {
+        ok: false,
+        error: UNAVAILABLE_PRODUCT_MESSAGE,
+      };
+    }
     return buildShopifyFallbackCheckoutPayload({
       request,
       resolvedVendorContext,
@@ -1695,6 +1747,7 @@ async function buildServerTrustedCheckoutPayload({
       prismaClient,
       shopifyGraphQLWithOfflineSessionImpl,
       checkoutSource,
+      env,
     });
   }
 
@@ -1705,6 +1758,12 @@ async function buildServerTrustedCheckoutPayload({
     const product = productsById.get(item.productId);
 
     if (!product) {
+      if (governanceGateEnabled) {
+        return {
+          ok: false,
+          error: UNAVAILABLE_PRODUCT_MESSAGE,
+        };
+      }
       return buildShopifyFallbackCheckoutPayload({
         request,
         resolvedVendorContext,
@@ -1712,6 +1771,7 @@ async function buildServerTrustedCheckoutPayload({
         prismaClient,
         shopifyGraphQLWithOfflineSessionImpl,
         checkoutSource,
+        env,
       });
     }
 
@@ -1744,6 +1804,30 @@ async function buildServerTrustedCheckoutPayload({
         ok: false,
         error: UNAVAILABLE_PRODUCT_MESSAGE,
       };
+    }
+
+    if (governanceGateEnabled) {
+      const seller =
+        product.vendorStore?.seller ||
+        product.vendorStore?.vendorAuth?.seller ||
+        null;
+      const sellerReadiness = evaluateSellerGovernanceReadiness(
+        seller
+          ? {
+              ...seller,
+              vendorStore: product.vendorStore,
+            }
+          : null,
+        getSellerAgreementReadinessOptions(env),
+      );
+      const productReadiness = evaluateProductGovernanceReadiness(product);
+
+      if (!sellerReadiness.ready || !productReadiness.ready) {
+        return {
+          ok: false,
+          error: UNAVAILABLE_PRODUCT_MESSAGE,
+        };
+      }
     }
 
     selectedProducts.push({
@@ -1845,6 +1929,7 @@ async function buildServerTrustedCheckoutPayload({
     ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy, {
       isMultiSeller: isMultiSellerCheckout,
       selectedProducts,
+      env,
     }),
     ...salesCredit.customAttributes,
   ];

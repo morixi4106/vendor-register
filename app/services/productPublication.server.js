@@ -1,5 +1,11 @@
 import prisma from "../db.server.js";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server.js";
+import {
+  evaluateProductGovernanceReadiness,
+  evaluateSellerGovernanceReadiness,
+  getSellerAgreementReadinessOptions,
+  isMarketplaceGovernanceGateEnabled,
+} from "./marketplaceGovernance.server.js";
 
 export class ProductPublicationError extends Error {
   constructor(message, details = {}) {
@@ -39,6 +45,7 @@ export async function ensureApprovedProductPublished(
   {
     prismaClient = prisma,
     syncVendorCollectionByStoreIdImpl = syncVendorCollectionByStoreId,
+    env = process.env,
   } = {},
 ) {
   const product = await prismaClient.product.findUnique({
@@ -49,6 +56,30 @@ export async function ensureApprovedProductPublished(
       shopifyProductId: true,
       shopDomain: true,
       vendorStoreId: true,
+      complianceProfile: true,
+      vendorStore: {
+        include: {
+          returnAddresses: true,
+          seller: {
+            include: {
+              complianceProfile: true,
+              agreementAcceptances: true,
+              settlementControl: true,
+            },
+          },
+          vendorAuth: {
+            include: {
+              seller: {
+                include: {
+                  complianceProfile: true,
+                  agreementAcceptances: true,
+                  settlementControl: true,
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -79,6 +110,34 @@ export async function ensureApprovedProductPublished(
       reason: "missing_vendor_store_id",
       productId,
     });
+  }
+
+  if (isMarketplaceGovernanceGateEnabled(env)) {
+    const seller =
+      product.vendorStore?.seller || product.vendorStore?.vendorAuth?.seller || null;
+    const sellerForEvaluation = seller
+      ? {
+          ...seller,
+          vendorStore: product.vendorStore,
+        }
+      : null;
+    const sellerReadiness = evaluateSellerGovernanceReadiness(
+      sellerForEvaluation,
+      getSellerAgreementReadinessOptions(env),
+    );
+    const productReadiness = evaluateProductGovernanceReadiness(product);
+
+    if (!sellerReadiness.ready || !productReadiness.ready) {
+      throw new ProductPublicationError(
+        "Marketplace governance requirements are incomplete",
+        {
+          reason: "marketplace_governance_incomplete",
+          productId,
+          sellerReasons: sellerReadiness.reasons,
+          productReasons: productReadiness.reasons,
+        },
+      );
+    }
   }
 
   const collectionSync = await syncVendorCollectionByStoreIdImpl(

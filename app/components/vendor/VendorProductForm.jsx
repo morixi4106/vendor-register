@@ -45,6 +45,7 @@ export default function VendorProductForm({
     initialValues.internationalShippingMethod ||
     PRODUCT_SHIPPING_METHOD.UNCONFIGURED;
   const [shippingMethod, setShippingMethod] = useState(initialShippingMethod);
+  const compliance = initialValues.complianceProfile || {};
 
   useEffect(() => {
     setShippingMethod(initialShippingMethod);
@@ -156,6 +157,115 @@ export default function VendorProductForm({
               <div className="vendor-helper-text">
                 配送先国の可否や追加審査は、商品確認時に管理者が設定します。
               </div>
+            </div>
+
+            <div className="vendor-form__field">
+              <h3 className="vendor-section-title" style={{ fontSize: "18px" }}>
+                販売・通関情報
+              </h3>
+              <div className="vendor-helper-text">
+                購入者への表示、税関申告、商品審査に使います。注文後に商品情報が変わっても、注文時点の内容は保存されます。
+              </div>
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="conditionStatus">
+                商品状態
+              </label>
+              <select
+                className="vendor-form__select"
+                defaultValue={compliance.conditionStatus || "NEW"}
+                id="conditionStatus"
+                name="conditionStatus"
+                required
+              >
+                <option value="NEW">新品</option>
+                <option value="USED">中古品</option>
+              </select>
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="countryOfOriginCode">
+                原産国コード
+              </label>
+              <input
+                className="vendor-form__input"
+                defaultValue={compliance.countryOfOriginCode || "JP"}
+                id="countryOfOriginCode"
+                maxLength={2}
+                name="countryOfOriginCode"
+                placeholder="JP"
+                required
+                type="text"
+              />
+              <div className="vendor-helper-text">ISO 2文字コードで入力してください。</div>
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="hsCode">
+                HSコード
+              </label>
+              <input
+                className="vendor-form__input"
+                defaultValue={compliance.hsCode || ""}
+                id="hsCode"
+                inputMode="numeric"
+                name="hsCode"
+                placeholder="例: 330499"
+                type="text"
+              />
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="customsDescriptionEn">
+                税関向け英語品名
+              </label>
+              <input
+                className="vendor-form__input"
+                defaultValue={compliance.customsDescriptionEn || ""}
+                id="customsDescriptionEn"
+                name="customsDescriptionEn"
+                placeholder="例: Facial lotion"
+                required
+                type="text"
+              />
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="regulatoryCategory">
+                規制・許認可区分
+              </label>
+              <input
+                className="vendor-form__input"
+                defaultValue={compliance.regulatoryCategory || ""}
+                id="regulatoryCategory"
+                name="regulatoryCategory"
+                placeholder="例: 化粧品 / 一般雑貨 / 食品"
+                type="text"
+              />
+            </div>
+
+            <div className="vendor-form__field">
+              <label className="vendor-form__label">
+                <input
+                  defaultChecked={Boolean(compliance.authenticityConfirmedAt)}
+                  name="authenticityConfirmed"
+                  required
+                  type="checkbox"
+                  value="1"
+                />
+                正規品であり、表示内容が実物と一致することを確認しました
+              </label>
+              <label className="vendor-form__label" style={{ marginTop: "10px" }}>
+                <input
+                  defaultChecked={Boolean(compliance.ipRightsConfirmedAt)}
+                  name="ipRightsConfirmed"
+                  required
+                  type="checkbox"
+                  value="1"
+                />
+                販売に必要な知的財産権・許諾を有することを確認しました
+              </label>
             </div>
 
             <div className="vendor-form__field">

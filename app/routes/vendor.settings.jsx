@@ -36,11 +36,19 @@ export const loader = async ({ request }) => {
     "../services/vendorManagement.server"
   );
   const { vendor, store } = await requireVendorContext(request);
+  const { getVendorGovernanceSettings } = await import(
+    "../services/marketplaceGovernance.server.js"
+  );
   const url = new URL(request.url);
+  const governance = await getVendorGovernanceSettings({
+    vendorId: vendor.id,
+    vendorStoreId: store.id,
+  });
 
   return json({
     ...getVendorPublicContext(vendor, store),
     saved: url.searchParams.get("saved") === "1",
+    governance,
   });
 };
 
@@ -55,6 +63,80 @@ export const action = async ({ request }) => {
   const { vendor, store } = await requireVendorContext(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "save");
+
+  if (intent === "save_compliance_profile") {
+    const {
+      getVendorGovernanceSettings,
+      sellerComplianceProfileFromFormData,
+      upsertSellerComplianceProfile,
+    } = await import("../services/marketplaceGovernance.server.js");
+    const governance = await getVendorGovernanceSettings({
+      vendorId: vendor.id,
+      vendorStoreId: store.id,
+    });
+    if (!governance?.seller?.id) {
+      return json({ ok: false, formError: "出店者情報が見つかりません。" }, { status: 404 });
+    }
+    const values = sellerComplianceProfileFromFormData(formData);
+    if (
+      values.entityType === "UNSET" ||
+      !values.legalName ||
+      !values.countryCode ||
+      !values.address1 ||
+      !values.antisocialDeclarationAt ||
+      !values.shipFromConfirmedAt ||
+      !values.privacyNoticeAcceptedAt
+    ) {
+      return json(
+        { ok: false, formError: "法的情報と3つの確認事項をすべて入力してください。" },
+        { status: 400 },
+      );
+    }
+    await upsertSellerComplianceProfile({
+      sellerId: governance.seller.id,
+      values,
+    });
+    return redirect(appendVendorIdToPath("/vendor/settings?saved=1", vendor.id));
+  }
+
+  if (intent === "accept_seller_agreement") {
+    const {
+      getCurrentSellerAgreementDocumentHash,
+      getVendorGovernanceSettings,
+      recordSellerAgreementAcceptance,
+    } = await import("../services/marketplaceGovernance.server.js");
+    const governance = await getVendorGovernanceSettings({
+      vendorId: vendor.id,
+      vendorStoreId: store.id,
+    });
+    const documentHash = getCurrentSellerAgreementDocumentHash(process.env);
+    if (
+      !governance?.seller?.id ||
+      governance.agreementVersion === "UNCONFIGURED" ||
+      !governance.agreementUrl ||
+      !documentHash
+    ) {
+      return json(
+        { ok: false, formError: "出店者契約の本文、版、または文書ハッシュが未設定です。運営へ連絡してください。" },
+        { status: 503 },
+      );
+    }
+    if (formData.get("agreementConfirmed") !== "on") {
+      return json({ ok: false, formError: "契約内容への同意を確認してください。" }, { status: 400 });
+    }
+    await recordSellerAgreementAcceptance({
+      sellerId: governance.seller.id,
+      version: governance.agreementVersion,
+      documentHash,
+      acceptedBy: vendor.managementEmail,
+      source: "VENDOR_SETTINGS",
+      ipAddress:
+        request.headers.get("cf-connecting-ip") ||
+        request.headers.get("x-forwarded-for"),
+      userAgent: request.headers.get("user-agent"),
+    });
+    return redirect(appendVendorIdToPath("/vendor/settings?saved=1", vendor.id));
+  }
 
   if (intent !== "save") {
     return json(
@@ -121,7 +203,7 @@ export const action = async ({ request }) => {
 export default function VendorSettingsPage() {
   const actionData = useActionData();
   const navigation = useNavigation();
-  const { vendor, store, saved } = useLoaderData();
+  const { vendor, store, saved, governance } = useLoaderData();
   const monthlyReportPath = useVendorScopedPath("/vendor/reports/monthly");
   const isSaving =
     navigation.state !== "idle" && navigation.formMethod?.toLowerCase() === "post";
@@ -284,6 +366,95 @@ export default function VendorSettingsPage() {
         </div>
       </section>
 
+      <section className="vendor-card">
+        <h2 className="vendor-section-title">販売主体・事業者情報</h2>
+        <p className="vendor-section-subtitle">
+          購入者への表示、商品審査、返金や精算の責任判定に使います。一般の店舗住所を自動転用せず、内容を明示して申請してください。
+        </p>
+        <Form method="post" className="vendor-form">
+          <input type="hidden" name="intent" value="save_compliance_profile" />
+          <div className="vendor-form__grid">
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="entityType">事業形態</label>
+              <select
+                className="vendor-form__select"
+                defaultValue={governance?.seller?.complianceProfile?.entityType || "UNSET"}
+                id="entityType"
+                name="entityType"
+                required
+              >
+                <option value="UNSET" disabled>選択してください</option>
+                <option value="INDIVIDUAL">個人・個人事業</option>
+                <option value="CORPORATION">法人</option>
+              </select>
+            </div>
+            <GovernanceInput label="法的名称・氏名" name="legalName" required value={governance?.seller?.complianceProfile?.legalName} />
+            <GovernanceInput label="代表者名" name="representativeName" value={governance?.seller?.complianceProfile?.representativeName} />
+            <GovernanceInput label="郵便番号" name="postalCode" value={governance?.seller?.complianceProfile?.postalCode} />
+            <GovernanceInput label="国コード" maxLength={2} name="countryCode" required value={governance?.seller?.complianceProfile?.countryCode || "JP"} />
+            <GovernanceInput label="都道府県・州" name="region" value={governance?.seller?.complianceProfile?.region} />
+            <GovernanceInput label="市区町村" name="city" value={governance?.seller?.complianceProfile?.city} />
+            <GovernanceInput label="住所" name="address1" required value={governance?.seller?.complianceProfile?.address1} />
+            <GovernanceInput label="建物名・部屋番号" name="address2" value={governance?.seller?.complianceProfile?.address2} />
+            <GovernanceInput label="電話番号" name="phone" value={governance?.seller?.complianceProfile?.phone} />
+            <GovernanceInput label="適格請求書発行事業者番号" name="invoiceRegistrationNumber" value={governance?.seller?.complianceProfile?.invoiceRegistrationNumber} />
+            <div className="vendor-form__field">
+              <label className="vendor-form__label" htmlFor="permitsJson">許認可・届出</label>
+              <textarea className="vendor-form__textarea" defaultValue={governance?.seller?.complianceProfile?.permitsJson?.note || ""} id="permitsJson" name="permitsJson" rows={3} />
+            </div>
+            <div className="vendor-form__field">
+              <label className="vendor-form__label"><input defaultChecked={Boolean(governance?.seller?.complianceProfile?.antisocialDeclarationAt)} name="antisocialDeclarationConfirmed" required type="checkbox" /> 反社会的勢力に該当せず、関係を有しないことを申告します</label>
+              <label className="vendor-form__label"><input defaultChecked={Boolean(governance?.seller?.complianceProfile?.shipFromConfirmedAt)} name="shipFromConfirmed" required type="checkbox" /> 登録した発送元情報から実際に発送できることを確認しました</label>
+              <label className="vendor-form__label"><input defaultChecked={Boolean(governance?.seller?.complianceProfile?.privacyNoticeAcceptedAt)} name="privacyNoticeAccepted" required type="checkbox" /> 注文処理に必要な購入者情報だけを目的内で扱います</label>
+            </div>
+          </div>
+          <div className="vendor-form__actions">
+            <button className="vendor-shell__button vendor-shell__button--primary" type="submit">事業者情報を審査へ提出</button>
+          </div>
+        </Form>
+      </section>
+
+      <section className="vendor-card">
+        <h2 className="vendor-section-title">出店者契約</h2>
+        <p className="vendor-section-subtitle">
+          現在の規約版: {governance?.agreementVersion || "未設定"} / 状態: {governance?.readiness?.activeAgreement ? "同意済み" : "同意待ち"}
+        </p>
+        {governance?.agreementUrl ? (
+          <p>
+            <a
+              className="vendor-shell__button"
+              href={governance.agreementUrl}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              契約本文を確認する
+            </a>
+          </p>
+        ) : (
+          <p className="vendor-alert vendor-alert--warning">
+            契約本文を準備中です。設定が完了するまで同意操作はできません。
+          </p>
+        )}
+        {!governance?.readiness?.activeAgreement ? (
+          <Form method="post" className="vendor-form">
+            <input type="hidden" name="intent" value="accept_seller_agreement" />
+            <label className="vendor-form__label">
+              <input name="agreementConfirmed" required type="checkbox" />
+              現在の出店者契約、販売責任、返金・相殺、禁止商品、個人情報取扱いの条項に同意します
+            </label>
+            <div className="vendor-form__actions">
+              <button
+                className="vendor-shell__button vendor-shell__button--primary"
+                disabled={!governance?.agreementUrl || !governance?.agreementDocumentHashConfigured}
+                type="submit"
+              >
+                契約に同意する
+              </button>
+            </div>
+          </Form>
+        ) : null}
+      </section>
+
       <div className="vendor-grid">
         <section className="vendor-card">
           <h2 className="vendor-section-title">公開ストア連携</h2>
@@ -328,5 +499,22 @@ export default function VendorSettingsPage() {
         </div>
       </section>
     </VendorManagementShell>
+  );
+}
+
+function GovernanceInput({ label, name, value = "", required = false, maxLength }) {
+  return (
+    <div className="vendor-form__field">
+      <label className="vendor-form__label" htmlFor={name}>{label}</label>
+      <input
+        className="vendor-form__input"
+        defaultValue={value || ""}
+        id={name}
+        maxLength={maxLength}
+        name={name}
+        required={required}
+        type="text"
+      />
+    </div>
   );
 }

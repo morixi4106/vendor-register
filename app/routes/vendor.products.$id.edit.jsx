@@ -17,6 +17,10 @@ import {
 } from "../utils/productShippingProfile";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 import { syncAndRecordShopifyVariantWeight } from "../services/shopifyInventoryWeight.server";
+import {
+  productComplianceProfileFromFormData,
+  upsertProductComplianceProfile,
+} from "../services/marketplaceGovernance.server.js";
 
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
@@ -121,6 +125,7 @@ export const loader = async ({ request, params }) => {
 
   const product = await prisma.product.findUnique({
     where: { id: productId },
+    include: { complianceProfile: true },
   });
 
   if (!product || product.vendorStoreId !== store.id) {
@@ -158,6 +163,7 @@ export const action = async ({ request, params }) => {
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
+      include: { complianceProfile: true },
     });
 
     if (!product || product.vendorStoreId !== store.id) {
@@ -185,6 +191,7 @@ export const action = async ({ request, params }) => {
       variantCount:
         product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null),
     });
+    const complianceProfile = productComplianceProfileFromFormData(formData);
 
     if (!shippingProfile.ok) {
       return json({ ok: false, error: shippingProfile.error }, { status: 400 });
@@ -373,6 +380,11 @@ export const action = async ({ request, params }) => {
         data: nextProductData,
       });
     }
+
+    await upsertProductComplianceProfile({
+      productId,
+      values: complianceProfile,
+    });
 
     return redirect(appendVendorIdToPath("/vendor/products", vendor.id));
   } catch (error) {

@@ -14,6 +14,10 @@ import {
   validateStoredAirPacketProfile,
 } from "../utils/productShippingProfile.js";
 import { INTERNATIONAL_SERVICE_STATUS } from "./internationalShippingAvailability.server.js";
+import {
+  getMarketplaceGovernanceDashboard,
+  isMarketplaceGovernanceGateEnabled,
+} from "./marketplaceGovernance.server.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
 const STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES = new Set([
@@ -197,6 +201,116 @@ function createCheck({ id, category, status, title, detail, action }) {
     detail: detail || "",
     action: action || "",
   };
+}
+
+function buildMarketplaceGovernanceChecks({ governance, env }) {
+  const gateEnabled = isMarketplaceGovernanceGateEnabled(env);
+
+  if (!governance?.available) {
+    return [
+      createCheck({
+        id: "marketplace_governance_models",
+        category: "app",
+        status: gateEnabled ? "fail" : "warning",
+        title: "販売責任・契約管理",
+        detail: "販売責任の検査データを読み込めませんでした。",
+        action: "migration適用後に販売責任・案件管理と本番確認を再読み込みしてください。",
+      }),
+    ];
+  }
+
+  const productionSellers = governance.sellers.filter(
+    ({ seller }) =>
+      !seller.vendor?.vendorStore?.isTestStore && seller.status === "active",
+  );
+  const productionProducts = governance.products.filter(
+    ({ product }) => !product.vendorStore?.isTestStore,
+  );
+  const blockedSellers = productionSellers.filter(({ readiness }) => !readiness.ready);
+  const blockedProducts = productionProducts.filter(({ readiness }) => !readiness.ready);
+  const criticalCases = governance.cases.filter(
+    (entry) =>
+      entry.priority === "CRITICAL" && !["RESOLVED", "CLOSED"].includes(entry.status),
+  );
+  const payoutHolds = productionSellers.filter(
+    ({ seller }) => seller.settlementControl?.payoutHold,
+  );
+  const versionsConfigured = Boolean(governance.configuration?.ready);
+
+  return [
+    createCheck({
+      id: "marketplace_governance_versions",
+      category: "app",
+      status: versionsConfigured ? "pass" : gateEnabled ? "fail" : "warning",
+      title: "契約・購入規約の版管理",
+      detail: versionsConfigured
+        ? `出店者契約 ${governance.agreementVersion} / 購入規約 ${governance.buyerTermsVersion}`
+        : `契約設定が不足しています: ${(
+            governance.configuration?.reasons || []
+          ).join(", ")}`,
+      action: versionsConfigured
+        ? ""
+        : "契約本文と購入規約を公開し、版・URL・SHA-256をRenderへ設定してください。",
+    }),
+    createCheck({
+      id: "marketplace_governance_sellers",
+      category: "seller",
+      status:
+        blockedSellers.length === 0 ? "pass" : gateEnabled ? "fail" : "warning",
+      title: "販売中店舗の事業者・契約確認",
+      detail:
+        blockedSellers.length === 0
+          ? "販売中の本番店舗は販売責任の確認を完了しています。"
+          : `${blockedSellers.length}店舗で事業者情報、契約、返品先または販売保留の確認が必要です。`,
+      action:
+        blockedSellers.length === 0
+          ? ""
+          : "販売責任・案件管理で不足項目を確認してください。",
+    }),
+    createCheck({
+      id: "marketplace_governance_products",
+      category: "shopify",
+      status:
+        blockedProducts.length === 0 ? "pass" : gateEnabled ? "fail" : "warning",
+      title: "販売商品の責任・通関情報",
+      detail:
+        blockedProducts.length === 0
+          ? "本番商品の販売主体、状態、原産国、真正性情報を確認済みです。"
+          : `${blockedProducts.length}商品で販売主体、状態、原産国、通関情報または真正性確認が不足しています。`,
+      action:
+        blockedProducts.length === 0
+          ? ""
+          : "販売責任・案件管理で、Shopify直接登録商品を含めて審査してください。",
+    }),
+    createCheck({
+      id: "marketplace_governance_critical_cases",
+      category: "app",
+      status: criticalCases.length > 0 ? "fail" : "pass",
+      title: "重大な購入後案件",
+      detail:
+        criticalCases.length > 0
+          ? `未解決の重大案件が${criticalCases.length}件あります。`
+          : "未解決の重大案件はありません。",
+      action:
+        criticalCases.length > 0
+          ? "責任・証拠・購入者対応・精算処理を確定してください。"
+          : "",
+    }),
+    createCheck({
+      id: "marketplace_governance_payout_holds",
+      category: "payout",
+      status: payoutHolds.length > 0 ? "warning" : "pass",
+      title: "出金保留",
+      detail:
+        payoutHolds.length > 0
+          ? `${payoutHolds.length}店舗の出金が管理者判断で保留されています。`
+          : "管理者判断による出金保留はありません。",
+      action:
+        payoutHolds.length > 0
+          ? "保留理由と解除条件を案件記録と照合してください。"
+          : "",
+    }),
+  ];
 }
 
 function isStripeConnectProductionEnabled(env) {
@@ -2364,6 +2478,31 @@ export async function getProductionReadiness({
     prismaClient,
     now,
   });
+  let marketplaceGovernance;
+  const governanceModelsAvailable = Boolean(
+    prismaClient?.sellerComplianceProfile?.findMany &&
+      prismaClient?.productComplianceProfile?.findMany &&
+      prismaClient?.marketplaceOperationalCase?.findMany,
+  );
+  try {
+    if (!governanceModelsAvailable) {
+      marketplaceGovernance = {
+        available: false,
+        errorCode: "models_unavailable",
+      };
+    } else {
+    marketplaceGovernance = {
+      available: true,
+      ...(await getMarketplaceGovernanceDashboard({ prismaClient, env })),
+    };
+    }
+  } catch (error) {
+    console.error("marketplace governance readiness inspection failed:", error);
+    marketplaceGovernance = {
+      available: false,
+      errorCode: error?.code || "inspection_failed",
+    };
+  }
 
   const connectedAccountProbe = stripeConnectProductionEnabled
     ? await probeConnectedAccounts({
@@ -2384,6 +2523,10 @@ export async function getProductionReadiness({
     ...buildLaunchIntegrityChecks({ launchIntegrity, env }),
     ...buildShopifyProductSyncChecks(shopifyProductSync),
     ...buildProductShippingProfileChecks(productShippingProfiles),
+    ...buildMarketplaceGovernanceChecks({
+      governance: marketplaceGovernance,
+      env,
+    }),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
       sellerRows: marketplaceSellerRows,
@@ -2438,6 +2581,7 @@ export async function getProductionReadiness({
       probeLimit: STRIPE_ACCOUNT_PROBE_LIMIT,
     },
     integrity: launchIntegrity,
+    marketplaceGovernance,
     withdrawals: { ...withdrawalOperations, directReturns },
     checks,
   };

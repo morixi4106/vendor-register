@@ -49,6 +49,7 @@ model VendorStore {
   returnAddresses        VendorReturnAddress[]
   withdrawalContracts    WithdrawalContract[]
   withdrawalReturnGroups WithdrawalReturnGroup[]
+  governanceCases        MarketplaceOperationalCase[]
 }
 
 model Product {
@@ -99,9 +100,11 @@ model Product {
   createdAt                       DateTime  @default(now())
   updatedAt                       DateTime  @updatedAt
 
-  vendorStore    VendorStore            @relation(fields: [vendorStoreId], references: [id])
-  priceApplyLogs ProductPriceApplyLog[]
-  countryPolicy  ProductCountryPolicy?
+  vendorStore       VendorStore                  @relation(fields: [vendorStoreId], references: [id])
+  priceApplyLogs    ProductPriceApplyLog[]
+  countryPolicy     ProductCountryPolicy?
+  complianceProfile ProductComplianceProfile?
+  governanceCases   MarketplaceOperationalCase[]
 
   @@unique([shopDomain, shopifyProductId])
   @@unique([shopDomain, shopifyVariantId])
@@ -204,17 +207,23 @@ model Seller {
   createdAt                  DateTime  @default(now())
   updatedAt                  DateTime  @updatedAt
 
-  vendor              Vendor                     @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  vendorStore         VendorStore                @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
-  stripeAccount       SellerStripeAccount?
-  payoutRecipient     SellerPayoutRecipient?
-  statusHistory       SellerStatusHistory[]
-  verificationRecords SellerVerificationRecord[]
-  orders              Order[]
-  ledgerEntries       LedgerEntry[]
-  payoutRuns          PayoutRun[]
-  salesCreditOffsets  SalesCreditOffset[]
-  withdrawalContracts WithdrawalContract[]
+  vendor                Vendor                       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorStore           VendorStore                  @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
+  stripeAccount         SellerStripeAccount?
+  payoutRecipient       SellerPayoutRecipient?
+  statusHistory         SellerStatusHistory[]
+  verificationRecords   SellerVerificationRecord[]
+  orders                Order[]
+  ledgerEntries         LedgerEntry[]
+  payoutRuns            PayoutRun[]
+  salesCreditOffsets    SalesCreditOffset[]
+  withdrawalContracts   WithdrawalContract[]
+  complianceProfile     SellerComplianceProfile?
+  agreementAcceptances  SellerAgreementAcceptance[]
+  settlementControl     SellerSettlementControl?
+  governanceCases       MarketplaceOperationalCase[] @relation("OperationalCaseSeller")
+  responsibilityCases   MarketplaceOperationalCase[] @relation("OperationalCaseResponsibleSeller")
+  settlementAdjustments SellerSettlementAdjustment[]
 
   @@index([status, createdAt])
   @@index([sellerVerificationStatus, updatedAt])
@@ -249,6 +258,7 @@ model MarketplaceOrder {
   withdrawalRequests      WithdrawalRequest[]
   withdrawalLinePositions WithdrawalOrderLinePosition[]
   withdrawalContracts     WithdrawalContract[]
+  governanceCases         MarketplaceOperationalCase[]
 
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopifyOrderId])
@@ -257,35 +267,40 @@ model MarketplaceOrder {
 }
 
 model SellerOrder {
-  id                       String   @id @default(cuid())
-  marketplaceOrderId       String
-  shopifyOrderId           String
-  shopifyOrderName         String?
-  sellerId                 String
-  vendorStoreId            String?
-  sellerSubtotalAmount     Int      @default(0)
-  sellerDiscountAmount     Int      @default(0)
-  sellerRefundAmount       Int      @default(0)
-  sellerNetAmount          Int      @default(0)
-  sellerPayableAmount      Int      @default(0)
-  shippingQuotedAmount     Int      @default(0)
-  shippingChargedAmount    Int      @default(0)
-  shippingAllocationMethod String   @default("not_allocated")
-  currencyCode             String   @default("jpy")
-  paymentStatus            String   @default("paid")
-  fulfillmentStatus        String   @default("unfulfilled")
-  settlementStatus         String   @default("shadow")
-  riskStatus               String   @default("normal")
-  metadataJson             Json?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                          String   @id @default(cuid())
+  marketplaceOrderId          String
+  shopifyOrderId              String
+  shopifyOrderName            String?
+  sellerId                    String
+  vendorStoreId               String?
+  sellerSubtotalAmount        Int      @default(0)
+  sellerDiscountAmount        Int      @default(0)
+  sellerRefundAmount          Int      @default(0)
+  sellerNetAmount             Int      @default(0)
+  sellerPayableAmount         Int      @default(0)
+  shippingQuotedAmount        Int      @default(0)
+  shippingChargedAmount       Int      @default(0)
+  shippingAllocationMethod    String   @default("not_allocated")
+  currencyCode                String   @default("jpy")
+  paymentStatus               String   @default("paid")
+  fulfillmentStatus           String   @default("unfulfilled")
+  settlementStatus            String   @default("shadow")
+  riskStatus                  String   @default("normal")
+  governanceSnapshotVersion   String?
+  legalSellerSnapshotJson     Json?
+  sellerAgreementSnapshotJson Json?
+  buyerTermsVersion           String?
+  metadataJson                Json?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 
-  marketplaceOrder         MarketplaceOrder          @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
+  marketplaceOrder         MarketplaceOrder             @relation(fields: [marketplaceOrderId], references: [id], onDelete: Cascade)
   lines                    SellerOrderLine[]
   shipments                SellerShipment[]
   withdrawalContracts      WithdrawalContract[]
   withdrawalReturnGroups   WithdrawalReturnGroup[]
   withdrawalRequestedLines WithdrawalRequestedLine[]
+  governanceCases          MarketplaceOperationalCase[]
 
   @@unique([marketplaceOrderId, sellerId])
   @@index([sellerId, createdAt])
@@ -295,26 +310,29 @@ model SellerOrder {
 }
 
 model SellerOrderLine {
-  id                 String   @id @default(cuid())
-  sellerOrderId      String
-  shopifyLineItemId  String
-  shopifyProductId   String?
-  shopifyVariantId   String?
-  productId          String?
-  title              String?
-  sku                String?
-  quantity           Int      @default(0)
-  fulfilledQuantity  Int      @default(0)
-  refundedQuantity   Int      @default(0)
-  unitAmount         Int      @default(0)
-  lineSubtotalAmount Int      @default(0)
-  discountAmount     Int      @default(0)
-  taxAmount          Int      @default(0)
-  netAmount          Int      @default(0)
-  currencyCode       String   @default("jpy")
-  metadataJson       Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  sellerOrderId           String
+  shopifyLineItemId       String
+  shopifyProductId        String?
+  shopifyVariantId        String?
+  productId               String?
+  title                   String?
+  sku                     String?
+  quantity                Int      @default(0)
+  fulfilledQuantity       Int      @default(0)
+  refundedQuantity        Int      @default(0)
+  unitAmount              Int      @default(0)
+  lineSubtotalAmount      Int      @default(0)
+  discountAmount          Int      @default(0)
+  taxAmount               Int      @default(0)
+  netAmount               Int      @default(0)
+  currencyCode            String   @default("jpy")
+  legalSellerSnapshotJson Json?
+  complianceSnapshotJson  Json?
+  sellerAgreementVersion  String?
+  metadataJson            Json?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   sellerOrder              SellerOrder               @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
   shipmentLines            SellerShipmentLine[]
@@ -599,6 +617,199 @@ model LedgerEntry {
   @@index([orderId, occurredAt])
   @@index([stripeAccountId, occurredAt])
   @@map("ledger_entries")
+}
+
+model SellerComplianceProfile {
+  id                        String    @id @default(cuid())
+  sellerId                  String    @unique
+  entityType                String    @default("UNSET")
+  legalName                 String?
+  representativeName        String?
+  postalCode                String?
+  countryCode               String?
+  region                    String?
+  city                      String?
+  address1                  String?
+  address2                  String?
+  phone                     String?
+  invoiceRegistrationNumber String?
+  permitsJson               Json?
+  antisocialDeclarationAt   DateTime?
+  shipFromConfirmedAt       DateTime?
+  privacyNoticeAcceptedAt   DateTime?
+  reviewStatus              String    @default("DRAFT")
+  reviewedAt                DateTime?
+  reviewedBy                String?
+  reviewNotes               String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([reviewStatus, updatedAt])
+  @@map("seller_compliance_profiles")
+}
+
+model SellerAgreementAcceptance {
+  id               String    @id @default(cuid())
+  sellerId         String
+  agreementType    String    @default("SELLER_MASTER")
+  version          String
+  documentHash     String
+  acceptedBy       String
+  acceptedAt       DateTime  @default(now())
+  source           String    @default("ADMIN_RECORDED")
+  ipHash           String?
+  userAgentHash    String?
+  revokedAt        DateTime?
+  revokedBy        String?
+  revocationReason String?
+  metadataJson     Json?
+  createdAt        DateTime  @default(now())
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerId, agreementType, version])
+  @@index([agreementType, version, acceptedAt])
+  @@map("seller_agreement_acceptances")
+}
+
+model SellerSettlementControl {
+  id                   String    @id @default(cuid())
+  sellerId             String    @unique
+  salesHold            Boolean   @default(false)
+  payoutHold           Boolean   @default(false)
+  holdReason           String?
+  reserveAmount        Int       @default(0)
+  futureSetoffEnabled  Boolean   @default(false)
+  directInvoiceBalance Int       @default(0)
+  reviewedAt           DateTime?
+  reviewedBy           String?
+  metadataJson         Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([payoutHold, salesHold, updatedAt])
+  @@map("seller_settlement_controls")
+}
+
+model ProductComplianceProfile {
+  id                      String    @id @default(cuid())
+  productId               String    @unique
+  legalSellerType         String    @default("VENDOR")
+  conditionStatus         String    @default("UNSET")
+  countryOfOriginCode     String?
+  hsCode                  String?
+  customsDescriptionEn    String?
+  regulatoryCategory      String?
+  regulatoryMarksJson     Json?
+  ageRestriction          String?
+  authenticityConfirmedAt DateTime?
+  ipRightsConfirmedAt     DateTime?
+  approvalStatus          String    @default("DRAFT")
+  reviewedAt              DateTime?
+  reviewedBy              String?
+  reviewNotes             String?
+  metadataJson            Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([approvalStatus, updatedAt])
+  @@index([countryOfOriginCode, hsCode])
+  @@map("product_compliance_profiles")
+}
+
+model MarketplaceOperationalCase {
+  id                             String    @id @default(cuid())
+  caseNumber                     String    @unique
+  caseType                       String
+  status                         String    @default("OPEN")
+  priority                       String    @default("NORMAL")
+  marketplaceOrderId             String?
+  sellerOrderId                  String?
+  sellerId                       String?
+  responsibilitySellerId         String?
+  vendorStoreId                  String?
+  productId                      String?
+  currencyCode                   String    @default("jpy")
+  claimedAmount                  Int       @default(0)
+  confirmedSellerLiabilityAmount Int       @default(0)
+  platformLiabilityAmount        Int       @default(0)
+  responsibilityStatus           String    @default("UNDETERMINED")
+  summary                        String
+  detailsJson                    Json?
+  evidenceJson                   Json?
+  resolutionType                 String?
+  resolutionNotes                String?
+  dueAt                          DateTime?
+  assignedTo                     String?
+  openedBy                       String
+  resolvedAt                     DateTime?
+  createdAt                      DateTime  @default(now())
+  updatedAt                      DateTime  @updatedAt
+
+  marketplaceOrder      MarketplaceOrder?                 @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  sellerOrder           SellerOrder?                      @relation(fields: [sellerOrderId], references: [id], onDelete: SetNull)
+  seller                Seller?                           @relation("OperationalCaseSeller", fields: [sellerId], references: [id], onDelete: SetNull)
+  responsibilitySeller  Seller?                           @relation("OperationalCaseResponsibleSeller", fields: [responsibilitySellerId], references: [id], onDelete: SetNull)
+  vendorStore           VendorStore?                      @relation(fields: [vendorStoreId], references: [id], onDelete: SetNull)
+  product               Product?                          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  events                MarketplaceOperationalCaseEvent[]
+  settlementAdjustments SellerSettlementAdjustment[]
+
+  @@index([status, priority, updatedAt])
+  @@index([sellerId, status, createdAt])
+  @@index([marketplaceOrderId, createdAt])
+  @@index([sellerOrderId, createdAt])
+  @@map("marketplace_operational_cases")
+}
+
+model MarketplaceOperationalCaseEvent {
+  id           String   @id @default(cuid())
+  caseId       String
+  eventType    String
+  fromStatus   String?
+  toStatus     String?
+  actor        String
+  note         String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  case MarketplaceOperationalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@map("marketplace_operational_case_events")
+}
+
+model SellerSettlementAdjustment {
+  id             String    @id @default(cuid())
+  sellerId       String
+  caseId         String?
+  adjustmentType String
+  direction      String    @default("debit")
+  amount         Int
+  currencyCode   String    @default("jpy")
+  status         String    @default("PENDING")
+  reason         String
+  approvedAt     DateTime?
+  approvedBy     String?
+  appliedAt      DateTime?
+  appliedBy      String?
+  ledgerEntryId  String?   @unique
+  metadataJson   Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  seller Seller                      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  case   MarketplaceOperationalCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([sellerId, status, createdAt])
+  @@index([caseId, createdAt])
+  @@map("seller_settlement_adjustments")
 }
 
 model PayoutRun {

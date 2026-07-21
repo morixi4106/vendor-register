@@ -470,6 +470,12 @@ function createPayoutRunErrorMessage(reason) {
       return "Wise受取先が未登録または有効ではありません。";
     case "insufficient_ledger_balance":
       return "台帳上の出金可能残高が不足しています。";
+    case "insufficient_governed_balance":
+      return "留保額または未精算の直接請求を差し引くと、出金可能残高が不足します。";
+    case "seller_payout_hold":
+      return "管理者判断により、この店舗の出金を保留しています。";
+    case "seller_governance_required":
+      return "事業者情報、契約、返品先などの出金前確認が完了していません。";
     case "wise_payout_execution_failed":
       return "Wise API送金に失敗しました。";
     case "wise_transfer_missing":

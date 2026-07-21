@@ -15,6 +15,7 @@ import {
   parseProductShippingProfileFormData,
 } from "../utils/productShippingProfile";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
+import { productComplianceProfileFromFormData } from "../services/marketplaceGovernance.server.js";
 
 const ALLOWED_CURRENCIES = ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
 
@@ -131,6 +132,7 @@ export const action = async ({ request }) => {
     const euSaleRequested = false;
     const productEuStatus = "DISABLED";
     const shippingProfile = parseProductShippingProfileFormData(formData);
+    const complianceProfile = productComplianceProfileFromFormData(formData);
 
     if (!shippingProfile.ok) {
       return json({ ok: false, error: shippingProfile.error }, { status: 400 });
@@ -198,6 +200,9 @@ export const action = async ({ request }) => {
         priceSyncStatus: PRICE_SYNC_STATUS.CALCULATED_NOT_APPLIED,
         priceSyncError: null,
         ...buildConfirmedShippingProfileData(shippingProfile.data),
+        complianceProfile: {
+          create: complianceProfile,
+        },
       },
     });
 
