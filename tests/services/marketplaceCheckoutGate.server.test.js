@@ -70,6 +70,18 @@ test("resolveMarketplaceCheckoutPolicy only permits explicit platform-direct pro
     ),
     MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT,
   );
+  assert.equal(
+    resolveMarketplaceCheckoutPolicy(
+      createProduct({
+        vendorStore: {
+          id: "test-store",
+          isPlatformStore: false,
+          isTestStore: true,
+        },
+      }),
+    ),
+    MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+  );
 });
 
 test("governed products are removed from the Online Store publication", async () => {

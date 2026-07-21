@@ -180,7 +180,6 @@ export function resolveMarketplaceCheckoutPolicy(product) {
     .toUpperCase();
   const isPlatformDirect = Boolean(
     product?.vendorStore?.isPlatformStore ||
-      product?.vendorStore?.isTestStore ||
       (!product?.vendorStore && legalSellerType === "PLATFORM"),
   );
 
