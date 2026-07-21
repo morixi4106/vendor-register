@@ -1,7 +1,11 @@
 import { json, redirect } from "@remix-run/node";
 
-import { authenticate } from "../shopify.server";
 import { markPayoutRunManuallyPaid } from "../services/sellerPayments.server.js";
+import {
+  MARKETPLACE_OPERATOR_ROLES,
+  operatorAuditSnapshot,
+  requireMarketplaceOperator,
+} from "../utils/marketplaceOperator.server.js";
 
 export const loader = async () => {
   return json(
@@ -11,12 +15,15 @@ export const loader = async () => {
 };
 
 export const action = async ({ request, params }) => {
-  await authenticate.admin(request);
+  const { operator } = await requireMarketplaceOperator(request, {
+    role: MARKETPLACE_OPERATOR_ROLES.FINANCE_EXECUTOR,
+  });
 
   const formData = await request.formData();
   const result = await markPayoutRunManuallyPaid({
     payoutRunId: params.id,
-    executedBy: "admin",
+    executedBy: operator.actorKey,
+    executedByJson: operatorAuditSnapshot(operator),
     externalTransferId: formData.get("externalTransferId"),
     transferMemo: formData.get("transferMemo"),
   });

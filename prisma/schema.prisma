@@ -681,7 +681,7 @@ model SellerComplianceProfile {
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
-  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
   @@index([reviewStatus, updatedAt])
   @@map("seller_compliance_profiles")
@@ -709,7 +709,7 @@ model SellerAgreementAcceptance {
   metadataJson     Json?
   createdAt        DateTime  @default(now())
 
-  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
   @@index([sellerId, agreementType, version, acceptedAt])
   @@index([agreementType, version, acceptedAt])
@@ -731,7 +731,7 @@ model SellerSettlementControl {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
   @@index([payoutHold, salesHold, updatedAt])
   @@map("seller_settlement_controls")
@@ -787,6 +787,9 @@ model MarketplaceOperationalCase {
   evidenceJson                   Json?
   resolutionType                 String?
   resolutionNotes                String?
+  decisionReasonCode             String?
+  responsibilityConfirmedAt      DateTime?
+  responsibilityConfirmedBy      String?
   dueAt                          DateTime?
   assignedTo                     String?
   openedBy                       String
@@ -828,29 +831,33 @@ model MarketplaceOperationalCaseEvent {
 }
 
 model SellerSettlementAdjustment {
-  id             String    @id @default(cuid())
-  sellerId       String
-  caseId         String?
-  adjustmentType String
-  direction      String    @default("debit")
-  amount         Int
-  currencyCode   String    @default("jpy")
-  status         String    @default("PENDING")
-  reason         String
-  approvedAt     DateTime?
-  approvedBy     String?
-  appliedAt      DateTime?
-  appliedBy      String?
-  ledgerEntryId  String?   @unique
-  metadataJson   Json?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                   String    @id @default(cuid())
+  sellerId             String
+  caseId               String?
+  originalAdjustmentId String?
+  adjustmentType       String
+  direction            String    @default("debit")
+  amount               Int
+  currencyCode         String    @default("jpy")
+  status               String    @default("PENDING")
+  reason               String
+  approvedAt           DateTime?
+  approvedBy           String?
+  appliedAt            DateTime?
+  appliedBy            String?
+  ledgerEntryId        String?   @unique
+  metadataJson         Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  seller Seller                      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  case   MarketplaceOperationalCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  seller             Seller                       @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  case               MarketplaceOperationalCase?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  originalAdjustment SellerSettlementAdjustment?  @relation("SettlementAdjustmentRelease", fields: [originalAdjustmentId], references: [id], onDelete: Restrict)
+  releaseAdjustments SellerSettlementAdjustment[] @relation("SettlementAdjustmentRelease")
 
   @@index([sellerId, status, createdAt])
   @@index([caseId, createdAt])
+  @@index([originalAdjustmentId])
   @@map("seller_settlement_adjustments")
 }
 
@@ -880,16 +887,23 @@ model PayoutRun {
   wisePayloadJson           Json?
   externalTransferId        String?
   transferMemo              String?
+  createdBy                 String?
+  createdByJson             Json?
   approvedAt                DateTime?
   approvedBy                String?
+  approvedByJson            Json?
+  processingAt              DateTime?
+  processingBy              String?
+  processingByJson          Json?
   executedAt                DateTime?
   executedBy                String?
+  executedByJson            Json?
   failureCode               String?
   failureMessage            String?
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
-  seller                Seller                 @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller                Seller                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   sellerStripeAccount   SellerStripeAccount?   @relation(fields: [sellerStripeAccountId], references: [id], onDelete: SetNull)
   sellerPayoutRecipient SellerPayoutRecipient? @relation(fields: [sellerPayoutRecipientId], references: [id], onDelete: SetNull)
   ledgerEntries         LedgerEntry[]

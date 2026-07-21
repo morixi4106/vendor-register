@@ -240,6 +240,16 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
     (entry) =>
       entry.priority === "CRITICAL" && !["RESOLVED", "CLOSED"].includes(entry.status),
   );
+  const blockedProductCount = Number.isInteger(
+    governance.inspection?.blockedProductionProductCount,
+  )
+    ? governance.inspection.blockedProductionProductCount
+    : blockedProducts.length;
+  const unresolvedCriticalCaseCount = Number.isInteger(
+    governance.inspection?.criticalCaseCount,
+  )
+    ? governance.inspection.criticalCaseCount
+    : criticalCases.length;
   const payoutHolds = productionSellers.filter(
     ({ seller }) => seller.settlementControl?.payoutHold,
   );
@@ -384,28 +394,28 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
       id: "marketplace_governance_products",
       category: "shopify",
       status:
-        blockedProducts.length === 0 ? "pass" : gateEnabled ? "fail" : "warning",
+        blockedProductCount === 0 ? "pass" : gateEnabled ? "fail" : "warning",
       title: "販売商品の責任・通関情報",
       detail:
-        blockedProducts.length === 0
+        blockedProductCount === 0
           ? "本番商品の販売主体、状態、原産国、真正性情報を確認済みです。"
-          : `${blockedProducts.length}商品で販売主体、状態、原産国、通関情報または真正性確認が不足しています。`,
+          : `${blockedProductCount}商品で販売主体、状態、原産国、通関情報または真正性確認が不足しています。`,
       action:
-        blockedProducts.length === 0
+        blockedProductCount === 0
           ? ""
           : "販売責任・案件管理で、Shopify直接登録商品を含めて審査してください。",
     }),
     createCheck({
       id: "marketplace_governance_critical_cases",
       category: "app",
-      status: criticalCases.length > 0 ? "fail" : "pass",
+      status: unresolvedCriticalCaseCount > 0 ? "fail" : "pass",
       title: "重大な購入後案件",
       detail:
-        criticalCases.length > 0
-          ? `未解決の重大案件が${criticalCases.length}件あります。`
+        unresolvedCriticalCaseCount > 0
+          ? `未解決の重大案件が${unresolvedCriticalCaseCount}件あります。`
           : "未解決の重大案件はありません。",
       action:
-        criticalCases.length > 0
+        unresolvedCriticalCaseCount > 0
           ? "責任・証拠・購入者対応・精算処理を確定してください。"
           : "",
     }),

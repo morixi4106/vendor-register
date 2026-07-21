@@ -29,6 +29,7 @@ import {
   getCurrentBuyerTermsUrl,
   getCurrentBuyerTermsVersion,
   getCurrentSellerAgreementVersion,
+  getMarketplaceGovernanceConfiguration,
   getSellerAgreementReadinessOptions,
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
@@ -549,8 +550,15 @@ async function recordMarketplaceCheckoutEvidence(
     throw new Error('Marketplace checkout evidence storage is unavailable.');
   }
 
-  const sellerAgreementVersion = getCurrentSellerAgreementVersion(env);
-  const buyerTermsVersion = getCurrentBuyerTermsVersion(env);
+  const governanceConfiguration = getMarketplaceGovernanceConfiguration(env);
+  if (!governanceConfiguration.ready) {
+    throw new Error(
+      `Marketplace governance configuration is incomplete: ${governanceConfiguration.reasons.join(',')}`,
+    );
+  }
+
+  const sellerAgreementVersion = governanceConfiguration.sellerAgreementVersion;
+  const buyerTermsVersion = governanceConfiguration.buyerTermsVersion;
   const sellerSnapshots = new Map();
 
   for (const { product } of selectedProducts) {
@@ -585,16 +593,45 @@ async function recordMarketplaceCheckoutEvidence(
       checkoutReference,
       shopDomain,
       sellerAgreementVersion,
-      sellerAgreementHash: getCurrentSellerAgreementDocumentHash(env),
-      sellerAgreementUrl: getCurrentSellerAgreementUrl(env),
+      sellerAgreementHash: governanceConfiguration.sellerAgreementDocumentHash,
+      sellerAgreementUrl: governanceConfiguration.sellerAgreementUrl,
       buyerTermsVersion,
-      buyerTermsHash: getCurrentBuyerTermsDocumentHash(env),
-      buyerTermsUrl: getCurrentBuyerTermsUrl(env),
+      buyerTermsHash: governanceConfiguration.buyerTermsDocumentHash,
+      buyerTermsUrl: governanceConfiguration.buyerTermsUrl,
       buyerTermsLocale: normalizeText(env.BUYER_TERMS_LOCALE) || 'ja-JP',
       presentedAt,
       sellerSnapshotsJson: Array.from(sellerSnapshots.values()),
       productSnapshotsJson: productSnapshots,
     },
+  });
+}
+
+export async function expireStaleMarketplaceCheckoutEvidence(
+  {
+    olderThan = new Date(Date.now() - 24 * 60 * 60 * 1000),
+  } = {},
+  { prismaClient = prisma } = {},
+) {
+  if (!prismaClient?.marketplaceCheckoutEvidence?.updateMany) {
+    return { ok: false, reason: 'checkout_evidence_storage_unavailable' };
+  }
+  const result = await prismaClient.marketplaceCheckoutEvidence.updateMany({
+    where: { status: 'PREPARED', createdAt: { lt: olderThan } },
+    data: { status: 'EXPIRED' },
+  });
+  return { ok: true, expiredCount: result.count };
+}
+
+async function markMarketplaceCheckoutEvidenceFailed(
+  checkoutReference,
+  { prismaClient = prisma } = {},
+) {
+  if (!checkoutReference || !prismaClient?.marketplaceCheckoutEvidence?.updateMany) {
+    return null;
+  }
+  return prismaClient.marketplaceCheckoutEvidence.updateMany({
+    where: { checkoutReference, status: 'PREPARED' },
+    data: { status: 'FAILED' },
   });
 }
 
@@ -933,8 +970,15 @@ export async function recordBuyerWarningAcceptance({
   acceptance,
   orderId = null,
   request = null,
+  throwOnFailure = false,
 } = {}) {
-  if (!acceptance || !prismaClient?.buyerWarningAcceptance?.create) {
+  if (!acceptance) {
+    return null;
+  }
+  if (!prismaClient?.buyerWarningAcceptance?.create) {
+    if (throwOnFailure) {
+      throw new Error('Buyer warning acceptance storage is unavailable.');
+    }
     return null;
   }
 
@@ -963,6 +1007,7 @@ export async function recordBuyerWarningAcceptance({
     });
   } catch (error) {
     console.error('buyer warning acceptance record failed:', error);
+    if (throwOnFailure) throw error;
     return null;
   }
 }
@@ -1848,11 +1893,17 @@ async function buildServerTrustedCheckoutPayload({
   });
 
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
+  const governanceConfiguration = governanceGateEnabled
+    ? getMarketplaceGovernanceConfiguration(env)
+    : null;
   const shopifyPaymentsApproval = governanceGateEnabled
     ? getShopifyMarketplacePaymentsApproval(env)
     : null;
 
-  if (governanceGateEnabled && !shopifyPaymentsApproval?.ready) {
+  if (
+    governanceGateEnabled &&
+    (!governanceConfiguration?.ready || !shopifyPaymentsApproval?.ready)
+  ) {
     return {
       ok: false,
       error: CHECKOUT_UNAVAILABLE_MESSAGE,
@@ -2053,6 +2104,7 @@ async function buildServerTrustedCheckoutPayload({
 
   if (governanceGateEnabled) {
     try {
+      await expireStaleMarketplaceCheckoutEvidence({}, { prismaClient });
       await recordMarketplaceCheckoutEvidence(
         {
           checkoutReference,
@@ -2089,6 +2141,7 @@ async function buildServerTrustedCheckoutPayload({
   return {
     ok: true,
     salesCreditOffset: salesCredit.offset,
+    checkoutReference: governanceGateEnabled ? checkoutReference : null,
     payload: {
       orderLike: {
         lines: selectedProducts.map(({ product, quantity }) =>
@@ -2150,6 +2203,7 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
     ok: true,
     payload: trustedPayload.payload,
     salesCreditOffset: trustedPayload.salesCreditOffset || null,
+    checkoutReference: trustedPayload.checkoutReference || null,
   };
 }
 
@@ -2198,6 +2252,7 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
     ok: true,
     payload: trustedPayload.payload,
     salesCreditOffset: trustedPayload.salesCreditOffset || null,
+    checkoutReference: trustedPayload.checkoutReference || null,
   };
 }
 
@@ -2261,10 +2316,17 @@ export function createVendorStorefrontAction({
         acceptance: checkoutInput.payload.buyerWarningAcceptance,
         orderId: result?.draftOrder?.id,
         request,
+        throwOnFailure: isMarketplaceGovernanceGateEnabled(env),
       });
 
       return redirect(invoiceUrl);
     } catch (error) {
+      await markMarketplaceCheckoutEvidenceFailed(
+        checkoutInput.checkoutReference,
+        { prismaClient },
+      ).catch((evidenceError) => {
+        console.error('marketplace checkout evidence failure mark failed:', evidenceError);
+      });
       await releaseCheckoutSalesCreditOffset({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,
@@ -2320,6 +2382,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
         acceptance: checkoutInput.payload.buyerWarningAcceptance,
         orderId: result?.draftOrder?.id,
         request,
+        throwOnFailure: isMarketplaceGovernanceGateEnabled(env),
       });
 
       const responsePayload = { ...result };
@@ -2333,6 +2396,12 @@ export function createPublicVendorDraftOrderCheckoutAction({
 
       return json(responsePayload);
     } catch (error) {
+      await markMarketplaceCheckoutEvidenceFailed(
+        checkoutInput.checkoutReference,
+        { prismaClient },
+      ).catch((evidenceError) => {
+        console.error('marketplace checkout evidence failure mark failed:', evidenceError);
+      });
       await releaseCheckoutSalesCreditOffset({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,

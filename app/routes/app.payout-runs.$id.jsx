@@ -7,10 +7,21 @@ import {
   useNavigation,
 } from "@remix-run/react";
 
-import { authenticate } from "../shopify.server";
+import {
+  MARKETPLACE_OPERATOR_ROLES,
+  operatorAuditSnapshot,
+  requireMarketplaceOperator,
+} from "../utils/marketplaceOperator.server.js";
 
 export const loader = async ({ request, params }) => {
-  await authenticate.admin(request);
+  await requireMarketplaceOperator(request, {
+    roles: [
+      MARKETPLACE_OPERATOR_ROLES.ADMIN,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_EXECUTOR,
+    ],
+  });
   const { getPayoutRunDetail } =
     await import("../services/sellerPayments.server.js");
 
@@ -24,7 +35,14 @@ export const loader = async ({ request, params }) => {
 };
 
 export const action = async ({ request, params }) => {
-  await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+  const { operator } = await requireMarketplaceOperator(request, {
+    role:
+      intent === "approve"
+        ? MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER
+        : MARKETPLACE_OPERATOR_ROLES.FINANCE_EXECUTOR,
+  });
   const {
     approvePayoutRun,
     executeWisePayoutRun,
@@ -32,25 +50,30 @@ export const action = async ({ request, params }) => {
     syncWisePayoutRunStatus,
   } = await import("../services/sellerPayments.server.js");
 
-  const formData = await request.formData();
-  const intent = String(formData.get("intent") || "");
   const result =
     intent === "approve"
-      ? await approvePayoutRun({ payoutRunId: params.id, approvedBy: "admin" })
+      ? await approvePayoutRun({
+          payoutRunId: params.id,
+          approvedBy: operator.actorKey,
+          approvedByJson: operatorAuditSnapshot(operator),
+        })
       : intent === "executeWise"
         ? await executeWisePayoutRun({
             payoutRunId: params.id,
-            executedBy: "admin",
+            executedBy: operator.actorKey,
+            executedByJson: operatorAuditSnapshot(operator),
           })
         : intent === "syncWise"
           ? await syncWisePayoutRunStatus({
               payoutRunId: params.id,
-              executedBy: "admin",
+              executedBy: operator.actorKey,
+              executedByJson: operatorAuditSnapshot(operator),
             })
           : intent === "markPaid"
             ? await markPayoutRunManuallyPaid({
                 payoutRunId: params.id,
-                executedBy: "admin",
+                executedBy: operator.actorKey,
+                executedByJson: operatorAuditSnapshot(operator),
                 externalTransferId: formData.get("externalTransferId"),
                 transferMemo: formData.get("transferMemo"),
               })
@@ -83,7 +106,9 @@ export const action = async ({ request, params }) => {
             ? result.pending
               ? "Wise送金ステータスを更新しました。"
               : "Wise送金の完了を確認し、台帳へ反映しました。"
-            : "手動送金済みとして記録しました。",
+            : result.pending
+              ? "手動送金を処理中にしました。実際の振込後、送金IDを記録して完了してください。"
+              : "手動送金の完了を記録し、台帳へ反映しました。",
   });
 };
 
@@ -305,36 +330,45 @@ export default function AdminPayoutRunDetailPage() {
         {payoutRun.status === "approved" ? (
           <section className="payout-detail__card">
             <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
-              手動精算の記録
+              手動送金を開始
             </h2>
             <p className="payout-detail__subtitle">
-              銀行振込やWise管理画面などで実際の送金を完了してから、この出金予定を送金済みにしてください。
-              Wise APIに失敗した場合の手動フォールバックにも使えます。
+              最新残高を再確認してこの出金予定を確保します。この操作では台帳を支払済みにせず、実際の銀行振込も行いません。
             </p>
-            <Form method="post" className="payout-detail__form">
+            <Form method="post">
               <input type="hidden" name="intent" value="markPaid" />
-              <label>
-                送金ID / 振込受付番号
-                <input
-                  className="payout-detail__input"
-                  name="externalTransferId"
-                  placeholder="例: bank_20260516_001"
-                />
-              </label>
-              <label>
-                メモ
-                <textarea
-                  className="payout-detail__textarea"
-                  name="transferMemo"
-                  placeholder="例: 2026年5月分の手動振込"
-                />
-              </label>
               <button
                 type="submit"
                 className="payout-detail__button"
                 disabled={isMarkingPaid}
               >
-                {isMarkingPaid ? "記録中..." : "手動送金済みにする"}
+                {isMarkingPaid ? "確保中..." : "手動送金の処理を開始"}
+              </button>
+            </Form>
+          </section>
+        ) : null}
+
+        {payoutRun.status === "processing" &&
+        payoutRun.transferMethod === "manual_bank_transfer" ? (
+          <section className="payout-detail__card">
+            <h2 className="payout-detail__title" style={{ fontSize: "18px" }}>
+              手動送金を完了
+            </h2>
+            <p className="payout-detail__subtitle">
+              銀行側で実際の振込が完了した後、その証跡となる送金IDを入力してください。完了時に初めて台帳へ反映します。
+            </p>
+            <Form method="post" className="payout-detail__form">
+              <input type="hidden" name="intent" value="markPaid" />
+              <label>
+                送金ID / 振込受付番号
+                <input className="payout-detail__input" name="externalTransferId" required placeholder="例: bank_20260516_001" />
+              </label>
+              <label>
+                メモ
+                <textarea className="payout-detail__textarea" name="transferMemo" placeholder="例: 2026年5月分の手動振込" />
+              </label>
+              <button type="submit" className="payout-detail__button" disabled={isMarkingPaid}>
+                {isMarkingPaid ? "完了処理中..." : "送金完了を記録"}
               </button>
             </Form>
           </section>
@@ -458,6 +492,11 @@ function createPayoutRunErrorMessage(reason) {
       return "この出金予定は承認できない状態です。";
     case "payout_run_not_executable":
       return "この出金予定は送金済みにできない状態です。";
+    case "payout_creator_missing":
+    case "payout_audit_identity_missing":
+      return "操作担当者の監査情報が不足しています。この出金予定は実行せず、作り直してください。";
+    case "payout_maker_checker_required":
+      return "作成者と承認者を分ける必要があります。別の担当者が操作してください。";
     case "seller_payout_restricted":
       return "この出店者は制限中または禁止中のため、出金対象外です。";
     case "wise_payout_not_enabled":

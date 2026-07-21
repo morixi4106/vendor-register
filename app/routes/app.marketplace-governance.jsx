@@ -7,10 +7,20 @@ import {
   useNavigation,
 } from "@remix-run/react";
 
-import { authenticate } from "../shopify.server";
+import {
+  MARKETPLACE_OPERATOR_ROLES,
+  operatorAuditSnapshot,
+  requireMarketplaceOperator,
+} from "../utils/marketplaceOperator.server.js";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  await requireMarketplaceOperator(request, {
+    roles: [
+      MARKETPLACE_OPERATOR_ROLES.ADMIN,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
+    ],
+  });
   const { getMarketplaceGovernanceDashboard } = await import(
     "../services/marketplaceGovernance.server.js"
   );
@@ -18,9 +28,19 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+  const requiredRole =
+    intent === "create_adjustment"
+      ? MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER
+      : intent === "apply_adjustment"
+        ? MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER
+        : MARKETPLACE_OPERATOR_ROLES.ADMIN;
+  const { operator } = await requireMarketplaceOperator(request, {
+    role: requiredRole,
+  });
+  const actor = operator.actorKey;
+  const actorMetadata = operatorAuditSnapshot(operator);
   const governance = await import("../services/marketplaceGovernance.server.js");
   let result;
 
@@ -31,7 +51,7 @@ export const action = async ({ request }) => {
         values: governance.sellerComplianceProfileFromFormData(formData, {
           admin: true,
         }),
-        reviewedBy: "shopify_admin",
+        reviewedBy: actor,
       });
       break;
     case "record_agreement":
@@ -49,7 +69,11 @@ export const action = async ({ request }) => {
         sellerId: String(formData.get("sellerId") || ""),
         version: configuration.sellerAgreementVersion,
         documentHash: configuration.sellerAgreementDocumentHash,
-        acceptedBy: String(formData.get("acceptedBy") || "shopify_admin"),
+        acceptedBy: actor,
+        acceptedByUserId: operator.userId,
+        acceptedByEmail: operator.email,
+        ipAddress: request.headers.get("x-forwarded-for"),
+        userAgent: request.headers.get("user-agent"),
         source: "ADMIN_RECORDED",
         evidenceUrl: formData.get("evidenceUrl"),
         evidenceHash: formData.get("evidenceHash"),
@@ -59,14 +83,12 @@ export const action = async ({ request }) => {
     case "update_settlement_control":
       result = await governance.upsertSellerSettlementControl({
         sellerId: String(formData.get("sellerId") || ""),
-        reviewedBy: "shopify_admin",
+        reviewedBy: actor,
         values: {
           salesHold: formData.get("salesHold"),
           payoutHold: formData.get("payoutHold"),
           holdReason: formData.get("holdReason"),
-          reserveAmount: formData.get("reserveAmount"),
           futureSetoffEnabled: formData.get("futureSetoffEnabled") === "on",
-          directInvoiceBalance: formData.get("directInvoiceBalance"),
         },
       });
       break;
@@ -76,19 +98,19 @@ export const action = async ({ request }) => {
         values: governance.productComplianceProfileFromFormData(formData, {
           admin: true,
         }),
-        reviewedBy: "shopify_admin",
+        reviewedBy: actor,
       });
       break;
     case "create_case":
       result = await governance.createMarketplaceOperationalCase(
         Object.fromEntries(formData),
-        { actor: "shopify_admin" },
+        { actor, actorMetadata },
       );
       break;
     case "update_case":
       result = await governance.updateMarketplaceOperationalCase(
         Object.fromEntries(formData),
-        { actor: "shopify_admin" },
+        { actor, actorMetadata },
       );
       break;
     case "create_adjustment":
@@ -100,12 +122,16 @@ export const action = async ({ request }) => {
         amount: formData.get("amount"),
         currencyCode: formData.get("currencyCode"),
         reason: formData.get("reason"),
+        originalAdjustmentId: formData.get("originalAdjustmentId"),
+        createdBy: actor,
+        createdByJson: actorMetadata,
       });
       break;
     case "apply_adjustment":
       result = await governance.applySettlementAdjustment({
         adjustmentId: String(formData.get("adjustmentId") || ""),
-        actor: "shopify_admin",
+        actor,
+        actorMetadata,
       });
       break;
     default:
@@ -375,9 +401,10 @@ function SettlementControlForm({ seller, busy }) {
       <label className="governance-check"><input defaultChecked={Boolean(control.salesHold)} name="salesHold" type="checkbox" />販売保留</label>
       <label className="governance-check"><input defaultChecked={Boolean(control.payoutHold)} name="payoutHold" type="checkbox" />出金保留</label>
       <label className="governance-check"><input defaultChecked={Boolean(control.futureSetoffEnabled)} name="futureSetoffEnabled" type="checkbox" />将来売上との相殺を許可</label>
-      <Field label="留保額" name="reserveAmount" type="number" value={control.reserveAmount || 0} />
-      <Field label="直接請求残高" name="directInvoiceBalance" type="number" value={control.directInvoiceBalance || 0} />
+      <div className="governance-balance"><span>留保額</span><strong>{control.reserveAmount || 0} JPY</strong></div>
+      <div className="governance-balance"><span>直接請求残高</span><strong>{control.directInvoiceBalance || 0} JPY</strong></div>
       <Field label="保留理由" name="holdReason" value={control.holdReason} />
+      <p className="governance-note">金額は案件の調整記録からのみ変更できます。ここから直接上書きはできません。</p>
       <button disabled={busy} type="submit">精算統制を保存</button>
     </Form>
   );
@@ -436,7 +463,9 @@ function CaseUpdateForm({ entry, sellers, busy }) {
       <label>責任判定<select defaultValue={entry.responsibilityStatus} name="responsibilityStatus"><option>UNDETERMINED</option><option>SELLER</option><option>PLATFORM</option><option>SHARED</option><option>EXTERNAL</option></select></label>
       <Field label="店舗責任額" name="confirmedSellerLiabilityAmount" type="number" value={entry.confirmedSellerLiabilityAmount} />
       <Field label="運営責任額" name="platformLiabilityAmount" type="number" value={entry.platformLiabilityAmount} />
+      <Field label="判断理由コード" name="decisionReasonCode" value={entry.decisionReasonCode} placeholder="例: SELLER_FAULT_CONFIRMED" />
       <Field label="解決方法" name="resolutionType" value={entry.resolutionType} />
+      <label>証拠（JSON）<textarea defaultValue={entry.evidenceJson ? JSON.stringify(entry.evidenceJson, null, 2) : ""} name="evidenceJson" placeholder='{"documentUrl":"https://...","summary":"確認内容"}' /></label>
       <label>記録<textarea defaultValue={entry.resolutionNotes || ""} name="resolutionNotes" /></label>
       <button disabled={busy} type="submit">責任・状態を保存</button>
     </Form>
@@ -445,6 +474,10 @@ function CaseUpdateForm({ entry, sellers, busy }) {
 
 function AdjustmentForm({ entry, busy }) {
   const sellerId = entry.responsibilitySellerId || entry.sellerId || "";
+  const releasableReserves = (entry.settlementAdjustments || []).filter(
+    (adjustment) =>
+      adjustment.adjustmentType === "RESERVE" && adjustment.status === "APPLIED",
+  );
   return (
     <Form method="post" className="governance-form governance-form--compact">
       <input type="hidden" name="intent" value="create_adjustment" />
@@ -452,6 +485,7 @@ function AdjustmentForm({ entry, busy }) {
       <input type="hidden" name="sellerId" value={sellerId} />
       <label>調整種別<select name="adjustmentType"><option>SET_OFF</option><option>RESERVE</option><option>DIRECT_INVOICE</option><option>RELEASE</option></select></label>
       <label>方向<select name="direction"><option value="debit">店舗売上から控除</option><option value="credit">店舗へ加算</option></select></label>
+      <label>解除元の留保<select name="originalAdjustmentId"><option value="">留保解除以外は未選択</option>{releasableReserves.map((adjustment) => <option key={adjustment.id} value={adjustment.id}>{adjustment.amount} {String(adjustment.currencyCode || "jpy").toUpperCase()} / {adjustment.reason}</option>)}</select></label>
       <Field label="金額" name="amount" type="number" />
       <Field label="通貨" name="currencyCode" value={entry.currencyCode} />
       <Field label="根拠" name="reason" />
@@ -476,6 +510,7 @@ const styles = `
   .governance-band__heading{display:flex;justify-content:space-between;gap:16px;margin-bottom:20px}.governance-list{border-top:1px solid #e5e7eb}.governance-list--spaced{margin-top:22px}
   .governance-row{border-bottom:1px solid #e5e7eb}.governance-row summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,auto);gap:20px;padding:18px 4px;cursor:pointer}.governance-row__body{display:grid;gap:18px;padding:4px 4px 24px}.status-ready{color:#047857}.status-blocked{color:#b45309;text-align:right}
   .governance-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:18px;background:#f9fafb;border:1px solid #e5e7eb}.governance-form--compact,.governance-form--case{grid-template-columns:repeat(4,minmax(0,1fr))}.governance-form label{display:grid;gap:6px;font-size:13px;font-weight:700}.governance-form input,.governance-form select,.governance-form textarea{width:100%;box-sizing:border-box;min-height:42px;border:1px solid #cbd5e1;background:#fff;padding:9px 10px;font:inherit}.governance-form textarea{min-height:84px}.governance-form button,.governance-adjustment button{min-height:42px;border:0;background:#111827;color:#fff;padding:0 16px;font-weight:700;cursor:pointer}.governance-form button:disabled{opacity:.45;cursor:not-allowed}.governance-check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.governance-check input{width:18px!important;min-height:18px!important}
+  .governance-balance{display:grid;gap:6px;align-content:center;padding:9px 10px;border:1px solid #d1d5db;background:#fff}.governance-balance span{font-size:12px;color:#6b7280}.governance-balance strong{font-size:16px}.governance-note{align-self:center;font-size:12px!important;color:#6b7280!important}
   .governance-adjustment{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px;border:1px solid #d1d5db;background:#fff}.governance-guide ol{margin:16px 0 0;padding-left:22px;line-height:1.8}
   @media(max-width:900px){.governance-header{display:grid}.governance-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.governance-form,.governance-form--compact,.governance-form--case{grid-template-columns:1fr}.governance-row summary{grid-template-columns:1fr}.status-blocked{text-align:left}}
 `;

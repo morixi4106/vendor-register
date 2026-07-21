@@ -4278,10 +4278,7 @@ async function recordShopifyOrderSellerOrderShadow(
             },
           },
           update: {
-            sellerRefundAmount: sellerOrderData.sellerRefundAmount,
-            paymentStatus: sellerOrderData.paymentStatus,
-            fulfillmentStatus: sellerOrderData.fulfillmentStatus,
-            riskStatus: sellerOrderData.riskStatus,
+            shopifyOrderName: sellerOrderData.shopifyOrderName,
           },
           create: sellerOrderData,
         });
@@ -4306,10 +4303,7 @@ async function recordShopifyOrderSellerOrderShadow(
                 shopifyLineItemId: line.shopifyLineItemId,
               },
             },
-            update: {
-              fulfilledQuantity: governedLine.fulfilledQuantity,
-              refundedQuantity: governedLine.refundedQuantity,
-            },
+            update: {},
             create: {
               ...governedLine,
               sellerOrderId: sellerOrder.id,
@@ -8787,6 +8781,7 @@ export async function repairSellerNegativeLedgerBalance(
     sellerId,
     currencyCode = DEFAULT_ORDER_CURRENCY,
     repairedBy = "admin",
+    repairedByJson = null,
     reason = "negative_payoutable_ledger_balance",
     repairScope = LEDGER_REPAIR_SCOPE_NEGATIVE_PAYOUTABLE_BALANCE,
     shopifyOrderId = "",
@@ -8926,6 +8921,7 @@ export async function repairSellerNegativeLedgerBalance(
         metadataJson: {
           repairReason: normalizeText(reason),
           repairedBy: normalizeText(repairedBy),
+          repairedByJson: repairedByJson || null,
           previousPayoutableLedgerBalance: payoutableLedgerBalance,
           repairAmount,
           repairScope: normalizedRepairScope,
@@ -9010,6 +9006,13 @@ async function assertPayoutEligibleSeller(
     };
   }
 
+  if (normalizeUppercase(seller.complianceProfile?.countryCode) !== "JP") {
+    return {
+      ok: false,
+      reason: "unsupported_settlement_country",
+    };
+  }
+
   if (seller.settlementControl?.payoutHold) {
     return {
       ok: false,
@@ -9082,7 +9085,7 @@ const PAYOUT_ELIGIBILITY_SELLER_INCLUDE = {
 };
 
 export async function createPayoutRun(
-  { sellerId, amount, currencyCode },
+  { sellerId, amount, currencyCode, createdBy = "admin", createdByJson = null },
   { prismaClient = prisma, env = process.env } = {},
 ) {
   const normalizedAmount = toPositiveInteger(amount);
@@ -9095,6 +9098,9 @@ export async function createPayoutRun(
       ok: false,
       reason: "invalid_amount",
     };
+  }
+  if (normalizedCurrency !== "jpy") {
+    return { ok: false, reason: "unsupported_settlement_currency" };
   }
 
   try {
@@ -9161,6 +9167,8 @@ export async function createPayoutRun(
             status: "draft",
             transferMethod:
               payoutProvider === "wise" ? "wise_api" : "manual_bank_transfer",
+            createdBy: normalizeText(createdBy),
+            createdByJson,
           },
         });
 
@@ -9181,84 +9189,169 @@ export async function createPayoutRun(
 }
 
 export async function approvePayoutRun(
-  { payoutRunId, approvedBy = "admin" },
+  { payoutRunId, approvedBy = "admin", approvedByJson = null },
   { prismaClient = prisma, env = process.env } = {},
 ) {
-  const payoutRun = await prismaClient.payoutRun.findUnique({
-    where: { id: payoutRunId },
-    include: {
-      seller: {
-        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
+  try {
+    return await runSerializableTransaction(prismaClient, async (tx) => {
+      const payoutRun = await tx.payoutRun.findUnique({
+        where: { id: payoutRunId },
+        include: {
+          seller: { include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE },
+          sellerPayoutRecipient: true,
+        },
+      });
+      if (!payoutRun?.seller) return { ok: false, reason: "payout_run_not_found" };
+      if (payoutRun.status !== "draft") {
+        return { ok: false, reason: "payout_run_not_approvable" };
+      }
+      if (!payoutRun.createdBy) {
+        return { ok: false, reason: "payout_creator_missing" };
+      }
+      if (payoutRun.createdBy && payoutRun.createdBy === approvedBy) {
+        return { ok: false, reason: "payout_maker_checker_required" };
+      }
+      if (normalizeLowercase(payoutRun.currencyCode) !== "jpy") {
+        return { ok: false, reason: "unsupported_settlement_currency" };
+      }
+
+      const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+        prismaClient: tx,
+        env,
+        seller: payoutRun.seller,
+      });
+      if (!eligibility.ok) return eligibility;
+      const availability = await getSellerPayoutAvailability(
+        {
+          seller: eligibility.seller,
+          currencyCode: payoutRun.currencyCode,
+          excludePayoutRunId: payoutRun.id,
+        },
+        { prismaClient: tx },
+      );
+      if (availability.availableAmount < payoutRun.amount) {
+        return {
+          ok: false,
+          reason: "insufficient_available_balance_at_approval",
+          availableLedgerBalance: availability.ledgerBalance,
+          reservedPayoutAmount: availability.reservedPayoutAmount,
+          governedAvailableAmount: availability.availableAmount,
+          requestedAmount: payoutRun.amount,
+        };
+      }
+      const claimed = await tx.payoutRun.updateMany({
+        where: { id: payoutRunId, status: "draft" },
+        data: {
+          status: "approved",
+          approvedAt: new Date(),
+          approvedBy,
+          approvedByJson,
+        },
+      });
+      if (claimed.count !== 1) {
+        return { ok: false, reason: "payout_run_state_conflict" };
+      }
+      return {
+        ok: true,
+        payoutRun: await tx.payoutRun.findUnique({ where: { id: payoutRunId } }),
+      };
+    });
+  } catch (error) {
+    if (error?.code === "P2034") {
+      return { ok: false, reason: "payout_reservation_conflict" };
+    }
+    throw error;
+  }
+}
+
+async function claimPayoutRunForExecution(
+  { payoutRunId, executedBy, executedByJson, transferMethod },
+  { prismaClient = prisma, env = process.env } = {},
+) {
+  return runSerializableTransaction(prismaClient, async (tx) => {
+    const payoutRun = await tx.payoutRun.findUnique({
+      where: { id: payoutRunId },
+      include: {
+        seller: { include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE },
+        sellerPayoutRecipient: true,
       },
-      sellerPayoutRecipient: true,
-    },
-  });
-
-  if (!payoutRun?.seller) {
+    });
+    if (!payoutRun?.seller) return { ok: false, reason: "payout_run_not_found" };
+    if (payoutRun.status !== "approved") {
+      return { ok: false, reason: "payout_run_not_executable" };
+    }
+    if (!payoutRun.createdBy || !payoutRun.approvedBy) {
+      return { ok: false, reason: "payout_audit_identity_missing" };
+    }
+    if (payoutRun.createdBy === payoutRun.approvedBy) {
+      return { ok: false, reason: "payout_maker_checker_required" };
+    }
+    if (payoutRun.createdBy && payoutRun.createdBy === executedBy) {
+      return { ok: false, reason: "payout_maker_checker_required" };
+    }
+    if (normalizeLowercase(payoutRun.currencyCode) !== "jpy") {
+      return { ok: false, reason: "unsupported_settlement_currency" };
+    }
+    const payoutRecipient =
+      payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
+    if (
+      transferMethod === "wise_api" &&
+      (!payoutRecipient ||
+        payoutRecipient.provider !== "wise" ||
+        payoutRecipient.status !== "active" ||
+        !payoutRecipient.wiseRecipientId)
+    ) {
+      return { ok: false, reason: "wise_recipient_missing" };
+    }
+    const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
+      prismaClient: tx,
+      env,
+      seller: payoutRun.seller,
+    });
+    if (!eligibility.ok) return eligibility;
+    const availability = await getSellerPayoutAvailability(
+      {
+        seller: eligibility.seller,
+        currencyCode: payoutRun.currencyCode,
+        excludePayoutRunId: payoutRun.id,
+      },
+      { prismaClient: tx },
+    );
+    if (availability.availableAmount < payoutRun.amount) {
+      return {
+        ok: false,
+        reason: "insufficient_available_balance_at_execution",
+        governedAvailableAmount: availability.availableAmount,
+        requestedAmount: payoutRun.amount,
+      };
+    }
+    const processingAt = new Date();
+    const claimed = await tx.payoutRun.updateMany({
+      where: { id: payoutRun.id, status: "approved" },
+      data: {
+        status: "processing",
+        processingAt,
+        processingBy: executedBy,
+        processingByJson: executedByJson,
+        transferMethod,
+      },
+    });
+    if (claimed.count !== 1) {
+      return { ok: false, reason: "payout_run_state_conflict" };
+    }
     return {
-      ok: false,
-      reason: "payout_run_not_found",
-    };
-  }
-
-  if (payoutRun.status !== "draft") {
-    return {
-      ok: false,
-      reason: "payout_run_not_approvable",
-    };
-  }
-
-  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
-    prismaClient,
-    env,
-    seller: payoutRun.seller,
-  });
-  if (!eligibility.ok) return eligibility;
-
-  const availability = await getSellerPayoutAvailability(
-    {
+      ok: true,
+      payoutRun: { ...payoutRun, status: "processing", processingAt, processingBy: executedBy },
       seller: eligibility.seller,
-      currencyCode: payoutRun.currencyCode,
-      excludePayoutRunId: payoutRun.id,
-    },
-    { prismaClient },
-  );
-  if (availability.availableAmount < payoutRun.amount) {
-    return {
-      ok: false,
-      reason: "insufficient_available_balance_at_approval",
-      availableLedgerBalance: availability.ledgerBalance,
-      reservedPayoutAmount: availability.reservedPayoutAmount,
-      governedAvailableAmount: availability.availableAmount,
-      requestedAmount: payoutRun.amount,
     };
-  }
-
-  const claimed = await prismaClient.payoutRun.updateMany({
-    where: { id: payoutRunId, status: "draft" },
-    data: {
-      status: "approved",
-      approvedAt: new Date(),
-      approvedBy,
-    },
   });
-  if (claimed.count !== 1) {
-    return { ok: false, reason: "payout_run_state_conflict" };
-  }
-  const updated = await prismaClient.payoutRun.findUnique({
-    where: { id: payoutRunId },
-  });
-
-  return {
-    ok: true,
-    payoutRun: updated,
-  };
 }
 
 export async function markPayoutRunManuallyPaid(
   {
     payoutRunId,
     executedBy = "admin",
+    executedByJson = null,
     externalTransferId = null,
     transferMemo = null,
   },
@@ -9281,59 +9374,61 @@ export async function markPayoutRunManuallyPaid(
     };
   }
 
-  if (payoutRun.status !== "approved") {
+  if (!['approved', 'processing'].includes(payoutRun.status)) {
     return {
       ok: false,
       reason: "payout_run_not_executable",
     };
   }
-  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
-    prismaClient,
-    env,
-    seller: payoutRun.seller,
-  });
-  if (!eligibility.ok) return eligibility;
-  const availability = await getSellerPayoutAvailability(
-    {
-      seller: eligibility.seller,
-      currencyCode: payoutRun.currencyCode,
-      excludePayoutRunId: payoutRun.id,
-    },
-    { prismaClient },
-  );
-  if (availability.availableAmount < payoutRun.amount) {
-    return {
-      ok: false,
-      reason: "insufficient_available_balance_at_execution",
-      governedAvailableAmount: availability.availableAmount,
-      requestedAmount: payoutRun.amount,
-    };
+  if (payoutRun.status === 'approved') {
+    const claimed = await claimPayoutRunForExecution(
+      {
+        payoutRunId,
+        executedBy,
+        executedByJson,
+        transferMethod: 'manual_bank_transfer',
+      },
+      { prismaClient, env },
+    );
+    if (!claimed.ok) return claimed;
+    return { ...claimed, pending: true, requiresCompletion: true };
   }
 
   const now = new Date();
   const normalizedExternalTransferId = normalizeText(externalTransferId);
   const normalizedTransferMemo = normalizeText(transferMemo);
 
-  return prismaClient.$transaction(async (tx) => {
-    const claimed = await tx.payoutRun.updateMany({
-      where: { id: payoutRun.id, status: "approved" },
-      data: { status: "processing" },
-    });
-    if (claimed.count !== 1) {
-      return { ok: false, reason: "payout_run_state_conflict" };
-    }
-    const updated = await tx.payoutRun.update({
-      where: { id: payoutRun.id },
+  if (payoutRun.processingBy && payoutRun.processingBy !== executedBy) {
+    return { ok: false, reason: 'payout_processing_owner_mismatch' };
+  }
+  if (!normalizedExternalTransferId) {
+    return { ok: false, reason: 'external_transfer_id_required' };
+  }
+
+  return runSerializableTransaction(prismaClient, async (tx) => {
+    const completed = await tx.payoutRun.updateMany({
+      where: {
+        id: payoutRun.id,
+        status: "processing",
+        processingBy: payoutRun.processingBy || executedBy,
+      },
       data: {
         status: "executed",
         executedAt: now,
         executedBy,
+        executedByJson,
         transferMethod: "manual_bank_transfer",
         externalTransferId: normalizedExternalTransferId,
         transferMemo: normalizedTransferMemo,
         failureCode: null,
         failureMessage: null,
       },
+    });
+    if (completed.count !== 1) {
+      return { ok: false, reason: "payout_run_state_conflict" };
+    }
+    const updated = await tx.payoutRun.findUnique({
+      where: { id: payoutRun.id },
     });
 
     await createLedgerEntry(
@@ -9568,7 +9663,7 @@ async function applyWiseTransferStatus(
 }
 
 export async function executeWisePayoutRun(
-  { payoutRunId, executedBy = "admin" },
+  { payoutRunId, executedBy = "admin", executedByJson = null },
   { prismaClient = prisma, fetchImpl = fetch, env = process.env } = {},
 ) {
   if (getConfiguredSellerPayoutProvider(env) !== "wise") {
@@ -9595,38 +9690,27 @@ export async function executeWisePayoutRun(
     };
   }
 
-  const payoutRun = await prismaClient.payoutRun.findUnique({
-    where: { id: payoutRunId },
-    include: {
-      seller: {
-        include: PAYOUT_ELIGIBILITY_SELLER_INCLUDE,
+  let claimedExecution;
+  try {
+    claimedExecution = await claimPayoutRunForExecution(
+      {
+        payoutRunId,
+        executedBy,
+        executedByJson,
+        transferMethod: "wise_api",
       },
-      sellerPayoutRecipient: true,
-    },
-  });
-
-  if (!payoutRun?.seller) {
-    return {
-      ok: false,
-      reason: "payout_run_not_found",
-    };
+      { prismaClient, env },
+    );
+  } catch (error) {
+    if (error?.code === "P2034") {
+      return { ok: false, reason: "payout_reservation_conflict" };
+    }
+    throw error;
   }
-
-  if (payoutRun.status !== "approved") {
-    return {
-      ok: false,
-      reason: "payout_run_not_executable",
-    };
-  }
-  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
-    prismaClient,
-    env,
-    seller: payoutRun.seller,
-  });
-  if (!eligibility.ok) return eligibility;
-
+  if (!claimedExecution.ok) return claimedExecution;
+  const payoutRun = claimedExecution.payoutRun;
   const payoutRecipient =
-    payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
+    payoutRun.sellerPayoutRecipient || claimedExecution.seller.payoutRecipient;
 
   if (
     !payoutRecipient ||
@@ -9638,34 +9722,6 @@ export async function executeWisePayoutRun(
       ok: false,
       reason: "wise_recipient_missing",
     };
-  }
-
-  const availability = await getSellerPayoutAvailability(
-    {
-      seller: eligibility.seller,
-      currencyCode: payoutRun.currencyCode,
-      excludePayoutRunId: payoutRun.id,
-    },
-    { prismaClient },
-  );
-
-  if (availability.availableAmount < payoutRun.amount) {
-    return {
-      ok: false,
-      reason: "insufficient_available_balance_at_execution",
-      availableLedgerBalance: availability.ledgerBalance,
-      governedAvailableAmount: availability.availableAmount,
-      requestedAmount: payoutRun.amount,
-      currencyCode: payoutRun.currencyCode,
-    };
-  }
-
-  const claimed = await prismaClient.payoutRun.updateMany({
-    where: { id: payoutRun.id, status: "approved" },
-    data: { status: "processing" },
-  });
-  if (claimed.count !== 1) {
-    return { ok: false, reason: "payout_run_state_conflict" };
   }
 
   const customerTransactionId =
@@ -9756,6 +9812,7 @@ export async function executeWisePayoutRun(
         status: "processing",
         executedAt: new Date(),
         executedBy,
+        executedByJson,
         transferMethod: "wise_api",
         wiseTransferId: transferId,
         wiseTransferStatus: transferStatus,

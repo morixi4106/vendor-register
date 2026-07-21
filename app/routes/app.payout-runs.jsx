@@ -9,12 +9,23 @@ import {
   useNavigation,
 } from "@remix-run/react";
 
-import { authenticate } from "../shopify.server";
+import {
+  MARKETPLACE_OPERATOR_ROLES,
+  operatorAuditSnapshot,
+  requireMarketplaceOperator,
+} from "../utils/marketplaceOperator.server.js";
 
 const DEFAULT_CURRENCY = "jpy";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  await requireMarketplaceOperator(request, {
+    roles: [
+      MARKETPLACE_OPERATOR_ROLES.ADMIN,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
+      MARKETPLACE_OPERATOR_ROLES.FINANCE_EXECUTOR,
+    ],
+  });
   const {
     getSellerPayoutableLedgerBalance,
     listAdminSellerRows,
@@ -49,10 +60,14 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  await authenticate.admin(request);
-
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "create_payout");
+  const { operator } = await requireMarketplaceOperator(request, {
+    role:
+      intent === "repair_negative_balance"
+        ? MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER
+        : MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER,
+  });
 
   if (intent === "repair_negative_balance") {
     const confirm = String(formData.get("confirm") || "");
@@ -74,7 +89,8 @@ export const action = async ({ request }) => {
     const result = await repairSellerNegativeLedgerBalance({
       sellerId: String(formData.get("sellerId") || ""),
       currencyCode: String(formData.get("currencyCode") || DEFAULT_CURRENCY),
-      repairedBy: "admin",
+      repairedBy: operator.actorKey,
+      repairedByJson: operatorAuditSnapshot(operator),
       repairScope: String(formData.get("repairScope") || ""),
       shopifyOrderId: String(formData.get("shopifyOrderId") || ""),
       reason: String(formData.get("repairReason") || ""),
@@ -109,7 +125,8 @@ export const action = async ({ request }) => {
     sellerId: String(formData.get("sellerId") || ""),
     amount: formData.get("amount"),
     currencyCode: String(formData.get("currencyCode") || DEFAULT_CURRENCY),
-    createdBy: "admin",
+    createdBy: operator.actorKey,
+    createdByJson: operatorAuditSnapshot(operator),
   });
 
   if (!result.ok) {

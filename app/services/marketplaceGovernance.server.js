@@ -671,9 +671,7 @@ export async function upsertSellerSettlementControl(
     salesHold: normalizeBoolean(values.salesHold),
     payoutHold: normalizeBoolean(values.payoutHold),
     holdReason: normalizeText(values.holdReason),
-    reserveAmount: normalizeNonNegativeInteger(values.reserveAmount),
     futureSetoffEnabled: normalizeBoolean(values.futureSetoffEnabled),
-    directInvoiceBalance: normalizeNonNegativeInteger(values.directInvoiceBalance),
     reviewedAt: new Date(),
     reviewedBy,
   };
@@ -710,7 +708,7 @@ export async function getMarketplaceGovernanceDashboard(
 ) {
   const configuration = getMarketplaceGovernanceConfiguration(env);
   const agreementVersion = configuration.sellerAgreementVersion;
-  const [sellers, products, cases] = await Promise.all([
+  const [sellers, products, productReadinessCandidates, cases, criticalCaseCount] = await Promise.all([
     prismaClient.seller.findMany({
       orderBy: { updatedAt: "desc" },
       include: {
@@ -726,6 +724,16 @@ export async function getMarketplaceGovernanceDashboard(
       include: { complianceProfile: true, vendorStore: true },
       take: 200,
     }),
+    prismaClient.product.findMany({
+      where: { approvalStatus: { in: ["pending", "review", "approved"] } },
+      select: {
+        id: true,
+        approvalStatus: true,
+        shopifyProductId: true,
+        complianceProfile: true,
+        vendorStore: { select: { isTestStore: true } },
+      },
+    }),
     prismaClient.marketplaceOperationalCase.findMany({
       orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
       include: {
@@ -735,6 +743,12 @@ export async function getMarketplaceGovernanceDashboard(
         events: { orderBy: { createdAt: "desc" }, take: 5 },
       },
       take: 100,
+    }),
+    prismaClient.marketplaceOperationalCase.count({
+      where: {
+        priority: "CRITICAL",
+        status: { notIn: ["RESOLVED", "CLOSED"] },
+      },
     }),
   ]);
 
@@ -749,6 +763,12 @@ export async function getMarketplaceGovernanceDashboard(
     product,
     readiness: evaluateProductGovernanceReadiness(product),
   }));
+  const productionProductReadiness = productReadinessCandidates
+    .filter((product) => !product.vendorStore?.isTestStore)
+    .map((product) => evaluateProductGovernanceReadiness(product));
+  const blockedProductionProductCount = productionProductReadiness.filter(
+    (readiness) => !readiness.ready,
+  ).length;
 
   return {
     agreementVersion,
@@ -758,12 +778,19 @@ export async function getMarketplaceGovernanceDashboard(
     sellers: sellerRows,
     products: productRows,
     cases,
+    inspection: {
+      productionProductCount: productionProductReadiness.length,
+      blockedProductionProductCount,
+      criticalCaseCount,
+    },
     summary: {
       sellerCount: sellerRows.length,
       sellerReadyCount: sellerRows.filter((row) => row.readiness.ready).length,
       productCount: productRows.length,
       productReadyCount: productRows.filter((row) => row.readiness.ready).length,
-      openCaseCount: cases.filter((entry) => !["RESOLVED", "CLOSED"].includes(entry.status)).length,
+      openCaseCount: await prismaClient.marketplaceOperationalCase.count({
+        where: { status: { notIn: ["RESOLVED", "CLOSED"] } },
+      }),
     },
   };
 }
@@ -775,7 +802,7 @@ function createCaseNumber(now = new Date()) {
 
 export async function createMarketplaceOperationalCase(
   values,
-  { prismaClient = prisma, actor = "admin" } = {},
+  { prismaClient = prisma, actor = "admin", actorMetadata = null } = {},
 ) {
   const caseType = normalizeUpper(values.caseType);
   const summary = normalizeText(values.summary);
@@ -835,6 +862,7 @@ export async function createMarketplaceOperationalCase(
         toStatus: entry.status,
         actor,
         note: summary,
+        metadataJson: actorMetadata,
       },
     });
     return entry;
@@ -843,8 +871,8 @@ export async function createMarketplaceOperationalCase(
 }
 
 export async function updateMarketplaceOperationalCase(
-  { caseId, status, responsibilitySellerId, responsibilityStatus, confirmedSellerLiabilityAmount, platformLiabilityAmount, resolutionType, resolutionNotes },
-  { prismaClient = prisma, actor = "admin" } = {},
+  { caseId, status, responsibilitySellerId, responsibilityStatus, confirmedSellerLiabilityAmount, platformLiabilityAmount, resolutionType, resolutionNotes, evidenceJson, decisionReasonCode },
+  { prismaClient = prisma, actor = "admin", actorMetadata = null } = {},
 ) {
   const current = await prismaClient.marketplaceOperationalCase.findUnique({
     where: { id: caseId },
@@ -854,6 +882,45 @@ export async function updateMarketplaceOperationalCase(
   const nextStatus = normalizeUpper(status) || current.status;
   if (!OPERATIONAL_CASE_STATUSES.includes(nextStatus)) {
     return { ok: false, reason: "invalid_case_status" };
+  }
+  const nextResponsibilitySellerId =
+    normalizeText(responsibilitySellerId) || current.responsibilitySellerId;
+  const nextResponsibilityStatus =
+    normalizeUpper(responsibilityStatus) || current.responsibilityStatus;
+  const nextEvidenceJson = parseJsonObject(evidenceJson) || current.evidenceJson;
+  const nextResolutionNotes =
+    normalizeText(resolutionNotes) || current.resolutionNotes;
+  const nextDecisionReasonCode =
+    normalizeUpper(decisionReasonCode) || current.decisionReasonCode;
+  const isResponsibilityConfirmation =
+    nextStatus === "RESPONSIBILITY_CONFIRMED" ||
+    (current.responsibilityConfirmedAt &&
+      ["ACTION_REQUIRED", "RESOLVED", "CLOSED"].includes(nextStatus));
+
+  if (isResponsibilityConfirmation) {
+    if (
+      !nextResponsibilitySellerId ||
+      !["SELLER", "SHARED"].includes(nextResponsibilityStatus)
+    ) {
+      return { ok: false, reason: "responsibility_details_required" };
+    }
+    if (
+      !nextEvidenceJson ||
+      Object.keys(nextEvidenceJson).length === 0 ||
+      !nextResolutionNotes ||
+      !nextDecisionReasonCode
+    ) {
+      return { ok: false, reason: "responsibility_evidence_required" };
+    }
+
+    const sellerParticipates = await sellerParticipatesInOperationalCase(
+      current,
+      nextResponsibilitySellerId,
+      prismaClient,
+    );
+    if (!sellerParticipates) {
+      return { ok: false, reason: "responsibility_seller_not_related" };
+    }
   }
   const nextLiabilityAmount = normalizeNonNegativeInteger(
     confirmedSellerLiabilityAmount,
@@ -877,13 +944,20 @@ export async function updateMarketplaceOperationalCase(
       where: { id: caseId },
       data: {
         status: nextStatus,
-        responsibilitySellerId: normalizeText(responsibilitySellerId),
-        responsibilityStatus:
-          normalizeUpper(responsibilityStatus) || current.responsibilityStatus,
+        responsibilitySellerId: nextResponsibilitySellerId,
+        responsibilityStatus: nextResponsibilityStatus,
         confirmedSellerLiabilityAmount: nextLiabilityAmount,
         platformLiabilityAmount: normalizeNonNegativeInteger(platformLiabilityAmount),
         resolutionType: normalizeText(resolutionType),
-        resolutionNotes: normalizeText(resolutionNotes),
+        resolutionNotes: nextResolutionNotes,
+        evidenceJson: nextEvidenceJson,
+        decisionReasonCode: nextDecisionReasonCode,
+        responsibilityConfirmedAt: isResponsibilityConfirmation
+          ? current.responsibilityConfirmedAt || new Date()
+          : current.responsibilityConfirmedAt,
+        responsibilityConfirmedBy: isResponsibilityConfirmation
+          ? current.responsibilityConfirmedBy || actor
+          : current.responsibilityConfirmedBy,
         resolvedAt: ["RESOLVED", "CLOSED"].includes(nextStatus) ? new Date() : null,
       },
     });
@@ -894,7 +968,13 @@ export async function updateMarketplaceOperationalCase(
         fromStatus: current.status,
         toStatus: nextStatus,
         actor,
-        note: normalizeText(resolutionNotes),
+        note: nextResolutionNotes,
+        metadataJson: {
+          ...(actorMetadata || {}),
+          decisionReasonCode: nextDecisionReasonCode,
+          responsibilitySellerId: nextResponsibilitySellerId,
+          responsibilityStatus: nextResponsibilityStatus,
+        },
       },
     });
     return updated;
@@ -902,8 +982,43 @@ export async function updateMarketplaceOperationalCase(
   return { ok: true, case: next };
 }
 
+async function sellerParticipatesInOperationalCase(
+  caseEntry,
+  sellerId,
+  prismaClient,
+) {
+  if (caseEntry.sellerOrderId) {
+    const sellerOrder = await prismaClient.sellerOrder.findUnique({
+      where: { id: caseEntry.sellerOrderId },
+      select: { sellerId: true },
+    });
+    return sellerOrder?.sellerId === sellerId;
+  }
+  if (caseEntry.productId) {
+    const product = await prismaClient.product.findUnique({
+      where: { id: caseEntry.productId },
+      select: { vendorStore: { select: { seller: { select: { id: true } } } } },
+    });
+    return product?.vendorStore?.seller?.id === sellerId;
+  }
+  if (caseEntry.vendorStoreId) {
+    const seller = await prismaClient.seller.findUnique({
+      where: { vendorStoreId: caseEntry.vendorStoreId },
+      select: { id: true },
+    });
+    return seller?.id === sellerId;
+  }
+  if (caseEntry.marketplaceOrderId) {
+    const count = await prismaClient.sellerOrder.count({
+      where: { marketplaceOrderId: caseEntry.marketplaceOrderId, sellerId },
+    });
+    return count > 0;
+  }
+  return caseEntry.sellerId === sellerId;
+}
+
 export async function createSettlementAdjustment(
-  { sellerId, caseId = null, adjustmentType, direction = "debit", amount, currencyCode = "jpy", reason },
+  { sellerId, caseId = null, originalAdjustmentId = null, adjustmentType, direction = "debit", amount, currencyCode = "jpy", reason, createdBy = "admin", createdByJson = null },
   { prismaClient = prisma } = {},
 ) {
   const normalizedType = normalizeUpper(adjustmentType);
@@ -911,18 +1026,29 @@ export async function createSettlementAdjustment(
   const normalizedReason = normalizeText(reason);
   const normalizedDirection = normalizeLower(direction) === "credit" ? "credit" : "debit";
   const normalizedCaseId = normalizeText(caseId);
+  const normalizedOriginalAdjustmentId = normalizeText(originalAdjustmentId);
+  const normalizedCurrency = normalizeLower(currencyCode) || "jpy";
   if (!SETTLEMENT_ADJUSTMENT_TYPES.includes(normalizedType) || !normalizedAmount || !normalizedReason) {
     return { ok: false, reason: "invalid_adjustment" };
   }
   if (normalizedType === "SET_OFF" && normalizedDirection !== "debit") {
     return { ok: false, reason: "invalid_adjustment_direction" };
   }
+  if (normalizedCurrency !== "jpy") {
+    return { ok: false, reason: "unsupported_settlement_currency" };
+  }
+  if (!normalizedCaseId) {
+    return { ok: false, reason: "case_required" };
+  }
   const adjustment = await prismaClient.$transaction(async (tx) => {
     const seller = await tx.seller.findUnique({
       where: { id: sellerId },
-      include: { settlementControl: true },
+      include: { settlementControl: true, complianceProfile: true },
     });
     if (!seller) return { error: "seller_not_found" };
+    if (normalizeUpper(seller.complianceProfile?.countryCode) !== "JP") {
+      return { error: "unsupported_settlement_country" };
+    }
 
     const caseEntry = normalizedCaseId
       ? await tx.marketplaceOperationalCase.findUnique({
@@ -931,6 +1057,9 @@ export async function createSettlementAdjustment(
         })
       : null;
     if (normalizedCaseId && !caseEntry) return { error: "case_not_found" };
+    if (caseEntry && normalizeLower(caseEntry.currencyCode) !== normalizedCurrency) {
+      return { error: "case_currency_mismatch" };
+    }
 
     if (
       normalizedDirection === "debit" &&
@@ -974,19 +1103,55 @@ export async function createSettlementAdjustment(
       return { error: "future_setoff_not_authorized" };
     }
 
-    if (["RESERVE", "RELEASE"].includes(normalizedType) && !normalizedCaseId) {
-      return { error: "case_required" };
+    if (normalizedType === "RESERVE" && normalizedOriginalAdjustmentId) {
+      return { error: "original_adjustment_not_allowed" };
+    }
+    if (normalizedType === "RELEASE") {
+      if (!normalizedOriginalAdjustmentId) {
+        return { error: "original_reserve_required" };
+      }
+      const original = await tx.sellerSettlementAdjustment.findUnique({
+        where: { id: normalizedOriginalAdjustmentId },
+        include: { releaseAdjustments: true },
+      });
+      if (
+        !original ||
+        original.adjustmentType !== "RESERVE" ||
+        original.status !== "APPLIED" ||
+        original.sellerId !== sellerId ||
+        original.caseId !== normalizedCaseId ||
+        normalizeLower(original.currencyCode) !== normalizedCurrency
+      ) {
+        return { error: "original_reserve_invalid" };
+      }
+      const releasedAmount = asArray(original.releaseAdjustments)
+        .filter((entry) => ["PENDING", "APPROVED", "APPLYING", "APPLIED"].includes(entry.status))
+        .reduce((total, entry) => total + normalizeNonNegativeInteger(entry.amount), 0);
+      if (releasedAmount + normalizedAmount > original.amount) {
+        return { error: "reserve_release_amount_exceeded" };
+      }
     }
 
     return tx.sellerSettlementAdjustment.create({
       data: {
         sellerId,
         caseId: normalizedCaseId,
+        originalAdjustmentId:
+          normalizedType === "RELEASE" ? normalizedOriginalAdjustmentId : null,
         adjustmentType: normalizedType,
-        direction: normalizedDirection,
+        direction:
+          normalizedType === "RELEASE"
+            ? "credit"
+            : normalizedType === "RESERVE"
+              ? "debit"
+              : normalizedDirection,
         amount: normalizedAmount,
-        currencyCode: normalizeLower(currencyCode) || "jpy",
+        currencyCode: normalizedCurrency,
         reason: normalizedReason,
+        metadataJson: {
+          createdBy: normalizeText(createdBy),
+          createdByJson,
+        },
       },
     });
   });
@@ -995,7 +1160,7 @@ export async function createSettlementAdjustment(
 }
 
 export async function applySettlementAdjustment(
-  { adjustmentId, actor = "admin" },
+  { adjustmentId, actor = "admin", actorMetadata = null },
   { prismaClient = prisma, env = process.env } = {},
 ) {
   return prismaClient.$transaction(async (tx) => {
@@ -1006,6 +1171,19 @@ export async function applySettlementAdjustment(
     if (!adjustment) return { ok: false, reason: "adjustment_not_found" };
     if (adjustment.status === "APPLIED") {
       return { ok: true, unchanged: true, adjustment };
+    }
+    const adjustmentCreator = normalizeText(
+      adjustment.metadataJson?.createdBy ||
+        adjustment.metadataJson?.createdByJson?.actorKey,
+    );
+    if (adjustmentCreator && adjustmentCreator === actor) {
+      return { ok: false, reason: "adjustment_maker_checker_required" };
+    }
+    if (
+      normalizeLower(adjustment.currencyCode) !== "jpy" ||
+      normalizeUpper(adjustment.seller?.complianceProfile?.countryCode) !== "JP"
+    ) {
+      return { ok: false, reason: "unsupported_settlement_currency" };
     }
     if (!["PENDING", "APPROVED"].includes(adjustment.status)) {
       return { ok: false, reason: "adjustment_not_applicable" };
@@ -1020,6 +1198,34 @@ export async function applySettlementAdjustment(
         reason: "seller_settlement_disabled",
         settlementReasons: settlementReadiness.reasons,
       };
+    }
+    if (adjustment.adjustmentType === "RELEASE") {
+      const original = adjustment.originalAdjustmentId
+        ? await tx.sellerSettlementAdjustment.findUnique({
+            where: { id: adjustment.originalAdjustmentId },
+            include: { releaseAdjustments: true },
+          })
+        : null;
+      if (
+        !original ||
+        original.adjustmentType !== "RESERVE" ||
+        original.status !== "APPLIED" ||
+        original.sellerId !== adjustment.sellerId ||
+        original.caseId !== adjustment.caseId ||
+        normalizeLower(original.currencyCode) !== normalizeLower(adjustment.currencyCode)
+      ) {
+        return { ok: false, reason: "original_reserve_invalid" };
+      }
+      const otherReleasedAmount = asArray(original.releaseAdjustments)
+        .filter(
+          (entry) =>
+            entry.id !== adjustment.id &&
+            ["APPROVED", "APPLYING", "APPLIED"].includes(entry.status),
+        )
+        .reduce((total, entry) => total + normalizeNonNegativeInteger(entry.amount), 0);
+      if (otherReleasedAmount + adjustment.amount > original.amount) {
+        return { ok: false, reason: "reserve_release_amount_exceeded" };
+      }
     }
     if (
       adjustment.direction === "debit" &&
@@ -1105,6 +1311,7 @@ export async function applySettlementAdjustment(
             caseId: adjustment.caseId,
             adjustmentType: adjustment.adjustmentType,
             appliedBy: actor,
+            actorMetadata,
           },
           occurredAt: new Date(),
         },
@@ -1172,6 +1379,7 @@ export async function applySettlementAdjustment(
           actor,
           note: `${adjustment.adjustmentType}: ${adjustment.amount} ${adjustment.currencyCode}`,
           metadataJson: {
+            ...(actorMetadata || {}),
             adjustmentId: adjustment.id,
             ledgerEntryId: ledgerEntry?.id || null,
             reserveAmount: controlChange?.reserveAmount ?? null,

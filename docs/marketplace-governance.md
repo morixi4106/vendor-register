@@ -23,6 +23,10 @@ CROSS_BORDER_SETTLEMENT_LEGAL_APPROVAL_REFERENCE=
 SELLER_DISCLOSURE_PROCEDURE_APPROVAL_REFERENCE=
 MARKETPLACE_TAX_INVOICE_POLICY_APPROVAL_REFERENCE=
 PRIVACY_HASH_SECRET=<32文字以上の乱数>
+MARKETPLACE_ADMIN_EMAILS=owner@example.com
+FINANCE_PREPARER_EMAILS=preparer@example.com
+FINANCE_APPROVER_EMAILS=approver@example.com
+FINANCE_EXECUTOR_EMAILS=executor@example.com
 ```
 
 - 初回デプロイ時は `MARKETPLACE_GOVERNANCE_GATE_ENABLED=false` のままにします。
@@ -30,6 +34,8 @@ PRIVACY_HASH_SECRET=<32文字以上の乱数>
 - 文書ハッシュは契約本文から計算した64桁のSHA-256です。秘密値ではありません。
 - Shopifyの書面回答、税務方針及び開示手順の参照値には、社内で保存したメール・PDF・議事録等の識別子だけを設定し、秘密資料そのものをPublic repositoryへ置きません。
 - 契約本文を変更するときは版とハッシュを更新し、出店者から改めて同意を取得します。
+- 担当者メールはShopify Adminのassociated userと一致させます。複数指定はカンマ区切りです。
+- `ADMIN_EMAIL` と `MARKETPLACE_ADMIN_EMAILS` の担当者は全ロールを操作できますが、同一人物による出金予定の作成と承認はサーバー側で拒否されます。
 
 ## 決済・精算の開始条件
 
@@ -58,6 +64,14 @@ PRIVACY_HASH_SECRET=<32文字以上の乱数>
 - `futureSetoffEnabled`: 責任確定後の将来売上との相殺について、契約上の根拠を確認済みであることを示します。
 
 案件を作成しただけでは台帳を変更しません。責任額と根拠を確定し、管理者が個別の精算調整を適用したときだけ台帳へ記録します。負担額は確定した店舗責任額を超えられません。
+
+### 財務操作の分離
+
+- `FINANCE_PREPARER`: 出金予定と精算調整を作成します。
+- `FINANCE_APPROVER`: 出金予定と精算調整を承認し、台帳不整合の補正を実行します。
+- `FINANCE_EXECUTOR`: 承認済みの出金予定を実送金へ進めます。
+- 送金は「承認済みから処理中への確保」と「外部送金IDを伴う完了記録」の二段階です。
+- 作成者情報がない旧出金予定は承認できません。削除や流用をせず、内容を確認して新しく作り直します。
 
 ## 注文スナップショット
 

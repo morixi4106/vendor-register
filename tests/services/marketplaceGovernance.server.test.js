@@ -341,6 +341,7 @@ test("seller set-off requires confirmed responsibility and explicit authorizatio
         return {
           id: "seller_1",
           settlementControl: { futureSetoffEnabled: false },
+          complianceProfile: { countryCode: "JP" },
         };
       },
     },
@@ -352,6 +353,7 @@ test("seller set-off requires confirmed responsibility and explicit authorizatio
           responsibilitySellerId: "seller_1",
           responsibilityStatus: "SELLER",
           confirmedSellerLiabilityAmount: 1_000,
+          currencyCode: "jpy",
           settlementAdjustments: [],
         };
       },
@@ -388,6 +390,7 @@ test("seller debit adjustments cannot exceed the confirmed liability", async () 
         return {
           id: "seller_1",
           settlementControl: { futureSetoffEnabled: true },
+          complianceProfile: { countryCode: "JP" },
         };
       },
     },
@@ -399,6 +402,7 @@ test("seller debit adjustments cannot exceed the confirmed liability", async () 
           responsibilitySellerId: "seller_1",
           responsibilityStatus: "SELLER",
           confirmedSellerLiabilityAmount: 1_000,
+          currencyCode: "jpy",
           settlementAdjustments: [
             {
               adjustmentType: "DIRECT_INVOICE",
@@ -439,8 +443,13 @@ test("case liability cannot be lowered below committed adjustments", async () =>
       async findUnique() {
         return {
           id: "case_1",
+          sellerId: "seller_1",
           status: "RESPONSIBILITY_CONFIRMED",
           responsibilityStatus: "SELLER",
+          responsibilitySellerId: "seller_1",
+          evidenceJson: { inspectionReportId: "inspection_1" },
+          resolutionNotes: "Evidence reviewed and seller responsibility confirmed.",
+          decisionReasonCode: "SELLER_CAUSED_DAMAGE",
           settlementAdjustments: [
             {
               adjustmentType: "SET_OFF",
@@ -583,5 +592,30 @@ test("an applied set-off is idempotent", async () => {
     ok: true,
     unchanged: true,
     adjustment,
+  });
+});
+
+test("a settlement adjustment cannot be applied by its creator", async () => {
+  const tx = {
+    sellerSettlementAdjustment: {
+      async findUnique() {
+        return {
+          id: "adjustment_1",
+          status: "PENDING",
+          metadataJson: { createdBy: "finance@example.com" },
+          seller: { complianceProfile: { countryCode: "JP" } },
+        };
+      },
+    },
+  };
+
+  const result = await applySettlementAdjustment(
+    { adjustmentId: "adjustment_1", actor: "finance@example.com" },
+    { prismaClient: transactionClient(tx) },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "adjustment_maker_checker_required",
   });
 });

@@ -2507,7 +2507,26 @@ test("processShopifyOrderPaidSettlement retries a missing shadow write for dupli
     prismaClient: fakePrisma,
     env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
   });
+  const existingSellerOrder = Array.from(state.sellerOrders.values())[0];
+  const existingSellerOrderLine = Array.from(state.sellerOrderLines.values())[0];
+  Object.assign(existingSellerOrder, {
+    sellerRefundAmount: 300,
+    paymentStatus: "partially_refunded",
+    fulfillmentStatus: "partially_fulfilled",
+    settlementStatus: "ledgered",
+    riskStatus: "review",
+  });
+  Object.assign(existingSellerOrderLine, {
+    fulfilledQuantity: 1,
+    refundedQuantity: 1,
+  });
+  state.sellerOrderShadowChecks.length = 0;
+
   const secondResult = await processShopifyOrderPaidSettlement(order, {
+    prismaClient: fakePrisma,
+    env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
+  });
+  const thirdResult = await processShopifyOrderPaidSettlement(order, {
     prismaClient: fakePrisma,
     env: { SELLER_ORDER_SHADOW_WRITE_ENABLED: "true" },
   });
@@ -2517,12 +2536,24 @@ test("processShopifyOrderPaidSettlement retries a missing shadow write for dupli
   assert.equal(firstResult.sellerOrderShadow.status, "matched");
   assert.equal(secondResult.ok, true);
   assert.equal(secondResult.duplicate, true);
-  assert.equal(secondResult.sellerOrderShadow, undefined);
-  assert.equal(productLookups, 1);
+  assert.equal(secondResult.sellerOrderShadow.status, "matched");
+  assert.equal(thirdResult.ok, true);
+  assert.equal(thirdResult.duplicate, true);
+  assert.equal(thirdResult.sellerOrderShadow, undefined);
+  assert.equal(productLookups, 2);
   assert.equal(state.marketplaceOrders.size, 1);
   assert.equal(state.sellerOrders.size, 1);
   assert.equal(state.sellerOrderLines.size, 1);
   assert.equal(state.sellerOrderShadowChecks.length, 1);
+  const retriedSellerOrder = Array.from(state.sellerOrders.values())[0];
+  const retriedSellerOrderLine = Array.from(state.sellerOrderLines.values())[0];
+  assert.equal(retriedSellerOrder.sellerRefundAmount, 300);
+  assert.equal(retriedSellerOrder.paymentStatus, "partially_refunded");
+  assert.equal(retriedSellerOrder.fulfillmentStatus, "partially_fulfilled");
+  assert.equal(retriedSellerOrder.settlementStatus, "ledgered");
+  assert.equal(retriedSellerOrder.riskStatus, "review");
+  assert.equal(retriedSellerOrderLine.fulfilledQuantity, 1);
+  assert.equal(retriedSellerOrderLine.refundedQuantity, 1);
 });
 
 test("processShopifyOrderPaidSettlement refuses multi-seller Shopify orders", async () => {
@@ -4494,6 +4525,10 @@ test("repairSellerNegativeLedgerBalance creates a credit adjustment", async () =
       sellerId: "seller_1",
       currencyCode: "jpy",
       repairedBy: "admin-test",
+      repairedByJson: {
+        role: "FINANCE_APPROVER",
+        actorKey: "admin-test",
+      },
     },
     {
       prismaClient: fakePrisma,
@@ -4516,6 +4551,10 @@ test("repairSellerNegativeLedgerBalance creates a credit adjustment", async () =
     state.ledgerEntries[0].metadataJson.previousPayoutableLedgerBalance,
     -130,
   );
+  assert.deepEqual(state.ledgerEntries[0].metadataJson.repairedByJson, {
+    role: "FINANCE_APPROVER",
+    actorKey: "admin-test",
+  });
 });
 
 test("listSellerLedgerRepairCandidates detects order reversal overage even when seller balance is positive", async () => {
@@ -5464,6 +5503,8 @@ test("createPayoutRun creates a draft only within the seller payoutable ledger b
           currencyCode: "jpy",
           status: "draft",
           transferMethod: "manual_bank_transfer",
+          createdBy: "admin",
+          createdByJson: null,
         });
         return {
           id: "pr_1",
@@ -5558,6 +5599,8 @@ test("createPayoutRun allows manual settlement without a Stripe account", async 
           currencyCode: "jpy",
           status: "draft",
           transferMethod: "manual_bank_transfer",
+          createdBy: "admin",
+          createdByJson: null,
         });
         return {
           id: "pr_manual",
@@ -5627,6 +5670,8 @@ test("createPayoutRun creates Wise payout runs only when a Wise recipient exists
             currencyCode: "jpy",
             status: "draft",
             transferMethod: "wise_api",
+            createdBy: "admin",
+            createdByJson: null,
           });
           return {
             id: "pr_wise",
@@ -5931,6 +5976,80 @@ test("createConnectedAccountPayout sends connected account as a Stripe header", 
   }
 });
 
+test("a payout run cannot be approved by its creator", async () => {
+  const payoutRun = {
+    id: "pr_maker_checker",
+    sellerId: "seller_1",
+    status: "draft",
+    currencyCode: "jpy",
+    createdBy: "finance@example.com",
+    seller: { id: "seller_1" },
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    payoutRun: {
+      async findUnique() {
+        return payoutRun;
+      },
+      async updateMany() {
+        throw new Error("the creator must not approve the payout run");
+      },
+    },
+  };
+
+  const result = await approvePayoutRun(
+    {
+      payoutRunId: payoutRun.id,
+      approvedBy: "finance@example.com",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "payout_maker_checker_required",
+  });
+});
+
+test("a legacy payout run without a creator cannot be approved", async () => {
+  const payoutRun = {
+    id: "pr_legacy_without_creator",
+    sellerId: "seller_1",
+    status: "draft",
+    currencyCode: "jpy",
+    createdBy: null,
+    seller: { id: "seller_1" },
+  };
+  const fakePrisma = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    payoutRun: {
+      async findUnique() {
+        return payoutRun;
+      },
+      async updateMany() {
+        throw new Error("a legacy payout must be recreated");
+      },
+    },
+  };
+
+  const result = await approvePayoutRun(
+    {
+      payoutRunId: payoutRun.id,
+      approvedBy: "finance-approver@example.com",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "payout_creator_missing",
+  });
+});
+
 test("payout runs require approval and execute on the connected account only when eligible", async () => {
   const state = {
     payoutRun: {
@@ -5941,6 +6060,7 @@ test("payout runs require approval and execute on the connected account only whe
       amount: 5000,
       currencyCode: "jpy",
       status: "draft",
+      createdBy: "finance-creator@example.com",
       stripePayoutId: null,
       seller: {
         id: "seller_1",
@@ -6047,6 +6167,8 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
       amount: 9900,
       currencyCode: "jpy",
       status: "approved",
+      createdBy: "finance-creator@example.com",
+      approvedBy: "finance-approver@example.com",
       transferMethod: "manual_bank_transfer",
       stripePayoutId: null,
       seller: {
@@ -6118,6 +6240,22 @@ test("markPayoutRunManuallyPaid records a manual transfer debit without Stripe p
     },
   };
 
+  const claimResult = await markPayoutRunManuallyPaid(
+    {
+      payoutRunId: "pr_manual",
+      executedBy: "admin_user",
+      externalTransferId: "bank_tx_123",
+      transferMemo: "May payout",
+    },
+    { prismaClient: fakePrisma },
+  );
+
+  assert.equal(claimResult.ok, true);
+  assert.equal(claimResult.pending, true);
+  assert.equal(claimResult.requiresCompletion, true);
+  assert.equal(state.payoutRun.status, "processing");
+  assert.equal(state.ledgerEntries.length, 0);
+
   const result = await markPayoutRunManuallyPaid(
     {
       payoutRunId: "pr_manual",
@@ -6169,6 +6307,8 @@ test("executeWisePayoutRun creates and funds a Wise transfer after approval", as
       amount: 9900,
       currencyCode: "jpy",
       status: "approved",
+      createdBy: "finance-creator@example.com",
+      approvedBy: "finance-approver@example.com",
       transferMethod: "wise_api",
       wiseCustomerTransactionId: null,
       wisePayloadJson: null,
