@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createShopifyProductSnapshot,
+  isShopifyProductPolicySyncCoolingDown,
   syncShopifyProductPayload,
 } from "../../app/services/shopifyProductSync.server.js";
 
@@ -70,6 +71,59 @@ test("createShopifyProductSnapshot converts Shopify variant weights upward to gr
   assert.equal(snapshot.variantCount, 1);
 });
 
+test("policy sync cooldown only applies to recent unresolved policy failures", async () => {
+  const now = new Date("2026-07-23T21:30:00.000Z");
+  let issue = {
+    status: "unresolved",
+    reason: "marketplace_checkout_policy_sync_failed",
+    lastAttemptAt: new Date("2026-07-23T21:29:00.000Z"),
+  };
+  const prismaClient = {
+    shopifyProductSyncIssue: {
+      findUnique: async () => issue,
+    },
+  };
+
+  const recentFailure = await isShopifyProductPolicySyncCoolingDown(
+    {
+      payload: productPayload(),
+      shopDomain: "shop.myshopify.com",
+      cooldownMs: 5 * 60 * 1000,
+    },
+    { prismaClient, now },
+  );
+  assert.equal(recentFailure, true);
+
+  issue = {
+    ...issue,
+    lastAttemptAt: new Date("2026-07-23T21:20:00.000Z"),
+  };
+  const expiredFailure = await isShopifyProductPolicySyncCoolingDown(
+    {
+      payload: productPayload(),
+      shopDomain: "shop.myshopify.com",
+      cooldownMs: 5 * 60 * 1000,
+    },
+    { prismaClient, now },
+  );
+  assert.equal(expiredFailure, false);
+
+  issue = {
+    ...issue,
+    status: "resolved",
+    lastAttemptAt: new Date("2026-07-23T21:29:00.000Z"),
+  };
+  const resolvedFailure = await isShopifyProductPolicySyncCoolingDown(
+    {
+      payload: productPayload(),
+      shopDomain: "shop.myshopify.com",
+      cooldownMs: 5 * 60 * 1000,
+    },
+    { prismaClient, now },
+  );
+  assert.equal(resolvedFailure, false);
+});
+
 test("sync preserves an existing local owner and pricing", async () => {
   const issues = createIssueDelegate();
   const existing = {
@@ -107,6 +161,34 @@ test("sync preserves an existing local owner and pricing", async () => {
   assert.equal(result.product.calculatedPrice, 900);
   assert.equal(updateArgs.data.name, "Shopify直登録商品");
   assert.equal("price" in updateArgs.data, false);
+});
+
+test("sync can preserve a policy failure until the Shopify boundary succeeds", async () => {
+  const issues = createIssueDelegate();
+  const existing = {
+    id: "product_1",
+    name: "Existing",
+    price: 500,
+    calculatedPrice: 900,
+    vendorStoreId: "store_existing",
+    shopifyVariantId: null,
+  };
+  const prismaClient = {
+    product: {
+      findFirst: async () => existing,
+      update: async (args) => ({ ...existing, ...args.data }),
+    },
+    shopifyProductSyncIssue: issues,
+  };
+
+  const result = await syncShopifyProductPayload(productPayload(), {
+    prismaClient,
+    shopDomain: "shop.myshopify.com",
+    resolveIssue: false,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(issues.calls.length, 0);
 });
 
 test("sync preserves a confirmed profile when Shopify echoes the same weight", async () => {

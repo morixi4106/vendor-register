@@ -30,10 +30,12 @@ test("successful product webhooks synchronize the checkout policy", async () => 
         ok: true,
         product: { id: "product_1", vendorStoreId: "store_1" },
       }),
+      isPolicySyncCoolingDown: async () => false,
       syncPolicy: async (input) => {
         calls.push(input);
         return { ok: true, changed: false };
       },
+      recordPolicySuccess: async () => {},
     },
   );
 
@@ -61,6 +63,7 @@ test("policy API failures are persisted and acknowledged for scheduled recovery"
         ok: true,
         product: { id: "product_1", vendorStoreId: "store_1" },
       }),
+      isPolicySyncCoolingDown: async () => false,
       syncPolicy: async () => {
         throw new Error("GraphqlQueryError: Throttled");
       },
@@ -100,6 +103,7 @@ test("a policy failure marker must be durable before the webhook is acknowledged
           ok: true,
           product: { id: "product_1", vendorStoreId: "store_1" },
         }),
+        isPolicySyncCoolingDown: async () => false,
         syncPolicy: async () => {
           throw new Error("GraphqlQueryError: Throttled");
         },
@@ -125,6 +129,7 @@ test("unresolved products keep their existing issue and absorb boundary throttli
         ok: false,
         reason: "vendor_label_not_found",
       }),
+      isPolicySyncCoolingDown: async () => false,
       enforceUnresolvedBoundary: async () => {
         throw new Error("GraphqlQueryError: Throttled");
       },
@@ -139,4 +144,41 @@ test("unresolved products keep their existing issue and absorb boundary throttli
   assert.equal(result.reason, "unresolved_product_boundary_failed");
   assert.equal(heartbeats.length, 1);
   assert.equal(heartbeats[0].status, "failed");
+});
+
+test("recent policy failures skip Shopify API calls while refreshing durable recovery data", async () => {
+  const payloadOptions = [];
+  const failures = [];
+  let policyCalls = 0;
+  const result = await processShopifyProductWebhook(
+    {
+      payload,
+      topic: "PRODUCTS_UPDATE",
+      shop: "shop.myshopify.com",
+    },
+    {
+      isPolicySyncCoolingDown: async () => true,
+      syncPayload: async (_payload, options) => {
+        payloadOptions.push(options);
+        return {
+          ok: true,
+          product: { id: "product_1", vendorStoreId: "store_1" },
+        };
+      },
+      syncPolicy: async () => {
+        policyCalls += 1;
+        return { ok: true };
+      },
+      recordPolicyFailure: async (input) => {
+        failures.push(input);
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.deferred, true);
+  assert.equal(result.coolingDown, true);
+  assert.equal(policyCalls, 0);
+  assert.equal(failures.length, 1);
+  assert.equal(payloadOptions[0].resolveIssue, false);
 });

@@ -1,5 +1,7 @@
 import {
+  isShopifyProductPolicySyncCoolingDown,
   recordShopifyProductPolicySyncFailure,
+  resolveShopifyProductPolicySyncSuccess,
   syncShopifyProductPayload,
 } from "./shopifyProductSync.server.js";
 import {
@@ -49,12 +51,22 @@ export async function processShopifyProductWebhook(
     syncPolicy = syncMarketplaceCheckoutPolicyForProduct,
     enforceUnresolvedBoundary =
       enforceUnresolvedShopifyProductPublicationBoundary,
+    isPolicySyncCoolingDown =
+      isShopifyProductPolicySyncCoolingDown,
     recordPolicyFailure = recordShopifyProductPolicySyncFailure,
+    recordPolicySuccess = resolveShopifyProductPolicySyncSuccess,
     recordHeartbeat = recordOperationalHeartbeatSafely,
   } = {},
 ) {
   const productId = payload?.admin_graphql_api_id || payload?.id || null;
-  const syncResult = await syncPayload(payload, { shopDomain: shop });
+  const policySyncCoolingDown = await isPolicySyncCoolingDown({
+    payload,
+    shopDomain: shop,
+  });
+  const syncResult = await syncPayload(payload, {
+    shopDomain: shop,
+    resolveIssue: false,
+  });
 
   if (!syncResult.ok) {
     try {
@@ -93,6 +105,23 @@ export async function processShopifyProductWebhook(
     }
   }
 
+  if (policySyncCoolingDown) {
+    await recordPolicyFailure({
+      payload,
+      shopDomain: shop,
+      localProductId: syncResult.product.id,
+      vendorStoreId: syncResult.product.vendorStoreId,
+      reason: POLICY_SYNC_FAILURE_REASON,
+    });
+    return {
+      ok: false,
+      deferred: true,
+      coolingDown: true,
+      reason: POLICY_SYNC_FAILURE_REASON,
+      syncResult,
+    };
+  }
+
   try {
     const policyResult = await syncPolicy({
       localProductId: syncResult.product.id,
@@ -105,6 +134,12 @@ export async function processShopifyProductWebhook(
       error.policyResult = policyResult;
       throw error;
     }
+    await recordPolicySuccess({
+      payload,
+      shopDomain: shop,
+      localProductId: syncResult.product.id,
+      vendorStoreId: syncResult.product.vendorStoreId,
+    });
     return {
       ok: true,
       deferred: false,

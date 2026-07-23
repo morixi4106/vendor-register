@@ -13,6 +13,9 @@ const DIRECT_IMPORT_FORMULA_VERSION = "shopify_direct_import_v1";
 const RESOLVED_ISSUE_STATUS = "resolved";
 const UNRESOLVED_ISSUE_STATUS = "unresolved";
 const DEFAULT_PLATFORM_VENDOR_LABEL = "Oja Immanuel Bacchus";
+const POLICY_SYNC_FAILURE_REASON =
+  "marketplace_checkout_policy_sync_failed";
+const DEFAULT_POLICY_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
 
 function normalizeText(value) {
   const normalized = String(value ?? "").trim();
@@ -404,6 +407,70 @@ export async function recordShopifyProductPolicySyncFailure(
   });
 }
 
+export async function isShopifyProductPolicySyncCoolingDown(
+  {
+    payload,
+    shopDomain: rawShopDomain,
+    cooldownMs = DEFAULT_POLICY_SYNC_COOLDOWN_MS,
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  const snapshot = createShopifyProductSnapshot(payload);
+
+  if (!shopDomain || !snapshot.id) {
+    return false;
+  }
+
+  const issue = await prismaClient.shopifyProductSyncIssue.findUnique({
+    where: {
+      shopDomain_shopifyProductId: {
+        shopDomain,
+        shopifyProductId: snapshot.id,
+      },
+    },
+    select: {
+      status: true,
+      reason: true,
+      lastAttemptAt: true,
+    },
+  });
+  const cutoff = now.getTime() - Math.max(1, Number(cooldownMs) || 0);
+
+  return Boolean(
+    issue?.status === UNRESOLVED_ISSUE_STATUS &&
+      issue.reason === POLICY_SYNC_FAILURE_REASON &&
+      issue.lastAttemptAt instanceof Date &&
+      issue.lastAttemptAt.getTime() >= cutoff,
+  );
+}
+
+export async function resolveShopifyProductPolicySyncSuccess(
+  {
+    payload,
+    shopDomain: rawShopDomain,
+    localProductId,
+    vendorStoreId,
+  },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  const snapshot = createShopifyProductSnapshot(payload);
+
+  if (!shopDomain || !snapshot.id || !localProductId || !vendorStoreId) {
+    throw new Error("invalid_shopify_product_policy_sync_success");
+  }
+
+  return resolveSyncIssue({
+    prismaClient,
+    shopDomain,
+    snapshot,
+    payload,
+    vendorStoreId,
+    localProductId,
+  });
+}
+
 async function resolveSyncIssue({
   prismaClient,
   shopDomain,
@@ -452,6 +519,7 @@ export async function syncShopifyProductPayload(
     prismaClient = prisma,
     shopDomain: rawShopDomain,
     vendorStoreIdOverride = null,
+    resolveIssue = true,
   } = {},
 ) {
   const shopDomain = normalizeShopDomain(rawShopDomain);
@@ -534,14 +602,16 @@ export async function syncShopifyProductPayload(
       data: updateData,
     });
 
-    await resolveSyncIssue({
-      prismaClient,
-      shopDomain,
-      snapshot,
-      payload,
-      vendorStoreId: product.vendorStoreId,
-      localProductId: product.id,
-    });
+    if (resolveIssue) {
+      await resolveSyncIssue({
+        prismaClient,
+        shopDomain,
+        snapshot,
+        payload,
+        vendorStoreId: product.vendorStoreId,
+        localProductId: product.id,
+      });
+    }
 
     return { ok: true, created: false, product, source: "existing_mapping" };
   }
@@ -625,14 +695,16 @@ export async function syncShopifyProductPayload(
     },
   });
 
-  await resolveSyncIssue({
-    prismaClient,
-    shopDomain,
-    snapshot,
-    payload,
-    vendorStoreId: product.vendorStoreId,
-    localProductId: product.id,
-  });
+  if (resolveIssue) {
+    await resolveSyncIssue({
+      prismaClient,
+      shopDomain,
+      snapshot,
+      payload,
+      vendorStoreId: product.vendorStoreId,
+      localProductId: product.id,
+    });
+  }
 
   return {
     ok: true,
