@@ -11,6 +11,43 @@ function buildHiddenPreviewResponse() {
   });
 }
 
+function buildPreviewAccessError(message, status) {
+  return new Response(message, {
+    status,
+    headers: HIDDEN_PREVIEW_HEADERS,
+  });
+}
+
+function normalizeShopDomain(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function createVendorPreviewOperatorAuthorizer({
+  requireOperatorImpl,
+  primaryShopDomain,
+}) {
+  if (typeof requireOperatorImpl !== "function") {
+    throw new TypeError("requireOperatorImpl must be a function");
+  }
+
+  const configuredShop = normalizeShopDomain(primaryShopDomain);
+
+  return async function authorizeVendorPreviewOperator(request) {
+    if (!configuredShop) {
+      throw buildPreviewAccessError("Preview access is not configured.", 503);
+    }
+
+    const context = await requireOperatorImpl(request);
+    const sessionShop = normalizeShopDomain(context?.session?.shop);
+
+    if (!sessionShop || sessionShop !== configuredShop) {
+      throw buildPreviewAccessError("Forbidden", 403);
+    }
+
+    return context;
+  };
+}
+
 export function createAdminVendorPreviewLoader({
   authenticateAdminImpl,
   loadPreviewImpl,
@@ -36,12 +73,14 @@ export function createDisabledVendorPreviewAction() {
 }
 
 export function buildVendorPreviewDocumentHeaders({
+  parentHeaders,
   loaderHeaders,
   actionHeaders,
+  errorHeaders,
 } = {}) {
-  const headers = new Headers();
+  const headers = new Headers(parentHeaders);
 
-  for (const source of [loaderHeaders, actionHeaders]) {
+  for (const source of [loaderHeaders, actionHeaders, errorHeaders]) {
     source?.forEach((value, key) => headers.set(key, value));
   }
 

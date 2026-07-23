@@ -7,9 +7,11 @@ import {
   buildVendorPreviewDocumentHeaders,
   createAdminVendorPreviewLoader,
   createDisabledVendorPreviewAction,
+  createVendorPreviewOperatorAuthorizer,
 } from "../services/vendorPreviewAccess.server";
-import { authenticate } from "../shopify.server";
+import { requireMarketplaceOperator } from "../utils/marketplaceOperator.server";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
+import { getConfiguredPrimaryShopDomain } from "../utils/shopifyAdmin.server";
 
 const PREVIEW_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -17,6 +19,11 @@ const PREVIEW_HEADERS = {
   Expires: "0",
   "Surrogate-Control": "no-store",
 };
+
+const authorizeVendorPreviewOperator = createVendorPreviewOperatorAuthorizer({
+  requireOperatorImpl: requireMarketplaceOperator,
+  primaryShopDomain: getConfiguredPrimaryShopDomain(),
+});
 
 const COUNTRY_OPTIONS = [
   { value: "", label: "配送先を選択" },
@@ -222,7 +229,7 @@ const loadVendorPreview = async ({ params, request }) => {
 };
 
 export const loader = createAdminVendorPreviewLoader({
-  authenticateAdminImpl: (request) => authenticate.admin(request),
+  authenticateAdminImpl: authorizeVendorPreviewOperator,
   loadPreviewImpl: loadVendorPreview,
 });
 
