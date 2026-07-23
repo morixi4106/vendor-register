@@ -13,13 +13,28 @@ import {
   loadLaunchIntegritySellerRows,
 } from "./productionReadiness.server.js";
 import { getMarketplaceCheckoutGateStatus } from "./marketplaceCheckoutGate.server.js";
+import {
+  buildMarketplaceCheckoutValidationReadinessCheck,
+  inspectMarketplaceCheckoutValidation,
+} from "./shopifyCheckoutValidation.server.js";
+import {
+  OPERATIONAL_TIMING_DEFAULTS,
+  resolveOperationalTimingPolicy,
+} from "./operationalTimingPolicy.js";
 import { SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY } from "./operationalHealth.server.js";
+import {
+  OPERATIONAL_READINESS_DEFINITIONS,
+  buildOperationalReadinessChecks,
+  getPlatformOperationalControl,
+  inspectOperationalReadiness,
+} from "./operationalReadiness.server.js";
 
-export const LAUNCH_MONITOR_HEARTBEAT_KEY = "launch_monitor_72h";
+export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
 
 const DEFAULT_DURATION_HOURS = 72;
-const HEAVY_CHECK_INTERVAL_MINUTES = 15;
+const HEAVY_CHECK_INTERVAL_MINUTES =
+  OPERATIONAL_TIMING_DEFAULTS.catalogSyncIntervalMinutes;
 const CRITICAL_REMINDER_MINUTES = 30;
 const WARNING_REMINDER_MINUTES = 120;
 const CRITICAL_SEVERITY = "critical";
@@ -32,10 +47,17 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
   "marketplace_checkout_publication_boundary",
+  "marketplace_checkout_server_validation",
   "seller_order_unresolved_shadow_checks",
   "seller_ledger_repair_candidates",
   "test_store_pending_payout_runs",
   "launch_integrity",
+  "platform_checkout_emergency_hold",
+  "platform_automated_email_hold",
+  ...OPERATIONAL_READINESS_DEFINITIONS.map(
+    (definition) =>
+      `operational_attestation_${definition.key.toLowerCase()}`,
+  ),
 ]);
 
 export async function runLaunchMonitor({
@@ -66,41 +88,17 @@ export async function runLaunchMonitor({
     });
   const endsAt = new Date(startedAt.getTime() + durationHours * 60 * 60 * 1000);
 
-  if (now >= endsAt) {
-    const report = asObject(previousMetadata.lastReport);
-    let completionSentAt = parseDate(previousMetadata.completionSentAt);
-    if (!completionSentAt) {
-      await sendEmailImpl({
-        kind: "completed",
-        report,
-        state: { startedAt, endsAt, now },
-        env,
-      });
-      completionSentAt = now;
-    }
-    const metadataJson = {
-      ...previousMetadata,
-      schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
-      campaignId,
-      startedAt: startedAt.toISOString(),
-      endsAt: endsAt.toISOString(),
-      completedAt: now.toISOString(),
-      completionSentAt: completionSentAt.toISOString(),
-      active: false,
-    };
-    await writeMonitorHeartbeat({
-      prismaClient,
-      now,
-      status: "succeeded",
-      metadataJson,
+  const concentratedMonitoringComplete = now >= endsAt;
+  let completionSentAt = parseDate(previousMetadata.completionSentAt);
+  if (concentratedMonitoringComplete && !completionSentAt) {
+    const previousReport = asObject(previousMetadata.lastReport);
+    await sendEmailImpl({
+      kind: "completed",
+      report: previousReport,
+      state: { startedAt, endsAt, now },
+      env,
     });
-    return {
-      ok: true,
-      active: false,
-      completed: true,
-      startedAt,
-      endsAt,
-    };
+    completionSentAt = now;
   }
 
   const lastHeavyCheckedAt = parseDate(previousMetadata.lastHeavyCheckedAt);
@@ -147,8 +145,13 @@ export async function runLaunchMonitor({
     schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
     campaignId,
     active: true,
+    concentratedMonitoringComplete,
     startedAt: startedAt.toISOString(),
     endsAt: endsAt.toISOString(),
+    completedAt: concentratedMonitoringComplete
+      ? previousMetadata.completedAt || endsAt.toISOString()
+      : null,
+    completionSentAt: completionSentAt?.toISOString() || null,
     lastCheckedAt: now.toISOString(),
     lastHeavyCheckedAt: runHeavyChecks && report.heavyCheckCompleted
       ? now.toISOString()
@@ -214,6 +217,8 @@ export async function runLaunchMonitor({
   return {
     ok: true,
     active: true,
+    completed: false,
+    concentratedMonitoringComplete,
     startedAt,
     endsAt,
     notificationKind,
@@ -243,9 +248,17 @@ export async function collectLaunchMonitorReport({
   const getMarketplaceCheckoutGateStatusImpl =
     dependencies.getMarketplaceCheckoutGateStatus ||
     getMarketplaceCheckoutGateStatus;
+  const inspectMarketplaceCheckoutValidationImpl =
+    dependencies.inspectMarketplaceCheckoutValidation ||
+    inspectMarketplaceCheckoutValidation;
   const inspectShopifyProductCatalogSyncHeartbeatImpl =
     dependencies.inspectShopifyProductCatalogSyncHeartbeat ||
     inspectShopifyProductCatalogSyncHeartbeat;
+  const inspectOperationalReadinessImpl =
+    dependencies.inspectOperationalReadiness || inspectOperationalReadiness;
+  const getPlatformOperationalControlImpl =
+    dependencies.getPlatformOperationalControl ||
+    getPlatformOperationalControl;
   const checks = [
     ...evaluateRenderSnapshot(renderSnapshot),
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
@@ -367,7 +380,9 @@ export async function collectLaunchMonitorReport({
 
   if (runHeavyChecks) {
     let checkoutBoundaryCompleted = false;
+    let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;
+    let operationalReadinessCompleted = false;
 
     try {
       const shopDomain = String(
@@ -390,6 +405,32 @@ export async function collectLaunchMonitorReport({
         "marketplace_checkout_publication_boundary",
         CRITICAL_SEVERITY,
         "Shopify販売チャネルの公開境界を確認できません。",
+        safeErrorCode(error),
+      );
+      heavyChecks.push(failure);
+      checks.push(failure);
+    }
+
+    try {
+      const shopDomain = String(
+        env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
+      ).trim();
+      if (!shopDomain) {
+        throw new Error("shopify_primary_shop_domain_missing");
+      }
+      const validationStatus =
+        await inspectMarketplaceCheckoutValidationImpl(shopDomain);
+      const validationCheck = readinessCheckToMonitorCheck(
+        buildMarketplaceCheckoutValidationReadinessCheck(validationStatus),
+      );
+      heavyChecks.push(validationCheck);
+      checks.push(validationCheck);
+      checkoutValidationCompleted = true;
+    } catch (error) {
+      const failure = issueCheck(
+        "marketplace_checkout_server_validation",
+        CRITICAL_SEVERITY,
+        "Shopifyサーバー側の購入制御を確認できません。",
         safeErrorCode(error),
       );
       heavyChecks.push(failure);
@@ -424,8 +465,36 @@ export async function collectLaunchMonitorReport({
       heavyChecks.push(failure);
       checks.push(failure);
     }
+    try {
+      const [operationalReadiness, platformOperationalControl] =
+        await Promise.all([
+          inspectOperationalReadinessImpl({ prismaClient, now }),
+          getPlatformOperationalControlImpl({ prismaClient }),
+        ]);
+      const operationalChecks = buildOperationalReadinessChecks({
+        inspection: operationalReadiness,
+        control: platformOperationalControl,
+      })
+        .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
+        .map(readinessCheckToMonitorCheck);
+      heavyChecks.push(...operationalChecks);
+      checks.push(...operationalChecks);
+      operationalReadinessCompleted = true;
+    } catch (error) {
+      const failure = issueCheck(
+        "operational_readiness",
+        CRITICAL_SEVERITY,
+        "実地確認証跡と販売緊急停止の状態を確認できません。",
+        safeErrorCode(error),
+      );
+      heavyChecks.push(failure);
+      checks.push(failure);
+    }
     heavyCheckCompleted =
-      checkoutBoundaryCompleted && launchIntegrityCompleted;
+      checkoutBoundaryCompleted &&
+      checkoutValidationCompleted &&
+      launchIntegrityCompleted &&
+      operationalReadinessCompleted;
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(
       (check) => READINESS_HEAVY_CHECK_IDS.has(check.id),
@@ -504,18 +573,17 @@ export function buildShopifyProductCatalogSyncHeartbeatCheck({
   heartbeat,
   env = process.env,
 }) {
-  const warningMinutes = boundedNumber(
-    env?.SHOPIFY_PRODUCT_CATALOG_SYNC_WARNING_MINUTES,
-    30,
-    5,
-    24 * 60,
-  );
-  const criticalMinutes = boundedNumber(
-    env?.SHOPIFY_PRODUCT_CATALOG_SYNC_CRITICAL_MINUTES,
-    180,
-    warningMinutes,
-    7 * 24 * 60,
-  );
+  const timing = resolveOperationalTimingPolicy(env);
+  if (!timing.valid) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      CRITICAL_SEVERITY,
+      `商品同期と投影期限の設定順が不正です: ${timing.invariant}`,
+      "catalog_sync_timing_invalid",
+    );
+  }
+  const warningMinutes = timing.catalogSyncWarningMinutes;
+  const criticalMinutes = timing.catalogSyncCriticalMinutes;
   const age = Number(heartbeat?.minutesSinceSuccess);
 
   if (heartbeat?.available !== true || !heartbeat?.row) {
@@ -817,21 +885,19 @@ export async function readLaunchMonitorDeadmanState({
   const row = await readMonitorHeartbeat(prismaClient);
   const metadata = asObject(row?.metadataJson);
   const lastCheckedAt = parseDate(metadata.lastCheckedAt);
-  const completed = Boolean(metadata.completedAt || metadata.active === false);
   const ageMinutes = lastCheckedAt
     ? Math.max(0, Math.floor((now.getTime() - lastCheckedAt.getTime()) / 60000))
     : null;
   return {
     schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
-    ok: completed || (ageMinutes !== null && ageMinutes <= staleMinutes),
-    status: completed
-      ? "completed"
-      : ageMinutes === null
+    ok: ageMinutes !== null && ageMinutes <= staleMinutes,
+    status:
+      ageMinutes === null
         ? "not_started"
         : ageMinutes > staleMinutes
           ? "stale"
           : "healthy",
-    completed,
+    completed: false,
     ageMinutes,
     checkedAt: now.toISOString(),
   };
@@ -1028,9 +1094,7 @@ export function resolveLaunchMonitorCampaign({
   const metadata = asObject(storedMetadata);
   const startedAt =
     parseDate(configuredStart) ||
-    (metadata.active === true && !metadata.completedAt
-      ? parseDate(metadata.startedAt)
-      : null) ||
+    (metadata.active === true ? parseDate(metadata.startedAt) : null) ||
     new Date(now);
   const campaignId = buildCampaignId(startedAt, durationHours);
   return {

@@ -2,24 +2,34 @@ import { json } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
 import { processShopifyOrderCancelledSettlement } from "../services/sellerPayments.server.js";
+import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { reconcileWithdrawalCancellationWebhook } from "../services/withdrawalDirectReturns.server.js";
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
-  const result = await processShopifyOrderCancelledSettlement({ payload, shop });
   let withdrawalReconciliation = null;
-  try {
-    withdrawalReconciliation = await reconcileWithdrawalCancellationWebhook({
-      payload,
-      shop,
-    });
-  } catch (error) {
-    console.error("withdrawal cancellation reconciliation failed:", {
-      shop,
-      orderId: payload?.id || payload?.order_id || null,
-      error: error?.message || String(error),
-    });
-  }
+  const delivery = await withShopifyWebhookReceipt({
+    request,
+    payload,
+    topic,
+    shop,
+    handler: async () => {
+      const result = await processShopifyOrderCancelledSettlement({
+        payload,
+        shop,
+      });
+      withdrawalReconciliation = await reconcileWithdrawalCancellationWebhook({
+        payload,
+        shop,
+      });
+      return result;
+    },
+  });
+  const result = delivery.result || {
+    ok: true,
+    duplicate: true,
+    reason: delivery.reason,
+  };
 
   if (!result.ok) {
     console.warn("orders/cancelled settlement skipped:", {
@@ -35,6 +45,7 @@ export const action = async ({ request }) => {
     settlement: {
       ok: Boolean(result.ok),
       duplicate: Boolean(result.duplicate),
+      deliveryDuplicate: Boolean(delivery.duplicate),
       reason: result.reason || null,
       sellerId: result.sellerId || null,
       amount: result.amount || null,

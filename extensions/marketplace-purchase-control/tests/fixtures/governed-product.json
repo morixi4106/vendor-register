@@ -1,0 +1,46 @@
+{
+  "payload": {
+    "export": "cart-validations-generate-run",
+    "target": "cart.validations.generate.run",
+    "input": {
+      "shop": {
+        "localTime": {
+          "date": "2026-07-24"
+        },
+        "operationalPurchaseControl": {
+          "value": "ALLOWED"
+        }
+      },
+      "cart": {
+        "lines": [
+          {
+            "merchandise": {
+              "product": {
+                "marketplaceCheckoutPolicy": {
+                  "value": "MARKETPLACE_GOVERNED"
+                },
+                "saleEligibilityProjection": {
+                  "value": "{\"routingClass\":\"MARKETPLACE_GOVERNED\",\"allowed\":false,\"status\":\"BLOCKED\",\"reasonCodes\":[\"THIRD_PARTY_CHECKOUT_DISABLED\"],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":2,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "現在購入できない商品が含まれています。対象商品をカートから削除してください。",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

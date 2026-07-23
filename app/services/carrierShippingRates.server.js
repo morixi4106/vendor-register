@@ -19,6 +19,11 @@ import {
   JAPAN_POST_AIR_PACKET_RATE_SOURCE,
   JAPAN_POST_AIR_PACKET_RATE_VERSION,
 } from "./japanPostAirPacket.server.js";
+import { getPlatformOperationalControl } from "./operationalReadiness.server.js";
+import {
+  SALE_ELIGIBILITY_CHANNEL,
+  evaluateSaleEligibilitySnapshot,
+} from "./saleEligibility.server.js";
 
 const CARRIER_SERVICE_NAME = "Shipping V2";
 // Keep carrier labels ASCII-encoded in source to avoid mojibake in deploy/log pipelines.
@@ -322,6 +327,8 @@ export async function resolveCarrierFulfillmentOwnership({
     },
     select: {
       id: true,
+      approvalStatus: true,
+      shopDomain: true,
       shopifyProductId: true,
       shopifyVariantId: true,
       vendorStoreId: true,
@@ -334,10 +341,18 @@ export async function resolveCarrierFulfillmentOwnership({
       shippingWeightSource: true,
       shopifyVariantCount: true,
       shopifyWeightSyncStatus: true,
-      complianceProfile: {
-        select: {
-          legalSellerType: true,
-        },
+      productEuStatus: true,
+      countryPolicy: true,
+      complianceProfile: true,
+      complianceEvidence: {
+        include: { requirement: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      },
+      complianceDecisions: {
+        include: { requirement: true },
+        orderBy: { decidedAt: "desc" },
+        take: 100,
       },
       vendorStore: {
         select: {
@@ -348,8 +363,16 @@ export async function resolveCarrierFulfillmentOwnership({
       },
     },
   });
+  const operationalControl = await getPlatformOperationalControl({
+    prismaClient,
+  });
+  const destinationCountry =
+    quoteRequest?.shippingAddress?.countryCode ||
+    quoteRequest?.shippingAddress?.country ||
+    null;
   const resolvedLines = [];
   const governedProductIds = new Set();
+  const saleEligibilityFailures = [];
 
   for (const line of lines) {
     if (line?.requiresShipping === false || Number(line?.quantity || 0) <= 0) {
@@ -386,6 +409,23 @@ export async function resolveCarrierFulfillmentOwnership({
     const matchedProduct = matches.find(
       (product) => getProductVendorStoreId(product) === vendorStoreId,
     );
+    const saleEligibility = evaluateSaleEligibilitySnapshot({
+      product: matchedProduct,
+      shopDomain: matchedProduct?.shopDomain || shopDomain,
+      vendorStoreId,
+      destinationCountry,
+      salesChannel: SALE_ELIGIBILITY_CHANNEL.CARRIER_SERVICE,
+      operationalControl,
+    });
+    if (!saleEligibility.allowed) {
+      saleEligibilityFailures.push({
+        productId: matchedProduct?.id || normalizeText(line?.productId),
+        variantId: normalizeText(line?.variantId),
+        status: saleEligibility.status,
+        reasonCodes: saleEligibility.reasonCodes,
+        policyVersion: saleEligibility.policyVersion,
+      });
+    }
     if (isProductionThirdPartyCarrierProduct(matchedProduct)) {
       governedProductIds.add(matchedProduct.id);
     }
@@ -422,6 +462,7 @@ export async function resolveCarrierFulfillmentOwnership({
     matchedProductCount: products.length,
     requiresMarketplaceCheckout: governedProductIds.size > 0,
     governedProductCount: governedProductIds.size,
+    saleEligibilityFailures,
   };
 }
 
@@ -1033,6 +1074,24 @@ export function createCarrierShippingRatesAction({
         details: {
           reason: "third_party_standard_checkout_not_supported",
           governedProductCount: ownershipResolution.governedProductCount,
+        },
+      });
+      return json({ rates: [] });
+    }
+
+    if (ownershipResolution.saleEligibilityFailures?.length > 0) {
+      logInfo?.("carrier shipping rates blocked by sale eligibility:", {
+        requestId,
+        failureCount: ownershipResolution.saleEligibilityFailures.length,
+        failures: ownershipResolution.saleEligibilityFailures.slice(0, 20),
+      });
+      recordCarrierDiagnostic({
+        requestId,
+        level: "warn",
+        message: "product_sale_ineligible",
+        details: {
+          failureCount: ownershipResolution.saleEligibilityFailures.length,
+          failures: ownershipResolution.saleEligibilityFailures.slice(0, 20),
         },
       });
       return json({ rates: [] });

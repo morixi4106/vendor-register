@@ -12,6 +12,7 @@ import {
   enforceShopifyResourcePublicationBoundary,
   syncMarketplaceCheckoutPolicyForProduct,
 } from "../services/marketplaceCheckoutGate.server.js";
+import { isPlatformCheckoutHoldActive } from "../services/operationalReadiness.server.js";
 
 import { SHOPIFY_API_VERSION } from "./shopifyApiVersion.js";
 const PRODUCT_PAGE_SIZE = 250;
@@ -263,6 +264,11 @@ async function loadVendorForCollectionSync({ vendorStoreId, vendorHandle, prisma
       vendorStore: {
         include: {
           products: {
+            include: {
+              complianceProfile: {
+                select: { approvalStatus: true },
+              },
+            },
             orderBy: { createdAt: "desc" },
           },
         },
@@ -634,6 +640,7 @@ export async function syncVendorCollection({
   prismaClient = prisma,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
   configuredPublicationId = process.env.SHOPIFY_ONLINE_STORE_PUBLICATION_ID,
+  isPlatformCheckoutHoldActiveImpl = isPlatformCheckoutHoldActive,
 } = {}) {
   const vendor = await loadVendorForCollectionSync({
     vendorStoreId,
@@ -651,6 +658,11 @@ export async function syncVendorCollection({
   const store = vendor.vendorStore;
   const usesStandardShopifyStorefront =
     store.isPlatformStore === true && store.isTestStore !== true;
+  const checkoutHoldActive = await isPlatformCheckoutHoldActiveImpl({
+    prismaClient,
+  });
+  const publicationBoundaryRequired =
+    !usesStandardShopifyStorefront || checkoutHoldActive;
   const collectionHandle = buildVendorCollectionHandle(vendor.handle);
   const collectionUrl = usesStandardShopifyStorefront
     ? buildVendorCollectionUrl(vendor.handle)
@@ -665,7 +677,14 @@ export async function syncVendorCollection({
   }
 
   const approvedProducts = store.products.filter(
-    (product) => product.approvalStatus === "approved",
+    (product) =>
+      product.approvalStatus === "approved" &&
+      product.complianceProfile?.approvalStatus !== "HOLD",
+  );
+  const heldProducts = store.products.filter(
+    (product) =>
+      product.approvalStatus === "approved" &&
+      product.complianceProfile?.approvalStatus === "HOLD",
   );
   const linkedProducts = approvedProducts
     .map((product) => ({
@@ -681,6 +700,13 @@ export async function syncVendorCollection({
       reason: "missing_shopify_product_gid",
     }));
   const productIds = unique(linkedProducts.map((product) => product.shopifyProductId));
+  const heldProductIds = unique(
+    heldProducts
+      .map((product) =>
+        normalizeShopifyProductGid(product.shopifyProductId),
+      )
+      .filter(Boolean),
+  );
   const shopDomainResult = await resolveCollectionShopDomain({
     products: linkedProducts.length > 0 ? linkedProducts : store.products,
     fallbackShopDomain: shopDomain,
@@ -723,8 +749,40 @@ export async function syncVendorCollection({
     REQUIRED_PUBLICATION_SCOPES,
   );
   let governedProductBoundary = null;
+  let heldProductBoundary = null;
 
-  if (!usesStandardShopifyStorefront) {
+  if (heldProductIds.length > 0) {
+    if (missingPublicationScopes.length > 0) {
+      return {
+        ok: false,
+        reason: "missing_scope",
+        missingScopes: missingPublicationScopes,
+        grantedScopes,
+        shopDomain: resolvedShopDomain,
+        collectionHandle,
+        collectionUrl,
+        unsyncedProducts,
+      };
+    }
+    heldProductBoundary = await enforceVendorResourceBoundaries({
+      resourceIds: heldProductIds,
+      shopDomain: resolvedShopDomain,
+      shopifyGraphQLWithOfflineSessionImpl,
+    });
+    if (!heldProductBoundary.ok) {
+      return {
+        ok: false,
+        reason: heldProductBoundary.reason,
+        shopDomain: resolvedShopDomain,
+        collectionHandle,
+        collectionUrl,
+        unsyncedProducts,
+        productPublish: heldProductBoundary,
+      };
+    }
+  }
+
+  if (publicationBoundaryRequired) {
     if (missingPublicationScopes.length > 0) {
       return {
         ok: false,
@@ -903,9 +961,13 @@ export async function syncVendorCollection({
     productSync,
     publish: publishResult,
     productPublish: productPublishResult,
-    storefrontMode: usesStandardShopifyStorefront
-      ? "SHOPIFY_STANDARD"
-      : "APP_PROXY_DRAFT_ORDER",
+    heldProductBoundary,
+    storefrontMode: checkoutHoldActive
+      ? "PLATFORM_EMERGENCY_HOLD"
+      : usesStandardShopifyStorefront
+        ? "SHOPIFY_STANDARD"
+        : "APP_PROXY_DRAFT_ORDER",
+    checkoutHoldActive,
     missingScopes: missingPublicationScopes,
   };
 }

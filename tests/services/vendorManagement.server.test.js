@@ -1389,6 +1389,8 @@ test("createVendorOrderFulfillment limits SellerOrder shipments to matching line
             currencyCode: "jpy",
             paymentStatus: "paid",
             fulfillmentStatus: "unfulfilled",
+            settlementStatus: "ledgered",
+            riskStatus: "normal",
             metadataJson: {},
             lines: [
               {
@@ -1549,6 +1551,62 @@ test("createVendorOrderFulfillment limits SellerOrder shipments to matching line
     sellerOrderUpdate.data.metadataJson.lastShipment.trackingNumber,
     "JP123456789",
   );
+});
+
+test("createVendorOrderFulfillment blocks quarantined SellerOrder shipments", async () => {
+  const calls = [];
+
+  const result = await createVendorOrderFulfillment({
+    storeId: "store_1",
+    vendorHandle: "amber-cellar",
+    shipment: {
+      orderId: "gid://shopify/Order/1001",
+      sellerOrderId: "seller_order_1",
+      trackingNumber: "JP123456789",
+      trackingCompany: "Japan Post",
+      trackingUrl: null,
+      notifyCustomer: false,
+    },
+    listVendorStoreShopDomainsImpl: async () => ["shop-a.myshopify.com"],
+    prismaClient: {
+      sellerOrder: {
+        findFirst: async () => ({
+          id: "seller_order_1",
+          shopifyOrderId: "gid://shopify/Order/1001",
+          sellerRefundAmount: 0,
+          sellerNetAmount: 2000,
+          sellerPayableAmount: 2000,
+          currencyCode: "jpy",
+          paymentStatus: "paid",
+          fulfillmentStatus: "unfulfilled",
+          settlementStatus: "held",
+          riskStatus: "review",
+          metadataJson: {},
+          lines: [],
+        }),
+      },
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async (call) => {
+      calls.push(call);
+      return {
+        data: {
+          order: {
+            id: "gid://shopify/Order/1001",
+            name: "#1001",
+            tags: [],
+            displayFinancialStatus: "PAID",
+            displayFulfillmentStatus: "UNFULFILLED",
+            fulfillmentOrders: { nodes: [] },
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].query, /VendorOrderFulfillmentTarget/);
 });
 
 test("createVendorOrderFulfillment allows ledger-owned Shopify checkout orders without vendor tags", async () => {

@@ -1,0 +1,46 @@
+{
+  "payload": {
+    "export": "cart-validations-generate-run",
+    "target": "cart.validations.generate.run",
+    "input": {
+      "shop": {
+        "localTime": {
+          "date": "2026-07-24"
+        },
+        "operationalPurchaseControl": {
+          "value": "ALLOWED"
+        }
+      },
+      "cart": {
+        "lines": [
+          {
+            "merchandise": {
+              "product": {
+                "marketplaceCheckoutPolicy": {
+                  "value": "PLATFORM_DIRECT"
+                },
+                "saleEligibilityProjection": {
+                  "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":true,\"status\":\"ELIGIBLE\",\"reasonCodes\":[],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-20T00:00:00.000Z\",\"expiresAt\":\"2026-07-23T23:59:59.000Z\",\"projectionRevision\":3,\"evaluatedOn\":\"2026-07-20\",\"expiresOnExclusive\":\"2026-07-23\",\"shopTimeZone\":\"UTC\"}"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "現在購入できない商品が含まれています。対象商品をカートから削除してください。",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

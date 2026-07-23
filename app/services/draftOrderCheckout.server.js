@@ -4,11 +4,16 @@ import {
   normalizeShopDomain,
   shopifyGraphQLWithOfflineSession,
 } from '../utils/shopifyAdmin.server.js';
+import { inspectDraftOrderSaleEligibility } from './saleEligibility.server.js';
 import { prepareShippingV2WriterPayload } from './shippingV2Writer.server.js';
 
 import { SHOPIFY_API_VERSION } from '../utils/shopifyApiVersion.js';
 
 const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
+const MAX_REQUEST_BODY_BYTES = 32 * 1024;
+const MAX_DRAFT_ORDER_LINES = 20;
+const MAX_DRAFT_ORDER_LINE_QUANTITY = 100;
+const MAX_DRAFT_ORDER_TOTAL_QUANTITY = 100;
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
 const GENERIC_SHIPPING_ERROR_MESSAGE =
@@ -99,6 +104,56 @@ function toPositiveInteger(value) {
   }
 
   return numeric;
+}
+
+function getDraftOrderLineIdentity(line) {
+  return normalizeText(
+    line?.lineId ||
+      line?.localProductId ||
+      line?.variantId ||
+      line?.merchandiseId,
+  );
+}
+
+function aggregateDraftOrderLines(lines) {
+  if (!Array.isArray(lines)) return lines;
+  const aggregated = [];
+  const byIdentity = new Map();
+
+  for (const line of lines) {
+    const identity = getDraftOrderLineIdentity(line);
+    if (!identity || !isPlainObject(line)) {
+      aggregated.push(line);
+      continue;
+    }
+
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      const cloned = { ...line };
+      byIdentity.set(identity, cloned);
+      aggregated.push(cloned);
+      continue;
+    }
+
+    const currentQuantity = toPositiveInteger(
+      existing.quantity ?? existing.qty,
+    );
+    const addedQuantity = toPositiveInteger(line.quantity ?? line.qty);
+    if (currentQuantity == null || addedQuantity == null) {
+      aggregated.push(line);
+      continue;
+    }
+
+    existing.quantity = currentQuantity + addedQuantity;
+    const existingPrice = toFiniteNumber(existing.originalUnitPrice);
+    const addedPrice = toFiniteNumber(line.originalUnitPrice);
+    if (existingPrice != null && existingPrice === addedPrice) {
+      existing.amountAfterItemDiscountBeforeOrderCoupon =
+        existingPrice * existing.quantity;
+    }
+  }
+
+  return aggregated;
 }
 
 function clonePlainObject(value) {
@@ -325,7 +380,8 @@ function buildMailingAddressInput(address) {
 function normalizeDraftOrderCheckoutInput(body) {
   const payload = isPlainObject(body) ? body : null;
   const orderLike = isPlainObject(payload?.orderLike) ? payload.orderLike : null;
-  const lines = Array.isArray(orderLike?.lines) ? orderLike.lines : null;
+  const rawLines = Array.isArray(orderLike?.lines) ? orderLike.lines : null;
+  const lines = aggregateDraftOrderLines(rawLines);
   const shippingAddress = isPlainObject(payload?.shippingAddress)
     ? payload.shippingAddress
     : isPlainObject(payload?.address)
@@ -382,6 +438,7 @@ function normalizeDraftOrderCheckoutInput(body) {
 
   return {
     payload,
+    rawLineCount: rawLines?.length || 0,
     lines,
     shippingAddress: normalizeAddress(shippingAddress),
     billingAddress: normalizeAddress(billingAddress),
@@ -424,6 +481,38 @@ function assertValidDraftOrderCheckoutInput(normalized) {
 
   if (!Array.isArray(normalized.lines) || normalized.lines.length === 0) {
     errors.push('orderLike.lines must be a non-empty array');
+  } else {
+    if (
+      normalized.rawLineCount > MAX_DRAFT_ORDER_LINES ||
+      normalized.lines.length > MAX_DRAFT_ORDER_LINES
+    ) {
+      errors.push(
+        `orderLike.lines must contain at most ${MAX_DRAFT_ORDER_LINES} lines`,
+      );
+    }
+
+    let totalQuantity = 0;
+    for (const [index, line] of normalized.lines.entries()) {
+      const quantity = toPositiveInteger(line?.quantity ?? line?.qty);
+      if (quantity == null || quantity > MAX_DRAFT_ORDER_LINE_QUANTITY) {
+        errors.push(
+          `orderLike.lines[${index}] quantity must be between 1 and ${MAX_DRAFT_ORDER_LINE_QUANTITY}`,
+        );
+        continue;
+      }
+      if (!normalizeText(line?.lineId || line?.localProductId)) {
+        errors.push(
+          `orderLike.lines[${index}] must include a local product lineId`,
+        );
+      }
+      totalQuantity += quantity;
+    }
+
+    if (totalQuantity > MAX_DRAFT_ORDER_TOTAL_QUANTITY) {
+      errors.push(
+        `orderLike.lines total quantity must not exceed ${MAX_DRAFT_ORDER_TOTAL_QUANTITY}`,
+      );
+    }
   }
 
   if (!normalized.shippingAddress) {
@@ -665,10 +754,26 @@ export function createDraftOrderCheckout({
   apiVersion = DEFAULT_ADMIN_API_VERSION,
   prepareShippingV2WriterPayloadImpl = prepareShippingV2WriterPayload,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  inspectDraftOrderSaleEligibilityImpl = inspectDraftOrderSaleEligibility,
 } = {}) {
   return async function draftOrderCheckout(input) {
     const normalized = normalizeDraftOrderCheckoutInput(input);
     assertValidDraftOrderCheckoutInput(normalized);
+    const saleEligibility = await inspectDraftOrderSaleEligibilityImpl({
+      shopDomain: normalized.shopDomain,
+      lines: normalized.lines,
+      destinationCountry:
+        normalized.shippingAddress?.countryCode ||
+        normalized.shippingAddress?.country ||
+        "",
+    });
+    if (!saleEligibility?.ok) {
+      throw createCheckoutProcessError(
+        'sale_eligibility_blocked',
+        GENERIC_CHECKOUT_ERROR_MESSAGE,
+        saleEligibility,
+      );
+    }
 
     const legacyPayload = buildLegacyCheckoutPayload(normalized);
     const prepareResult = normalizePrepareResult(
@@ -769,6 +874,19 @@ export function createDraftOrderCheckoutLoader() {
   };
 }
 
+async function readJsonRequestWithLimit(request, maxBytes) {
+  const contentLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error('request_body_too_large');
+  }
+
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    throw new Error('request_body_too_large');
+  }
+  return JSON.parse(text);
+}
+
 export function createDraftOrderCheckoutAction({
   draftOrderCheckoutImpl = draftOrderCheckout,
 } = {}) {
@@ -780,9 +898,14 @@ export function createDraftOrderCheckoutAction({
     let body;
 
     try {
-      body = await request.json();
+      body = await readJsonRequestWithLimit(
+        request,
+        MAX_REQUEST_BODY_BYTES,
+      );
     } catch {
-      return createInvalidPayloadResponse(['Request body must be valid JSON']);
+      return createInvalidPayloadResponse([
+        `Request body must be valid JSON and at most ${MAX_REQUEST_BODY_BYTES} bytes`,
+      ]);
     }
 
     try {

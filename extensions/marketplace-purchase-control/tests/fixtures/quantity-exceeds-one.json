@@ -1,0 +1,46 @@
+{
+  "payload": {
+    "export": "cart-validations-generate-run",
+    "target": "cart.validations.generate.run",
+    "input": {
+      "shop": {
+        "localTime": {
+          "date": "2026-07-24"
+        },
+        "operationalPurchaseControl": {
+          "value": "BLOCKED"
+        }
+      },
+      "cart": {
+        "lines": [
+          {
+            "merchandise": {
+              "product": {
+                "marketplaceCheckoutPolicy": {
+                  "value": "PLATFORM_DIRECT"
+                },
+                "saleEligibilityProjection": {
+                  "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":true,\"status\":\"ELIGIBLE\",\"reasonCodes\":[],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":1,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "現在注文受付を一時停止しています。時間をおいて再度お試しください。",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

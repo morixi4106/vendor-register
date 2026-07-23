@@ -1,13 +1,12 @@
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server.js";
 import { hashPrivateIdentifier } from "./privacyHash.server.js";
+import { MARKETPLACE_OPERATOR_ROLES } from "./marketplaceOperatorRoles.js";
 
-export const MARKETPLACE_OPERATOR_ROLES = Object.freeze({
-  ADMIN: "MARKETPLACE_ADMIN",
-  FINANCE_PREPARER: "FINANCE_PREPARER",
-  FINANCE_APPROVER: "FINANCE_APPROVER",
-  FINANCE_EXECUTOR: "FINANCE_EXECUTOR",
-});
+export {
+  MARKETPLACE_OPERATOR_ROLES,
+  resolveProductionReadinessOperatorRole,
+} from "./marketplaceOperatorRoles.js";
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();

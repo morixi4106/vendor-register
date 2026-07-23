@@ -122,18 +122,6 @@ async function main() {
     }),
   );
 
-  if (payload.completed === true) {
-    const schedulerStopped = await stopScheduler();
-    console.log(
-      JSON.stringify({
-        ok: true,
-        completed: true,
-        schedulerStopped,
-      }),
-    );
-    return;
-  }
-
   if (payload.status === "critical") {
     process.exitCode = 2;
   }
@@ -229,63 +217,6 @@ async function probePublicEndpoints() {
     }
   }
   return result;
-}
-
-async function stopScheduler() {
-  if (String(process.env.RENDER_CRON_SERVICE_ID || "").trim()) {
-    await suspendMonitorCron();
-    return "render_cron_suspended";
-  }
-  if (String(process.env.GITHUB_ACTIONS || "").toLowerCase() === "true") {
-    await disableGithubWorkflow();
-    return "github_workflow_disabled";
-  }
-  throw new Error("monitor_scheduler_not_configured");
-}
-
-async function suspendMonitorCron() {
-  const serviceId = String(process.env.RENDER_CRON_SERVICE_ID || "").trim();
-  if (!/^crn-[a-z0-9]+$/i.test(serviceId)) {
-    throw new Error("invalid_render_cron_service_id");
-  }
-  const response = await fetchWithTimeout(
-    `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/suspend`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RENDER_API_KEY}`,
-        Accept: "application/json",
-      },
-    },
-  );
-  if (response.status !== 202) {
-    throw new Error(`render_cron_suspend_${response.status}`);
-  }
-}
-
-async function disableGithubWorkflow() {
-  const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
-  const token = String(process.env.GITHUB_TOKEN || "").trim();
-  const workflow = String(
-    process.env.LAUNCH_MONITOR_GITHUB_WORKFLOW || "launch-monitor.yml",
-  ).trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !token) {
-    throw new Error("github_workflow_credentials_missing");
-  }
-  const response = await fetchWithTimeout(
-    `https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/disable`,
-    {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    },
-  );
-  if (response.status !== 204) {
-    throw new Error(`github_workflow_disable_${response.status}`);
-  }
 }
 
 async function listRenderLogs(

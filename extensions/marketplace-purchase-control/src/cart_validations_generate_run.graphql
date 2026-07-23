@@ -1,0 +1,35 @@
+query CartValidationsGenerateRunInput {
+  shop {
+    localTime {
+      date
+    }
+    operationalPurchaseControl: metafield(
+      namespace: "$app"
+      key: "operational_purchase_control"
+    ) {
+      value
+    }
+  }
+  cart {
+    lines {
+      merchandise {
+        ... on ProductVariant {
+          product {
+            marketplaceCheckoutPolicy: metafield(
+              namespace: "$app"
+              key: "marketplace_checkout_policy"
+            ) {
+              value
+            }
+            saleEligibilityProjection: metafield(
+              namespace: "$app"
+              key: "sale_eligibility_projection"
+            ) {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -8,8 +8,6 @@ async function main() {
   for (const key of [
     "LAUNCH_MONITOR_URL",
     "LAUNCH_MONITOR_DEADMAN_TOKEN",
-    "RENDER_API_KEY",
-    "RENDER_CRON_SERVICE_ID",
   ]) {
     if (!String(process.env[key] || "").trim()) {
       throw new Error(`${key}_required`);
@@ -33,13 +31,6 @@ async function main() {
     throw new Error(`deadman_endpoint_${response.status}`);
   }
 
-  if (payload.completed === true) {
-    await suspendSelf();
-    console.log(
-      JSON.stringify({ ok: true, status: "completed", suspended: true }),
-    );
-    return;
-  }
   if (payload.ok !== true || payload.status !== "healthy") {
     throw new Error(`github_monitor_${safeStatus(payload.status)}`);
   }
@@ -58,29 +49,9 @@ function isDeadmanResponse(payload) {
     typeof payload === "object" &&
     payload.schemaVersion === 1 &&
     typeof payload.ok === "boolean" &&
-    ["healthy", "stale", "not_started", "completed"].includes(payload.status) &&
+    ["healthy", "stale", "not_started"].includes(payload.status) &&
     (payload.ageMinutes === null || Number.isInteger(payload.ageMinutes)),
   );
-}
-
-async function suspendSelf() {
-  const serviceId = String(process.env.RENDER_CRON_SERVICE_ID || "").trim();
-  if (!/^crn-[a-z0-9]+$/i.test(serviceId)) {
-    throw new Error("invalid_render_cron_service_id");
-  }
-  const response = await fetchWithTimeout(
-    `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/suspend`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RENDER_API_KEY}`,
-        Accept: "application/json",
-      },
-    },
-  );
-  if (response.status !== 202) {
-    throw new Error(`render_cron_suspend_${response.status}`);
-  }
 }
 
 async function sendAlert(error) {

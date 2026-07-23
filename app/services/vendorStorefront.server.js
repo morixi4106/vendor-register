@@ -33,6 +33,11 @@ import {
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
+import { getPlatformOperationalControl } from "./operationalReadiness.server.js";
+import {
+  SALE_ELIGIBILITY_CHANNEL,
+  evaluateSaleEligibilitySnapshot,
+} from "./saleEligibility.server.js";
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   "注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。";
@@ -1221,12 +1226,21 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
       approvalStatus: "approved",
     },
     orderBy: { createdAt: "desc" },
+    include: {
+      complianceProfile: {
+        select: { approvalStatus: true },
+      },
+    },
   });
 
   return {
     vendor: vendorContext.vendor,
     store: vendorContext.store,
-    products: products.map((product) => {
+    products: products
+      .filter(
+        (product) => product.complianceProfile?.approvalStatus !== "HOLD",
+      )
+      .map((product) => {
       const shopDomain = normalizeShopDomain(product.shopDomain);
       const price = toDisplayPrice(product);
 
@@ -1247,7 +1261,7 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
         euSaleRequested: Boolean(product.euSaleRequested),
         isPurchasable: Boolean(shopDomain && price > 0),
       };
-    }),
+      }),
   };
 }
 
@@ -1631,6 +1645,7 @@ async function buildServerTrustedCheckoutPayload({
       shopifyProductId: true,
       shopifyVariantId: true,
       shopDomain: true,
+      approvalStatus: true,
       shippingWeightGrams: true,
       shippingLengthMm: true,
       shippingWidthMm: true,
@@ -1643,6 +1658,16 @@ async function buildServerTrustedCheckoutPayload({
       productEuStatus: true,
       countryPolicy: true,
       complianceProfile: true,
+      complianceEvidence: {
+        include: { requirement: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      },
+      complianceDecisions: {
+        include: { requirement: true },
+        orderBy: { decidedAt: "desc" },
+        take: 100,
+      },
       vendorStore: {
         select: {
           id: true,
@@ -1687,9 +1712,22 @@ async function buildServerTrustedCheckoutPayload({
       },
     },
   });
+  const operationalControl = await getPlatformOperationalControl({
+    prismaClient,
+  });
 
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
   if (products.some((product) => product.vendorStore?.isTestStore)) {
+    return {
+      ok: false,
+      error: UNAVAILABLE_PRODUCT_MESSAGE,
+    };
+  }
+  if (
+    products.some(
+      (product) => product.complianceProfile?.approvalStatus === "HOLD",
+    )
+  ) {
     return {
       ok: false,
       error: UNAVAILABLE_PRODUCT_MESSAGE,
@@ -1797,6 +1835,34 @@ async function buildServerTrustedCheckoutPayload({
       return {
         ok: false,
         error: UNAVAILABLE_PRODUCT_MESSAGE,
+      };
+    }
+
+    const saleEligibility = evaluateSaleEligibilitySnapshot({
+      product,
+      shopDomain,
+      vendorStoreId: productVendorContext.store.id,
+      destinationCountry: submission.shippingAddress.countryCode,
+      salesChannel: SALE_ELIGIBILITY_CHANNEL.DRAFT_ORDER,
+      operationalControl,
+      env,
+    });
+    const nonDeliverySaleEligibilityReasons =
+      saleEligibility.reasonCodes.filter(
+        (reasonCode) => !String(reasonCode).startsWith("DELIVERY_"),
+      );
+    if (
+      !saleEligibility.allowed &&
+      nonDeliverySaleEligibilityReasons.length > 0
+    ) {
+      return {
+        ok: false,
+        error: UNAVAILABLE_PRODUCT_MESSAGE,
+        saleEligibility: {
+          status: saleEligibility.status,
+          reasonCodes: saleEligibility.reasonCodes,
+          policyVersion: saleEligibility.policyVersion,
+        },
       };
     }
 

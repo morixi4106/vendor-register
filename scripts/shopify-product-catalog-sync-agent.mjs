@@ -1,4 +1,4 @@
-const DEFAULT_LIMIT = 250;
+const DEFAULT_LIMIT = 10_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 export async function runShopifyProductCatalogSyncAgent({
@@ -39,7 +39,11 @@ export async function runShopifyProductCatalogSyncAgent({
 
   const unresolved = toCount(payload?.unresolved);
   const failed = toCount(payload?.checkoutPolicies?.failedCount);
-  if (unresolved > 0 || failed > 0) {
+  if (
+    payload?.complete !== true ||
+    unresolved > 0 ||
+    failed > 0
+  ) {
     throw new Error("catalog_sync_incomplete");
   }
 

@@ -21,6 +21,29 @@ export const PRODUCT_COMPLIANCE_STATUSES = [
   "HOLD",
 ];
 export const PRODUCT_CONDITION_STATUSES = ["NEW", "USED"];
+export const PRODUCT_APPLICABILITY_STATUSES = [
+  "UNKNOWN",
+  "REQUIRED",
+  "NOT_APPLICABLE",
+];
+export const COMPLIANCE_VERIFICATION_LEVELS = [
+  "UNVERIFIED",
+  "SELF_ATTESTED",
+  "DOCUMENT_REVIEWED",
+  "ISSUER_VERIFIED",
+  "API_VERIFIED",
+];
+export const PRODUCT_COMPLIANCE_EVIDENCE_STATUSES = [
+  "SUBMITTED",
+  "VERIFIED",
+  "REJECTED",
+  "REVOKED",
+];
+export const PRODUCT_COMPLIANCE_DECISIONS = [
+  "COMPLIANT",
+  "NOT_APPLICABLE",
+  "BLOCKED",
+];
 export const OPERATIONAL_CASE_TYPES = [
   "SELLER_DISCLOSURE",
   "TAX_INVOICE",
@@ -388,6 +411,34 @@ export function evaluateSellerGovernanceReadiness(
 export function evaluateProductGovernanceReadiness(product) {
   const reasons = [];
   const profile = product?.complianceProfile || null;
+  const evidence = asArray(product?.complianceEvidence);
+  const decisions = asArray(product?.complianceDecisions);
+  const now = new Date();
+  const applicabilityStatus = normalizeUpper(profile?.applicabilityStatus);
+  const verificationLevel = normalizeUpper(profile?.verificationLevel);
+  const verificationRank = COMPLIANCE_VERIFICATION_LEVELS.indexOf(
+    verificationLevel,
+  );
+  const currentDecision = decisions
+    .filter(
+      (entry) =>
+        !entry.reviewDueAt || new Date(entry.reviewDueAt).getTime() > now.getTime(),
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.decidedAt).getTime() - new Date(left.decidedAt).getTime(),
+    )[0];
+  const currentVerifiedEvidence = evidence.filter(
+    (entry) =>
+      entry.status === "VERIFIED" &&
+      !entry.revokedAt &&
+      (!entry.expiresAt ||
+        new Date(entry.expiresAt).getTime() > now.getTime()) &&
+      (!entry.reviewDueAt ||
+        new Date(entry.reviewDueAt).getTime() > now.getTime()) &&
+      COMPLIANCE_VERIFICATION_LEVELS.indexOf(entry.verificationLevel) >=
+        COMPLIANCE_VERIFICATION_LEVELS.indexOf("DOCUMENT_REVIEWED"),
+  );
 
   if (!product?.id) reasons.push("product_missing");
   if (product?.approvalStatus !== "approved")
@@ -416,8 +467,63 @@ export function evaluateProductGovernanceReadiness(product) {
   if (profile && !profile.ipRightsConfirmedAt) {
     reasons.push("ip_rights_confirmation_missing");
   }
+  if (
+    profile &&
+    !["REQUIRED", "NOT_APPLICABLE"].includes(applicabilityStatus)
+  ) {
+    reasons.push("product_applicability_undecided");
+  }
+  if (
+    profile &&
+    ["REQUIRED", "NOT_APPLICABLE"].includes(applicabilityStatus) &&
+    (!hasText(profile.applicabilityReasonText) ||
+      !hasText(profile.applicabilitySourceUrl) ||
+      !hasText(profile.applicabilityDecidedBy) ||
+      !profile.applicabilityDecidedAt)
+  ) {
+    reasons.push("product_applicability_evidence_missing");
+  }
+  if (
+    profile?.nextReviewAt &&
+    new Date(profile.nextReviewAt).getTime() <= now.getTime()
+  ) {
+    reasons.push("product_applicability_review_expired");
+  }
+  if (
+    applicabilityStatus === "REQUIRED" &&
+    verificationRank <
+      COMPLIANCE_VERIFICATION_LEVELS.indexOf("DOCUMENT_REVIEWED")
+  ) {
+    reasons.push("product_verification_level_insufficient");
+  }
+  if (
+    applicabilityStatus === "REQUIRED" &&
+    currentVerifiedEvidence.length === 0
+  ) {
+    reasons.push("verified_product_evidence_missing");
+  }
+  if (
+    applicabilityStatus === "REQUIRED" &&
+    currentDecision?.decision !== "COMPLIANT"
+  ) {
+    reasons.push("product_compliance_decision_missing");
+  }
+  if (
+    applicabilityStatus === "NOT_APPLICABLE" &&
+    currentDecision?.decision !== "NOT_APPLICABLE"
+  ) {
+    reasons.push("product_not_applicable_decision_missing");
+  }
+  if (currentDecision?.decision === "BLOCKED") {
+    reasons.push("product_compliance_blocked");
+  }
 
-  return { ready: reasons.length === 0, reasons };
+  return {
+    ready: reasons.length === 0,
+    reasons,
+    currentDecision: currentDecision || null,
+    verifiedEvidenceCount: currentVerifiedEvidence.length,
+  };
 }
 
 export function calculateGovernedPayoutAvailability(
@@ -505,6 +611,14 @@ export function buildProductComplianceSnapshot(product) {
     hsCode: profile?.hsCode || null,
     customsDescriptionEn: profile?.customsDescriptionEn || null,
     regulatoryCategory: profile?.regulatoryCategory || null,
+    applicabilityStatus: profile?.applicabilityStatus || "UNKNOWN",
+    verificationLevel: profile?.verificationLevel || "UNVERIFIED",
+    applicabilityReasonCode: profile?.applicabilityReasonCode || null,
+    applicabilityReasonText: profile?.applicabilityReasonText || null,
+    applicabilitySourceUrl: profile?.applicabilitySourceUrl || null,
+    applicabilityDecidedAt: profile?.applicabilityDecidedAt || null,
+    applicabilityDecidedBy: profile?.applicabilityDecidedBy || null,
+    nextReviewAt: profile?.nextReviewAt || null,
     approvalStatus: profile?.approvalStatus || "MISSING",
     reviewedAt: profile?.reviewedAt || null,
     capturedAt: new Date().toISOString(),
@@ -768,6 +882,226 @@ export async function upsertProductComplianceProfile(
   return { ok: true, profile };
 }
 
+export async function recordProductComplianceEvidence(
+  {
+    productId,
+    evidenceType,
+    evidenceReference,
+    verificationLevel,
+    status,
+    issuerName = null,
+    referenceNumber = null,
+    expiresAt = null,
+    reviewDueAt = null,
+    fileHash = null,
+    notes = null,
+    submittedBy,
+    verifiedBy = null,
+    verificationMethod = null,
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const product = await prismaClient.product.findUnique({
+    where: { id: productId },
+    select: { id: true },
+  });
+  if (!product) return { ok: false, reason: "product_not_found" };
+
+  const normalizedType = normalizeUpper(evidenceType);
+  const normalizedReference = normalizeText(evidenceReference);
+  const normalizedLevel = normalizeUpper(verificationLevel);
+  const normalizedStatus = normalizeUpper(status);
+  const normalizedSubmitter = normalizeText(submittedBy);
+  const normalizedVerifier = normalizeText(verifiedBy);
+  const normalizedFileHash = normalizeLower(fileHash);
+  const parsedExpiresAt = expiresAt ? new Date(expiresAt) : null;
+  const parsedReviewDueAt = reviewDueAt ? new Date(reviewDueAt) : null;
+
+  if (
+    !normalizedType ||
+    !normalizedReference ||
+    !normalizedSubmitter ||
+    !COMPLIANCE_VERIFICATION_LEVELS.includes(normalizedLevel) ||
+    !PRODUCT_COMPLIANCE_EVIDENCE_STATUSES.includes(normalizedStatus)
+  ) {
+    return { ok: false, reason: "invalid_product_evidence" };
+  }
+  if (
+    (expiresAt && Number.isNaN(parsedExpiresAt?.getTime())) ||
+    (reviewDueAt && Number.isNaN(parsedReviewDueAt?.getTime())) ||
+    (normalizedFileHash && !/^[a-f0-9]{64}$/.test(normalizedFileHash))
+  ) {
+    return { ok: false, reason: "invalid_product_evidence_dates_or_hash" };
+  }
+  if (
+    normalizedStatus === "VERIFIED" &&
+    (!normalizedVerifier ||
+      COMPLIANCE_VERIFICATION_LEVELS.indexOf(normalizedLevel) <
+        COMPLIANCE_VERIFICATION_LEVELS.indexOf("DOCUMENT_REVIEWED"))
+  ) {
+    return { ok: false, reason: "verified_evidence_review_required" };
+  }
+
+  const evidenceKey = hashValue(
+    JSON.stringify({
+      productId,
+      normalizedType,
+      normalizedReference,
+      normalizedLevel,
+      normalizedStatus,
+      normalizedFileHash: normalizedFileHash || null,
+      submittedAt: now.toISOString(),
+    }),
+  );
+  const evidence = await prismaClient.productComplianceEvidence.create({
+    data: {
+      evidenceKey,
+      productId,
+      status: normalizedStatus,
+      verificationLevel: normalizedLevel,
+      evidenceType: normalizedType,
+      issuerName: normalizeText(issuerName),
+      referenceNumber: normalizeText(referenceNumber),
+      expiresAt: parsedExpiresAt,
+      reviewDueAt: parsedReviewDueAt,
+      evidenceReference: normalizedReference,
+      fileHash: normalizedFileHash || null,
+      submittedBy: normalizedSubmitter,
+      submittedAt: now,
+      verifiedBy:
+        normalizedStatus === "VERIFIED" ? normalizedVerifier : null,
+      verifiedAt: normalizedStatus === "VERIFIED" ? now : null,
+      verificationMethod: normalizeText(verificationMethod),
+      sourceCheckedAt: normalizedStatus === "VERIFIED" ? now : null,
+      notes: normalizeText(notes),
+    },
+  });
+  return { ok: true, evidence };
+}
+
+export async function recordProductComplianceDecision(
+  {
+    productId,
+    applicabilityStatus,
+    decision,
+    reasonCode = null,
+    reasonText,
+    verificationLevel,
+    sourceUrl,
+    reviewDueAt,
+    decidedBy,
+  },
+  { prismaClient = prisma, now = new Date() } = {},
+) {
+  const normalizedApplicability = normalizeUpper(applicabilityStatus);
+  const normalizedDecision = normalizeUpper(decision);
+  const normalizedLevel = normalizeUpper(verificationLevel);
+  const normalizedReason = normalizeText(reasonText);
+  const normalizedSource = normalizePublicHttpUrl(sourceUrl);
+  const normalizedActor = normalizeText(decidedBy);
+  const parsedReviewDueAt = reviewDueAt ? new Date(reviewDueAt) : null;
+  const expectedDecision =
+    normalizedApplicability === "NOT_APPLICABLE"
+      ? "NOT_APPLICABLE"
+      : normalizedDecision;
+
+  if (
+    !["REQUIRED", "NOT_APPLICABLE"].includes(normalizedApplicability) ||
+    !PRODUCT_COMPLIANCE_DECISIONS.includes(expectedDecision) ||
+    !COMPLIANCE_VERIFICATION_LEVELS.includes(normalizedLevel) ||
+    !normalizedReason ||
+    !normalizedSource ||
+    !normalizedActor ||
+    !parsedReviewDueAt ||
+    Number.isNaN(parsedReviewDueAt.getTime()) ||
+    parsedReviewDueAt.getTime() <= now.getTime()
+  ) {
+    return { ok: false, reason: "invalid_product_compliance_decision" };
+  }
+  if (
+    COMPLIANCE_VERIFICATION_LEVELS.indexOf(normalizedLevel) <
+    COMPLIANCE_VERIFICATION_LEVELS.indexOf("DOCUMENT_REVIEWED")
+  ) {
+    return { ok: false, reason: "decision_verification_level_insufficient" };
+  }
+
+  const decisionKey = hashValue(
+    JSON.stringify({
+      productId,
+      normalizedApplicability,
+      expectedDecision,
+      normalizedReason,
+      normalizedSource,
+      normalizedActor,
+      decidedAt: now.toISOString(),
+    }),
+  );
+
+  const result = await runSerializableGovernanceTransaction(
+    prismaClient,
+    async (tx) => {
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) return { ok: false, reason: "product_not_found" };
+
+    const currentDecision = await tx.productComplianceDecision.findFirst({
+      where: { productId },
+      orderBy: { decidedAt: "desc" },
+      select: { id: true },
+    });
+    const created = await tx.productComplianceDecision.create({
+      data: {
+        decisionKey,
+        productId,
+        decision: expectedDecision,
+        reasonCode: normalizeUpper(reasonCode) || null,
+        reasonText: normalizedReason,
+        verificationLevel: normalizedLevel,
+        sourceUrl: normalizedSource,
+        decidedBy: normalizedActor,
+        decidedAt: now,
+        reviewDueAt: parsedReviewDueAt,
+        supersedesId: currentDecision?.id || null,
+      },
+    });
+    const profile = await tx.productComplianceProfile.upsert({
+      where: { productId },
+      create: {
+        productId,
+        applicabilityStatus: normalizedApplicability,
+        verificationLevel: normalizedLevel,
+        applicabilityReasonCode: normalizeUpper(reasonCode) || null,
+        applicabilityReasonText: normalizedReason,
+        applicabilitySourceUrl: normalizedSource,
+        applicabilityDecidedAt: now,
+        applicabilityDecidedBy: normalizedActor,
+        nextReviewAt: parsedReviewDueAt,
+        approvalStatus:
+          expectedDecision === "BLOCKED" ? "HOLD" : "PENDING",
+      },
+      update: {
+        applicabilityStatus: normalizedApplicability,
+        verificationLevel: normalizedLevel,
+        applicabilityReasonCode: normalizeUpper(reasonCode) || null,
+        applicabilityReasonText: normalizedReason,
+        applicabilitySourceUrl: normalizedSource,
+        applicabilityDecidedAt: now,
+        applicabilityDecidedBy: normalizedActor,
+        nextReviewAt: parsedReviewDueAt,
+        ...(expectedDecision === "BLOCKED"
+          ? { approvalStatus: "HOLD" }
+          : {}),
+      },
+    });
+    return { ok: true, decision: created, profile };
+    },
+  );
+
+  return result;
+}
+
 export async function getMarketplaceGovernanceDashboard({
   prismaClient = prisma,
   env = process.env,
@@ -795,7 +1129,12 @@ export async function getMarketplaceGovernanceDashboard({
     prismaClient.product.findMany({
       where: { approvalStatus: { in: ["pending", "review", "approved"] } },
       orderBy: { updatedAt: "desc" },
-      include: { complianceProfile: true, vendorStore: true },
+      include: {
+        complianceProfile: true,
+        complianceEvidence: { orderBy: { createdAt: "desc" }, take: 20 },
+        complianceDecisions: { orderBy: { decidedAt: "desc" }, take: 20 },
+        vendorStore: true,
+      },
       take: 200,
     }),
     prismaClient.product.findMany({
@@ -805,6 +1144,15 @@ export async function getMarketplaceGovernanceDashboard({
         approvalStatus: true,
         shopifyProductId: true,
         complianceProfile: true,
+        complianceEvidence: {
+          where: { status: "VERIFIED" },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        },
+        complianceDecisions: {
+          orderBy: { decidedAt: "desc" },
+          take: 20,
+        },
         vendorStore: { select: { isTestStore: true } },
       },
     }),

@@ -23,6 +23,11 @@ import {
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
+import {
+  inspectPaidOrderSaleEligibility,
+  POST_ORDER_ELIGIBILITY_TRIGGER,
+} from "./saleEligibility.server.js";
+import { applyShopifyOrderQuarantine } from "./shopifyOrderQuarantine.server.js";
 
 const require = createRequire(import.meta.url);
 const jaLocale = require("i18n-iso-countries/langs/ja.json");
@@ -4082,10 +4087,14 @@ async function recordShopifyOrderSellerOrderShadow(
     salesCreditOffset = null,
     multiSellerDetected = false,
     writeSellerOrders = true,
+    forceWrite = false,
+    settlementStatus = "shadow",
+    riskStatus = "normal",
+    riskMetadata = null,
   },
   { prismaClient = prisma, env = process.env } = {},
 ) {
-  if (!isSellerOrderShadowWriteEnabled(env)) {
+  if (!forceWrite && !isSellerOrderShadowWriteEnabled(env)) {
     return { ok: true, skipped: true, reason: "shadow_write_disabled" };
   }
 
@@ -4327,8 +4336,8 @@ async function recordShopifyOrderSellerOrderShadow(
           currencyCode: normalizedCurrencyCode,
           paymentStatus: "paid",
           fulfillmentStatus: "unfulfilled",
-          settlementStatus: "shadow",
-          riskStatus: "normal",
+          settlementStatus,
+          riskStatus,
           governanceSnapshotVersion:
             governanceSnapshot.governanceSnapshotVersion,
           legalSellerSnapshotJson: governanceSnapshot.legalSellerSnapshotJson,
@@ -4347,6 +4356,9 @@ async function recordShopifyOrderSellerOrderShadow(
             sellerTaxAmount: bucket.sellerTaxAmount,
             salesCreditOffsetId: salesCreditOffset?.offsetId || null,
             salesCreditOffsetAmount: bucket.salesCreditOffsetAmount,
+            ...(riskMetadata && typeof riskMetadata === "object"
+              ? { saleEligibilityReview: riskMetadata }
+              : {}),
           },
         };
         const sellerOrder = await prismaClient.sellerOrder.upsert({
@@ -4358,6 +4370,13 @@ async function recordShopifyOrderSellerOrderShadow(
           },
           update: {
             shopifyOrderName: sellerOrderData.shopifyOrderName,
+            ...(forceWrite
+              ? {
+                  settlementStatus,
+                  riskStatus,
+                  metadataJson: sellerOrderData.metadataJson,
+                }
+              : {}),
           },
           create: sellerOrderData,
         });
@@ -5473,12 +5492,289 @@ async function evaluateMarketplaceOrderGovernance(
   };
 }
 
+function getShopifyOrderOccurredAt(payload) {
+  const value =
+    payload?.created_at || payload?.processed_at || payload?.updated_at || null;
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function getShopifyOrderDestinationCountry(payload) {
+  return normalizeText(
+    payload?.shipping_address?.country_code ||
+      payload?.billing_address?.country_code ||
+      payload?.customer?.default_address?.country_code,
+  );
+}
+
+async function quarantinePaidShopifyOrder(
+  {
+    payload,
+    shopDomain,
+    shopifyOrderId,
+    shopifyOrderName,
+    currencyCode,
+    matchedLines,
+    sellerIds,
+    failures,
+    evidence,
+    unmatchedProductIds = [],
+    integrityTrigger = POST_ORDER_ELIGIBILITY_TRIGGER.ORDERS_PAID,
+  },
+  {
+    prismaClient = prisma,
+    env = process.env,
+    shopifyGraphQLWithOfflineSessionImpl = null,
+    now = new Date(),
+  } = {},
+) {
+  const adminReviewDueAt = new Date(now.getTime() + 15 * 60 * 1000);
+  const refundDecisionDueAt = new Date(now.getTime() + 60 * 60 * 1000);
+  const buyerContactDueAt = endOfBusinessDayInJapan(now);
+  const riskMetadata = {
+    reason: "paid_order_sale_eligibility_review_required",
+    failures,
+    evidence,
+    unmatchedProductIds,
+    quarantinedAt: now.toISOString(),
+    shipmentProhibited: true,
+    ledgerHold: true,
+    adminReviewDueAt: adminReviewDueAt.toISOString(),
+    refundDecisionDueAt: refundDecisionDueAt.toISOString(),
+    buyerContactDueAt: buyerContactDueAt.toISOString(),
+    integrityTrigger,
+  };
+
+  if (prismaClient?.sellerSettlementControl?.upsert) {
+    await runSerializableTransaction(prismaClient, async (tx) => {
+      for (const sellerId of sellerIds) {
+        await tx.sellerSettlementControl.upsert({
+          where: { sellerId },
+          create: {
+            sellerId,
+            salesHold: true,
+            payoutHold: true,
+            holdReason: "paid_order_sale_eligibility_review_required",
+            metadataJson: {
+              shopDomain,
+              shopifyOrderId,
+              integrityTrigger,
+              operationalCasePending: true,
+              heldAt: now.toISOString(),
+            },
+          },
+          update: {
+            salesHold: true,
+            payoutHold: true,
+            holdReason: "paid_order_sale_eligibility_review_required",
+            metadataJson: {
+              shopDomain,
+              shopifyOrderId,
+              integrityTrigger,
+              operationalCasePending: true,
+              heldAt: now.toISOString(),
+            },
+          },
+        });
+      }
+    });
+  }
+
+  const sellerOrderShadow = await recordShopifyOrderSellerOrderShadow(
+    {
+      payload,
+      shopDomain,
+      shopifyOrderId,
+      shopifyOrderName,
+      currencyCode,
+      matchedLines,
+      multiSellerDetected: false,
+      writeSellerOrders: true,
+      forceWrite: true,
+      settlementStatus: "held",
+      riskStatus: "review",
+      riskMetadata,
+    },
+    { prismaClient, env },
+  );
+  const marketplaceOrderId = sellerOrderShadow?.marketplaceOrder?.id || null;
+  let operationalCase = null;
+
+  if (prismaClient?.marketplaceOperationalCase?.findFirst) {
+    operationalCase =
+      (await prismaClient.marketplaceOperationalCase.findFirst({
+        where: {
+          marketplaceOrderId,
+          caseType: "COMPLIANCE",
+          status: { notIn: ["RESOLVED", "CLOSED"] },
+        },
+      })) || null;
+  }
+  if (!operationalCase) {
+    const created = await createMarketplaceOperationalCase(
+      {
+        caseType: "COMPLIANCE",
+        priority: "CRITICAL",
+        marketplaceOrderId,
+        sellerId: sellerIds[0] || null,
+        vendorStoreId: matchedLines[0]?.product?.vendorStoreId || null,
+        currencyCode,
+        summary:
+          "Paid Shopify order requires sale eligibility review before settlement or shipment.",
+        detailsJson: {
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          sellerIds,
+          ...riskMetadata,
+        },
+        dueAt: refundDecisionDueAt,
+        assignedTo:
+          normalizeText(env.SALE_ELIGIBILITY_QUARANTINE_ASSIGNEE) ||
+          normalizeText(env.ADMIN_EMAIL) ||
+          "INCIDENT_COMMANDER",
+      },
+      {
+        prismaClient,
+        actor: "system:orders_paid_sale_eligibility",
+      },
+    ).catch(() => null);
+    operationalCase = created?.case || null;
+  }
+
+  const shopifyQuarantine = await applyShopifyOrderQuarantine(
+    {
+      shopDomain,
+      shopifyOrderId,
+      operationalCaseId: operationalCase?.id || null,
+      requiresShipping: matchedLines.some(
+        ({ lineItem }) => lineItem?.requires_shipping !== false,
+      ),
+    },
+    {
+      graphQL: shopifyGraphQLWithOfflineSessionImpl,
+      prismaClient,
+    },
+  );
+
+  if (operationalCase && prismaClient?.marketplaceOperationalCase?.update) {
+    const existingDetails =
+      operationalCase.detailsJson &&
+      typeof operationalCase.detailsJson === "object" &&
+      !Array.isArray(operationalCase.detailsJson)
+        ? operationalCase.detailsJson
+        : {};
+    operationalCase = await prismaClient.marketplaceOperationalCase.update({
+      where: { id: operationalCase.id },
+      data: {
+        priority: "CRITICAL",
+        dueAt: refundDecisionDueAt,
+        assignedTo:
+          operationalCase.assignedTo ||
+          normalizeText(env.SALE_ELIGIBILITY_QUARANTINE_ASSIGNEE) ||
+          normalizeText(env.ADMIN_EMAIL) ||
+          "INCIDENT_COMMANDER",
+        detailsJson: {
+          ...existingDetails,
+          ...riskMetadata,
+          quarantineStatus: shopifyQuarantine.status,
+          shopifyQuarantine,
+        },
+      },
+    });
+    if (prismaClient?.marketplaceOperationalCaseEvent?.create) {
+      await prismaClient.marketplaceOperationalCaseEvent.create({
+        data: {
+          caseId: operationalCase.id,
+          eventType:
+            shopifyQuarantine.ok === true
+              ? "SHOPIFY_QUARANTINE_APPLIED"
+              : "SHOPIFY_QUARANTINE_PARTIAL_FAILURE",
+          actor: "system:orders_paid_sale_eligibility",
+          note:
+            shopifyQuarantine.ok === true
+              ? "Shopify fulfillment holds and quarantine tag were applied."
+              : "Shopify order quarantine requires immediate manual completion.",
+          metadataJson: {
+            quarantineStatus: shopifyQuarantine.status,
+            fulfillmentOrderCount:
+              shopifyQuarantine.fulfillmentOrders?.length || 0,
+            failedFulfillmentOrderCount: (
+              shopifyQuarantine.fulfillmentOrders || []
+            ).filter((entry) => entry?.ok !== true).length,
+            orderTagApplied: shopifyQuarantine.tag?.ok === true,
+          },
+        },
+      });
+    }
+  }
+
+  if (
+    prismaClient?.sellerOrder?.update &&
+    Array.isArray(sellerOrderShadow?.sellerOrders)
+  ) {
+    for (const sellerOrder of sellerOrderShadow.sellerOrders) {
+      const metadata =
+        sellerOrder?.metadataJson &&
+        typeof sellerOrder.metadataJson === "object" &&
+        !Array.isArray(sellerOrder.metadataJson)
+          ? sellerOrder.metadataJson
+          : {};
+      const currentReview =
+        metadata.saleEligibilityReview &&
+        typeof metadata.saleEligibilityReview === "object" &&
+        !Array.isArray(metadata.saleEligibilityReview)
+          ? metadata.saleEligibilityReview
+          : {};
+      await prismaClient.sellerOrder.update({
+        where: { id: sellerOrder.id },
+        data: {
+          settlementStatus: "held",
+          riskStatus: "review",
+          metadataJson: {
+            ...metadata,
+            saleEligibilityReview: {
+              ...currentReview,
+              ...riskMetadata,
+              quarantineStatus: shopifyQuarantine.status,
+              shopifyQuarantine,
+            },
+          },
+        },
+      });
+    }
+  }
+
+  return {
+    ok: false,
+    quarantined: true,
+    reason: "paid_order_sale_eligibility_review_required",
+    sellerIds,
+    failures,
+    unmatchedProductIds,
+    sellerOrderShadow,
+    operationalCaseId: operationalCase?.id || null,
+    shopifyQuarantine,
+  };
+}
+
+function endOfBusinessDayInJapan(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  jst.setUTCHours(23, 59, 59, 999);
+  return new Date(jst.getTime() - 9 * 60 * 60 * 1000);
+}
+
 export async function processShopifyOrderPaidSettlement(
   { payload, shop },
   {
     prismaClient = prisma,
     shopifyGraphQLWithOfflineSessionImpl = null,
+    inspectPaidOrderSaleEligibilityImpl = inspectPaidOrderSaleEligibility,
     env = process.env,
+    integrityOnly = false,
+    integrityTrigger = POST_ORDER_ELIGIBILITY_TRIGGER.ORDERS_PAID,
+    verifyOrderTimeProjection = !integrityOnly,
   } = {},
 ) {
   const shopDomain = normalizeLowercase(
@@ -5503,16 +5799,18 @@ export async function processShopifyOrderPaidSettlement(
     };
   }
 
-  const paymentRisk = await resolveShopifyOrderSalesCreditPaymentRisk(
-    {
-      payload,
-      shopDomain,
-      shopifyOrderId,
-    },
-    {
-      shopifyGraphQLWithOfflineSessionImpl,
-    },
-  );
+  const paymentRisk = integrityOnly
+    ? null
+    : await resolveShopifyOrderSalesCreditPaymentRisk(
+        {
+          payload,
+          shopDomain,
+          shopifyOrderId,
+        },
+        {
+          shopifyGraphQLWithOfflineSessionImpl,
+        },
+      );
 
   const existingLedgerEntry = await prismaClient.ledgerEntry.findFirst({
     where: {
@@ -5521,7 +5819,7 @@ export async function processShopifyOrderPaidSettlement(
     },
   });
 
-  if (existingLedgerEntry) {
+  if (existingLedgerEntry && !integrityOnly) {
     let salesCreditCapture = null;
 
     if (salesCreditOffset?.offsetId) {
@@ -5563,7 +5861,11 @@ export async function processShopifyOrderPaidSettlement(
           ledgerEntry: existingLedgerEntry,
           salesCreditOffset,
         },
-        { prismaClient, env },
+        {
+          prismaClient,
+          env,
+          shopifyGraphQLWithOfflineSessionImpl,
+        },
       );
 
     if (!sellerOrderShadow?.skipped) {
@@ -5723,13 +6025,101 @@ export async function processShopifyOrderPaidSettlement(
   );
 
   if (!governance.ok) {
+    const quarantine = await quarantinePaidShopifyOrder(
+      {
+        payload,
+        shopDomain,
+        shopifyOrderId,
+        shopifyOrderName,
+        currencyCode,
+        matchedLines,
+        sellerIds,
+        failures: (governance.reasons || []).map((reason) => ({
+          productId: null,
+          code: "MARKETPLACE_GOVERNANCE_REVIEW_REQUIRED",
+          reason,
+        })),
+        evidence: [],
+        unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+        integrityTrigger,
+      },
+      {
+        prismaClient,
+        env,
+        shopifyGraphQLWithOfflineSessionImpl,
+      },
+    );
     return {
-      ok: false,
+      ...quarantine,
       reason: governance.reason,
+      quarantineReason: quarantine.reason,
       governanceReasons: governance.reasons,
-      checkoutReference: governance.checkoutReference,
-      operationalCaseId: governance.operationalCaseId,
+    };
+  }
+
+  const postOrderEligibilityEnabled =
+    String(
+      env.POST_ORDER_SALE_ELIGIBILITY_ENFORCEMENT_ENABLED ??
+        process.env.POST_ORDER_SALE_ELIGIBILITY_ENFORCEMENT_ENABLED ??
+        "true",
+    )
+      .trim()
+      .toLowerCase() !== "false";
+  if (postOrderEligibilityEnabled) {
+    const orderOccurredAt = getShopifyOrderOccurredAt(payload);
+    const eligibility = await inspectPaidOrderSaleEligibilityImpl(
+      {
+        shopDomain,
+        matchedLines,
+        orderOccurredAt,
+        destinationCountry: getShopifyOrderDestinationCountry(payload),
+        triggerType: integrityTrigger,
+        verifyOrderTimeProjection,
+      },
+      { prismaClient, env },
+    );
+    const failures = [
+      ...(Array.isArray(eligibility?.failures) ? eligibility.failures : []),
+      ...unmatchedProductIds.filter(Boolean).map((productId) => ({
+        productId,
+        code: "ORDER_LINE_PRODUCT_UNMATCHED",
+      })),
+    ];
+
+    if (!eligibility?.ok || failures.length > 0) {
+      return quarantinePaidShopifyOrder(
+        {
+          payload,
+          shopDomain,
+          shopifyOrderId,
+          shopifyOrderName,
+          currencyCode,
+          matchedLines,
+          sellerIds,
+          failures,
+          evidence: Array.isArray(eligibility?.evidence)
+            ? eligibility.evidence
+            : [],
+          unmatchedProductIds: unmatchedProductIds.filter(Boolean),
+          integrityTrigger,
+        },
+        {
+          prismaClient,
+          env,
+          shopifyGraphQLWithOfflineSessionImpl,
+        },
+      );
+    }
+  }
+
+  if (integrityOnly) {
+    return {
+      ok: true,
+      integrityOnly: true,
+      duplicate: Boolean(existingLedgerEntry),
+      shopifyOrderId,
       sellerIds,
+      matchedLineCount: matchedLines.length,
       unmatchedProductIds: unmatchedProductIds.filter(Boolean),
     };
   }
@@ -9671,10 +10061,12 @@ export async function approvePayoutRun(
           requestedAmount: payoutRun.amount,
         };
       }
+      const approvedTransferMethod =
+        payoutRun.transferMethod || "stripe_connect_payout";
       const approvedRecipientSnapshot = buildPayoutApprovalRecipientSnapshot(
         payoutRecipient,
         {
-          transferMethod: payoutRun.transferMethod,
+          transferMethod: approvedTransferMethod,
           currencyCode: payoutRun.currencyCode,
         },
       );
@@ -9688,7 +10080,8 @@ export async function approvePayoutRun(
           approvedAt: new Date(),
           approvedBy,
           approvedByJson,
-          approvedTransferMethod: payoutRun.transferMethod,
+          transferMethod: approvedTransferMethod,
+          approvedTransferMethod,
           approvedPayoutRecipientId: payoutRecipient.id,
           approvedRecipientHash,
           approvedRecipientSnapshotJson: approvedRecipientSnapshot,
@@ -9744,6 +10137,12 @@ async function claimPayoutRunForExecution(
     }
     if (transferMethod !== payoutRun.transferMethod) {
       return { ok: false, reason: "payout_transfer_method_changed" };
+    }
+    if (
+      transferMethod === "stripe_connect_payout" &&
+      !payoutRun.seller.stripeAccount?.payoutsEnabled
+    ) {
+      return { ok: false, reason: "payouts_not_enabled" };
     }
     const payoutRecipient =
       payoutRun.sellerPayoutRecipient || payoutRun.seller.payoutRecipient;
@@ -10505,7 +10904,7 @@ export async function executePayoutRun(
     env = process.env,
   } = {},
 ) {
-  const payoutRun = await prismaClient.payoutRun.findUnique({
+  const payoutCandidate = await prismaClient.payoutRun.findUnique({
     where: { id: payoutRunId },
     include: {
       seller: {
@@ -10513,79 +10912,60 @@ export async function executePayoutRun(
       },
     },
   });
-
-  if (!payoutRun?.seller?.stripeAccount) {
-    return {
-      ok: false,
-      reason: "payout_run_not_found",
-    };
+  if (!payoutCandidate?.seller?.stripeAccount) {
+    return { ok: false, reason: "payout_run_not_found" };
+  }
+  if (payoutCandidate.status !== "approved") {
+    return { ok: false, reason: "payout_run_not_executable" };
+  }
+  if (!payoutCandidate.seller.stripeAccount.payoutsEnabled) {
+    return { ok: false, reason: "payouts_not_enabled" };
   }
 
-  if (payoutRun.status !== "approved") {
-    return {
-      ok: false,
-      reason: "payout_run_not_executable",
-    };
-  }
-  const eligibility = await assertPayoutEligibleSeller(payoutRun.sellerId, {
-    prismaClient,
-    env,
-    seller: payoutRun.seller,
+  const balanceStripeClient =
+    stripeClient ||
+    (createPayout === createConnectedAccountPayout ? getStripeClient() : null);
+  const availableBalance = await getConnectedAccountAvailableBalanceAmount({
+    stripeClient: balanceStripeClient,
+    stripeAccountId: payoutCandidate.stripeAccountId,
+    currencyCode: payoutCandidate.currencyCode,
   });
-  if (!eligibility.ok) return eligibility;
-  const availability = await getSellerPayoutAvailability(
-    {
-      seller: eligibility.seller,
-      currencyCode: payoutRun.currencyCode,
-      excludePayoutRunId: payoutRun.id,
-    },
-    { prismaClient },
-  );
-  if (availability.availableAmount < payoutRun.amount) {
+  if (
+    availableBalance != null &&
+    availableBalance < payoutCandidate.amount
+  ) {
     return {
       ok: false,
-      reason: "insufficient_available_balance_at_execution",
-      governedAvailableAmount: availability.availableAmount,
-      requestedAmount: payoutRun.amount,
+      reason: "insufficient_stripe_available_balance",
+      availableBalance,
+      payoutRun: payoutCandidate,
     };
   }
 
-  if (!payoutRun.seller.stripeAccount.payoutsEnabled) {
-    return {
-      ok: false,
-      reason: "payouts_not_enabled",
-    };
-  }
-
+  let claimedExecution;
   try {
-    const balanceStripeClient =
-      stripeClient ||
-      (createPayout === createConnectedAccountPayout
-        ? getStripeClient()
-        : null);
-    const availableBalance = await getConnectedAccountAvailableBalanceAmount({
-      stripeClient: balanceStripeClient,
-      stripeAccountId: payoutRun.stripeAccountId,
-      currencyCode: payoutRun.currencyCode,
-    });
-
-    if (availableBalance != null && availableBalance < payoutRun.amount) {
-      return {
-        ok: false,
-        reason: "insufficient_stripe_available_balance",
-        availableBalance,
-        payoutRun,
-      };
+    claimedExecution = await claimPayoutRunForExecution(
+      {
+        payoutRunId,
+        executedBy,
+        executedByJson: null,
+        transferMethod: "stripe_connect_payout",
+      },
+      { prismaClient, env },
+    );
+  } catch (error) {
+    if (error?.code === "P2034") {
+      return { ok: false, reason: "payout_reservation_conflict" };
     }
+    throw error;
+  }
+  if (!claimedExecution.ok) return claimedExecution;
 
-    const claimed = await prismaClient.payoutRun.updateMany({
-      where: { id: payoutRun.id, status: "approved" },
-      data: { status: "processing" },
-    });
-    if (claimed.count !== 1) {
-      return { ok: false, reason: "payout_run_state_conflict" };
-    }
-
+  const payoutRun = claimedExecution.payoutRun;
+  if (!claimedExecution.seller?.stripeAccount) {
+    return { ok: false, reason: "payout_run_not_found" };
+  }
+  try {
     const payout = await createPayout({
       stripeAccountId: payoutRun.stripeAccountId,
       amount: payoutRun.amount,

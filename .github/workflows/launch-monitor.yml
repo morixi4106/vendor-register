@@ -1,4 +1,4 @@
-name: Launch monitor (72 hours)
+name: Production integrity monitor
 
 on:
   schedule:
@@ -6,11 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
 
 concurrency:
-  group: launch-monitor-72-hours
+  group: production-integrity-monitor
   cancel-in-progress: false
 
 jobs:
@@ -39,5 +38,13 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/launch-monitor-agent.mjs
+
+      - name: Enforce catalog freshness fail-safe
+        if: always()
+        env:
+          LAUNCH_MONITOR_URL: ${{ vars.LAUNCH_MONITOR_URL }}
+          SALE_ELIGIBILITY_WATCHDOG_TOKEN: ${{ secrets.SALE_ELIGIBILITY_WATCHDOG_TOKEN }}
+          SHOPIFY_WATCHDOG_SHOP_DOMAIN: ${{ vars.SHOPIFY_WATCHDOG_SHOP_DOMAIN }}
+          SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN: ${{ secrets.SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN }}
+        run: node scripts/sale-eligibility-watchdog-agent.mjs

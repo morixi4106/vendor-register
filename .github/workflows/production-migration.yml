@@ -1,0 +1,59 @@
+name: Production database migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type MIGRATE_PRODUCTION to continue
+        required: true
+      backup_reference:
+        description: Render/Postgres backup or snapshot reference
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-database-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: ${{ inputs.confirmation == 'MIGRATE_PRODUCTION' }}
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+    steps:
+      - name: Check out the exact release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify migration authorization
+        shell: bash
+        run: |
+          test "${{ inputs.confirmation }}" = "MIGRATE_PRODUCTION"
+          test -n "${{ inputs.backup_reference }}"
+          test -n "$DATABASE_URL"
+          echo "Backup reference recorded: ${{ inputs.backup_reference }}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Pre-migration audit
+        run: npm run audit:operational-migration
+
+      - name: Apply pending migrations
+        run: npx prisma migrate deploy
+
+      - name: Post-migration audit
+        run: npm run audit:operational-migration -- --require-current-schema

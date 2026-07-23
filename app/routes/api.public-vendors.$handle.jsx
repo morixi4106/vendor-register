@@ -1,4 +1,9 @@
 import prisma from "../db.server";
+import { getPlatformOperationalControl } from "../services/operationalReadiness.server.js";
+import {
+  SALE_ELIGIBILITY_CHANNEL,
+  evaluateSaleEligibilitySnapshot,
+} from "../services/saleEligibility.server.js";
 import { isPublicDraftOrderCheckoutEnabled } from "../services/vendorStorefront.server.js";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 
@@ -100,16 +105,43 @@ export const loader = async ({ params, request }) => {
       calculatedPrice: true,
       inventoryQuantity: true,
       shopDomain: true,
+      shopifyProductId: true,
       approvalStatus: true,
       productEuStatus: true,
       countryPolicy: true,
+      complianceProfile: true,
+      complianceEvidence: {
+        include: { requirement: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      },
+      complianceDecisions: {
+        include: { requirement: true },
+        orderBy: { decidedAt: "desc" },
+        take: 100,
+      },
     },
   });
+  const operationalControl = await getPlatformOperationalControl();
+  const availableProducts = products.filter(
+    (product) =>
+      evaluateSaleEligibilitySnapshot({
+        product: {
+          ...product,
+          vendorStore: vendor.vendorStore,
+        },
+        shopDomain: product.shopDomain,
+        vendorStoreId: vendor.vendorStore.id,
+        destinationCountry: deliveryCountry,
+        salesChannel: SALE_ELIGIBILITY_CHANNEL.PUBLIC_API,
+        operationalControl,
+      }).allowed,
+  );
 
   const storefront = serializePublicVendorStorefront({
     vendor,
     store: vendor.vendorStore,
-    products,
+    products: availableProducts,
     deliveryCountry,
     filterByDeliveryEligibility,
     draftOrderCheckoutEnabled,

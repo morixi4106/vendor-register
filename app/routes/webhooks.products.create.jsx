@@ -1,6 +1,7 @@
 import { authenticate } from "../shopify.server";
 import { Resend } from "resend";
 import { syncShopifyProductPayload } from "../services/shopifyProductSync.server.js";
+import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
 import {
   enforceUnresolvedShopifyProductPublicationBoundary,
   syncMarketplaceCheckoutPolicyForProduct,
@@ -35,6 +36,9 @@ export const action = async ({ request }) => {
   }
 
   try {
+    if (await isAutomatedEmailHoldActive()) {
+      return new Response("OK", { status: 200 });
+    }
     const { error } = await resend.emails.send({
       from: process.env.MAIL_FROM,
       to: [process.env.ADMIN_EMAIL],

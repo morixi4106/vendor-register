@@ -1,5 +1,50 @@
 # Production go-live checklist
 
+## Shopify app version release boundary
+
+`npm run deploy` only creates an unreleased Shopify app version. It must not
+change the active checkout Function by itself.
+
+An unreleased app version is not installed into the production shop. Never
+claim that the new Function was tested in the production shop before the app
+version was released.
+
+1. Test the new Function in a development store, including all four checkout
+   probes: direct product allowed, blocked product rejected, global stop
+   rejected and recovery allowed.
+2. Run `npm run deploy` to create the production app version without releasing
+   it.
+3. Inspect the generated app version, Function extensions, requested scopes and
+   handle. Record the version in `SHOPIFY_APP_VERSION`.
+4. Apply the compatible Render commit and Prisma migrations. Keep the
+   production storefront password protected.
+5. Inspect all existing validations owned by this app before release. Record
+   their IDs, `enabled`, `functionHandle` and `blockOnFailure` values. A
+   validation already bound to the same handle may start using the new Function
+   as soon as the app version is released.
+6. Release the staged Shopify version explicitly with
+   `npm run deploy:shopify:release`.
+7. Approve any additional scopes in the production shop.
+8. Create or update the validation in the disabled state.
+9. Synchronize every product projection and the shop-level purchase control,
+   then read them back.
+10. Enable the validation and run the four production probes while the
+    storefront remains password protected.
+11. Save the Release Manifest and separate evidence for each production probe.
+12. Run the low-value real payment and refund test only after all probes pass.
+
+If a probe fails, disable the new validation, establish a Shopify-side sales
+stop, and release the previous app version. Do not restore sales merely because
+the prior app version was restored.
+
+Do not use `--allow-deletes` in an ordinary release. Keep the previous Shopify
+app version available for rollback until the post-release probes pass.
+
+For a future incompatible Function change, prefer a new handle such as
+`marketplace-purchase-control-v2`, create a disabled validation for it, then
+switch after evidence review. Do not rename the current handle during an
+ordinary maintenance release.
+
 This project currently uses Shopify checkout as the customer payment surface, then records seller balances in the app ledger. Seller payouts are either recorded as manual bank/Wise transfers or executed through an admin-approved Wise API payout run.
 
 ## 1. Shopify Payments
@@ -19,6 +64,8 @@ Required Render environment variables for the current production payment path:
 ```text
 PAYMENT_PROVIDER=shopify_payments
 SELLER_PAYOUT_PROVIDER=manual
+PRODUCTION_PROBE_SIGNING_SECRET=<dedicated random secret, 32+ characters>
+SALE_ELIGIBILITY_WATCHDOG_TOKEN=<different random secret, 32+ characters>
 ```
 
 Use `SELLER_PAYOUT_PROVIDER=wise` only after Wise sandbox transfer, funding failure, webhook duplication, and ledger idempotency tests pass.
@@ -101,11 +148,132 @@ of at least 32 characters and send it as a Bearer token:
 FX_REFRESH_WORKER_TOKEN=...
 ```
 
-Apply production database migrations before serving the new release:
+Apply production database migrations before serving the new release. Do not
+make application startup responsible for migration:
+
+1. Record a recoverable database backup or snapshot reference.
+2. Run the pre-migration operational audit.
+3. Run `prisma migrate deploy` from the protected
+   `.github/workflows/production-migration.yml` workflow.
+4. Run the post-migration audit and verify expected tables, constraints, and
+   row counts.
+5. Deploy the application only after the migration job succeeds.
+
+The GitHub `production` environment must protect `PRODUCTION_DATABASE_URL` and
+require an authorized reviewer. Perform and record a restore drill before first
+release and after material schema or backup-provider changes.
+
+### Independent Shopify watchdog
+
+The GitHub `production` environment must also contain:
 
 ```text
-npx prisma migrate deploy --schema=prisma/schema.prisma
+SALE_ELIGIBILITY_WATCHDOG_TOKEN=<same value configured on Render>
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN=<independent watchdog app token>
 ```
+
+The watchdog app must be separate from the main application and limited to
+`read_products`, `read_publications`, and `write_publications`. Before go-live,
+perform a controlled Render/DB outage drill and prove that the watchdog can
+unpublish all products and verify zero remaining publications. Save the
+workflow run and recovery approval under
+`INDEPENDENT_SALES_STOP_DRILL_COMPLETED`. Repeat the drill at least every 90
+days.
+
+### Unsupported sales surfaces
+
+Before go-live, confirm and record `UNSUPPORTED_SALES_SURFACES_DISABLED`:
+
+- Shopify POS sales of governed products are disabled or operationally
+  prohibited.
+- Shopify Admin Create Order and post-order line editing have a documented
+  review and quarantine procedure.
+- Subscription, pre-order, try-before-you-buy, and unapproved external order
+  creation apps are absent or disabled.
+- `orders/edited` and `orders/updated` webhooks are active, and periodic
+  canonical order reconciliation has a fresh successful heartbeat.
+
+Orders are linked by the Shopify order GID. This codebase does not depend on the
+removed `checkout_id` field; do not add a guessed checkout identifier fallback.
+
+### Purchase-control migration and activation
+
+The Cart and Checkout Validation Function is fail-closed. Do not enable it
+until every active product has a current eligibility projection.
+
+The Function enforces explicit `ALLOWED` / `BLOCKED` decisions and a day-level
+hard validity boundary. Shopify Function input does not provide an arbitrary
+current UTC timestamp for comparing a dynamic minute-level expiry. Minute-level
+freshness is therefore enforced by the external catalog watchdog: after the
+critical freshness limit it writes the shop control as `BLOCKED`, keeps the
+validation active and applies the platform emergency purchase stop. The
+watchdog never restores sales automatically.
+
+1. Capture the pre-migration counts:
+
+   ```text
+   npm run audit:operational-migration
+   ```
+
+2. Apply the migrations and Render release. Follow **Shopify app version release
+   boundary** above to release the Function while the storefront is password
+   protected, then leave the validation rule disabled.
+3. Capture the post-migration counts with the same audit command. Investigate
+   missing eligibility decisions or projections before continuing.
+4. Approve the `read_validations` and `write_validations` scopes.
+5. In **Production readiness**, run **Prepare validation while disabled**.
+   This stages exactly one disabled validation, backfills product projections,
+   synchronizes the shop-level control, and verifies the disabled rule.
+6. Record the successful development-store Function replay in
+   `CHECKOUT_VALIDATION_REPLAY_COMPLETED`.
+7. Run **Enable after evidence review**. Activation is refused while the
+   replay evidence is missing or expired.
+8. In the real production shop, test the four production scenarios with the
+   storefront password protected and bind their evidence to the active app
+   version, Render commit, migration, Function, validation and projection
+   versions.
+9. Confirm all of the following before accepting orders:
+   - Exactly one `Marketplace purchase control` validation exists.
+   - It is enabled with `blockOnFailure`.
+   - Its error history is empty.
+   - Every eligible product has a non-expired, versioned projection.
+   - The operational purchase control is `ALLOWED`.
+
+Never enable the rule manually before step 7. Missing, malformed, expired, or
+unknown-version projection data intentionally blocks checkout.
+
+### Emergency procedure A: restore valid orders after a Function failure
+
+Use this only when the Validation Function itself is incorrectly blocking
+otherwise valid orders and sales should continue:
+
+1. Open **Settings > Checkout > Checkout rules**.
+2. Open **Marketplace purchase control**.
+3. Click **Turn off**.
+4. Record the incident time, operator, reason, and evidence reference.
+5. Confirm that no separate application, database, compliance or product-safety
+   incident requires sales to remain stopped.
+6. Repair and replay the Function before reactivation.
+
+Turning off this rule restores checkout; it is not a sales-stop operation.
+
+### Emergency procedure B: stop sales while the app or database is unavailable
+
+Do not turn off the Validation Function merely because the app is unavailable.
+Keep the fail-closed rule enabled and independently stop sales in Shopify:
+
+1. Enable Online Store password protection when the whole store must stop.
+2. Set affected products to draft or unpublish them from every sales channel.
+3. Disable affected Markets, shipping zones or delivery availability when the
+   incident is country or route specific.
+4. Verify from a private browser that checkout cannot complete.
+5. Record the incident time, operator, affected scope and evidence reference.
+6. Restore sales only after a different operator approves recovery and the
+   application readiness page is green again.
+
+If the Function is also malfunctioning, first establish the Shopify sales stop
+above, and only then turn off the broken Checkout Rule.
 
 Open Shopify Admin > vendor-register > Production readiness.
 

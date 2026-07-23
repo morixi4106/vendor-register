@@ -1,65 +1,82 @@
-# 公開後72時間監視
+# 本番整合性監視
 
-公開直後の72時間だけ、GitHub ActionsとRender Cronを組み合わせて監視します。
-監視は読み取り専用で、注文、台帳、返金、商品、出金を自動修復しません。
+公開後72時間は集中監視し、その後もGitHub ActionsとRender Cronを
+組み合わせて継続監視します。監視処理は読み取り専用です。注文、台帳、
+返金、商品、出金を自動修復しません。
 
 ## 構成
 
-### GitHub Actions（5分ごと）
+### GitHub Actions
 
-`.github/workflows/launch-monitor.yml` がRenderとは別の実行環境から次を確認します。
+`.github/workflows/launch-monitor.yml` はRenderとは別の実行環境から次を
+確認します。
 
 - Renderの5xx、401/403、429、アプリエラーログ
-- Renderアプリのルートが正式ストアへ転送されること
-- 正式ストアが200を返し、`/password` ではなく、ブランド文字列を含むこと
-- Webアプリ内のDB、撤回メール、問い合わせ、SellerOrder、台帳、テスト出金
+- Renderルートが正式ストアへ転送されること
+- 正式ストアが200を返し、パスワード画面ではないこと
+- DB、撤回メール、問い合わせ、SellerOrder、台帳、テスト出金
+- 商品同期と全販売チャネルの公開境界
+- 販売制御の鮮度が失われた場合の緊急停止
 
-軽い検査は5分ごと、台帳などの重い検査は15分ごとです。重い検査を省略した回は、
-直前の結果を維持するため、見かけ上の復旧にはなりません。
+軽い検査は5分ごと、台帳などの重い検査は15分ごとです。重い検査を
+省略した回は直前の結果を維持するため、見かけだけの復旧にはしません。
 
-### Render Dead Man's Switch（10分ごと）
+### 独立販売停止Watchdog
 
-GitHub Actionsの最終成功時刻だけを確認します。15分以上更新されない場合、
-GitHub ActionsまたはWebアプリ停止として、Renderから直接メールします。
+販売制御が古い、Renderが停止、DBへ接続できない、または内部停止APIが
+失敗した場合は、別のShopifyカスタムアプリから直接、すべての商品を
+全Publicationから非公開化します。最後に公開残存が0件であることを
+再取得して確認します。
 
-これにより、Renderが停止した場合はGitHub側、GitHub Actionsが停止した場合は
-Render側から異常を検出できます。
+必要なGitHub `production` 環境の値:
+
+```text
+SALE_ELIGIBILITY_WATCHDOG_TOKEN=<Renderにも設定する32文字以上の専用秘密値>
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN=<独立Watchdogアプリのトークン>
+```
+
+Watchdogアプリの権限は
+`read_products,read_publications,write_publications` のみに制限します。
+メインアプリのトークンを流用しません。停止後の再公開は自動化せず、原因と
+証跡を別担当者が確認してから手動で復旧します。
+
+### Render Dead Man's Switch
+
+Render Cronは10分ごとにGitHub Actionsの最終成功時刻を確認します。
+15分以上更新されない場合は、監視停止として通知します。これにより
+GitHub Actions側とRender側の片方が停止しても検知できます。
 
 ## 通知
 
-- 重大異常は初回即時、継続時は30分ごと
-- 注意は初回即時、継続時は2時間ごと
-- 内容変更、重要度上昇、復旧は即時
-- 開始時と72時間完了時にも通知
-- Dead Man's Switchの同一障害通知はResendの冪等キーで1時間に1回まで
-- 重大異常時はGitHub Actionsも失敗扱いになり、Resendとは別に赤い実行履歴を残す
+- 重大異常: 初回即時、継続時は30分ごと
+- 注意: 初回即時、継続時は2時間ごと
+- 内容変更、重要度上昇、復旧: 即時
+- 72時間集中監視の開始時と終了時: 通知
 
-監視状態、通知抑制、復旧状態、ロックは既存の`OperationalHeartbeat`へ保存します。
-業務データへの書き込みは行いません。
+状態、通知抑制、復旧、実行ロックは既存の`OperationalHeartbeat`へ
+永続化します。業務データは変更しません。
 
-管理画面の「公開監視」には、現在の検査結果から確認先を示す決定表ベースの
-運用ガイドがあります。AIによる自動判断や自動修復は行いません。
-
-## Webサービスの環境変数
+## Render環境変数
 
 ```text
 LAUNCH_MONITOR_ENABLED=true
-LAUNCH_MONITOR_TOKEN=<32文字以上のランダム値>
-LAUNCH_MONITOR_DEADMAN_TOKEN=<別の32文字以上のランダム値>
+LAUNCH_MONITOR_TOKEN=<32文字以上の専用秘密値>
+LAUNCH_MONITOR_DEADMAN_TOKEN=<別の32文字以上の専用秘密値>
 LAUNCH_MONITOR_DURATION_HOURS=72
 LAUNCH_MONITOR_STARTED_AT=<UTC ISO日時>
+SALE_ELIGIBILITY_WATCHDOG_TOKEN=<さらに別の32文字以上の専用秘密値>
 ```
-
-`LAUNCH_MONITOR_STARTED_AT`はパスワード解除直後の時刻へ必ず更新します。
-開始時刻と期間から監視キャンペーンを識別し、以前の完了・通知・重い検査の状態を
-新しい72時間へ引き継ぎません。
 
 任意:
 
 ```text
-LAUNCH_MONITOR_ALERT_EMAIL=<通知先。未設定時はADMIN_EMAIL>
-LAUNCH_MONITOR_FROM_EMAIL=<送信元。未設定時はMAIL_FROM>
+LAUNCH_MONITOR_ALERT_EMAIL=<未設定時はADMIN_EMAIL>
+LAUNCH_MONITOR_FROM_EMAIL=<未設定時はMAIL_FROM>
 ```
+
+`LAUNCH_MONITOR_STARTED_AT` は公開直後の時刻へ更新します。72時間後も
+監視そのものは止めず、集中監視期間だけを終了します。
 
 ## GitHub Actions
 
@@ -67,6 +84,8 @@ Secrets:
 
 ```text
 LAUNCH_MONITOR_TOKEN
+SALE_ELIGIBILITY_WATCHDOG_TOKEN
+SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN
 RENDER_API_KEY
 RESEND_API_KEY
 MAIL_FROM
@@ -82,13 +101,12 @@ RENDER_SERVICE_ID=<Render Web service ID>
 LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION=https://oja-immanuel-bacchus.com/
 LAUNCH_MONITOR_STOREFRONT_URL=https://oja-immanuel-bacchus.com/
 LAUNCH_MONITOR_STOREFRONT_MARKER=Oja Immanuel Bacchus
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
 ```
-
-Workflowは72時間完了レスポンスを受け取ると、自身を無効化します。
 
 ## Render Cron
 
-10分ごとのCron Jobを別サービスとして作成します。
+10分ごとの別Cron Job:
 
 ```text
 Build: npm ci
@@ -101,24 +119,29 @@ Schedule: */10 * * * *
 ```text
 LAUNCH_MONITOR_URL
 LAUNCH_MONITOR_DEADMAN_TOKEN
-RENDER_API_KEY
-RENDER_CRON_SERVICE_ID
 RESEND_API_KEY
 MAIL_FROM
 ADMIN_EMAIL
 ```
 
-72時間完了を検知すると、このCron Jobも自身を停止します。
-
 ## 安全性
 
 - 内部APIはPOST専用、専用Bearer Token、定数時間比較、`no-store`
-- 外部レスポンスはID、状態コード、件数だけ。個人情報や生エラーを返さない
-- 監視対象URLとDB条件はサーバー側で固定し、リクエストから指定できない
-- Agentはコマンド実行、`eval`、動的スクリプト実行をしない
-- 同時実行はGitHub ActionsのconcurrencyとDBロックの両方で抑止
-- DBロックは所有者を記録し、古い実行が後続実行のロックを解除できない
-- Renderの自己停止対象は`crn-`で始まるCron Job IDだけ
+- 外部レスポンスには個人情報、生エラー、内部ID、秘密値を含めない
+- 監視対象URLとDB条件はサーバー側で固定
+- Agentはコマンド実行、`eval`、動的スクリプト実行を行わない
+- GitHub Actionsの`concurrency`とDBロックで同時実行を抑止
+- ロック所有者を記録し、別実行が有効なロックを解除しない
 
-`node scripts/launch-monitor-agent.mjs --dry-run` はRenderログと公開URLだけを確認し、
-内部監視、DB書き込み、通知を行いません。
+`node scripts/launch-monitor-agent.mjs --dry-run` は公開URLとRenderログだけを
+確認し、内部DB監視、書き込み、通知を行いません。
+
+## 公開前訓練
+
+1. 通常状態で監視が`healthy`になることを確認する。
+2. テスト用の疑似障害で初回通知と通知抑制を確認する。
+3. 障害を解消し、復旧通知を確認する。
+4. RenderとDBへ到達できない状態を作る。
+5. 独立Watchdogが全商品を非公開化し、公開残存0件を確認する。
+6. 別担当者が証跡を確認し、意図した商品だけを復旧する。
+7. 証跡を`INDEPENDENT_SALES_STOP_DRILL_COMPLETED`として登録する。

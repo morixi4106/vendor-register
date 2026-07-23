@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  evaluateShopifyProductCatalogSyncFreshness,
   evaluateShopifyProductCatalogSyncRun,
   recordOperationalHeartbeat,
 } from "../../app/services/operationalHealth.server.js";
@@ -9,7 +10,12 @@ import {
 test("evaluateShopifyProductCatalogSyncRun only accepts a complete sync", () => {
   assert.deepEqual(
     evaluateShopifyProductCatalogSyncRun({
-      result: { unresolved: 0 },
+      result: {
+        ok: true,
+        complete: true,
+        unresolved: 0,
+        incompleteReason: null,
+      },
       checkoutPolicies: { ok: true, failedCount: 0 },
     }),
     {
@@ -17,19 +23,28 @@ test("evaluateShopifyProductCatalogSyncRun only accepts a complete sync", () => 
       errorCode: null,
       unresolved: 0,
       checkoutPolicyFailedCount: 0,
+      catalogComplete: true,
+      incompleteReason: null,
     },
   );
 
   assert.deepEqual(
     evaluateShopifyProductCatalogSyncRun({
-      result: { unresolved: 2 },
-      checkoutPolicies: { ok: false, failedCount: 1 },
+      result: {
+        ok: false,
+        complete: false,
+        unresolved: 2,
+        incompleteReason: "safety_page_limit_reached",
+      },
+      checkoutPolicies: { ok: true, failedCount: 0 },
     }),
     {
       complete: false,
       errorCode: "shopify_product_catalog_sync_incomplete",
       unresolved: 2,
-      checkoutPolicyFailedCount: 1,
+      checkoutPolicyFailedCount: 0,
+      catalogComplete: false,
+      incompleteReason: "safety_page_limit_reached",
     },
   );
 });
@@ -70,4 +85,28 @@ test("recordOperationalHeartbeat rejects unsupported statuses", async () => {
     ),
     /operational_heartbeat_status_invalid/,
   );
+});
+
+test("catalog freshness becomes critical at the configured fail-safe limit", () => {
+  const now = new Date("2026-07-24T12:00:00.000Z");
+  const freshness = evaluateShopifyProductCatalogSyncFreshness({
+    heartbeat: {
+      lastSucceededAt: new Date("2026-07-24T08:59:59.000Z"),
+    },
+    now,
+  });
+
+  assert.equal(freshness.status, "critical");
+  assert.equal(freshness.reason, "catalog_sync_critical_stale");
+  assert.equal(freshness.ageMinutes > 180, true);
+});
+
+test("catalog freshness fails closed without a successful heartbeat", () => {
+  const freshness = evaluateShopifyProductCatalogSyncFreshness({
+    heartbeat: null,
+    now: new Date("2026-07-24T12:00:00.000Z"),
+  });
+
+  assert.equal(freshness.status, "critical");
+  assert.equal(freshness.reason, "catalog_sync_success_missing");
 });

@@ -101,6 +101,64 @@ export const action = async ({ request }) => {
         reviewedBy: actor,
       });
       break;
+    case "record_product_evidence":
+      result = await governance.recordProductComplianceEvidence({
+        productId: String(formData.get("productId") || ""),
+        evidenceType: formData.get("evidenceType"),
+        evidenceReference: formData.get("evidenceReference"),
+        verificationLevel: formData.get("verificationLevel"),
+        status: formData.get("evidenceStatus"),
+        issuerName: formData.get("issuerName"),
+        referenceNumber: formData.get("referenceNumber"),
+        expiresAt: formData.get("evidenceExpiresAt"),
+        reviewDueAt: formData.get("evidenceReviewDueAt"),
+        fileHash: formData.get("fileHash"),
+        notes: formData.get("evidenceNotes"),
+        submittedBy: actor,
+        verifiedBy: actor,
+        verificationMethod: formData.get("verificationMethod"),
+      });
+      break;
+    case "record_product_decision":
+      result = await governance.recordProductComplianceDecision({
+        productId: String(formData.get("productId") || ""),
+        applicabilityStatus: formData.get("applicabilityStatus"),
+        decision: formData.get("complianceDecision"),
+        reasonCode: formData.get("applicabilityReasonCode"),
+        reasonText: formData.get("applicabilityReasonText"),
+        verificationLevel: formData.get("decisionVerificationLevel"),
+        sourceUrl: formData.get("applicabilitySourceUrl"),
+        reviewDueAt: formData.get("nextReviewAt"),
+        decidedBy: actor,
+      });
+      if (result.ok && result.decision?.decision === "BLOCKED") {
+        try {
+          const { syncMarketplaceCheckoutPolicyForProduct } = await import(
+            "../services/marketplaceCheckoutGate.server.js"
+          );
+          const publicationResult =
+            await syncMarketplaceCheckoutPolicyForProduct({
+              localProductId: String(formData.get("productId") || ""),
+            });
+          result = { ...result, publicationResult };
+          if (!publicationResult.ok) {
+            result = {
+              ...result,
+              ok: false,
+              reason: "product_block_recorded_but_publication_sync_failed",
+            };
+          }
+        } catch (error) {
+          result = {
+            ...result,
+            ok: false,
+            reason: "product_block_recorded_but_publication_sync_failed",
+            publicationError:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+      break;
     case "create_case":
       result = await governance.createMarketplaceOperationalCase(
         Object.fromEntries(formData),
@@ -175,6 +233,14 @@ const REASON_LABELS = {
   customs_description_missing: "英語品名なし",
   authenticity_confirmation_missing: "真正性確認なし",
   ip_rights_confirmation_missing: "知財権確認なし",
+  product_applicability_undecided: "規制適用判断なし",
+  product_applicability_evidence_missing: "適用判断の根拠不足",
+  product_applicability_review_expired: "適用判断の期限切れ",
+  product_verification_level_insufficient: "確認レベル不足",
+  verified_product_evidence_missing: "検証済み証拠なし",
+  product_compliance_decision_missing: "適合判断なし",
+  product_not_applicable_decision_missing: "非適用判断なし",
+  product_compliance_blocked: "販売停止判断",
 };
 
 function reasonText(reasons) {
@@ -281,6 +347,9 @@ export default function MarketplaceGovernancePage() {
               </summary>
               <div className="governance-row__body">
                 <ProductComplianceForm product={product} busy={busy} />
+                <ProductEvidenceForm product={product} busy={busy} />
+                <ProductDecisionForm product={product} busy={busy} />
+                <ProductComplianceHistory product={product} />
               </div>
             </details>
           ))}
@@ -432,6 +501,138 @@ function ProductComplianceForm({ product, busy }) {
   );
 }
 
+function ProductEvidenceForm({ product, busy }) {
+  return (
+    <Form method="post" className="governance-form">
+      <input type="hidden" name="intent" value="record_product_evidence" />
+      <input type="hidden" name="productId" value={product.id} />
+      <Field
+        label="証拠種別"
+        name="evidenceType"
+        placeholder="適合証明、仕入証憑、メーカー仕様書など"
+      />
+      <Field
+        label="証拠参照"
+        name="evidenceReference"
+        placeholder="管理番号またはアクセス制御されたURL"
+      />
+      <label>
+        証拠状態
+        <select defaultValue="VERIFIED" name="evidenceStatus">
+          <option>SUBMITTED</option>
+          <option>VERIFIED</option>
+          <option>REJECTED</option>
+          <option>REVOKED</option>
+        </select>
+      </label>
+      <label>
+        確認レベル
+        <select defaultValue="DOCUMENT_REVIEWED" name="verificationLevel">
+          <option>SELF_ATTESTED</option>
+          <option>DOCUMENT_REVIEWED</option>
+          <option>ISSUER_VERIFIED</option>
+          <option>API_VERIFIED</option>
+        </select>
+      </label>
+      <Field label="発行者" name="issuerName" />
+      <Field label="証明・文書番号" name="referenceNumber" />
+      <Field label="確認方法" name="verificationMethod" placeholder="原本照合、発行者サイト照合など" />
+      <Field label="証拠の有効期限" name="evidenceExpiresAt" type="date" />
+      <Field label="次回確認日" name="evidenceReviewDueAt" type="date" />
+      <Field label="ファイルSHA-256" name="fileHash" placeholder="任意・64文字" />
+      <label>
+        確認メモ
+        <textarea name="evidenceNotes" />
+      </label>
+      <button disabled={busy} type="submit">証拠を追記</button>
+    </Form>
+  );
+}
+
+function ProductDecisionForm({ product, busy }) {
+  const profile = product.complianceProfile || {};
+  return (
+    <Form method="post" className="governance-form">
+      <input type="hidden" name="intent" value="record_product_decision" />
+      <input type="hidden" name="productId" value={product.id} />
+      <label>
+        規制・表示要件の適用
+        <select
+          defaultValue={profile.applicabilityStatus || "REQUIRED"}
+          name="applicabilityStatus"
+        >
+          <option value="REQUIRED">適用対象</option>
+          <option value="NOT_APPLICABLE">非適用</option>
+        </select>
+      </label>
+      <label>
+        判断
+        <select defaultValue="COMPLIANT" name="complianceDecision">
+          <option value="COMPLIANT">適合</option>
+          <option value="NOT_APPLICABLE">非適用</option>
+          <option value="BLOCKED">販売停止</option>
+        </select>
+      </label>
+      <label>
+        判断の確認レベル
+        <select
+          defaultValue="DOCUMENT_REVIEWED"
+          name="decisionVerificationLevel"
+        >
+          <option>DOCUMENT_REVIEWED</option>
+          <option>ISSUER_VERIFIED</option>
+          <option>API_VERIFIED</option>
+        </select>
+      </label>
+      <Field
+        label="理由コード"
+        name="applicabilityReasonCode"
+        placeholder="例: GENERAL_GOODS_NO_SPECIAL_REGULATION"
+      />
+      <Field
+        label="根拠URL"
+        name="applicabilitySourceUrl"
+        placeholder="https://..."
+        value={profile.applicabilitySourceUrl}
+      />
+      <Field label="次回確認日" name="nextReviewAt" type="date" />
+      <label>
+        判断理由
+        <textarea
+          defaultValue={profile.applicabilityReasonText || ""}
+          name="applicabilityReasonText"
+        />
+      </label>
+      <button disabled={busy} type="submit">適用判断を追記</button>
+    </Form>
+  );
+}
+
+function ProductComplianceHistory({ product }) {
+  return (
+    <div className="governance-history">
+      <h3>証拠・判断履歴</h3>
+      {(product.complianceDecisions || []).map((entry) => (
+        <p key={entry.id}>
+          判断 {entry.decision} / {entry.verificationLevel} /{" "}
+          {new Date(entry.decidedAt).toLocaleString("ja-JP")} /{" "}
+          {entry.decidedBy}
+        </p>
+      ))}
+      {(product.complianceEvidence || []).map((entry) => (
+        <p key={entry.id}>
+          証拠 {entry.evidenceType} / {entry.status} /{" "}
+          {entry.verificationLevel} / {entry.evidenceReference}
+        </p>
+      ))}
+      {(product.complianceDecisions || []).length === 0 &&
+      (product.complianceEvidence || []).length === 0 ? (
+        <p>履歴はありません。</p>
+      ) : null}
+    </div>
+  );
+}
+
 function CreateCaseForm({ sellers, busy }) {
   return (
     <Form method="post" className="governance-form governance-form--case">
@@ -512,5 +713,6 @@ const styles = `
   .governance-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:18px;background:#f9fafb;border:1px solid #e5e7eb}.governance-form--compact,.governance-form--case{grid-template-columns:repeat(4,minmax(0,1fr))}.governance-form label{display:grid;gap:6px;font-size:13px;font-weight:700}.governance-form input,.governance-form select,.governance-form textarea{width:100%;box-sizing:border-box;min-height:42px;border:1px solid #cbd5e1;background:#fff;padding:9px 10px;font:inherit}.governance-form textarea{min-height:84px}.governance-form button,.governance-adjustment button{min-height:42px;border:0;background:#111827;color:#fff;padding:0 16px;font-weight:700;cursor:pointer}.governance-form button:disabled{opacity:.45;cursor:not-allowed}.governance-check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.governance-check input{width:18px!important;min-height:18px!important}
   .governance-balance{display:grid;gap:6px;align-content:center;padding:9px 10px;border:1px solid #d1d5db;background:#fff}.governance-balance span{font-size:12px;color:#6b7280}.governance-balance strong{font-size:16px}.governance-note{align-self:center;font-size:12px!important;color:#6b7280!important}
   .governance-adjustment{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px;border:1px solid #d1d5db;background:#fff}.governance-guide ol{margin:16px 0 0;padding-left:22px;line-height:1.8}
+  .governance-history{padding:18px;border:1px solid #d1d5db;background:#fff}.governance-history h3{margin:0 0 12px}.governance-history p{margin:6px 0!important;font-size:13px}
   @media(max-width:900px){.governance-header{display:grid}.governance-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.governance-form,.governance-form--compact,.governance-form--case{grid-template-columns:1fr}.governance-row summary{grid-template-columns:1fr}.status-blocked{text-align:left}}
 `;

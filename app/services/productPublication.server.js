@@ -1,6 +1,7 @@
 import prisma from "../db.server.js";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server.js";
 import { syncMarketplaceCheckoutPolicyForProduct } from "./marketplaceCheckoutGate.server.js";
+import { isPlatformCheckoutHoldActive } from "./operationalReadiness.server.js";
 import {
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
@@ -9,6 +10,10 @@ import {
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
+import {
+  SALE_ELIGIBILITY_CHANNEL,
+  evaluateSaleEligibilitySnapshot,
+} from "./saleEligibility.server.js";
 
 export class ProductPublicationError extends Error {
   constructor(message, details = {}) {
@@ -50,6 +55,7 @@ export async function ensureApprovedProductPublished(
     syncVendorCollectionByStoreIdImpl = syncVendorCollectionByStoreId,
     syncMarketplaceCheckoutPolicyForProductImpl =
       syncMarketplaceCheckoutPolicyForProduct,
+    isPlatformCheckoutHoldActiveImpl = isPlatformCheckoutHoldActive,
     env = process.env,
   } = {},
 ) {
@@ -62,6 +68,15 @@ export async function ensureApprovedProductPublished(
       shopDomain: true,
       vendorStoreId: true,
       complianceProfile: true,
+      complianceEvidence: {
+        where: { status: "VERIFIED" },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      },
+      complianceDecisions: {
+        orderBy: { decidedAt: "desc" },
+        take: 20,
+      },
       vendorStore: {
         include: {
           returnAddresses: true,
@@ -117,6 +132,18 @@ export async function ensureApprovedProductPublished(
     });
   }
 
+  const checkoutHoldActive = await isPlatformCheckoutHoldActiveImpl({
+    prismaClient,
+  });
+  if (checkoutHoldActive) {
+    throw new ProductPublicationError(
+      "Product publication is blocked by the platform emergency hold",
+      {
+        reason: "platform_checkout_emergency_hold",
+        productId,
+      },
+    );
+  }
   if (isMarketplaceGovernanceGateEnabled(env)) {
     const governanceConfiguration = getMarketplaceGovernanceConfiguration(env);
     const shopifyPaymentsApproval =
@@ -153,6 +180,30 @@ export async function ensureApprovedProductPublished(
         },
       );
     }
+  }
+
+  const saleEligibility = evaluateSaleEligibilitySnapshot({
+    product,
+    shopDomain: product.shopDomain,
+    vendorStoreId: product.vendorStoreId,
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.PUBLICATION_SYNC,
+    operationalControl: {
+      checkoutHold: checkoutHoldActive,
+      checkoutControlState: checkoutHoldActive ? "ACTIVE" : "IDLE",
+    },
+    env,
+  });
+  if (!saleEligibility.allowed) {
+    throw new ProductPublicationError(
+      "Product publication is blocked by sale eligibility",
+      {
+        reason: "product_sale_ineligible",
+        productId,
+        status: saleEligibility.status,
+        reasonCodes: saleEligibility.reasonCodes,
+        policyVersion: saleEligibility.policyVersion,
+      },
+    );
   }
 
   const collectionSync = await syncVendorCollectionByStoreIdImpl(

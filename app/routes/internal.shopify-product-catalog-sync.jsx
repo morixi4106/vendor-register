@@ -26,10 +26,10 @@ export async function action({ request }) {
   }
 
   const formData = await request.formData().catch(() => new FormData());
-  const requestedLimit = Number(formData.get("limit") || 250);
+  const requestedLimit = Number(formData.get("limit") || 10000);
   const limit = Math.max(
     1,
-    Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 250, 1000),
+    Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 10000, 10000),
   );
 
   await recordOperationalHeartbeatSafely({
@@ -58,6 +58,8 @@ export async function action({ request }) {
       metadataJson: {
         shopDomain,
         scanned: result.scanned,
+        catalogComplete: completion.catalogComplete,
+        incompleteReason: completion.incompleteReason,
         unresolved: completion.unresolved,
         checkoutPolicyFailedCount: completion.checkoutPolicyFailedCount,
       },
@@ -70,6 +72,9 @@ export async function action({ request }) {
       created: result.created,
       updated: result.updated,
       unresolved: result.unresolved,
+      complete: result.complete,
+      incompleteReason: result.incompleteReason,
+      nextCursor: result.nextCursor,
       checkoutPolicies,
       publications,
     });

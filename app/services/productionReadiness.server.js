@@ -22,6 +22,16 @@ import {
   isMarketplaceGovernanceGateEnabled,
   isMarketplaceSettlementActionsEnabled,
 } from "./marketplaceGovernance.server.js";
+import {
+  buildOperationalReadinessChecks,
+  getPlatformOperationalControl,
+  inspectOperationalReadiness,
+} from "./operationalReadiness.server.js";
+import {
+  buildProductionReleaseExpectation,
+  getProductionProbeSigningSecret,
+  inspectProductionReleaseEvidence,
+} from "./productionRelease.server.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
 const STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES = new Set([
@@ -70,8 +80,7 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
 ];
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG =
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED";
-const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG =
-  "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
+const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG = "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
 const SELLER_ORDER_SHADOW_WRITE_FLAG = "SELLER_ORDER_SHADOW_WRITE_ENABLED";
 const VENDOR_ORDER_SELLER_ORDER_READ_FLAG = "VENDOR_ORDERS_USE_SELLER_ORDERS";
 const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
@@ -113,6 +122,8 @@ const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "write_merchant_managed_fulfillment_orders",
   "read_publications",
   "write_publications",
+  "read_validations",
+  "write_validations",
   "read_draft_orders",
   "write_draft_orders",
   "read_shopify_payments_disputes",
@@ -124,6 +135,7 @@ const WRITE_SCOPES_THAT_SATISFY_READ_SCOPES = {
     "write_merchant_managed_fulfillment_orders",
   read_products: "write_products",
   read_publications: "write_publications",
+  read_validations: "write_validations",
   read_draft_orders: "write_draft_orders",
   read_shipping: "write_shipping",
 };
@@ -227,7 +239,8 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
         status: gateEnabled ? "fail" : "warning",
         title: "販売責任・契約管理",
         detail: "販売責任の検査データを読み込めませんでした。",
-        action: "migration適用後に販売責任・案件管理と本番確認を再読み込みしてください。",
+        action:
+          "migration適用後に販売責任・案件管理と本番確認を再読み込みしてください。",
       }),
     ];
   }
@@ -239,11 +252,16 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
   const productionProducts = governance.products.filter(
     ({ product }) => !product.vendorStore?.isTestStore,
   );
-  const blockedSellers = productionSellers.filter(({ readiness }) => !readiness.ready);
-  const blockedProducts = productionProducts.filter(({ readiness }) => !readiness.ready);
+  const blockedSellers = productionSellers.filter(
+    ({ readiness }) => !readiness.ready,
+  );
+  const blockedProducts = productionProducts.filter(
+    ({ readiness }) => !readiness.ready,
+  );
   const criticalCases = governance.cases.filter(
     (entry) =>
-      entry.priority === "CRITICAL" && !["RESOLVED", "CLOSED"].includes(entry.status),
+      entry.priority === "CRITICAL" &&
+      !["RESOLVED", "CLOSED"].includes(entry.status),
   );
   const blockedProductCount = Number.isInteger(
     governance.inspection?.blockedProductionProductCount,
@@ -259,8 +277,7 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
     ({ seller }) => seller.settlementControl?.payoutHold,
   );
   const versionsConfigured = Boolean(governance.configuration?.ready);
-  const shopifyPaymentsApproval =
-    getShopifyMarketplacePaymentsApproval(env);
+  const shopifyPaymentsApproval = getShopifyMarketplacePaymentsApproval(env);
   const shopifyPaymentsApproved = shopifyPaymentsApproval.ready;
   const shopifyApprovalReference = shopifyPaymentsApproval.reference;
   const crossBorderLegalApprovalReference = normalizeText(
@@ -274,6 +291,9 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
   );
   const privacyHashSecretConfigured =
     normalizeText(env.PRIVACY_HASH_SECRET).length >= 32;
+  const productionProbeSigningSecretConfigured = Boolean(
+    getProductionProbeSigningSecret(env),
+  );
   const hasThirdPartyProductionSeller = productionSellers.length > 0;
   const unsafeSettlementSwitch =
     settlementActionsEnabled &&
@@ -319,6 +339,18 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
       action: privacyHashSecretConfigured
         ? ""
         : "32文字以上の乱数をPRIVACY_HASH_SECRETへ設定してください。",
+    }),
+    createCheck({
+      id: "production_probe_signing_secret",
+      category: "security",
+      status: productionProbeSigningSecretConfigured ? "pass" : "fail",
+      title: "本番プローブ専用署名鍵",
+      detail: productionProbeSigningSecretConfigured
+        ? "公開フォームやShopify認証とは分離した署名鍵を設定済みです。"
+        : "本番プローブの署名鍵が未設定、短すぎる、または用途分離されていません。",
+      action: productionProbeSigningSecretConfigured
+        ? ""
+        : "32文字以上の乱数をPRODUCTION_PROBE_SIGNING_SECRETへ設定してください。",
     }),
     createCheck({
       id: "shopify_marketplace_payments_written_approval",
@@ -2347,17 +2379,17 @@ async function inspectProductShippingProfiles({
         shopifyWeightSyncStatus: true,
       },
     });
-    const availabilityRows =
-      prismaClient.internationalShippingCountryAvailability?.findMany
-        ? await prismaClient.internationalShippingCountryAvailability.findMany({
-            where: { service: "JAPAN_POST_AIR_PACKET" },
-            select: {
-              countryCode: true,
-              status: true,
-              checkedAt: true,
-            },
-          })
-        : null;
+    const availabilityRows = prismaClient
+      .internationalShippingCountryAvailability?.findMany
+      ? await prismaClient.internationalShippingCountryAvailability.findMany({
+          where: { service: "JAPAN_POST_AIR_PACKET" },
+          select: {
+            countryCode: true,
+            status: true,
+            checkedAt: true,
+          },
+        })
+      : null;
 
     const missingWeight = products.filter((product) => {
       const weight = Number(product.shippingWeightGrams);
@@ -2384,8 +2416,7 @@ async function inspectProductShippingProfiles({
     );
     const weightSyncIssues = airPacketProducts.filter(
       (product) =>
-        product.shopifyWeightSyncStatus !==
-        SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED,
+        product.shopifyWeightSyncStatus !== SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED,
     );
     const staleBefore = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const activeRows = (availabilityRows || []).filter(
@@ -2435,8 +2466,13 @@ async function inspectProductShippingProfiles({
 }
 
 function formatProductSamples(products) {
-  const names = products.slice(0, 5).map((product) => product.name || product.id);
-  const suffix = products.length > names.length ? `、ほか${products.length - names.length}件` : "";
+  const names = products
+    .slice(0, 5)
+    .map((product) => product.name || product.id);
+  const suffix =
+    products.length > names.length
+      ? `、ほか${products.length - names.length}件`
+      : "";
   return `${names.join("、")}${suffix}`;
 }
 
@@ -2449,7 +2485,8 @@ function buildProductShippingProfileChecks(shippingProfiles) {
         status: "warning",
         title: "商品配送プロフィール",
         detail: `配送プロフィールを確認できませんでした（${shippingProfiles.error}）。`,
-        action: "最新のPrisma migrationを適用し、本番確認を再実行してください。",
+        action:
+          "最新のPrisma migrationを適用し、本番確認を再実行してください。",
       }),
     ];
   }
@@ -2611,6 +2648,10 @@ export async function getProductionReadiness({
   const withdrawalOperations = await inspectWithdrawalOperations({
     prismaClient,
   });
+  const [operationalReadiness, platformOperationalControl] = await Promise.all([
+    inspectOperationalReadiness({ prismaClient, now }),
+    getPlatformOperationalControl({ prismaClient }),
+  ]);
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
   const directReturns = await inspectDirectReturnReadiness({ prismaClient });
   const launchIntegrity = await inspectLaunchIntegrity({
@@ -2626,8 +2667,8 @@ export async function getProductionReadiness({
   let marketplaceGovernance;
   const governanceModelsAvailable = Boolean(
     prismaClient?.sellerComplianceProfile?.findMany &&
-      prismaClient?.productComplianceProfile?.findMany &&
-      prismaClient?.marketplaceOperationalCase?.findMany,
+    prismaClient?.productComplianceProfile?.findMany &&
+    prismaClient?.marketplaceOperationalCase?.findMany,
   );
   try {
     if (!governanceModelsAvailable) {
@@ -2636,10 +2677,10 @@ export async function getProductionReadiness({
         errorCode: "models_unavailable",
       };
     } else {
-    marketplaceGovernance = {
-      available: true,
-      ...(await getMarketplaceGovernanceDashboard({ prismaClient, env })),
-    };
+      marketplaceGovernance = {
+        available: true,
+        ...(await getMarketplaceGovernanceDashboard({ prismaClient, env })),
+      };
     }
   } catch (error) {
     console.error("marketplace governance readiness inspection failed:", error);
@@ -2671,6 +2712,10 @@ export async function getProductionReadiness({
     ...buildMarketplaceGovernanceChecks({
       governance: marketplaceGovernance,
       env,
+    }),
+    ...buildOperationalReadinessChecks({
+      inspection: operationalReadiness,
+      control: platformOperationalControl,
     }),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
@@ -2727,6 +2772,8 @@ export async function getProductionReadiness({
     },
     integrity: launchIntegrity,
     marketplaceGovernance,
+    operationalReadiness,
+    platformOperationalControl,
     withdrawals: { ...withdrawalOperations, directReturns },
     checks,
   };
@@ -2738,10 +2785,10 @@ export function includeCheckoutGateInProductionReadiness(
 ) {
   const gateReady = Boolean(
     checkoutGate?.available === true &&
-      checkoutGate?.active === true &&
-      checkoutGate?.publicationConfigurationReady !== false &&
-      Number(checkoutGate?.exposedProductCount || 0) === 0 &&
-      Number(checkoutGate?.failedProductCount || 0) === 0,
+    checkoutGate?.active === true &&
+    checkoutGate?.publicationConfigurationReady !== false &&
+    Number(checkoutGate?.exposedProductCount || 0) === 0 &&
+    Number(checkoutGate?.failedProductCount || 0) === 0,
   );
   const checkoutGateCheck = {
     id: "marketplace_checkout_publication_boundary",
@@ -2784,6 +2831,74 @@ export function includeCheckoutGateInProductionReadiness(
       manualCount: manualChecks.length,
     },
     checkoutGate,
+    checks,
+  };
+}
+
+export function includeCheckoutValidationInProductionReadiness(
+  readiness,
+  checkoutValidation,
+) {
+  const validationReady = Boolean(
+    checkoutValidation?.ok === true && checkoutValidation?.active === true,
+  );
+  const checkoutValidationCheck = {
+    id: "marketplace_checkout_server_validation",
+    category: "shopify",
+    status: validationReady ? "pass" : "fail",
+    title: "Shopifyサーバー側の購入制御",
+    detail: validationReady
+      ? "Cart and Checkout Validation Functionが有効で、実行失敗時も購入を拒否します。"
+      : `Shopifyの購入制御が未完成です: ${
+          checkoutValidation?.reason || "status_unavailable"
+        }`,
+    action: validationReady
+      ? ""
+      : "read_validations/write_validationsを承認し、本番確認画面から購入制御を有効化してください。",
+  };
+  const expectedRelease = buildProductionReleaseExpectation({
+    checkoutValidation,
+  });
+  const productionRelease = inspectProductionReleaseEvidence({
+    operationalReadiness: readiness?.operationalReadiness,
+    expected: expectedRelease,
+  });
+  const productionReleaseCheck = {
+    id: "operational_attestation_checkout_validation_live_probe_completed",
+    category: "operations",
+    status: productionRelease.ready ? "pass" : "fail",
+    title: "本番Function・Release Manifestの4シナリオ実機確認",
+    detail: productionRelease.ready
+      ? `リリース ${productionRelease.manifest.releaseId} の実チェックアウト証跡が現在の稼働版と一致しています。`
+      : `リリース証跡が現在の稼働版と一致しません: ${productionRelease.mismatches.join(", ")}`,
+    action: productionRelease.ready
+      ? ""
+      : "SHOPIFY_APP_VERSIONを設定し、本番確認画面で4シナリオを実行して現在のIDを記録してください。",
+  };
+  const checks = [
+    ...(readiness?.checks || []).filter(
+      (check) =>
+        check.id !== checkoutValidationCheck.id &&
+        check.id !== productionReleaseCheck.id,
+    ),
+    productionReleaseCheck,
+    checkoutValidationCheck,
+  ];
+  const blockingChecks = checks.filter((check) => check.status === "fail");
+  const warningChecks = checks.filter((check) => check.status === "warning");
+  const manualChecks = checks.filter((check) => check.status === "manual");
+
+  return {
+    ...readiness,
+    canGoLive: blockingChecks.length === 0,
+    summary: {
+      totalChecks: checks.length,
+      blockingCount: blockingChecks.length,
+      warningCount: warningChecks.length,
+      manualCount: manualChecks.length,
+    },
+    checkoutValidation,
+    productionRelease,
     checks,
   };
 }

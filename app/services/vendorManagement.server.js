@@ -2159,6 +2159,8 @@ async function findVendorSellerOrderForShipment({
       currencyCode: true,
       paymentStatus: true,
       fulfillmentStatus: true,
+      settlementStatus: true,
+      riskStatus: true,
       metadataJson: true,
       lines: {
         select: {
@@ -2369,6 +2371,21 @@ export async function createVendorOrderFulfillment({
         ok: false,
         status: 404,
         error: "この注文は現在の店舗では発送登録できません。",
+      };
+    }
+
+    if (
+      sellerOrder &&
+      (sellerOrder.riskStatus !== "normal" ||
+        ["held", "review", "quarantined"].includes(
+          String(sellerOrder.settlementStatus || "").toLowerCase(),
+        ))
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          "この注文は確認中のため発送できません。運営の確認完了をお待ちください。",
       };
     }
 

@@ -26,6 +26,10 @@ PRIVACY_HASH_SECRET=<32文字以上の乱数>
 MARKETPLACE_ADMIN_EMAILS=owner@example.com
 FINANCE_PREPARER_EMAILS=preparer@example.com
 FINANCE_APPROVER_EMAILS=approver@example.com
+RELEASE_MANAGER_EMAILS=release-manager@example.com
+INCIDENT_COMMANDER_EMAILS=incident-commander@example.com
+RECOVERY_APPROVER_EMAILS=recovery-approver@example.com
+COMPLIANCE_REVIEWER_EMAILS=compliance-reviewer@example.com
 FINANCE_EXECUTOR_EMAILS=executor@example.com
 ```
 
@@ -35,7 +39,9 @@ FINANCE_EXECUTOR_EMAILS=executor@example.com
 - Shopifyの書面回答、税務方針及び開示手順の参照値には、社内で保存したメール・PDF・議事録等の識別子だけを設定し、秘密資料そのものをPublic repositoryへ置きません。
 - 契約本文を変更するときは版とハッシュを更新し、出店者から改めて同意を取得します。
 - 担当者メールはShopify Adminのassociated userと一致させます。複数指定はカンマ区切りです。
-- `ADMIN_EMAIL` と `MARKETPLACE_ADMIN_EMAILS` の担当者は全ロールを操作できますが、同一人物による出金予定の作成と承認はサーバー側で拒否されます。
+- `ADMIN_EMAIL` と `MARKETPLACE_ADMIN_EMAILS` は緊急用の全権管理者です。通常運用では、リリース、事故対応、復旧承認、コンプライアンス証跡確認を上記の個別リストへ分離してください。
+- Shopifyアカウント所有者も緊急用の全権を持ちます。日常操作には使わず、監査ログに残る担当アカウントを使用してください。
+- 同一人物による出金予定の作成と承認、および販売停止者本人による復旧はサーバー側でも拒否されます。
 
 ## 決済・精算の開始条件
 

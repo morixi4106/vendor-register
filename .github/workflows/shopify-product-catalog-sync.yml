@@ -30,3 +30,19 @@ jobs:
           APP_URL: ${{ vars.LAUNCH_MONITOR_URL }}
           SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN: ${{ secrets.SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN }}
         run: node scripts/shopify-product-catalog-sync-agent.mjs
+
+      - name: Reconcile recently paid and edited orders
+        if: always()
+        env:
+          APP_URL: ${{ vars.LAUNCH_MONITOR_URL }}
+          SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN: ${{ secrets.SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN }}
+        run: node scripts/shopify-order-integrity-agent.mjs
+
+      - name: Enforce catalog freshness fail-safe
+        if: always()
+        env:
+          LAUNCH_MONITOR_URL: ${{ vars.LAUNCH_MONITOR_URL }}
+          SALE_ELIGIBILITY_WATCHDOG_TOKEN: ${{ secrets.SALE_ELIGIBILITY_WATCHDOG_TOKEN }}
+          SHOPIFY_WATCHDOG_SHOP_DOMAIN: ${{ vars.SHOPIFY_WATCHDOG_SHOP_DOMAIN }}
+          SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN: ${{ secrets.SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN }}
+        run: node scripts/sale-eligibility-watchdog-agent.mjs

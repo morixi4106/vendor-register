@@ -36,6 +36,14 @@ api_version = "2026-04"
   uri = "/webhooks/orders/paid"
 
   [[webhooks.subscriptions]]
+  topics = [ "orders/edited" ]
+  uri = "/webhooks/orders/edited"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/updated" ]
+  uri = "/webhooks/orders/updated"
+
+  [[webhooks.subscriptions]]
   topics = [ "orders/cancelled" ]
   uri = "/webhooks/orders/cancelled"
 
@@ -52,7 +60,7 @@ api_version = "2026-04"
   uri = "/webhooks/disputes/update"
 
 [access_scopes]
-scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_publications,write_publications"
+scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_publications,write_publications,read_validations,write_validations"
 
 [product.metafields.app.marketplace_checkout_policy]
 type = "single_line_text_field"
@@ -60,6 +68,19 @@ name = "Marketplace checkout policy"
 description = "Internal checkout routing policy managed by vendor-register."
 access.admin = "merchant_read"
 access.storefront = "none"
+
+[product.metafields.app.sale_eligibility_projection]
+type = "json"
+name = "Sale eligibility projection"
+description = "Compact app-controlled checkout eligibility projection."
+access.admin = "merchant_read"
+access.storefront = "none"
+
+[shop.metafields.app.operational_purchase_control]
+type = "single_line_text_field"
+name = "Operational purchase control"
+description = "Emergency checkout state enforced by vendor-register."
+access.admin = "merchant_read"
 
 [auth]
 redirect_urls = [ "https://vendor-register-pbjl.onrender.com/auth/callback" ]

@@ -18,6 +18,7 @@ import {
   resolveNotificationKind,
   sanitizeLaunchMonitorResult,
 } from "../../app/services/launchMonitor.server.js";
+import { OPERATIONAL_READINESS_DEFINITIONS } from "../../app/services/operationalReadiness.server.js";
 
 const NOW = new Date("2026-07-18T00:00:00.000Z");
 
@@ -157,7 +158,15 @@ test("buildReport prioritizes critical over warning", () => {
 
 test("collectLaunchMonitorReport is healthy when shared checks are healthy", async () => {
   const report = await collectReport();
-  assert.equal(report.overallStatus, "healthy");
+  assert.equal(
+    report.overallStatus,
+    "healthy",
+    JSON.stringify(
+      report.checks.filter((check) => check.severity !== "ok"),
+      null,
+      2,
+    ),
+  );
   assert.equal(report.checkMode, "full");
   assert.equal(
     find(report.checks, "withdrawal_email_worker_heartbeat").severity,
@@ -284,6 +293,12 @@ test("failed heavy checks remain critical and are safe to reuse until retry", as
       inspectShopifyProductCatalogSyncHeartbeat: async () =>
         catalogSyncHeartbeat(),
       getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),
+      inspectMarketplaceCheckoutValidation: async () => ({
+        ok: true,
+        active: true,
+        validationCount: 1,
+        runtimeErrorDetected: false,
+      }),
       loadLaunchIntegritySellerRows: async () => {
         throw Object.assign(new Error("query failed"), { code: "P1001" });
       },
@@ -421,7 +436,7 @@ test("public response is minimal and excludes details and raw errors", () => {
   assert.equal(result.commit, "abc123");
 });
 
-test("deadman reports healthy, stale, and completed monitor state", async () => {
+test("deadman remains active after the concentrated monitoring window", async () => {
   const prismaClient = {
     operationalHeartbeat: {
       findUnique: async () => ({
@@ -447,11 +462,15 @@ test("deadman reports healthy, stale, and completed monitor state", async () => 
     "stale",
   );
   prismaClient.operationalHeartbeat.findUnique = async () => ({
-    metadataJson: { active: false, completedAt: NOW },
+    metadataJson: {
+      active: false,
+      completedAt: NOW,
+      lastCheckedAt: new Date(NOW.getTime() - 16 * 60 * 1000),
+    },
   });
   assert.equal(
     (await readLaunchMonitorDeadmanState({ prismaClient, now: NOW })).status,
-    "completed",
+    "stale",
   );
 });
 
@@ -533,8 +552,29 @@ async function collectReport({
       inspectShopifyProductCatalogSyncHeartbeat: async () =>
         catalogSyncHeartbeat(),
       getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),
+      inspectMarketplaceCheckoutValidation: async () => ({
+        ok: true,
+        active: true,
+        validationCount: 1,
+        runtimeErrorDetected: false,
+      }),
       loadLaunchIntegritySellerRows: async () => [],
       inspectLaunchIntegrity: async () => integrity,
+      inspectOperationalReadiness: async () => ({
+        available: true,
+        rows: OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
+          definition,
+          ready: true,
+          reason: null,
+          attestation: {
+            evidenceReference: `test:${definition.key}`,
+            expiresAt: new Date("2099-01-01T00:00:00Z"),
+          },
+        })),
+      }),
+      getPlatformOperationalControl: async () => ({
+        checkoutHold: false,
+      }),
     },
   });
 }

@@ -1,6 +1,7 @@
 import { json, redirect } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { Resend } from "resend";
+import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
@@ -207,6 +208,9 @@ export const action = async ({ request }) => {
     });
 
     try {
+      if (await isAutomatedEmailHoldActive()) {
+        throw new Error("automated_email_hold_active");
+      }
       const adminUrl = `https://vendor-register-pbjl.onrender.com/admin/products/${createdProduct.id}`;
 
       await resend.emails.send({

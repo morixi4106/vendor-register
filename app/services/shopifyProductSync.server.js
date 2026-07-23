@@ -622,12 +622,14 @@ export async function reconcileShopifyProductCatalog(
   } = {},
 ) {
   const normalizedShopDomain = normalizeShopDomain(shopDomain);
-  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 250, 1000));
+  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 250, 10000));
   const results = [];
   let cursor = null;
   let hasNextPage = true;
+  let pageCount = 0;
 
   while (hasNextPage && results.length < normalizedLimit) {
+    pageCount += 1;
     const first = Math.min(100, normalizedLimit - results.length);
     const { data } = await graphQL({
       shopDomain: normalizedShopDomain,
@@ -680,7 +682,11 @@ export async function reconcileShopifyProductCatalog(
   }
 
   return {
-    ok: true,
+    ok: !hasNextPage,
+    complete: !hasNextPage,
+    incompleteReason: hasNextPage ? "catalog_scan_limit_reached" : null,
+    nextCursor: hasNextPage ? cursor : null,
+    pageCount,
     scanned: results.length,
     created: results.filter((result) => result.ok && result.created).length,
     updated: results.filter((result) => result.ok && !result.created).length,

@@ -16,6 +16,7 @@ test("catalog sync agent sends one authenticated bounded request", async () => {
       request = { url: String(url), options };
       return jsonResponse({
         ok: true,
+        complete: true,
         scanned: 10,
         updated: 2,
         unresolved: 0,
@@ -30,7 +31,7 @@ test("catalog sync agent sends one authenticated bounded request", async () => {
   );
   assert.equal(request.options.method, "POST");
   assert.equal(request.options.headers.Authorization, `Bearer ${TOKEN}`);
-  assert.equal(String(request.options.body), "limit=250");
+  assert.equal(String(request.options.body), "limit=10000");
   assert.deepEqual(result, {
     scanned: 10,
     updated: 2,

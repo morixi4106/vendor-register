@@ -8,6 +8,7 @@ import {
   buildAdminContactNotification,
   buildContactAcknowledgement,
 } from "../services/contactInquiry.server.js";
+import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
 import {
   consumePublicEndpointRateLimit,
   getRequestClientIp,
@@ -144,7 +145,6 @@ export const action = async ({ request }) => {
       console.warn("expired public rate limit cleanup failed", error);
     }
 
-    ensureEmailConfiguration();
     const replyType = "fixed";
     const replyText = buildContactAcknowledgement({ name });
 
@@ -159,6 +159,19 @@ export const action = async ({ request }) => {
         matchedRuleId: null,
       },
     });
+    if (await isAutomatedEmailHoldActive()) {
+      return json(
+        {
+          ok: true,
+          accepted: true,
+          replyType,
+          matchedRuleId: null,
+        },
+        { headers },
+      );
+    }
+
+    ensureEmailConfiguration();
     const resend = new Resend(process.env.RESEND_API_KEY);
     const buyerResult = await resend.emails.send(
       {

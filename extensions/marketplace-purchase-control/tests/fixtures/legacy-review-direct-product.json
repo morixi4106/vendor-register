@@ -1,0 +1,41 @@
+{
+  "payload": {
+    "export": "cart-validations-generate-run",
+    "target": "cart.validations.generate.run",
+    "input": {
+      "shop": {
+        "localTime": {
+          "date": "2026-07-24"
+        },
+        "operationalPurchaseControl": {
+          "value": "ALLOWED"
+        }
+      },
+      "cart": {
+        "lines": [
+          {
+            "merchandise": {
+              "product": {
+                "marketplaceCheckoutPolicy": {
+                  "value": "PLATFORM_DIRECT"
+                },
+                "saleEligibilityProjection": {
+                  "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":true,\"status\":\"LEGACY_REVIEW_REQUIRED\",\"reasonCodes\":[\"PRODUCT_GOVERNANCE_PENDING\"],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":1,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": []
+          }
+        }
+      ]
+    }
+  }
+}

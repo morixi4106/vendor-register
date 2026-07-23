@@ -35,6 +35,7 @@ import {
   syncWisePayoutRunStatus,
 } from "../../app/services/sellerPayments.server.js";
 
+process.env.POST_ORDER_SALE_ELIGIBILITY_ENFORCEMENT_ENABLED = "false";
 process.env.MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED = "true";
 process.env.DOMESTIC_SELLER_SETTLEMENT_ENABLED = "true";
 process.env.CROSS_BORDER_SELLER_SETTLEMENT_ENABLED = "false";
@@ -1802,6 +1803,91 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
     state.sellerOrderShadowChecks[0].sellerOrderCalculatedAmount,
     1900,
   );
+});
+
+test("processShopifyOrderPaidSettlement quarantines a paid order that fails the post-order eligibility gate", async () => {
+  const state = {
+    ledgerEntries: [],
+    marketplaceOrders: new Map(),
+    sellerOrders: new Map(),
+    sellerOrderLines: new Map(),
+    sellerOrderShadowChecks: [],
+  };
+  const fakePrisma = {
+    ...createSellerOrderShadowFakeModels(state),
+    ledgerEntry: {
+      async findFirst() {
+        return null;
+      },
+      async create({ data }) {
+        state.ledgerEntries.push(data);
+        return data;
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_quarantine",
+            name: "Quarantined Product",
+            approvalStatus: "approved",
+            shopifyProductId: "gid://shopify/Product/991",
+            shopDomain: "b30ize-1a.myshopify.com",
+            vendorStoreId: "store_quarantine",
+            vendorStore: {
+              id: "store_quarantine",
+              storeName: "Quarantine Store",
+              isTestStore: true,
+              isPlatformStore: false,
+              seller: {
+                id: "seller_quarantine",
+                status: "active",
+                stripeAccount: null,
+              },
+              vendorAuth: null,
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const result = await processShopifyOrderPaidSettlement(
+    {
+      shop: "b30ize-1a.myshopify.com",
+      payload: {
+        id: 1299,
+        admin_graphql_api_id: "gid://shopify/Order/1299",
+        name: "#1299",
+        currency: "JPY",
+        created_at: "2026-07-24T00:00:00Z",
+        line_items: [{ id: 99, product_id: 991, price: "1200", quantity: 1 }],
+      },
+    },
+    {
+      prismaClient: fakePrisma,
+      env: {
+        POST_ORDER_SALE_ELIGIBILITY_ENFORCEMENT_ENABLED: "true",
+      },
+      inspectPaidOrderSaleEligibilityImpl: async () => ({
+        ok: false,
+        failures: [
+          {
+            productId: "product_quarantine",
+            code: "CURRENT_SALE_ELIGIBILITY_BLOCKED",
+          },
+        ],
+        evidence: [],
+      }),
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.quarantined, true);
+  assert.equal(state.ledgerEntries.length, 0);
+  const sellerOrder = Array.from(state.sellerOrders.values())[0];
+  assert.equal(sellerOrder.settlementStatus, "held");
+  assert.equal(sellerOrder.riskStatus, "review");
 });
 
 test("processShopifyOrderPaidSettlement prefers Shopify variant mapping over product mapping", async () => {
@@ -6392,6 +6478,20 @@ test("payout runs require approval and execute on the connected account only whe
   assert.equal(approval.ok, true);
   assert.equal(state.payoutRun.status, "approved");
 
+  state.payoutRun.seller.settlementControl.payoutHold = true;
+  const heldExecution = await executePayoutRun(
+    { payoutRunId: "pr_1", executedBy: "admin_user" },
+    {
+      prismaClient: fakePrisma,
+      createPayout,
+    },
+  );
+  assert.equal(heldExecution.ok, false);
+  assert.equal(heldExecution.reason, "seller_payout_hold");
+  assert.equal(state.payoutRun.status, "approved");
+  assert.equal(payoutCalls.length, 0);
+
+  state.payoutRun.seller.settlementControl.payoutHold = false;
   const execution = await executePayoutRun(
     { payoutRunId: "pr_1", executedBy: "admin_user" },
     {

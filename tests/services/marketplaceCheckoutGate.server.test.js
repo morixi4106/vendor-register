@@ -16,6 +16,7 @@ import {
 function createProduct(overrides = {}) {
   return {
     id: "product_1",
+    approvalStatus: "approved",
     shopDomain: "shop-a.myshopify.com",
     shopifyProductId: "gid://shopify/Product/1",
     vendorStore: {
@@ -95,6 +96,22 @@ test("resolveMarketplaceCheckoutPolicy only permits explicit platform-direct pro
           id: "misconfigured-test-store",
           isPlatformStore: true,
           isTestStore: true,
+        },
+      }),
+    ),
+    MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+  );
+  assert.equal(
+    resolveMarketplaceCheckoutPolicy(
+      createProduct({
+        vendorStore: {
+          id: "platform",
+          isPlatformStore: true,
+          isTestStore: false,
+        },
+        complianceProfile: {
+          legalSellerType: "PLATFORM",
+          approvalStatus: "HOLD",
         },
       }),
     ),
@@ -306,6 +323,7 @@ test("platform-direct products keep their attached publications", async () => {
     mutationVariables.metafields[0].value,
     MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT,
   );
+  assert.equal(mutationVariables.metafields[0].compareDigest, null);
 });
 
 test("unresolved Shopify products fail closed across publications", async () => {
@@ -493,4 +511,183 @@ test("activation verifies the all-publication boundary after synchronization", a
   assert.equal(result.ok, true);
   assert.equal(result.boundary.active, true);
   assert.equal(result.boundary.mode, MARKETPLACE_CHECKOUT_BOUNDARY_MODE);
+});
+
+test("platform product sync persists and verifies a versioned eligibility projection", async () => {
+  const product = createProduct({
+    vendorStoreId: "platform-store",
+    vendorStore: {
+      id: "platform-store",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
+    complianceProfile: {
+      legalSellerType: "PLATFORM",
+      approvalStatus: "PENDING",
+    },
+    complianceEvidence: [],
+    complianceDecisions: [],
+  });
+  let storedProjection = null;
+  let mutationProjectionInput = null;
+  let projectionInput = null;
+  const prismaClient = {
+    ...createPrismaMock({ products: [product] }),
+    saleEligibilityProjection: {
+      async upsert(args) {
+        projectionInput = args;
+        return {
+          projectionRevision: 7,
+          expiresAt: args.create.expiresAt,
+        };
+      },
+    },
+  };
+  const graphQL = async ({ query, variables }) => {
+    if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+      return {
+        data: {
+          product: {
+            ...productState(
+              product,
+              [],
+              MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT,
+            ),
+            saleEligibilityProjection: storedProjection
+              ? { value: storedProjection }
+              : null,
+          },
+        },
+      };
+    }
+    if (query.includes("SetMarketplaceCheckoutProductPolicy")) {
+      const projection = variables.metafields.find(
+        (entry) => entry.key === "sale_eligibility_projection",
+      );
+      mutationProjectionInput = projection;
+      storedProjection = projection.value;
+      return {
+        data: {
+          metafieldsSet: {
+            metafields: variables.metafields.map((entry, index) => ({
+              id: `gid://shopify/Metafield/${index + 1}`,
+              key: entry.key,
+              value: entry.value,
+            })),
+            userErrors: [],
+          },
+        },
+      };
+    }
+    throw new Error("Unexpected GraphQL operation");
+  };
+
+  const result = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    {
+      prismaClient,
+      graphQL,
+      env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+      isPlatformCheckoutHoldActiveImpl: async () => false,
+    },
+  );
+
+  const projection = JSON.parse(storedProjection);
+  assert.equal(result.ok, true);
+  assert.equal(result.policy, MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT);
+  assert.equal(result.projectionRevision, 7);
+  assert.equal(projection.v, 2);
+  assert.equal(projection.c, "PLATFORM_DIRECT");
+  assert.equal(projection.a, true);
+  assert.equal(projection.p, "sale-eligibility-2026-07-v1");
+  assert.equal(projection.r, 7);
+  assert.match(projection.h, /^[a-f0-9]{64}$/);
+  assert.ok(projection.d);
+  assert.ok(projection.e);
+  assert.equal(mutationProjectionInput.compareDigest, null);
+  assert.equal(projectionInput.update.projectionRevision.increment, 1);
+});
+
+test("a stale eligible projection cannot overwrite a newer blocked revision", async () => {
+  const product = createProduct({
+    vendorStoreId: "platform-store",
+    vendorStore: {
+      id: "platform-store",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
+    complianceProfile: {
+      legalSellerType: "PLATFORM",
+      approvalStatus: "PENDING",
+    },
+    complianceEvidence: [],
+    complianceDecisions: [],
+  });
+  let policyMutations = 0;
+  const prismaClient = {
+    ...createPrismaMock({ products: [product] }),
+    saleEligibilityProjection: {
+      async upsert(args) {
+        return {
+          projectionRevision: 10,
+          expiresAt: args.create.expiresAt,
+        };
+      },
+      async findUnique() {
+        return {
+          projectionRevision: 11,
+          status: "BLOCKED",
+          inputHash: "b".repeat(64),
+          policyVersion: "sale-eligibility-2026-07-v1",
+          evaluatedAt: new Date("2026-07-24T01:00:00.000Z"),
+          expiresAt: new Date("2026-07-25T03:00:00.000Z"),
+        };
+      },
+    },
+  };
+  const graphQL = async ({ query }) => {
+    if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+      return {
+        data: {
+          shop: { ianaTimezone: "Asia/Tokyo" },
+          product: {
+            ...productState(product, []),
+            saleEligibilityProjection: null,
+          },
+        },
+      };
+    }
+    if (query.includes("MarketplaceCheckoutPublishableState")) {
+      return {
+        data: {
+          node: {
+            id: product.shopifyProductId,
+            resourcePublicationsV2: publicationConnection([]),
+          },
+        },
+      };
+    }
+    if (query.includes("SetMarketplaceCheckoutProductPolicy")) {
+      policyMutations += 1;
+      throw new Error("stale job must not write Shopify metafields");
+    }
+    throw new Error("Unexpected GraphQL operation");
+  };
+
+  const result = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    {
+      prismaClient,
+      graphQL,
+      env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+      isPlatformCheckoutHoldActiveImpl: async () => false,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, "stale_projection_job");
+  assert.equal(result.projectionRevision, 10);
+  assert.equal(result.currentProjectionRevision, 11);
+  assert.equal(policyMutations, 0);
 });

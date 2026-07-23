@@ -1,0 +1,17 @@
+api_version = "2026-04"
+
+[[extensions]]
+name = "t:name"
+handle = "marketplace-purchase-control"
+type = "function"
+uid = "078e786b-ef41-b43e-c173-b38649de9b2fc2d4c1d1"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart-validations-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

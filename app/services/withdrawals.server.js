@@ -36,8 +36,13 @@ import {
 } from "./withdrawalEmailTemplates.js";
 import {
   buildWithdrawalOutboxRecord,
+  holdWithdrawalEmailSnapshot,
   processWithdrawalEmailOutbox,
 } from "./withdrawalEmailOutbox.server.js";
+import {
+  EMAIL_MESSAGE_CLASS,
+  getEmailClassHoldStatus,
+} from "./operationalReadiness.server.js";
 import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -2997,6 +3002,10 @@ export async function sendWithdrawalEmail({
   const fromEmail = getWithdrawalFromEmail();
   const recipientEmail = normalizeEmail(toEmail || withdrawalRequest.customerEmail);
   const sentAt = new Date();
+  const legalEmailHold = await getEmailClassHoldStatus(
+    EMAIL_MESSAGE_CLASS.LEGAL_TRANSACTIONAL,
+    { prismaClient },
+  );
 
   if (!process.env.RESEND_API_KEY || !fromEmail || !recipientEmail) {
     await prismaClient.withdrawalEmailLog.create({
@@ -3021,6 +3030,21 @@ export async function sendWithdrawalEmail({
       ok: false,
       error: !recipientEmail ? "recipient_email_not_configured" : "email_not_configured",
     };
+  }
+
+  if (legalEmailHold.active) {
+    return holdWithdrawalEmailSnapshot({
+      prismaClient,
+      withdrawalRequest,
+      emailType,
+      recipient: recipientEmail,
+      sender: fromEmail,
+      subject,
+      text: bodyText,
+      html: bodyHtml,
+      holdStatus: legalEmailHold,
+      now: sentAt,
+    });
   }
 
   try {

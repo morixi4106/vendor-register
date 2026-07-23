@@ -8,6 +8,13 @@ const GENERIC_CHECKOUT_ERROR_MESSAGE =
 const GENERIC_SHIPPING_ERROR_MESSAGE =
   '送料の計算に失敗しました。配送先を確認して、もう一度お試しください。';
 
+function createTestDraftOrderCheckout(options = {}) {
+  return createDraftOrderCheckout({
+    inspectDraftOrderSaleEligibilityImpl: async () => ({ ok: true }),
+    ...options,
+  });
+}
+
 function buildValidCheckoutRequest(overrides = {}) {
   return {
     orderLike: {
@@ -91,7 +98,7 @@ test('draftOrderCheckout uses prepared shippingAmount and preserves vendor metad
   let graphQLCallCount = 0;
   let receivedGraphQLInput = null;
   let prepareMutation = null;
-  const checkout = createDraftOrderCheckout({
+  const checkout = createTestDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async (input) => {
       prepareCallCount += 1;
 
@@ -150,7 +157,7 @@ test('draftOrderCheckout uses prepared shippingAmount and preserves vendor metad
 
 test('draftOrderCheckout fails closed when Shipping V2 cannot produce a quote', async () => {
   let graphQLCallCount = 0;
-  const checkout = createDraftOrderCheckout({
+  const checkout = createTestDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async () => ({
       applied: false,
       reason: 'quote_error',
@@ -179,7 +186,7 @@ test('draftOrderCheckout fails closed when Shipping V2 cannot produce a quote', 
 
 test('draftOrderCheckout does not generate shipping_v2_snapshot locally after prepare', async () => {
   let receivedGraphQLInput = null;
-  const checkout = createDraftOrderCheckout({
+  const checkout = createTestDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async (input) => ({
       applied: true,
       reason: null,
@@ -204,7 +211,7 @@ test('draftOrderCheckout does not generate shipping_v2_snapshot locally after pr
 });
 
 test('draftOrderCheckout treats Shopify GraphQL userErrors as sanitized failures', async () => {
-  const checkout = createDraftOrderCheckout({
+  const checkout = createTestDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async (input) => ({
       applied: true,
       reason: null,
@@ -236,7 +243,7 @@ test('draftOrderCheckout treats Shopify GraphQL userErrors as sanitized failures
 });
 
 test('draftOrderCheckout treats prepare userErrors as sanitized failures', async () => {
-  const checkout = createDraftOrderCheckout({
+  const checkout = createTestDraftOrderCheckout({
     prepareShippingV2WriterPayloadImpl: async (input) => ({
       applied: true,
       reason: null,
@@ -265,4 +272,103 @@ test('draftOrderCheckout treats prepare userErrors as sanitized failures', async
       error?.publicMessage === GENERIC_CHECKOUT_ERROR_MESSAGE &&
       Array.isArray(error?.userErrors),
   );
+});
+
+test('draftOrderCheckout blocks ineligible products before shipping or Shopify mutations', async () => {
+  let shippingCalls = 0;
+  let graphQLCalls = 0;
+  const checkout = createDraftOrderCheckout({
+    inspectDraftOrderSaleEligibilityImpl: async () => ({
+      ok: false,
+      reason: 'purchase_stop_active',
+    }),
+    prepareShippingV2WriterPayloadImpl: async () => {
+      shippingCalls += 1;
+      return { applied: true, payload: {} };
+    },
+    shopifyGraphQLWithOfflineSessionImpl: async () => {
+      graphQLCalls += 1;
+      return createDraftOrderCreateResponse();
+    },
+  });
+
+  await assert.rejects(
+    () => checkout(buildValidCheckoutRequest()),
+    (error) => error?.reason === 'sale_eligibility_blocked',
+  );
+  assert.equal(shippingCalls, 0);
+  assert.equal(graphQLCalls, 0);
+});
+
+test('draftOrderCheckout aggregates duplicate local product rows before inventory and mutation', async () => {
+  let receivedLines = null;
+  const checkout = createTestDraftOrderCheckout({
+    prepareShippingV2WriterPayloadImpl: async (input) => ({
+      applied: true,
+      payload: {
+        ...input.payload,
+        shippingAmount: 420,
+      },
+    }),
+    shopifyGraphQLWithOfflineSessionImpl: async ({ query, variables }) => {
+      if (query.includes('draftOrderPrepareForBuyerCheckout')) {
+        return createDraftOrderPrepareResponse();
+      }
+      receivedLines = variables.input.lineItems;
+      return createDraftOrderCreateResponse();
+    },
+  });
+  const request = buildValidCheckoutRequest({
+    orderLike: {
+      lines: [
+        {
+          lineId: 'prod_1',
+          title: 'Amber Wine',
+          quantity: 1,
+          originalUnitPrice: 2400,
+          amountAfterItemDiscountBeforeOrderCoupon: 2400,
+        },
+        {
+          lineId: 'prod_1',
+          title: 'Amber Wine',
+          quantity: 2,
+          originalUnitPrice: 2400,
+          amountAfterItemDiscountBeforeOrderCoupon: 4800,
+        },
+      ],
+    },
+  });
+
+  await checkout(request);
+
+  assert.equal(receivedLines.length, 1);
+  assert.equal(receivedLines[0].quantity, 3);
+});
+
+test('draftOrderCheckout rejects excessive line and quantity inputs before external work', async () => {
+  let externalCalls = 0;
+  const checkout = createTestDraftOrderCheckout({
+    prepareShippingV2WriterPayloadImpl: async () => {
+      externalCalls += 1;
+      return { applied: true, payload: {} };
+    },
+  });
+  const excessiveLines = Array.from({ length: 21 }, (_, index) => ({
+    lineId: `prod_${index}`,
+    title: `Product ${index}`,
+    quantity: 1,
+    originalUnitPrice: 100,
+    amountAfterItemDiscountBeforeOrderCoupon: 100,
+  }));
+
+  await assert.rejects(
+    () =>
+      checkout(
+        buildValidCheckoutRequest({
+          orderLike: { lines: excessiveLines },
+        }),
+      ),
+    (error) => error?.reason === 'invalid_payload',
+  );
+  assert.equal(externalCalls, 0);
 });

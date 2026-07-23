@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   getProductionReadiness,
   includeCheckoutGateInProductionReadiness,
+  includeCheckoutValidationInProductionReadiness,
   inspectStripeEnvironment,
 } from "../../app/services/productionReadiness.server.js";
+import { OPERATIONAL_READINESS_DEFINITIONS } from "../../app/services/operationalReadiness.server.js";
 
 const REQUIRED_SCOPE_STRING = [
   "read_products",
@@ -20,6 +22,8 @@ const REQUIRED_SCOPE_STRING = [
   "write_merchant_managed_fulfillment_orders",
   "read_publications",
   "write_publications",
+  "read_validations",
+  "write_validations",
   "read_draft_orders",
   "write_draft_orders",
   "read_shopify_payments_disputes",
@@ -67,6 +71,23 @@ function createFakePrisma({
     },
     withdrawalEmailLog: {
       count: async () => withdrawalCounts.emailFailedCount || 0,
+    },
+    operationalReadinessAttestation: {
+      findMany: async () =>
+        OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
+          checkKey: definition.key,
+          status: "CONFIRMED",
+          evidenceReference: `test:${definition.key}`,
+          confirmedBy: "test_operator",
+          confirmedAt: new Date("2026-07-23T00:00:00Z"),
+          expiresAt: new Date("2099-01-01T00:00:00Z"),
+        })),
+    },
+    platformOperationalControl: {
+      findUnique: async () => ({
+        key: "GLOBAL",
+        checkoutHold: false,
+      }),
     },
   };
 
@@ -504,6 +525,7 @@ test("getProductionReadiness treats write grants as satisfying paired Shopify re
     "read_locations",
     "write_merchant_managed_fulfillment_orders",
     "write_publications",
+    "write_validations",
     "write_draft_orders",
     "read_shopify_payments_disputes",
   ].join(",");
@@ -850,4 +872,51 @@ test("includeCheckoutGateInProductionReadiness passes only a verified checkout b
     "marketplace_checkout_publication_boundary",
   );
   assert.equal(result.checks[0].status, "pass");
+});
+
+test("includeCheckoutValidationInProductionReadiness blocks launch until fail-closed validation is active", () => {
+  const blocked = includeCheckoutValidationInProductionReadiness(
+    {
+      checks: [],
+      summary: {
+        totalChecks: 0,
+        blockingCount: 0,
+        warningCount: 0,
+        manualCount: 0,
+      },
+      canGoLive: true,
+    },
+    {
+      ok: true,
+      active: false,
+      reason: "validation_disabled",
+    },
+  );
+  assert.equal(blocked.canGoLive, false);
+  assert.equal(
+    blocked.checks.find(
+      (check) => check.id === "marketplace_checkout_server_validation",
+    ).status,
+    "fail",
+  );
+
+  const ready = includeCheckoutValidationInProductionReadiness(blocked, {
+    ok: true,
+    active: true,
+  });
+  assert.equal(ready.canGoLive, false);
+  assert.equal(
+    ready.checks.find(
+      (check) =>
+        check.id ===
+        "operational_attestation_checkout_validation_live_probe_completed",
+    ).status,
+    "fail",
+  );
+  assert.equal(
+    ready.checks.find(
+      (check) => check.id === "marketplace_checkout_server_validation",
+    ).status,
+    "pass",
+  );
 });

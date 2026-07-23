@@ -58,6 +58,11 @@ test("ensureApprovedProductPublished syncs the vendor collection for an approved
     shopifyProductId: "gid://shopify/Product/1",
     shopDomain: "shop-a.myshopify.com",
     vendorStoreId: "store_1",
+    vendorStore: {
+      id: "store_1",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
   };
   let syncCall = null;
   let policyCall = null;
@@ -102,6 +107,11 @@ test("ensureApprovedProductPublished fails when the final checkout boundary cann
     shopifyProductId: "gid://shopify/Product/1",
     shopDomain: "shop-a.myshopify.com",
     vendorStoreId: "store_1",
+    vendorStore: {
+      id: "store_1",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
   };
 
   await assert.rejects(
@@ -136,6 +146,11 @@ test("ensureApprovedProductPublished fails before sync when the product is not a
     shopifyProductId: "gid://shopify/Product/1",
     shopDomain: "shop-a.myshopify.com",
     vendorStoreId: "store_1",
+    vendorStore: {
+      id: "store_1",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
   };
   let syncCalled = false;
 
@@ -155,6 +170,38 @@ test("ensureApprovedProductPublished fails before sync when the product is not a
   assert.equal(syncCalled, false);
 });
 
+test("ensureApprovedProductPublished stops before Shopify sync during an emergency hold", async () => {
+  const product = {
+    id: "product_1",
+    approvalStatus: "approved",
+    shopifyProductId: "gid://shopify/Product/1",
+    shopDomain: "shop-a.myshopify.com",
+    vendorStoreId: "store_1",
+    vendorStore: {
+      id: "store_1",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
+  };
+  let syncCalled = false;
+
+  await assert.rejects(
+    ensureApprovedProductPublished(product.id, {
+      prismaClient: createPrismaClient(product),
+      isPlatformCheckoutHoldActiveImpl: async () => true,
+      syncVendorCollectionByStoreIdImpl: async () => {
+        syncCalled = true;
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof ProductPublicationError);
+      assert.equal(error.details.reason, "platform_checkout_emergency_hold");
+      return true;
+    },
+  );
+  assert.equal(syncCalled, false);
+});
+
 test("ensureApprovedProductPublished fails when product publish did not complete", async () => {
   const product = {
     id: "product_1",
@@ -162,6 +209,11 @@ test("ensureApprovedProductPublished fails when product publish did not complete
     shopifyProductId: "gid://shopify/Product/1",
     shopDomain: "shop-a.myshopify.com",
     vendorStoreId: "store_1",
+    vendorStore: {
+      id: "store_1",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
   };
 
   await assert.rejects(

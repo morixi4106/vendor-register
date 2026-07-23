@@ -100,11 +100,14 @@ model Product {
   createdAt                       DateTime  @default(now())
   updatedAt                       DateTime  @updatedAt
 
-  vendorStore       VendorStore                  @relation(fields: [vendorStoreId], references: [id])
-  priceApplyLogs    ProductPriceApplyLog[]
-  countryPolicy     ProductCountryPolicy?
-  complianceProfile ProductComplianceProfile?
-  governanceCases   MarketplaceOperationalCase[]
+  vendorStore                VendorStore                  @relation(fields: [vendorStoreId], references: [id])
+  priceApplyLogs             ProductPriceApplyLog[]
+  countryPolicy              ProductCountryPolicy?
+  complianceProfile          ProductComplianceProfile?
+  complianceEvidence         ProductComplianceEvidence[]
+  complianceDecisions        ProductComplianceDecision[]
+  saleEligibilityProjections SaleEligibilityProjection[]
+  governanceCases            MarketplaceOperationalCase[]
 
   @@unique([shopDomain, shopifyProductId])
   @@unique([shopDomain, shopifyVariantId])
@@ -461,6 +464,160 @@ model OperationalHeartbeat {
   @@map("operational_heartbeats")
 }
 
+model ShopifyWebhookReceipt {
+  id               String    @id @default(cuid())
+  shopDomain       String
+  webhookId        String
+  eventId          String?
+  topic            String
+  resourceId       String?
+  payloadHash      String
+  processingStatus String    @default("PROCESSING")
+  attemptCount     Int       @default(1)
+  triggeredAt      DateTime?
+  receivedAt       DateTime  @default(now())
+  processedAt      DateTime?
+  lastAttemptAt    DateTime  @default(now())
+  lastErrorCode    String?
+  metadataJson     Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([shopDomain, webhookId])
+  @@index([eventId])
+  @@index([topic, processingStatus, receivedAt])
+  @@index([shopDomain, resourceId, receivedAt])
+  @@map("shopify_webhook_receipts")
+}
+
+model ShopifyOrderQuarantineHold {
+  id                     String    @id @default(cuid())
+  shopDomain             String
+  shopifyOrderId         String
+  fulfillmentOrderId     String
+  fulfillmentHoldId      String?
+  holdHandle             String
+  status                 String    @default("PENDING")
+  fulfillmentOrderStatus String?
+  operationalCaseId      String?
+  appliedAt              DateTime?
+  lastVerifiedAt         DateTime?
+  releasedAt             DateTime?
+  lastErrorCode          String?
+  metadataJson           Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@unique([shopDomain, fulfillmentOrderId, holdHandle])
+  @@index([shopDomain, shopifyOrderId, status])
+  @@index([operationalCaseId])
+  @@map("shopify_order_quarantine_holds")
+}
+
+model PlatformOperationalControl {
+  key                       String   @id @default("GLOBAL")
+  checkoutHold              Boolean  @default(false)
+  automatedEmailHold        Boolean  @default(false)
+  orderEmailHold            Boolean  @default(false)
+  legalEmailHold            Boolean  @default(false)
+  securityEmailHold         Boolean  @default(false)
+  internationalShippingHold Boolean  @default(false)
+  checkoutControlState      String   @default("IDLE")
+  activeCheckoutControlId   String?
+  holdReason                String?
+  changedBy                 String?
+  changedAt                 DateTime @default(now())
+  releaseEvidenceReference  String?
+  metadataJson              Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@map("platform_operational_controls")
+}
+
+model OperationalControl {
+  id                        String    @id @default(cuid())
+  activeKey                 String?   @unique
+  shopDomain                String
+  controlType               String
+  scopeType                 String    @default("PLATFORM")
+  scopeId                   String?
+  state                     String    @default("REQUESTED")
+  revision                  Int       @default(1)
+  reasonCode                String
+  reasonText                String
+  requestedByUserId         String
+  requestedAt               DateTime  @default(now())
+  activatedByUserId         String?
+  activatedAt               DateTime?
+  lastVerifiedAt            DateTime?
+  recoveryRequestedByUserId String?
+  recoveryRequestedAt       DateTime?
+  recoveredByUserId         String?
+  recoveredAt               DateTime?
+  recoveryEvidenceJson      Json?
+  preControlSnapshotJson    Json?
+  recoveryPlanJson          Json?
+  operationalCaseId         String?
+  metadataJson              Json?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  executions OperationalControlExecution[]
+  heldEmails WithdrawalEmailOutbox[]
+
+  @@index([shopDomain, controlType, state])
+  @@index([state, updatedAt])
+  @@map("operational_controls")
+}
+
+model OperationalControlExecution {
+  id              String    @id @default(cuid())
+  controlId       String
+  targetSystem    String
+  targetType      String
+  targetId        String
+  operation       String
+  status          String    @default("PENDING")
+  attemptCount    Int       @default(0)
+  errorCode       String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  beforeStateJson Json?
+  afterStateJson  Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  control OperationalControl @relation(fields: [controlId], references: [id], onDelete: Restrict)
+
+  @@unique([controlId, targetSystem, targetType, targetId, operation])
+  @@index([controlId, status])
+  @@index([status, updatedAt])
+  @@map("operational_control_executions")
+}
+
+model OperationalReadinessAttestation {
+  id                String    @id @default(cuid())
+  checkKey          String
+  scopeType         String    @default("PLATFORM")
+  scopeId           String    @default("GLOBAL")
+  status            String    @default("PENDING")
+  evidenceReference String?
+  evidenceHash      String?
+  confirmedBy       String?
+  confirmedAt       DateTime?
+  expiresAt         DateTime?
+  notes             String?
+  metadataJson      Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([checkKey, scopeType, scopeId])
+  @@index([status, expiresAt])
+  @@map("operational_readiness_attestations")
+}
+
 model SalesCreditOffset {
   id                String    @id @default(cuid())
   sellerId          String
@@ -747,6 +904,14 @@ model ProductComplianceProfile {
   customsDescriptionEn    String?
   regulatoryCategory      String?
   regulatoryMarksJson     Json?
+  applicabilityStatus     String    @default("UNKNOWN")
+  verificationLevel       String    @default("UNVERIFIED")
+  applicabilityReasonCode String?
+  applicabilityReasonText String?
+  applicabilitySourceUrl  String?
+  applicabilityDecidedAt  DateTime?
+  applicabilityDecidedBy  String?
+  nextReviewAt            DateTime?
   ageRestriction          String?
   authenticityConfirmedAt DateTime?
   ipRightsConfirmedAt     DateTime?
@@ -763,6 +928,144 @@ model ProductComplianceProfile {
   @@index([approvalStatus, updatedAt])
   @@index([countryOfOriginCode, hsCode])
   @@map("product_compliance_profiles")
+}
+
+model ComplianceRequirement {
+  id                        String    @id @default(cuid())
+  code                      String
+  version                   String    @default("v1")
+  name                      String
+  jurisdiction              String    @default("JP")
+  market                    String    @default("DOMESTIC")
+  subjectType               String    @default("PRODUCT")
+  productCategory           String?
+  sellerType                String?
+  severity                  String    @default("BLOCKING")
+  status                    String    @default("ACTIVE")
+  requiredVerificationLevel String    @default("DOCUMENT_REVIEWED")
+  evidencePolicyJson        Json?
+  sourceUrl                 String?
+  sourceTitle               String?
+  effectiveFrom             DateTime?
+  effectiveUntil            DateTime?
+  reviewDueAt               DateTime?
+  isActive                  Boolean   @default(true)
+  metadataJson              Json?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  evidence  ProductComplianceEvidence[]
+  decisions ProductComplianceDecision[]
+
+  @@unique([code, version, jurisdiction])
+  @@index([jurisdiction, market, isActive])
+  @@index([jurisdiction, subjectType, status])
+  @@index([productCategory, isActive])
+  @@map("compliance_requirements")
+}
+
+model ProductComplianceEvidence {
+  id                 String    @id @default(cuid())
+  evidenceKey        String    @unique
+  productId          String
+  requirementId      String?
+  status             String    @default("SUBMITTED")
+  verificationLevel  String    @default("SELF_ATTESTED")
+  evidenceType       String
+  issuerName         String?
+  referenceNumber    String?
+  issuedAt           DateTime?
+  expiresAt          DateTime?
+  reviewDueAt        DateTime?
+  revokedAt          DateTime?
+  evidenceReference  String?
+  fileHash           String?
+  fileSizeBytes      Int?
+  mimeType           String?
+  malwareScanStatus  String?
+  submittedBy        String?
+  submittedAt        DateTime  @default(now())
+  verifiedBy         String?
+  verifiedAt         DateTime?
+  verificationMethod String?
+  sourceCheckedAt    DateTime?
+  notes              String?
+  metadataJson       Json?
+  createdAt          DateTime  @default(now())
+
+  product       Product                             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  requirement   ComplianceRequirement?              @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  decisionLinks ProductComplianceDecisionEvidence[]
+
+  @@index([productId, status, expiresAt])
+  @@index([requirementId, status])
+  @@map("product_compliance_evidence")
+}
+
+model ProductComplianceDecision {
+  id                String    @id @default(cuid())
+  decisionKey       String    @unique
+  productId         String
+  requirementId     String?
+  decision          String
+  reasonCode        String?
+  reasonText        String
+  verificationLevel String    @default("DOCUMENT_REVIEWED")
+  sourceUrl         String?
+  decidedBy         String
+  decidedAt         DateTime  @default(now())
+  reviewDueAt       DateTime?
+  supersedesId      String?
+  metadataJson      Json?
+  createdAt         DateTime  @default(now())
+
+  product       Product                             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  requirement   ComplianceRequirement?              @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  evidenceLinks ProductComplianceDecisionEvidence[]
+
+  @@index([productId, decidedAt])
+  @@index([requirementId, decision])
+  @@map("product_compliance_decisions")
+}
+
+model ProductComplianceDecisionEvidence {
+  decisionId String
+  evidenceId String
+  createdAt  DateTime @default(now())
+
+  decision ProductComplianceDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict)
+  evidence ProductComplianceEvidence @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
+
+  @@id([decisionId, evidenceId])
+  @@index([evidenceId])
+  @@map("product_compliance_decision_evidence")
+}
+
+model SaleEligibilityProjection {
+  id                  String   @id @default(cuid())
+  shopDomain          String
+  productId           String
+  vendorStoreId       String?
+  destinationCountry  String   @default("")
+  salesChannel        String
+  status              String
+  reasonCodes         Json
+  requirementVersions Json
+  decisionIds         Json
+  policyVersion       String
+  inputHash           String
+  projectionRevision  Int      @default(1)
+  evaluatedAt         DateTime
+  expiresAt           DateTime
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([shopDomain, productId, destinationCountry, salesChannel])
+  @@index([status, expiresAt])
+  @@index([vendorStoreId, status])
+  @@map("sale_eligibility_projections")
 }
 
 model MarketplaceOperationalCase {
@@ -1188,39 +1491,51 @@ model WithdrawalEvent {
 }
 
 model WithdrawalEmailOutbox {
-  id                  String    @id @default(cuid())
-  withdrawalRequestId String
-  withdrawalEventId   String
-  messageType         String
-  recipient           String
-  sender              String?
-  locale              String
-  templateVersion     String
-  subjectSnapshot     String
-  textBodySnapshot    String
-  htmlBodySnapshot    String
-  renderedContentHash String
-  idempotencyKey      String    @unique
-  status              String    @default("PENDING")
-  attemptCount        Int       @default(0)
-  nextAttemptAt       DateTime  @default(now())
-  lockedUntil         DateTime?
-  lastErrorCode       String?
-  providerMessageId   String?
-  sentAt              DateTime?
-  deliveredAt         DateTime?
-  bouncedAt           DateTime?
-  complainedAt        DateTime?
-  deadLetteredAt      DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  withdrawalRequestId   String
+  withdrawalEventId     String
+  messageType           String
+  messageClass          String    @default("LEGAL_TRANSACTIONAL")
+  recipient             String
+  sender                String?
+  locale                String
+  templateVersion       String
+  subjectSnapshot       String
+  textBodySnapshot      String
+  htmlBodySnapshot      String
+  renderedContentHash   String
+  idempotencyKey        String    @unique
+  status                String    @default("PENDING")
+  heldByControlId       String?
+  holdReason            String?
+  heldAt                DateTime?
+  releasedAt            DateTime?
+  releaseApprovedById   String?
+  cancelReasonCode      String?
+  cancelledAt           DateTime?
+  cancellationAuditJson Json?
+  attemptCount          Int       @default(0)
+  nextAttemptAt         DateTime  @default(now())
+  lockedUntil           DateTime?
+  lastErrorCode         String?
+  providerMessageId     String?
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  bouncedAt             DateTime?
+  complainedAt          DateTime?
+  deadLetteredAt        DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
-  withdrawalEvent   WithdrawalEvent   @relation(fields: [withdrawalEventId], references: [id], onDelete: Restrict)
+  withdrawalRequest WithdrawalRequest   @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
+  withdrawalEvent   WithdrawalEvent     @relation(fields: [withdrawalEventId], references: [id], onDelete: Restrict)
+  heldByControl     OperationalControl? @relation(fields: [heldByControlId], references: [id], onDelete: SetNull)
 
   @@index([status, nextAttemptAt])
+  @@index([messageClass, status, nextAttemptAt])
   @@index([withdrawalRequestId, createdAt])
   @@index([lockedUntil])
+  @@index([heldByControlId, status])
   @@map("withdrawal_email_outbox")
 }
 

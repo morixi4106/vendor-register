@@ -79,7 +79,30 @@ function readyProduct() {
       approvalStatus: "APPROVED",
       authenticityConfirmedAt: new Date("2026-01-01T00:00:00Z"),
       ipRightsConfirmedAt: new Date("2026-01-01T00:00:00Z"),
+      applicabilityStatus: "REQUIRED",
+      verificationLevel: "DOCUMENT_REVIEWED",
+      applicabilityReasonText: "General consumer goods requirements reviewed.",
+      applicabilitySourceUrl: "https://example.com/requirements",
+      applicabilityDecidedAt: new Date("2026-01-01T00:00:00Z"),
+      applicabilityDecidedBy: "operator_1",
+      nextReviewAt: new Date("2099-01-01T00:00:00Z"),
     },
+    complianceEvidence: [
+      {
+        status: "VERIFIED",
+        verificationLevel: "DOCUMENT_REVIEWED",
+        expiresAt: new Date("2099-01-01T00:00:00Z"),
+        reviewDueAt: new Date("2099-01-01T00:00:00Z"),
+        revokedAt: null,
+      },
+    ],
+    complianceDecisions: [
+      {
+        decision: "COMPLIANT",
+        decidedAt: new Date("2026-01-01T00:00:00Z"),
+        reviewDueAt: new Date("2099-01-01T00:00:00Z"),
+      },
+    ],
   };
 }
 
@@ -287,6 +310,35 @@ test("product governance readiness requires approved provenance and authenticity
   assert.equal(result.ready, false);
   assert.ok(result.reasons.includes("country_of_origin_missing"));
   assert.ok(result.reasons.includes("ip_rights_confirmation_missing"));
+});
+
+test("product governance readiness rejects self-attestation without a reviewed decision", () => {
+  const product = readyProduct();
+  product.complianceProfile.verificationLevel = "SELF_ATTESTED";
+  product.complianceEvidence = [];
+  product.complianceDecisions = [];
+
+  const result = evaluateProductGovernanceReadiness(product);
+
+  assert.equal(result.ready, false);
+  assert.ok(result.reasons.includes("product_verification_level_insufficient"));
+  assert.ok(result.reasons.includes("verified_product_evidence_missing"));
+  assert.ok(result.reasons.includes("product_compliance_decision_missing"));
+});
+
+test("not-applicable product decisions require a current formal decision", () => {
+  const product = readyProduct();
+  product.complianceProfile.applicabilityStatus = "NOT_APPLICABLE";
+  product.complianceEvidence = [];
+  product.complianceDecisions = [
+    {
+      decision: "NOT_APPLICABLE",
+      decidedAt: new Date("2026-01-01T00:00:00Z"),
+      reviewDueAt: new Date("2099-01-01T00:00:00Z"),
+    },
+  ];
+
+  assert.equal(evaluateProductGovernanceReadiness(product).ready, true);
 });
 
 test("governed payout availability subtracts reserves and direct invoices", () => {

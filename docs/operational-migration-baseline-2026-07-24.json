@@ -1,0 +1,43 @@
+{
+  "schema": "operational-migration-audit/v1",
+  "generatedAt": "2026-07-23T16:04:56.932Z",
+  "products": {
+    "total": 10,
+    "approved": 10,
+    "shopifyLinked": 10,
+    "nonTestPublicationCandidates": 6
+  },
+  "compliance": {
+    "requirements": {
+      "unavailable": true,
+      "code": "P2021"
+    },
+    "evidence": {
+      "unavailable": true,
+      "code": "P2021"
+    },
+    "decisions": {
+      "unavailable": true,
+      "code": "P2021"
+    },
+    "projections": {
+      "unavailable": true,
+      "code": "P2021"
+    }
+  },
+  "controls": {
+    "platform": {
+      "unavailable": true,
+      "code": "P2021"
+    },
+    "operational": {
+      "unavailable": true,
+      "code": "P2021"
+    },
+    "executions": {
+      "unavailable": true,
+      "code": "P2021"
+    }
+  },
+  "withdrawalEmailOutbox": {}
+}
