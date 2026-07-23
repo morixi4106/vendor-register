@@ -16,7 +16,6 @@ import {
   evaluateCartDeliveryEligibility,
 } from "../utils/deliveryEligibility.js";
 import { normalizeProductCategory } from "../utils/productCategories.js";
-import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 import {
   buildProductComplianceSnapshot,
@@ -59,10 +58,8 @@ const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
   "この商品では売上金を利用できません。ほかの支払い方法で購入してください。";
 const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
   "複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。";
-const VARIANT_REQUIRED_ERROR = "variant_required";
 const PUBLIC_CHECKOUT_SOURCE = "vendor_storefront";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DEFAULT_ADMIN_API_VERSION = SHOPIFY_API_VERSION;
 const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = "jpy";
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED",
@@ -94,42 +91,6 @@ const SALES_CREDIT_RESTRICTED_CATEGORY_KEYWORDS = [
   "電子機器",
   "サプリ",
 ];
-
-const PRODUCT_FOR_CHECKOUT_QUERY = `#graphql
-  query ProductForDraftOrderCheckout($id: ID!) {
-    product(id: $id) {
-      id
-      title
-      variants(first: 2) {
-        nodes {
-          id
-          title
-          price
-          inventoryItem {
-            requiresShipping
-          }
-        }
-      }
-    }
-  }
-`;
-
-const VARIANT_FOR_CHECKOUT_QUERY = `#graphql
-  query VariantForDraftOrderCheckout($id: ID!) {
-    productVariant(id: $id) {
-      id
-      title
-      price
-      product {
-        id
-        title
-      }
-      inventoryItem {
-        requiresShipping
-      }
-    }
-  }
-`;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -342,12 +303,6 @@ function getRequestedShopifyVariantGid(item) {
   return (
     normalizeShopifyGid(item?.shopifyVariantGid, "ProductVariant") ||
     normalizeShopifyGid(item?.shopifyVariantId, "ProductVariant")
-  );
-}
-
-function hasRequestedShopifyReference(item) {
-  return Boolean(
-    getRequestedShopifyProductGid(item) || getRequestedShopifyVariantGid(item),
   );
 }
 
@@ -1148,6 +1103,8 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
           country: true,
           category: true,
           note: true,
+          isTestStore: true,
+          isPlatformStore: true,
         },
       },
       seller: {
@@ -1159,7 +1116,12 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
     },
   });
 
-  if (!vendor || vendor.status !== "active" || !vendor.vendorStore) {
+  if (
+    !vendor ||
+    vendor.status !== "active" ||
+    !vendor.vendorStore ||
+    vendor.vendorStore.isTestStore
+  ) {
     return null;
   }
 
@@ -1179,6 +1141,8 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
       country: vendor.vendorStore.country,
       category: vendor.vendorStore.category,
       note: vendor.vendorStore.note || null,
+      isTestStore: vendor.vendorStore.isTestStore,
+      isPlatformStore: vendor.vendorStore.isPlatformStore,
     },
   };
 }
@@ -1197,6 +1161,10 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
       return fallbackVendorContext;
     }
 
+    return null;
+  }
+
+  if (store.isTestStore) {
     return null;
   }
 
@@ -1220,6 +1188,8 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
       country: store.country,
       category: store.category,
       note: store.note || null,
+      isTestStore: Boolean(store.isTestStore),
+      isPlatformStore: Boolean(store.isPlatformStore),
     },
   };
 }
@@ -1267,247 +1237,6 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
         isPurchasable: Boolean(shopDomain && price > 0),
       };
     }),
-  };
-}
-
-async function resolveVendorStoreShopDomain({
-  vendorStoreId,
-  prismaClient = prisma,
-}) {
-  const products = await prismaClient.product.findMany({
-    where: {
-      vendorStoreId,
-      shopDomain: {
-        not: null,
-      },
-    },
-    select: {
-      shopDomain: true,
-    },
-  });
-  const shopDomains = Array.from(
-    new Set(
-      products
-        .map((product) => normalizeShopDomain(product.shopDomain))
-        .filter(Boolean),
-    ),
-  );
-
-  return shopDomains.length === 1 ? shopDomains[0] : null;
-}
-
-function buildShopifyOnlyProductFromVariant({ variant, product, quantity }) {
-  const price = Number(variant?.price);
-  const productTitle = normalizeText(product?.title);
-  const variantTitle = normalizeText(variant?.title);
-  const title =
-    variantTitle && variantTitle !== "Default Title" && productTitle
-      ? `${productTitle} - ${variantTitle}`
-      : productTitle || variantTitle;
-
-  if (
-    !normalizeText(variant?.id) ||
-    !normalizeText(product?.id) ||
-    !title ||
-    !Number.isFinite(price) ||
-    price <= 0
-  ) {
-    return null;
-  }
-
-  return {
-    id: normalizeText(variant.id),
-    name: title,
-    category: null,
-    price,
-    calculatedPrice: price,
-    shopifyProductId: normalizeText(product.id),
-    shopifyVariantId: normalizeText(variant.id),
-    salesCreditEligible: false,
-    // Shopify-only fallback defaults to shipping-required when inventoryItem is missing.
-    requiresShipping: variant.inventoryItem?.requiresShipping !== false,
-    quantity,
-  };
-}
-
-async function fetchShopifyCheckoutProduct({
-  item,
-  shopDomain,
-  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
-}) {
-  const variantGid = getRequestedShopifyVariantGid(item);
-  const productGid = getRequestedShopifyProductGid(item);
-
-  if (variantGid) {
-    const { data } = await shopifyGraphQLWithOfflineSessionImpl({
-      shopDomain,
-      apiVersion: DEFAULT_ADMIN_API_VERSION,
-      query: VARIANT_FOR_CHECKOUT_QUERY,
-      variables: {
-        id: variantGid,
-      },
-    });
-    const variant = data?.productVariant;
-    const product = variant?.product;
-
-    return buildShopifyOnlyProductFromVariant({
-      variant,
-      product,
-      quantity: item.quantity,
-    });
-  }
-
-  if (!productGid) {
-    return null;
-  }
-
-  const { data } = await shopifyGraphQLWithOfflineSessionImpl({
-    shopDomain,
-    apiVersion: DEFAULT_ADMIN_API_VERSION,
-    query: PRODUCT_FOR_CHECKOUT_QUERY,
-    variables: {
-      id: productGid,
-    },
-  });
-  const product = data?.product;
-  const variants = Array.isArray(product?.variants?.nodes)
-    ? product.variants.nodes
-    : [];
-
-  if (variants.length !== 1) {
-    return {
-      error: VARIANT_REQUIRED_ERROR,
-    };
-  }
-
-  return buildShopifyOnlyProductFromVariant({
-    variant: variants[0],
-    product,
-    quantity: item.quantity,
-  });
-}
-
-async function buildShopifyFallbackCheckoutPayload({
-  request = null,
-  resolvedVendorContext,
-  submission,
-  prismaClient = prisma,
-  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
-  checkoutSource = PUBLIC_CHECKOUT_SOURCE,
-  env = process.env,
-}) {
-  if (!submission.items.every(hasRequestedShopifyReference)) {
-    return {
-      ok: false,
-      error: INVALID_SELECTION_MESSAGE,
-    };
-  }
-
-  const shopDomain = await resolveVendorStoreShopDomain({
-    vendorStoreId: resolvedVendorContext.store.id,
-    prismaClient,
-  });
-
-  if (!shopDomain) {
-    return {
-      ok: false,
-      error: CHECKOUT_UNAVAILABLE_MESSAGE,
-    };
-  }
-
-  const selectedProducts = [];
-
-  for (const item of submission.items) {
-    const resolvedProduct = await fetchShopifyCheckoutProduct({
-      item,
-      shopDomain,
-      shopifyGraphQLWithOfflineSessionImpl,
-    });
-
-    if (resolvedProduct?.error) {
-      return {
-        ok: false,
-        error: resolvedProduct.error,
-      };
-    }
-
-    if (!resolvedProduct) {
-      return {
-        ok: false,
-        error: INVALID_SELECTION_MESSAGE,
-      };
-    }
-
-    selectedProducts.push({
-      product: {
-        ...resolvedProduct,
-        shopDomain,
-      },
-      quantity: resolvedProduct.quantity,
-    });
-  }
-
-  const countryPolicy = evaluateCheckoutCountryPolicy({
-    vendorContext: resolvedVendorContext,
-    products: selectedProducts.map(({ product }) => product),
-    shippingCountry: submission.shippingAddress.countryCode,
-    importResponsibilityAccepted: submission.importResponsibilityAccepted,
-  });
-
-  if (!countryPolicy.ok) {
-    return {
-      ok: false,
-      error: countryPolicy.error,
-    };
-  }
-
-  const salesCredit = await prepareCheckoutSalesCredit({
-    request,
-    submission,
-    vendorContext: resolvedVendorContext,
-    selectedProducts,
-    prismaClient,
-  });
-
-  if (!salesCredit.ok) {
-    return {
-      ok: false,
-      error: salesCredit.error,
-    };
-  }
-
-  const metadata = buildCheckoutMetadata(resolvedVendorContext, checkoutSource);
-  const customAttributes = [
-    ...buildCheckoutCustomAttributes(resolvedVendorContext, countryPolicy, {
-      env,
-    }),
-    ...salesCredit.customAttributes,
-  ];
-
-  return {
-    ok: true,
-    salesCreditOffset: salesCredit.offset,
-    payload: {
-      orderLike: {
-        lines: selectedProducts.map(({ product, quantity }) =>
-          buildServerTrustedCheckoutLine(product, quantity),
-        ),
-      },
-      shippingAddress: submission.shippingAddress,
-      customer: submission.customer,
-      email: submission.customer.email,
-      customerEmail: submission.customer.email,
-      ...(submission.note ? { note: submission.note } : {}),
-      shopDomain,
-      tags: metadata.tags,
-      customAttributes,
-      ...(salesCredit.appliedDiscount
-        ? { appliedDiscount: salesCredit.appliedDiscount }
-        : {}),
-      ...(countryPolicy.acceptance
-        ? { buyerWarningAcceptance: countryPolicy.acceptance }
-        : {}),
-    },
   };
 }
 
@@ -1949,9 +1678,15 @@ async function buildServerTrustedCheckoutPayload({
   });
 
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
+  if (products.some((product) => product.vendorStore?.isTestStore)) {
+    return {
+      ok: false,
+      error: UNAVAILABLE_PRODUCT_MESSAGE,
+    };
+  }
+
   const requiresMarketplaceGovernance = products.some(
     (product) =>
-      product.vendorStore?.isTestStore !== true &&
       product.vendorStore?.isPlatformStore !== true &&
       String(
         product.complianceProfile?.legalSellerType || "VENDOR",
@@ -1977,21 +1712,10 @@ async function buildServerTrustedCheckoutPayload({
   }
 
   if (products.length !== uniqueProductIds.length) {
-    if (requiresMarketplaceGovernance) {
-      return {
-        ok: false,
-        error: UNAVAILABLE_PRODUCT_MESSAGE,
-      };
-    }
-    return buildShopifyFallbackCheckoutPayload({
-      request,
-      resolvedVendorContext,
-      submission,
-      prismaClient,
-      shopifyGraphQLWithOfflineSessionImpl,
-      checkoutSource,
-      env,
-    });
+    return {
+      ok: false,
+      error: UNAVAILABLE_PRODUCT_MESSAGE,
+    };
   }
 
   const productsById = new Map(
@@ -2003,21 +1727,33 @@ async function buildServerTrustedCheckoutPayload({
     const product = productsById.get(item.productId);
 
     if (!product) {
-      if (governanceGateEnabled) {
-        return {
-          ok: false,
-          error: UNAVAILABLE_PRODUCT_MESSAGE,
-        };
-      }
-      return buildShopifyFallbackCheckoutPayload({
-        request,
-        resolvedVendorContext,
-        submission,
-        prismaClient,
-        shopifyGraphQLWithOfflineSessionImpl,
-        checkoutSource,
-        env,
-      });
+      return {
+        ok: false,
+        error: UNAVAILABLE_PRODUCT_MESSAGE,
+      };
+    }
+
+    const requestedShopifyProductId = getRequestedShopifyProductGid(item);
+    const requestedShopifyVariantId = getRequestedShopifyVariantGid(item);
+    const linkedShopifyProductId = normalizeShopifyGid(
+      product.shopifyProductId,
+      "Product",
+    );
+    const linkedShopifyVariantId = normalizeShopifyGid(
+      product.shopifyVariantId,
+      "ProductVariant",
+    );
+
+    if (
+      (requestedShopifyProductId &&
+        requestedShopifyProductId !== linkedShopifyProductId) ||
+      (requestedShopifyVariantId &&
+        requestedShopifyVariantId !== linkedShopifyVariantId)
+    ) {
+      return {
+        ok: false,
+        error: UNAVAILABLE_PRODUCT_MESSAGE,
+      };
     }
 
     const shopDomain = normalizeShopDomain(product.shopDomain);
@@ -2054,7 +1790,6 @@ async function buildServerTrustedCheckoutPayload({
     }
 
     const productRequiresMarketplaceGovernance =
-      product.vendorStore?.isTestStore !== true &&
       product.vendorStore?.isPlatformStore !== true &&
       String(
         product.complianceProfile?.legalSellerType || "VENDOR",

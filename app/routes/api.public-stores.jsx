@@ -4,6 +4,7 @@ import { serializePublicStore } from "../utils/publicStores";
 export const loader = async () => {
   const stores = await prisma.vendorStore.findMany({
     where: {
+      isTestStore: false,
       vendorAuth: {
         is: {
           status: "active",

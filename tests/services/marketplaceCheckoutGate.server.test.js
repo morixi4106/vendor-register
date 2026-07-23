@@ -6,7 +6,9 @@ import {
   MARKETPLACE_CHECKOUT_POLICY,
   activateMarketplaceCheckoutGate,
   backfillMarketplaceCheckoutPolicies,
+  enforceShopifyResourcePublicationBoundary,
   enforceUnresolvedShopifyProductPublicationBoundary,
+  getMarketplaceCheckoutGateStatus,
   resolveMarketplaceCheckoutPolicy,
   syncMarketplaceCheckoutPolicyForProduct,
 } from "../../app/services/marketplaceCheckoutGate.server.js";
@@ -38,18 +40,22 @@ function createPrismaMock({ products = [], unresolvedIssues = [] } = {}) {
   };
 }
 
-function publicationResponse() {
+function publicationConnection(ids = []) {
   return {
-    data: {
-      publications: {
-        nodes: [
-          {
-            id: "gid://shopify/Publication/1",
-            supportsFuturePublishing: true,
-          },
-        ],
-      },
-    },
+    nodes: ids.map((id) => ({
+      isPublished: true,
+      publishDate: null,
+      publication: { id },
+    })),
+    pageInfo: { hasNextPage: false },
+  };
+}
+
+function productState(product, ids = [], policy = null) {
+  return {
+    id: product.shopifyProductId,
+    metafield: policy ? { value: policy } : null,
+    resourcePublicationsV2: publicationConnection(ids),
   };
 }
 
@@ -82,28 +88,54 @@ test("resolveMarketplaceCheckoutPolicy only permits explicit platform-direct pro
     ),
     MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
   );
+  assert.equal(
+    resolveMarketplaceCheckoutPolicy(
+      createProduct({
+        vendorStore: {
+          id: "misconfigured-test-store",
+          isPlatformStore: true,
+          isTestStore: true,
+        },
+      }),
+    ),
+    MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+  );
 });
 
-test("governed products are removed from the Online Store publication", async () => {
+test("governed products are removed from every attached publication", async () => {
   const product = createProduct();
+  const publicationIds = [
+    "gid://shopify/Publication/1",
+    "gid://shopify/Publication/2",
+  ];
+  let publishableReadCount = 0;
   let unpublishVariables = null;
+
   const result = await syncMarketplaceCheckoutPolicyForProduct(
     { product },
     {
       prismaClient: createPrismaMock({ products: [product] }),
       graphQL: async ({ query, variables }) => {
-        if (query.includes("MarketplaceCheckoutPublications")) {
-          return publicationResponse();
-        }
         if (query.includes("query MarketplaceCheckoutProductPolicy")) {
           return {
             data: {
-              product: {
+              product: productState(
+                product,
+                publicationIds,
+                MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+              ),
+            },
+          };
+        }
+        if (query.includes("MarketplaceCheckoutPublishableState")) {
+          publishableReadCount += 1;
+          return {
+            data: {
+              node: {
                 id: product.shopifyProductId,
-                metafield: {
-                  value: MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
-                },
-                publishedOnPublication: true,
+                resourcePublicationsV2: publicationConnection(
+                  publishableReadCount === 1 ? publicationIds : [],
+                ),
               },
             },
           };
@@ -129,14 +161,95 @@ test("governed products are removed from the Online Store publication", async ()
   assert.equal(result.ok, true);
   assert.equal(result.changed, true);
   assert.equal(result.policyChanged, false);
-  assert.equal(result.boundary.publishedOnOnlineStore, false);
+  assert.deepEqual(result.boundary.remainingPublicationIds, []);
   assert.deepEqual(unpublishVariables, {
     id: product.shopifyProductId,
-    input: [{ publicationId: "gid://shopify/Publication/1" }],
+    input: publicationIds.map((publicationId) => ({ publicationId })),
   });
 });
 
-test("platform-direct products keep standard publication eligibility", async () => {
+test("governed products are removed from app, market, and company catalogs", async () => {
+  const product = createProduct();
+  const publicationIds = [
+    "gid://shopify/Publication/app",
+    "gid://shopify/Publication/market",
+    "gid://shopify/Publication/company",
+  ];
+  let publishableReadCount = 0;
+  let unpublishInput = null;
+
+  const result = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    {
+      prismaClient: createPrismaMock({ products: [product] }),
+      graphQL: async ({ query, variables }) => {
+        if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+          return {
+            data: {
+              product: {
+                id: product.shopifyProductId,
+                metafield: {
+                  value: MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+                },
+                appPublications: publicationConnection([publicationIds[0]]),
+                marketPublications: publicationConnection([
+                  publicationIds[1],
+                ]),
+                companyLocationPublications: publicationConnection([
+                  publicationIds[2],
+                ]),
+              },
+            },
+          };
+        }
+        if (query.includes("MarketplaceCheckoutPublishableState")) {
+          publishableReadCount += 1;
+          return {
+            data: {
+              node: {
+                id: product.shopifyProductId,
+                appPublications: publicationConnection(
+                  publishableReadCount === 1 ? [publicationIds[0]] : [],
+                ),
+                marketPublications: publicationConnection(
+                  publishableReadCount === 1 ? [publicationIds[1]] : [],
+                ),
+                companyLocationPublications: publicationConnection(
+                  publishableReadCount === 1 ? [publicationIds[2]] : [],
+                ),
+              },
+            },
+          };
+        }
+        if (query.includes("UnpublishMarketplaceProduct")) {
+          unpublishInput = variables.input;
+          return {
+            data: {
+              publishableUnpublish: {
+                publishable: {
+                  availablePublicationsCount: { count: 0 },
+                },
+                userErrors: [],
+              },
+            },
+          };
+        }
+        throw new Error("Unexpected GraphQL operation");
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(unpublishInput, [
+    { publicationId: publicationIds[0] },
+    { publicationId: publicationIds[1] },
+    { publicationId: publicationIds[2] },
+  ]);
+  assert.deepEqual(result.boundary.remainingPublicationIds, []);
+});
+
+test("platform-direct products keep their attached publications", async () => {
   const product = createProduct({
     vendorStore: {
       id: "platform",
@@ -150,17 +263,12 @@ test("platform-direct products keep standard publication eligibility", async () 
     {
       prismaClient: createPrismaMock({ products: [product] }),
       graphQL: async ({ query, variables }) => {
-        if (query.includes("MarketplaceCheckoutPublications")) {
-          return publicationResponse();
-        }
         if (query.includes("query MarketplaceCheckoutProductPolicy")) {
           return {
             data: {
-              product: {
-                id: product.shopifyProductId,
-                metafield: null,
-                publishedOnPublication: true,
-              },
+              product: productState(product, [
+                "gid://shopify/Publication/1",
+              ]),
             },
           };
         }
@@ -183,39 +291,45 @@ test("platform-direct products keep standard publication eligibility", async () 
   assert.equal(result.ok, true);
   assert.equal(result.policy, MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT);
   assert.equal(result.boundary.changed, false);
-  assert.equal(result.boundary.publishedOnOnlineStore, true);
+  assert.deepEqual(result.boundary.publicationIds, [
+    "gid://shopify/Publication/1",
+  ]);
   assert.equal(
     mutationVariables.metafields[0].value,
     MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT,
   );
-  assert.equal(mutationVariables.metafields[0].namespace, "$app");
 });
 
-test("unresolved Shopify products fail closed by being unpublished", async () => {
-  let unpublished = false;
+test("unresolved Shopify products fail closed across publications", async () => {
+  let stateReadCount = 0;
+  let unpublishInput = null;
   const result = await enforceUnresolvedShopifyProductPublicationBoundary(
     {
       shopDomain: "shop-a.myshopify.com",
       shopifyProductId: "2",
     },
     {
-      graphQL: async ({ query }) => {
-        if (query.includes("MarketplaceCheckoutPublications")) {
-          return publicationResponse();
-        }
-        if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+      graphQL: async ({ query, variables }) => {
+        if (query.includes("MarketplaceCheckoutPublishableState")) {
+          stateReadCount += 1;
           return {
             data: {
-              product: {
+              node: {
                 id: "gid://shopify/Product/2",
-                metafield: null,
-                publishedOnPublication: true,
+                resourcePublicationsV2: publicationConnection(
+                  stateReadCount === 1
+                    ? [
+                        "gid://shopify/Publication/1",
+                        "gid://shopify/Publication/2",
+                      ]
+                    : [],
+                ),
               },
             },
           };
         }
         if (query.includes("UnpublishMarketplaceProduct")) {
-          unpublished = true;
+          unpublishInput = variables.input;
           return {
             data: {
               publishableUnpublish: {
@@ -232,7 +346,46 @@ test("unresolved Shopify products fail closed by being unpublished", async () =>
 
   assert.equal(result.ok, true);
   assert.equal(result.changed, true);
-  assert.equal(unpublished, true);
+  assert.equal(unpublishInput.length, 2);
+});
+
+test("boundary verification fails when a publication remains attached", async () => {
+  await assert.rejects(
+    enforceShopifyResourcePublicationBoundary(
+      {
+        shopDomain: "shop-a.myshopify.com",
+        resourceId: "gid://shopify/Product/2",
+      },
+      {
+        graphQL: async ({ query }) => {
+          if (query.includes("MarketplaceCheckoutPublishableState")) {
+            return {
+              data: {
+                node: {
+                  id: "gid://shopify/Product/2",
+                  resourcePublicationsV2: publicationConnection([
+                    "gid://shopify/Publication/1",
+                  ]),
+                },
+              },
+            };
+          }
+          if (query.includes("UnpublishMarketplaceProduct")) {
+            return {
+              data: {
+                publishableUnpublish: {
+                  publishable: null,
+                  userErrors: [],
+                },
+              },
+            };
+          }
+          throw new Error("Unexpected GraphQL operation");
+        },
+      },
+    ),
+    (error) => error.reason === "publication_boundary_verification_failed",
+  );
 });
 
 test("backfill secures unresolved mappings instead of merely counting them", async () => {
@@ -245,16 +398,12 @@ test("backfill secures unresolved mappings instead of merely counting them", asy
         ],
       }),
       graphQL: async ({ query }) => {
-        if (query.includes("MarketplaceCheckoutPublications")) {
-          return publicationResponse();
-        }
-        if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+        if (query.includes("MarketplaceCheckoutPublishableState")) {
           return {
             data: {
-              product: {
+              node: {
                 id: "gid://shopify/Product/2",
-                metafield: null,
-                publishedOnPublication: false,
+                resourcePublicationsV2: publicationConnection([]),
               },
             },
           };
@@ -270,20 +419,57 @@ test("backfill secures unresolved mappings instead of merely counting them", asy
   assert.equal(result.unresolvedSecuredCount, 1);
 });
 
-test("activation verifies the publication boundary after synchronization", async () => {
+test("production gate requires an explicit Online Store publication ID", async () => {
+  const status = await getMarketplaceCheckoutGateStatus(
+    "shop-a.myshopify.com",
+    {
+      prismaClient: createPrismaMock(),
+      graphQL: async () => {
+        throw new Error("GraphQL must not be called");
+      },
+      env: { NODE_ENV: "production" },
+    },
+  );
+
+  assert.equal(status.publicationConfigurationReady, false);
+  assert.equal(status.active, false);
+});
+
+test("activation verifies the all-publication boundary after synchronization", async () => {
   const product = createProduct();
   const prismaClient = createPrismaMock({ products: [product] });
   const graphQL = async ({ query }) => {
-    if (query.includes("MarketplaceCheckoutPublications")) {
-      return publicationResponse();
-    }
     if (query.includes("query MarketplaceCheckoutProductPolicy")) {
       return {
         data: {
-          product: {
+          product: productState(
+            product,
+            [],
+            MARKETPLACE_CHECKOUT_POLICY.GOVERNED,
+          ),
+        },
+      };
+    }
+    if (query.includes("MarketplaceCheckoutPublishableState")) {
+      return {
+        data: {
+          node: {
             id: product.shopifyProductId,
-            metafield: { value: MARKETPLACE_CHECKOUT_POLICY.GOVERNED },
-            publishedOnPublication: false,
+            resourcePublicationsV2: publicationConnection([]),
+          },
+        },
+      };
+    }
+    if (query.includes("MarketplaceCheckoutPublications")) {
+      return {
+        data: {
+          publications: {
+            nodes: [
+              {
+                id: "gid://shopify/Publication/1",
+                supportsFuturePublishing: true,
+              },
+            ],
           },
         },
       };
@@ -293,7 +479,7 @@ test("activation verifies the publication boundary after synchronization", async
 
   const result = await activateMarketplaceCheckoutGate(
     "shop-a.myshopify.com",
-    { prismaClient, graphQL },
+    { prismaClient, graphQL, env: { NODE_ENV: "test" } },
   );
 
   assert.equal(result.ok, true);

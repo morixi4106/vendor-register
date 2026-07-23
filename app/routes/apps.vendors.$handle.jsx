@@ -23,18 +23,25 @@ async function resolveCanonicalHandle(handleOrStoreId) {
 
   const vendor = await prisma.vendor.findUnique({
     where: { handle: value },
-    select: { handle: true, status: true },
+    select: {
+      handle: true,
+      status: true,
+      vendorStore: { select: { isTestStore: true } },
+    },
   });
-  if (vendor?.status === "active") return vendor.handle;
+  if (vendor?.status === "active" && !vendor.vendorStore?.isTestStore) {
+    return vendor.handle;
+  }
 
   const store = await prisma.vendorStore.findUnique({
     where: { id: value },
     select: {
+      isTestStore: true,
       vendorAuth: { select: { handle: true, status: true } },
     },
   });
 
-  return store?.vendorAuth?.status === "active"
+  return !store?.isTestStore && store?.vendorAuth?.status === "active"
     ? store.vendorAuth.handle
     : null;
 }

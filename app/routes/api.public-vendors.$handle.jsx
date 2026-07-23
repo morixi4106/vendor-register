@@ -50,6 +50,7 @@ export const loader = async ({ params, request }) => {
           category: true,
           address: true,
           note: true,
+          isTestStore: true,
         },
       },
       seller: {
@@ -60,7 +61,12 @@ export const loader = async ({ params, request }) => {
     },
   });
 
-  if (!vendor || vendor.status !== "active" || !vendor.vendorStore) {
+  if (
+    !vendor ||
+    vendor.status !== "active" ||
+    !vendor.vendorStore ||
+    vendor.vendorStore.isTestStore
+  ) {
     return jsonResponse({ ok: false, error: "Vendor was not found." }, { status: 404 });
   }
 

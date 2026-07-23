@@ -21,19 +21,149 @@ const PUBLICATIONS_QUERY = `#graphql
       nodes {
         id
         supportsFuturePublishing
+        channels(first: 10) {
+          nodes {
+            id
+            name
+            handle
+          }
+        }
       }
     }
   }
 `;
 
 const PRODUCT_POLICY_QUERY = `#graphql
-  query MarketplaceCheckoutProductPolicy($id: ID!, $publicationId: ID!) {
+  query MarketplaceCheckoutProductPolicy($id: ID!) {
     product(id: $id) {
       id
       metafield(namespace: "$app", key: "marketplace_checkout_policy") {
         value
       }
-      publishedOnPublication(publicationId: $publicationId)
+      appPublications: resourcePublicationsV2(
+        first: 100
+        onlyPublished: false
+        catalogType: APP
+      ) {
+        nodes {
+          isPublished
+          publishDate
+          publication {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+      marketPublications: resourcePublicationsV2(
+        first: 100
+        onlyPublished: false
+        catalogType: MARKET
+      ) {
+        nodes {
+          isPublished
+          publishDate
+          publication {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+      companyLocationPublications: resourcePublicationsV2(
+        first: 100
+        onlyPublished: false
+        catalogType: COMPANY_LOCATION
+      ) {
+        nodes {
+          isPublished
+          publishDate
+          publication {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+  }
+`;
+
+const PUBLISHABLE_PUBLICATION_STATE_QUERY = `#graphql
+  query MarketplaceCheckoutPublishableState($id: ID!) {
+    node(id: $id) {
+      ... on Product {
+        id
+        appPublications: resourcePublicationsV2(
+          first: 100
+          onlyPublished: false
+          catalogType: APP
+        ) {
+          nodes {
+            isPublished
+            publishDate
+            publication {
+              id
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+        marketPublications: resourcePublicationsV2(
+          first: 100
+          onlyPublished: false
+          catalogType: MARKET
+        ) {
+          nodes {
+            isPublished
+            publishDate
+            publication {
+              id
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+        companyLocationPublications: resourcePublicationsV2(
+          first: 100
+          onlyPublished: false
+          catalogType: COMPANY_LOCATION
+        ) {
+          nodes {
+            isPublished
+            publishDate
+            publication {
+              id
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
+      ... on Collection {
+        id
+        appPublications: resourcePublicationsV2(
+          first: 100
+          onlyPublished: false
+        ) {
+          nodes {
+            isPublished
+            publishDate
+            publication {
+              id
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
     }
   }
 `;
@@ -103,15 +233,46 @@ function normalizeProductId(value) {
     : `gid://shopify/Product/${normalized}`;
 }
 
+export async function getShopifyPublicationDiagnostics(
+  shopDomain,
+  { graphQL = shopifyGraphQLWithOfflineSession } = {},
+) {
+  const normalizedShopDomain = normalizeShopDomain(shopDomain);
+  const { data } = await graphQL({
+    shopDomain: normalizedShopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: PUBLICATIONS_QUERY,
+  });
+
+  return (data?.publications?.nodes || []).map((publication) => ({
+    id: normalizeText(publication?.id),
+    supportsFuturePublishing: Boolean(
+      publication?.supportsFuturePublishing,
+    ),
+    channels: (publication?.channels?.nodes || []).map((channel) => ({
+      id: normalizeText(channel?.id),
+      name: normalizeText(channel?.name),
+      handle: normalizeText(channel?.handle),
+    })),
+  }));
+}
+
 async function resolveOnlineStorePublicationId(
   shopDomain,
   {
     graphQL = shopifyGraphQLWithOfflineSession,
     configuredPublicationId = process.env.SHOPIFY_ONLINE_STORE_PUBLICATION_ID,
+    env = process.env,
   } = {},
 ) {
   const configured = normalizeText(configuredPublicationId);
   if (configured) return configured;
+
+  if (String(env?.NODE_ENV || "").toLowerCase() === "production") {
+    throw new Error(
+      "SHOPIFY_ONLINE_STORE_PUBLICATION_ID must be configured in production",
+    );
+  }
 
   const { data } = await graphQL({
     shopDomain,
@@ -134,32 +295,83 @@ async function resolveOnlineStorePublicationId(
 async function loadProductPublicationState({
   shopDomain,
   shopifyProductId,
-  publicationId,
   graphQL,
 }) {
   const { data } = await graphQL({
     shopDomain,
     apiVersion: SHOPIFY_API_VERSION,
     query: PRODUCT_POLICY_QUERY,
-    variables: { id: shopifyProductId, publicationId },
+    variables: { id: shopifyProductId },
   });
 
   return data?.product || null;
 }
 
-async function unpublishProductFromOnlineStore({
+function getPublicationIds(state) {
+  const connections = [
+    state?.appPublications,
+    state?.marketPublications,
+    state?.companyLocationPublications,
+    // Backward-compatible input for tests and older serialized diagnostics.
+    state?.resourcePublicationsV2,
+  ].filter(Boolean);
+
+  if (
+    connections.some((connection) => connection?.pageInfo?.hasNextPage)
+  ) {
+    throw new Error(
+      "Publication boundary is incomplete because more than 100 publications are attached",
+    );
+  }
+
+  return Array.from(
+    new Set(
+      connections
+        .flatMap((connection) => connection?.nodes || [])
+        .map((entry) => normalizeText(entry?.publication?.id))
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function loadPublishablePublicationState({
   shopDomain,
-  shopifyProductId,
-  publicationId,
+  resourceId,
   graphQL,
 }) {
   const { data } = await graphQL({
     shopDomain,
     apiVersion: SHOPIFY_API_VERSION,
+    query: PUBLISHABLE_PUBLICATION_STATE_QUERY,
+    variables: { id: resourceId },
+  });
+
+  return data?.node || null;
+}
+
+async function unpublishResourceFromPublications({
+  shopDomain,
+  resourceId,
+  publicationIds,
+  graphQL,
+}) {
+  const targets = Array.from(new Set(publicationIds.filter(Boolean)));
+  if (targets.length === 0) {
+    return {
+      ok: true,
+      changed: false,
+      publicationIds: [],
+      remainingPublicationIds: [],
+    };
+  }
+
+  const { data } = await graphQL({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
     query: UNPUBLISH_RESOURCE_MUTATION,
     variables: {
-      id: shopifyProductId,
-      input: [{ publicationId }],
+      id: resourceId,
+      input: targets.map((publicationId) => ({ publicationId })),
     },
   });
   const payload = data?.publishableUnpublish;
@@ -168,7 +380,58 @@ async function unpublishProductFromOnlineStore({
   return {
     ok: true,
     changed: true,
-    publicationId,
+    publicationIds: targets,
+  };
+}
+
+export async function enforceShopifyResourcePublicationBoundary(
+  { shopDomain: rawShopDomain, resourceId: rawResourceId },
+  { graphQL = shopifyGraphQLWithOfflineSession } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  const resourceId = normalizeText(rawResourceId);
+  if (!shopDomain || !resourceId) {
+    return { ok: false, reason: "shopify_resource_not_linked" };
+  }
+
+  const state = await loadPublishablePublicationState({
+    shopDomain,
+    resourceId,
+    graphQL,
+  });
+  if (!state?.id) {
+    return { ok: true, changed: false, reason: "shopify_resource_not_found" };
+  }
+
+  const publicationIds = getPublicationIds(state);
+  const result = await unpublishResourceFromPublications({
+    shopDomain,
+    resourceId,
+    publicationIds,
+    graphQL,
+  });
+
+  const verifiedState = await loadPublishablePublicationState({
+    shopDomain,
+    resourceId,
+    graphQL,
+  });
+  const remainingPublicationIds = verifiedState
+    ? getPublicationIds(verifiedState)
+    : [];
+
+  if (remainingPublicationIds.length > 0) {
+    const error = new Error(
+      "Shopify resource remains attached to a publication after unpublish",
+    );
+    error.reason = "publication_boundary_verification_failed";
+    error.publicationIds = remainingPublicationIds;
+    throw error;
+  }
+
+  return {
+    ...result,
+    remainingPublicationIds,
   };
 }
 
@@ -179,8 +442,9 @@ export function resolveMarketplaceCheckoutPolicy(product) {
     .trim()
     .toUpperCase();
   const isPlatformDirect = Boolean(
-    product?.vendorStore?.isPlatformStore ||
-      (!product?.vendorStore && legalSellerType === "PLATFORM"),
+    product?.vendorStore?.isTestStore !== true &&
+      (product?.vendorStore?.isPlatformStore ||
+        (!product?.vendorStore && legalSellerType === "PLATFORM")),
   );
 
   return isPlatformDirect
@@ -210,7 +474,6 @@ export async function enforceUnresolvedShopifyProductPublicationBoundary(
   { shopDomain: rawShopDomain, shopifyProductId: rawProductId },
   {
     graphQL = shopifyGraphQLWithOfflineSession,
-    configuredPublicationId,
   } = {},
 ) {
   const shopDomain = normalizeShopDomain(rawShopDomain);
@@ -219,28 +482,10 @@ export async function enforceUnresolvedShopifyProductPublicationBoundary(
     return { ok: false, reason: "shopify_product_not_linked" };
   }
 
-  const publicationId = await resolveOnlineStorePublicationId(shopDomain, {
-    graphQL,
-    configuredPublicationId,
-  });
-  const state = await loadProductPublicationState({
+  return enforceShopifyResourcePublicationBoundary({
     shopDomain,
-    shopifyProductId,
-    publicationId,
-    graphQL,
-  });
-
-  if (!state) {
-    return { ok: true, changed: false, reason: "shopify_product_not_found" };
-  }
-  if (!state.publishedOnPublication) {
-    return { ok: true, changed: false, publicationId };
-  }
-
-  return unpublishProductFromOnlineStore({
-    shopDomain,
-    shopifyProductId,
-    publicationId,
+    resourceId: shopifyProductId,
+  }, {
     graphQL,
   });
 }
@@ -254,7 +499,6 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
   {
     prismaClient = prisma,
     graphQL = shopifyGraphQLWithOfflineSession,
-    configuredPublicationId,
   } = {},
 ) {
   const product =
@@ -277,14 +521,9 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
     return { ok: false, reason: "shopify_product_not_linked" };
   }
 
-  const publicationId = await resolveOnlineStorePublicationId(shopDomain, {
-    graphQL,
-    configuredPublicationId,
-  });
   const state = await loadProductPublicationState({
     shopDomain,
     shopifyProductId,
-    publicationId,
     graphQL,
   });
   if (!state?.id) return { ok: false, reason: "shopify_product_not_found" };
@@ -320,22 +559,17 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
   let boundary = {
     ok: true,
     changed: false,
-    publicationId,
-    publishedOnOnlineStore: Boolean(state.publishedOnPublication),
+    publicationIds: getPublicationIds(state),
+    remainingPublicationIds: getPublicationIds(state),
   };
-  if (
-    expectedPolicy === MARKETPLACE_CHECKOUT_POLICY.GOVERNED &&
-    state.publishedOnPublication
-  ) {
-    boundary = {
-      ...(await unpublishProductFromOnlineStore({
+  if (expectedPolicy === MARKETPLACE_CHECKOUT_POLICY.GOVERNED) {
+    boundary = await enforceShopifyResourcePublicationBoundary(
+      {
         shopDomain,
-        shopifyProductId,
-        publicationId,
-        graphQL,
-      })),
-      publishedOnOnlineStore: false,
-    };
+        resourceId: shopifyProductId,
+      },
+      { graphQL },
+    );
   }
 
   return {
@@ -354,7 +588,6 @@ export async function backfillMarketplaceCheckoutPolicies(
   {
     prismaClient = prisma,
     graphQL = shopifyGraphQLWithOfflineSession,
-    configuredPublicationId,
   } = {},
 ) {
   const normalizedShopDomain = normalizeShopDomain(shopDomain);
@@ -385,7 +618,7 @@ export async function backfillMarketplaceCheckoutPolicies(
       results.push(
         await syncMarketplaceCheckoutPolicyForProduct(
           { product, shopDomain: normalizedShopDomain },
-          { prismaClient, graphQL, configuredPublicationId },
+          { prismaClient, graphQL },
         ),
       );
     } catch (error) {
@@ -407,7 +640,7 @@ export async function backfillMarketplaceCheckoutPolicies(
             shopDomain: normalizedShopDomain,
             shopifyProductId: issue.shopifyProductId,
           },
-          { graphQL, configuredPublicationId },
+          { graphQL },
         ),
       );
     } catch (error) {
@@ -442,6 +675,7 @@ export async function getMarketplaceCheckoutGateStatus(
     prismaClient = prisma,
     graphQL = shopifyGraphQLWithOfflineSession,
     configuredPublicationId,
+    env = process.env,
   } = {},
 ) {
   const normalizedShopDomain = normalizeShopDomain(shopDomain);
@@ -463,10 +697,12 @@ export async function getMarketplaceCheckoutGateStatus(
       select: { shopifyProductId: true },
     }),
   ]);
-  const publicationId = await resolveOnlineStorePublicationId(
-    normalizedShopDomain,
-    { graphQL, configuredPublicationId },
+  const configuredOnlineStorePublicationId = normalizeText(
+    configuredPublicationId ?? env?.SHOPIFY_ONLINE_STORE_PUBLICATION_ID,
   );
+  const publicationConfigurationReady =
+    Boolean(configuredOnlineStorePublicationId) ||
+    String(env?.NODE_ENV || "").toLowerCase() !== "production";
   const governedIds = products
     .filter(
       (product) =>
@@ -490,10 +726,11 @@ export async function getMarketplaceCheckoutGateStatus(
       const state = await loadProductPublicationState({
         shopDomain: normalizedShopDomain,
         shopifyProductId,
-        publicationId,
         graphQL,
       });
-      if (state?.publishedOnPublication) exposedProductIds.push(shopifyProductId);
+      if (state && getPublicationIds(state).length > 0) {
+        exposedProductIds.push(shopifyProductId);
+      }
     } catch {
       failedProductIds.push(shopifyProductId);
     }
@@ -501,9 +738,21 @@ export async function getMarketplaceCheckoutGateStatus(
 
   return {
     exists: true,
-    active: exposedProductIds.length === 0 && failedProductIds.length === 0,
+    active:
+      publicationConfigurationReady &&
+      exposedProductIds.length === 0 &&
+      failedProductIds.length === 0,
     mode: MARKETPLACE_CHECKOUT_BOUNDARY_MODE,
-    publicationId,
+    publicationId:
+      configuredOnlineStorePublicationId ||
+      (String(env?.NODE_ENV || "").toLowerCase() !== "production"
+        ? await resolveOnlineStorePublicationId(normalizedShopDomain, {
+            graphQL,
+            configuredPublicationId,
+            env,
+          })
+        : null),
+    publicationConfigurationReady,
     governedProductCount: governedIds.length,
     unresolvedIssueCount: unresolvedIssues.length,
     exposedProductCount: exposedProductIds.length,

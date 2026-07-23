@@ -35,6 +35,24 @@ function createPrisma(vendor) {
         return vendor;
       },
     },
+    product: {
+      async findUnique({ where }) {
+        const product =
+          vendor.vendorStore.products.find((entry) => entry.id === where.id) ||
+          null;
+        return product
+          ? {
+              ...product,
+              vendorStore: {
+                id: vendor.vendorStore.id,
+                isPlatformStore: vendor.vendorStore.isPlatformStore,
+                isTestStore: vendor.vendorStore.isTestStore,
+              },
+              complianceProfile: null,
+            }
+          : null;
+      },
+    },
   };
 }
 
@@ -408,12 +426,16 @@ test("syncVendorCollection omits blank collection metafields", async () => {
   assert.equal(metafields.some((metafield) => metafield.key === "vendor_note"), false);
 });
 
-test("syncVendorCollection removes third-party collections and products from Online Store", async () => {
+test("syncVendorCollection keeps test-store collections and products off every sales channel", async () => {
   const unpublishedIds = [];
+  const attachedPublicationIds = new Map([
+    ["gid://shopify/Product/1", ["gid://shopify/Publication/1", "gid://shopify/Publication/2"]],
+    ["gid://shopify/Collection/1", ["gid://shopify/Publication/1", "gid://shopify/Publication/2"]],
+  ]);
   const vendor = createVendor({
     storeOverrides: {
-      isPlatformStore: false,
-      isTestStore: false,
+      isPlatformStore: true,
+      isTestStore: true,
     },
     products: [
       {
@@ -470,8 +492,50 @@ test("syncVendorCollection removes third-party collections and products from Onl
           shopDomain,
         };
       }
-      if (query.includes("UnpublishVendorResource")) {
+      if (query.includes("MarketplaceCheckoutProductPolicy")) {
+        return {
+          data: {
+            product: {
+              id: variables.id,
+              metafield: { value: "MARKETPLACE_GOVERNED" },
+              resourcePublicationsV2: {
+                nodes: (attachedPublicationIds.get(variables.id) || []).map(
+                  (publicationId) => ({
+                    isPublished: true,
+                    publishDate: null,
+                    publication: { id: publicationId },
+                  }),
+                ),
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          },
+          shopDomain,
+        };
+      }
+      if (query.includes("MarketplaceCheckoutPublishableState")) {
+        return {
+          data: {
+            node: {
+              id: variables.id,
+              resourcePublicationsV2: {
+                nodes: (attachedPublicationIds.get(variables.id) || []).map(
+                  (publicationId) => ({
+                    isPublished: true,
+                    publishDate: null,
+                    publication: { id: publicationId },
+                  }),
+                ),
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          },
+          shopDomain,
+        };
+      }
+      if (query.includes("UnpublishMarketplaceProduct")) {
         unpublishedIds.push(variables.id);
+        attachedPublicationIds.set(variables.id, []);
         return {
           data: {
             publishableUnpublish: {

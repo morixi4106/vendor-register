@@ -46,8 +46,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
   ];

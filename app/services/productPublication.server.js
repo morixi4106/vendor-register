@@ -1,5 +1,6 @@
 import prisma from "../db.server.js";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server.js";
+import { syncMarketplaceCheckoutPolicyForProduct } from "./marketplaceCheckoutGate.server.js";
 import {
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
@@ -47,6 +48,8 @@ export async function ensureApprovedProductPublished(
   {
     prismaClient = prisma,
     syncVendorCollectionByStoreIdImpl = syncVendorCollectionByStoreId,
+    syncMarketplaceCheckoutPolicyForProductImpl =
+      syncMarketplaceCheckoutPolicyForProduct,
     env = process.env,
   } = {},
 ) {
@@ -169,6 +172,29 @@ export async function ensureApprovedProductPublished(
     });
   }
 
+  const checkoutPolicySync =
+    await syncMarketplaceCheckoutPolicyForProductImpl(
+      {
+        localProductId: product.id,
+        shopDomain: collectionSync.shopDomain || product.shopDomain,
+      },
+      { prismaClient },
+    );
+
+  if (!checkoutPolicySync?.ok) {
+    throw new ProductPublicationError(
+      "Product checkout publication boundary sync failed",
+      {
+        reason:
+          checkoutPolicySync?.reason ||
+          "checkout_publication_boundary_sync_failed",
+        productId,
+        vendorStoreId: product.vendorStoreId,
+        checkoutPolicySync,
+      },
+    );
+  }
+
   return {
     ok: true,
     productId,
@@ -176,5 +202,6 @@ export async function ensureApprovedProductPublished(
     shopDomain: collectionSync.shopDomain || product.shopDomain,
     shopifyProductId: product.shopifyProductId,
     collectionSync,
+    checkoutPolicySync,
   };
 }

@@ -8,8 +8,8 @@ import {
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
-const INVALID_SELECTION_MESSAGE =
-  '選択した商品を確認できませんでした。もう一度商品を選び直してください。';
+const UNAVAILABLE_PRODUCT_MESSAGE =
+  '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
 
 function createVendorContext() {
   return {
@@ -48,8 +48,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
     {
@@ -68,8 +68,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
     {
@@ -88,8 +88,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
   ];
@@ -322,7 +322,7 @@ test('vendor.$handle action rejects other-vendor product ids mixed into the form
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
-  assert.equal(payload.fieldErrors.cart, INVALID_SELECTION_MESSAGE);
+  assert.equal(payload.fieldErrors.cart, UNAVAILABLE_PRODUCT_MESSAGE);
 });
 
 test('vendor.$handle action rejects unapproved products', async () => {
@@ -355,7 +355,7 @@ test('vendor.$handle action rejects unapproved products', async () => {
 
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
-  assert.equal(payload.fieldErrors.cart, INVALID_SELECTION_MESSAGE);
+  assert.equal(payload.fieldErrors.cart, UNAVAILABLE_PRODUCT_MESSAGE);
 });
 
 test('vendor.$handle action returns validation errors for invalid input', async () => {

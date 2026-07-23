@@ -2712,3 +2712,59 @@ export async function getProductionReadiness({
     checks,
   };
 }
+
+export function includeCheckoutGateInProductionReadiness(
+  readiness,
+  checkoutGate,
+) {
+  const gateReady = Boolean(
+    checkoutGate?.available === true &&
+      checkoutGate?.active === true &&
+      checkoutGate?.publicationConfigurationReady !== false &&
+      Number(checkoutGate?.exposedProductCount || 0) === 0 &&
+      Number(checkoutGate?.failedProductCount || 0) === 0,
+  );
+  const checkoutGateCheck = {
+    id: "marketplace_checkout_publication_boundary",
+    category: "shopify",
+    status: gateReady ? "pass" : "fail",
+    title: "Shopify販売チャネルの公開境界",
+    detail: gateReady
+      ? "第三者・テスト・未解決の商品は、すべての購入可能Publicationから除外されています。"
+      : checkoutGate?.message ||
+        `公開中 ${Number(
+          checkoutGate?.exposedProductCount || 0,
+        )}件 / 確認失敗 ${Number(
+          checkoutGate?.failedProductCount || 0,
+        )}件 / Publication設定 ${
+          checkoutGate?.publicationConfigurationReady === false
+            ? "未完了"
+            : "確認済み"
+        }`,
+    action: gateReady
+      ? ""
+      : "SHOPIFY_ONLINE_STORE_PUBLICATION_IDを設定し、商品カタログ同期と公開境界の有効化を再実行してください。",
+  };
+  const checks = [
+    ...(readiness?.checks || []).filter(
+      (check) => check.id !== checkoutGateCheck.id,
+    ),
+    checkoutGateCheck,
+  ];
+  const blockingChecks = checks.filter((check) => check.status === "fail");
+  const warningChecks = checks.filter((check) => check.status === "warning");
+  const manualChecks = checks.filter((check) => check.status === "manual");
+
+  return {
+    ...readiness,
+    canGoLive: blockingChecks.length === 0,
+    summary: {
+      totalChecks: checks.length,
+      blockingCount: blockingChecks.length,
+      warningCount: warningChecks.length,
+      manualCount: manualChecks.length,
+    },
+    checkoutGate,
+    checks,
+  };
+}

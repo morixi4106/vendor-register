@@ -11,7 +11,10 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const { getProductionReadiness } =
+  const {
+    getProductionReadiness,
+    includeCheckoutGateInProductionReadiness,
+  } =
     await import("../services/productionReadiness.server.js");
   const { getMarketplaceCheckoutGateStatus } =
     await import("../services/marketplaceCheckoutGate.server.js");
@@ -35,7 +38,9 @@ export const loader = async ({ request }) => {
     };
   }
 
-  return json({ ...readiness, checkoutGate });
+  return json(
+    includeCheckoutGateInProductionReadiness(readiness, checkoutGate),
+  );
 };
 
 export const action = async ({ request }) => {

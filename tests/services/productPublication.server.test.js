@@ -60,6 +60,7 @@ test("ensureApprovedProductPublished syncs the vendor collection for an approved
     vendorStoreId: "store_1",
   };
   let syncCall = null;
+  let policyCall = null;
 
   const result = await ensureApprovedProductPublished(product.id, {
     prismaClient: createPrismaClient(product),
@@ -73,6 +74,10 @@ test("ensureApprovedProductPublished syncs the vendor collection for an approved
         productPublish: { ok: true },
       };
     },
+    syncMarketplaceCheckoutPolicyForProductImpl: async (input) => {
+      policyCall = input;
+      return { ok: true, policy: "PLATFORM_DIRECT" };
+    },
   });
 
   assert.deepEqual(syncCall, {
@@ -82,8 +87,46 @@ test("ensureApprovedProductPublished syncs the vendor collection for an approved
     },
   });
   assert.equal(result.ok, true);
+  assert.deepEqual(policyCall, {
+    localProductId: "product_1",
+    shopDomain: "shop-a.myshopify.com",
+  });
   assert.equal(result.productId, "product_1");
   assert.equal(result.shopifyProductId, "gid://shopify/Product/1");
+});
+
+test("ensureApprovedProductPublished fails when the final checkout boundary cannot be verified", async () => {
+  const product = {
+    id: "product_1",
+    approvalStatus: "approved",
+    shopifyProductId: "gid://shopify/Product/1",
+    shopDomain: "shop-a.myshopify.com",
+    vendorStoreId: "store_1",
+  };
+
+  await assert.rejects(
+    ensureApprovedProductPublished(product.id, {
+      prismaClient: createPrismaClient(product),
+      syncVendorCollectionByStoreIdImpl: async () => ({
+        ok: true,
+        shopDomain: "shop-a.myshopify.com",
+        publish: { ok: true },
+        productPublish: { ok: true },
+      }),
+      syncMarketplaceCheckoutPolicyForProductImpl: async () => ({
+        ok: false,
+        reason: "publication_boundary_verification_failed",
+      }),
+    }),
+    (error) => {
+      assert.ok(error instanceof ProductPublicationError);
+      assert.equal(
+        error.details.reason,
+        "publication_boundary_verification_failed",
+      );
+      return true;
+    },
+  );
 });
 
 test("ensureApprovedProductPublished fails before sync when the product is not approved", async () => {

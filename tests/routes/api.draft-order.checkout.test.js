@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  createDraftOrderCheckout,
   createDraftOrderCheckoutLoader,
 } from '../../app/services/draftOrderCheckout.server.js';
 import { SALES_CREDIT_PAYMENT_RISK_CLASSES } from '../../app/services/sellerPayments.server.js';
@@ -13,10 +12,10 @@ process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-cha
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
-const INVALID_SELECTION_MESSAGE =
-  '選択した商品を確認できませんでした。もう一度商品を選び直してください。';
 const OUT_OF_STOCK_MESSAGE =
   '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
+const UNAVAILABLE_PRODUCT_MESSAGE =
+  '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
 
 const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskClass:
@@ -43,8 +42,8 @@ function createVendorStoreRelation({
 }) {
   return {
     id,
-    isTestStore: true,
-    isPlatformStore: false,
+    isTestStore: false,
+    isPlatformStore: true,
     storeName,
     ownerName: `${storeName} Owner`,
     country,
@@ -116,8 +115,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
     {
@@ -137,8 +136,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
     {
@@ -158,8 +157,8 @@ function createProducts() {
       productEuStatus: 'DISABLED',
       countryPolicy: null,
       vendorStore: {
-        isTestStore: true,
-        isPlatformStore: false,
+        isTestStore: false,
+        isPlatformStore: true,
       },
     },
   ];
@@ -805,7 +804,7 @@ test('api.draft-order.checkout rejects sales credit on restricted product catego
   assert.match(payload.errors[0], /売上金/);
 });
 
-test('api.draft-order.checkout rejects sales credit on Shopify-only fallback products', async () => {
+test('api.draft-order.checkout rejects Shopify-only products before sales-credit processing', async () => {
   const buyerSeller = createVerifiedSeller();
   let callCount = 0;
   const action = createPublicVendorDraftOrderCheckoutAction({
@@ -863,7 +862,10 @@ test('api.draft-order.checkout rejects sales credit on Shopify-only fallback pro
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
   assert.equal(payload.errors.length, 1);
-  assert.match(payload.errors[0], /売上金/);
+  assert.equal(
+    payload.errors[0],
+    '選択した商品は購入できません。内容を確認して、もう一度お試しください。',
+  );
 });
 
 test('api.draft-order.checkout rejects sales credit on the seller own products', async () => {
@@ -1160,7 +1162,7 @@ test('api.draft-order.checkout rejects items from another vendor store', async (
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
   assert.equal(payload.reason, 'invalid_payload');
-  assert.deepEqual(payload.errors, [INVALID_SELECTION_MESSAGE]);
+  assert.deepEqual(payload.errors, [UNAVAILABLE_PRODUCT_MESSAGE]);
 });
 
 test('api.draft-order.checkout allows multi-seller products when all storefront flags are enabled', async () => {
@@ -1334,7 +1336,7 @@ test('api.draft-order.checkout rejects unapproved products', async () => {
 
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
-  assert.deepEqual(payload.errors, [INVALID_SELECTION_MESSAGE]);
+  assert.deepEqual(payload.errors, [UNAVAILABLE_PRODUCT_MESSAGE]);
 });
 
 test('api.draft-order.checkout rejects quantities above local inventory', async () => {
@@ -1372,184 +1374,11 @@ test('api.draft-order.checkout rejects quantities above local inventory', async 
   assert.deepEqual(payload.errors, [OUT_OF_STOCK_MESSAGE]);
 });
 
-test('api.draft-order.checkout falls back to Shopify product when local product id is absent', async () => {
-  let receivedPayload = null;
-  const action = createPublicVendorDraftOrderCheckoutAction({
-    prismaClient: createFakePrisma(),
-    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
-    draftOrderCheckoutImpl: async (payload) => {
-      receivedPayload = payload;
-
-      return {
-        ok: true,
-        draftOrder: {
-          id: 'gid://shopify/DraftOrder/1',
-          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        },
-        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        applied: true,
-        reason: null,
-        shippingAmount: 420,
-      };
-    },
-  });
-  const request = new Request('http://localhost/api/draft-order/checkout', {
-    method: 'POST',
-    body: JSON.stringify(createShopifyFallbackBody()),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  const response = await action({ request });
-
-  assert.equal(response.status, 200);
-  assert.equal(receivedPayload.shopDomain, 'shop-a.myshopify.com');
-  assert.equal(receivedPayload.orderLike.lines[0].variantId, 'gid://shopify/ProductVariant/9991');
-  assert.equal(receivedPayload.orderLike.lines[0].productId, 'gid://shopify/Product/999');
-  assert.equal(receivedPayload.orderLike.lines[0].originalUnitPrice, 1234);
-  assert.equal(receivedPayload.orderLike.lines[0].amountAfterItemDiscountBeforeOrderCoupon, 1234);
-  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, true);
-  assert.equal(JSON.stringify(receivedPayload).includes('shipping_v2_snapshot'), false);
-});
-
-test('api.draft-order.checkout uses requested Shopify variant before product fallback', async () => {
-  let receivedPayload = null;
-  const action = createPublicVendorDraftOrderCheckoutAction({
-    prismaClient: createFakePrisma(),
-    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
-      variant: {
-        id: 'gid://shopify/ProductVariant/selected',
-        title: '750ml',
-        price: '2345',
-        inventoryItem: {
-          requiresShipping: false,
-        },
-        product: {
-          id: 'gid://shopify/Product/999',
-          title: 'Shopify Only Bottle',
-        },
-      },
-    }),
-    draftOrderCheckoutImpl: async (payload) => {
-      receivedPayload = payload;
-      return {
-        ok: true,
-        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        draftOrder: {
-          id: 'gid://shopify/DraftOrder/1',
-          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        },
-        applied: true,
-        shippingAmount: 420,
-      };
-    },
-  });
-  const request = new Request('http://localhost/api/draft-order/checkout', {
-    method: 'POST',
-    body: JSON.stringify(
-      createShopifyFallbackBody({
-        items: [
-          {
-            shopifyProductId: 'gid://shopify/Product/999',
-            shopifyVariantId: 'gid://shopify/ProductVariant/selected',
-            quantity: 2,
-            price: 1,
-          },
-        ],
-      }),
-    ),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  const response = await action({ request });
-
-  assert.equal(response.status, 200);
-  assert.equal(receivedPayload.orderLike.lines[0].variantId, 'gid://shopify/ProductVariant/selected');
-  assert.equal(receivedPayload.orderLike.lines[0].originalUnitPrice, 2345);
-  assert.equal(receivedPayload.orderLike.lines[0].amountAfterItemDiscountBeforeOrderCoupon, 4690);
-  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, false);
-});
-
-test('api.draft-order.checkout does not require ProductVariant.requiresShipping in Shopify fallback result', async () => {
-  let receivedPayload = null;
-  const action = createPublicVendorDraftOrderCheckoutAction({
-    prismaClient: createFakePrisma(),
-    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
-      variant: {
-        id: 'gid://shopify/ProductVariant/selected',
-        title: '750ml',
-        price: '2345',
-        product: {
-          id: 'gid://shopify/Product/999',
-          title: 'Shopify Only Bottle',
-        },
-        inventoryItem: null,
-      },
-    }),
-    draftOrderCheckoutImpl: async (payload) => {
-      receivedPayload = payload;
-      return {
-        ok: true,
-        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        draftOrder: {
-          id: 'gid://shopify/DraftOrder/1',
-          invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-        },
-        applied: true,
-        shippingAmount: 420,
-      };
-    },
-  });
-  const request = new Request('http://localhost/api/draft-order/checkout', {
-    method: 'POST',
-    body: JSON.stringify(
-      createShopifyFallbackBody({
-        items: [
-          {
-            shopifyVariantId: 'gid://shopify/ProductVariant/selected',
-            quantity: 1,
-          },
-        ],
-      }),
-    ),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  const response = await action({ request });
-
-  assert.equal(response.status, 200);
-  assert.equal(receivedPayload.orderLike.lines[0].requiresShipping, true);
-});
-
-test('api.draft-order.checkout returns variant_required for multi-variant Shopify products', async () => {
+test('api.draft-order.checkout rejects Shopify-only products that are absent locally', async () => {
   let callCount = 0;
   const action = createPublicVendorDraftOrderCheckoutAction({
     prismaClient: createFakePrisma(),
-    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub({
-      productVariants: [
-        {
-          id: 'gid://shopify/ProductVariant/1',
-          title: 'Small',
-          price: '1200',
-          inventoryItem: {
-            requiresShipping: true,
-          },
-        },
-        {
-          id: 'gid://shopify/ProductVariant/2',
-          title: 'Large',
-          price: '1400',
-          inventoryItem: {
-            requiresShipping: true,
-          },
-        },
-      ],
-    }),
+    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
     draftOrderCheckoutImpl: async () => {
       callCount += 1;
       return {};
@@ -1568,56 +1397,34 @@ test('api.draft-order.checkout returns variant_required for multi-variant Shopif
 
   assert.equal(callCount, 0);
   assert.equal(response.status, 400);
-  assert.deepEqual(payload.errors, ['variant_required']);
+  assert.deepEqual(payload.errors, [
+    '選択した商品は購入できません。内容を確認して、もう一度お試しください。',
+  ]);
 });
 
-test('api.draft-order.checkout prepares Shopify fallback shipping once without caller snapshots', async () => {
-  let prepareCallCount = 0;
-  let receivedPrepareInput = null;
-  const checkout = createDraftOrderCheckout({
-    prepareShippingV2WriterPayloadImpl: async (input) => {
-      prepareCallCount += 1;
-      receivedPrepareInput = input;
-
-      return {
-        applied: true,
-        reason: null,
-        payload: {
-          ...input.payload,
-          shippingAmount: 420,
-        },
-      };
-    },
-    shopifyGraphQLWithOfflineSessionImpl: async ({ query }) => ({
-      data: query.includes('draftOrderPrepareForBuyerCheckout')
-        ? {
-            draftOrderPrepareForBuyerCheckout: {
-              draftOrder: {
-                id: 'gid://shopify/DraftOrder/1',
-                invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-              },
-              userErrors: [],
-            },
-          }
-        : {
-            draftOrderCreate: {
-              draftOrder: {
-                id: 'gid://shopify/DraftOrder/1',
-                invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
-              },
-              userErrors: [],
-            },
-          },
-    }),
-  });
+test('api.draft-order.checkout rejects a Shopify variant that does not match the local product', async () => {
+  let callCount = 0;
   const action = createPublicVendorDraftOrderCheckoutAction({
     prismaClient: createFakePrisma(),
-    shopifyGraphQLWithOfflineSessionImpl: createShopifyGraphQLStub(),
-    draftOrderCheckoutImpl: checkout,
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
   });
   const request = new Request('http://localhost/api/draft-order/checkout', {
     method: 'POST',
-    body: JSON.stringify(createShopifyFallbackBody()),
+    body: JSON.stringify(
+      createShopifyFallbackBody({
+        items: [
+          {
+            productId: 'prod_1',
+            shopifyProductId: 'gid://shopify/Product/1',
+            shopifyVariantId: 'gid://shopify/ProductVariant/tampered',
+            quantity: 1,
+          },
+        ],
+      }),
+    ),
     headers: {
       'Content-Type': 'application/json',
     },
@@ -1626,12 +1433,51 @@ test('api.draft-order.checkout prepares Shopify fallback shipping once without c
   const response = await action({ request });
   const payload = await response.json();
 
-  assert.equal(response.status, 200);
-  assert.equal(prepareCallCount, 1);
-  assert.equal(JSON.stringify(receivedPrepareInput).includes('shipping_v2_snapshot'), false);
-  assert.equal(payload.invoiceUrl, 'https://shop-a.myshopify.com/invoices/1');
-  assert.equal(payload.applied, true);
-  assert.equal(payload.shippingAmount, 420);
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.errors, [
+    '選択した商品は購入できません。内容を確認して、もう一度お試しください。',
+  ]);
+});
+
+test('api.draft-order.checkout rejects test-store products even when they are approved', async () => {
+  let callCount = 0;
+  const products = createProducts();
+  products[0] = {
+    ...products[0],
+    vendorStore: {
+      ...products[0].vendorStore,
+      isTestStore: true,
+      isPlatformStore: false,
+    },
+  };
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    prismaClient: createFakePrisma({ products }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    body: JSON.stringify(
+      createShopifyFallbackBody({
+        items: [{ productId: 'prod_1', quantity: 1 }],
+      }),
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.errors, [
+    '選択した商品は購入できません。内容を確認して、もう一度お試しください。',
+  ]);
 });
 
 test('api.draft-order.checkout sanitizes service failures', async () => {

@@ -8,6 +8,10 @@ import {
   buildVendorCollectionUrl,
   buildVendorProxyStorefrontUrl,
 } from "./vendorCollectionHandles.js";
+import {
+  enforceShopifyResourcePublicationBoundary,
+  syncMarketplaceCheckoutPolicyForProduct,
+} from "../services/marketplaceCheckoutGate.server.js";
 
 import { SHOPIFY_API_VERSION } from "./shopifyApiVersion.js";
 const PRODUCT_PAGE_SIZE = 250;
@@ -140,22 +144,6 @@ const PUBLICATIONS_QUERY = `
 const PUBLISH_RESOURCE_MUTATION = `
   mutation PublishVendorResource($id: ID!, $input: [PublicationInput!]!) {
     publishablePublish(id: $id, input: $input) {
-      publishable {
-        availablePublicationsCount {
-          count
-        }
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
-
-const UNPUBLISH_RESOURCE_MUTATION = `
-  mutation UnpublishVendorResource($id: ID!, $input: [PublicationInput!]!) {
-    publishableUnpublish(id: $id, input: $input) {
       publishable {
         availablePublicationsCount {
           count
@@ -490,6 +478,13 @@ async function findPublicationId({
     };
   }
 
+  if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+    return {
+      publicationId: null,
+      source: "missing_production_configuration",
+    };
+  }
+
   const { data } = await shopifyGraphQLWithOfflineSessionImpl({
     shopDomain,
     apiVersion: SHOPIFY_API_VERSION,
@@ -601,30 +596,21 @@ async function publishVendorProducts({
   };
 }
 
-async function unpublishVendorResources({
+async function enforceVendorResourceBoundaries({
   resourceIds,
-  publicationId,
-  source,
   shopDomain,
   shopifyGraphQLWithOfflineSessionImpl,
 }) {
-  const normalizedResourceIds = unique(resourceIds);
-  const unpublishedResourceIds = [];
+  const securedResourceIds = [];
   const errors = [];
 
-  for (const resourceId of normalizedResourceIds) {
+  for (const resourceId of unique(resourceIds)) {
     try {
-      const { data } = await shopifyGraphQLWithOfflineSessionImpl({
-        shopDomain,
-        apiVersion: SHOPIFY_API_VERSION,
-        query: UNPUBLISH_RESOURCE_MUTATION,
-        variables: {
-          id: resourceId,
-          input: [{ publicationId }],
-        },
-      });
-      assertNoUserErrors(data, "publishableUnpublish");
-      unpublishedResourceIds.push(resourceId);
+      await enforceShopifyResourcePublicationBoundary(
+        { shopDomain, resourceId },
+        { graphQL: shopifyGraphQLWithOfflineSessionImpl },
+      );
+      securedResourceIds.push(resourceId);
     } catch (error) {
       errors.push({
         resourceId,
@@ -636,9 +622,7 @@ async function unpublishVendorResources({
   return {
     ok: errors.length === 0,
     reason: errors.length > 0 ? "resource_unpublish_failed" : undefined,
-    publicationId,
-    source,
-    resourceIds: unpublishedResourceIds,
+    resourceIds: securedResourceIds,
     errors,
   };
 }
@@ -665,9 +649,8 @@ export async function syncVendorCollection({
   }
 
   const store = vendor.vendorStore;
-  const usesStandardShopifyStorefront = Boolean(
-    store.isPlatformStore || store.isTestStore,
-  );
+  const usesStandardShopifyStorefront =
+    store.isPlatformStore === true && store.isTestStore !== true;
   const collectionHandle = buildVendorCollectionHandle(vendor.handle);
   const collectionUrl = usesStandardShopifyStorefront
     ? buildVendorCollectionUrl(vendor.handle)
@@ -739,7 +722,6 @@ export async function syncVendorCollection({
     grantedScopes,
     REQUIRED_PUBLICATION_SCOPES,
   );
-  let governedPublication = null;
   let governedProductBoundary = null;
 
   if (!usesStandardShopifyStorefront) {
@@ -756,27 +738,9 @@ export async function syncVendorCollection({
       };
     }
 
-    governedPublication = await findPublicationId({
-      shopDomain: resolvedShopDomain,
-      shopifyGraphQLWithOfflineSessionImpl,
-      configuredPublicationId,
-    });
-    if (!governedPublication.publicationId) {
-      return {
-        ok: false,
-        reason: "publication_not_found",
-        shopDomain: resolvedShopDomain,
-        collectionHandle,
-        collectionUrl,
-        unsyncedProducts,
-      };
-    }
-
-    // Close the standard storefront path before changing collection membership.
-    governedProductBoundary = await unpublishVendorResources({
+    // Close every Shopify sales-channel path before changing collection membership.
+    governedProductBoundary = await enforceVendorResourceBoundaries({
       resourceIds: productIds,
-      publicationId: governedPublication.publicationId,
-      source: governedPublication.source,
       shopDomain: resolvedShopDomain,
       shopifyGraphQLWithOfflineSessionImpl,
     });
@@ -884,14 +848,45 @@ export async function syncVendorCollection({
             reason: publishResult.reason || "collection_publish_failed",
           };
   } else {
-    publishResult = await unpublishVendorResources({
+    publishResult = await enforceVendorResourceBoundaries({
       resourceIds: [collection.id],
-      publicationId: governedPublication.publicationId,
-      source: governedPublication.source,
       shopDomain: resolvedShopDomain,
       shopifyGraphQLWithOfflineSessionImpl,
     });
-    productPublishResult = governedProductBoundary;
+    const finalPolicyResults = [];
+    for (const product of linkedProducts) {
+      try {
+        finalPolicyResults.push(
+          await syncMarketplaceCheckoutPolicyForProduct(
+            {
+              localProductId: product.id,
+              shopDomain: resolvedShopDomain,
+            },
+            {
+              prismaClient,
+              graphQL: shopifyGraphQLWithOfflineSessionImpl,
+            },
+          ),
+        );
+      } catch (error) {
+        finalPolicyResults.push({
+          ok: false,
+          productId: product.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const finalPolicyErrors = finalPolicyResults.filter((entry) => !entry.ok);
+    productPublishResult = {
+      ok: governedProductBoundary.ok && finalPolicyErrors.length === 0,
+      reason:
+        !governedProductBoundary.ok || finalPolicyErrors.length > 0
+          ? "resource_unpublish_failed"
+          : undefined,
+      resourceIds: governedProductBoundary.resourceIds,
+      errors: [...governedProductBoundary.errors, ...finalPolicyErrors],
+      policyResults: finalPolicyResults,
+    };
   }
 
   return {

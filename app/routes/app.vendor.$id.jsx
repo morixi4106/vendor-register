@@ -73,7 +73,7 @@ export default function VendorDetailPage() {
   const isSyncing =
     navigation.state === "submitting" &&
     navigation.formData?.get("intent") === "sync-collection";
-  const collectionUrl = store.isPlatformStore || store.isTestStore
+  const collectionUrl = store.isPlatformStore && !store.isTestStore
     ? buildVendorCollectionUrl(store.vendorAuth?.handle)
     : buildVendorProxyStorefrontUrl(store.vendorAuth?.handle);
 

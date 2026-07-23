@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   getProductionReadiness,
+  includeCheckoutGateInProductionReadiness,
   inspectStripeEnvironment,
 } from "../../app/services/productionReadiness.server.js";
 
@@ -760,4 +761,74 @@ test("getProductionReadiness shows SellerOrder vendor reads fallback when shadow
   assert.equal(result.canGoLive, true);
   assert.equal(check.status, "warning");
   assert.match(check.detail, /fall back to the legacy ledger path/);
+});
+
+test("includeCheckoutGateInProductionReadiness blocks launch when the checkout boundary is inactive", () => {
+  const result = includeCheckoutGateInProductionReadiness(
+    {
+      checks: [
+        {
+          id: "existing_check",
+          status: "pass",
+          title: "Existing check",
+          detail: "ready",
+        },
+      ],
+      summary: {
+        fail: 0,
+        warning: 0,
+        pass: 1,
+        external: 0,
+        total: 1,
+      },
+      canGoLive: true,
+    },
+    {
+      available: true,
+      active: false,
+      publicationConfigurationReady: true,
+      exposedProductCount: 1,
+      failedProductCount: 0,
+    },
+  );
+
+  const check = result.checks.find(
+    (entry) => entry.id === "marketplace_checkout_publication_boundary",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(result.summary.blockingCount, 1);
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /公開中 1件/);
+});
+
+test("includeCheckoutGateInProductionReadiness passes only a verified checkout boundary", () => {
+  const result = includeCheckoutGateInProductionReadiness(
+    {
+      checks: [],
+      summary: {
+        fail: 0,
+        warning: 0,
+        pass: 0,
+        external: 0,
+        total: 0,
+      },
+      canGoLive: true,
+    },
+    {
+      available: true,
+      active: true,
+      publicationConfigurationReady: true,
+      exposedProductCount: 0,
+      failedProductCount: 0,
+    },
+  );
+
+  assert.equal(result.canGoLive, true);
+  assert.equal(result.summary.blockingCount, 0);
+  assert.equal(
+    result.checks[0].id,
+    "marketplace_checkout_publication_boundary",
+  );
+  assert.equal(result.checks[0].status, "pass");
 });
