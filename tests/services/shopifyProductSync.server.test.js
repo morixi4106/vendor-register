@@ -163,6 +163,59 @@ test("sync preserves an existing local owner and pricing", async () => {
   assert.equal("price" in updateArgs.data, false);
 });
 
+test("sync does not touch Product.updatedAt when Shopify sends an unchanged snapshot", async () => {
+  let updateCalls = 0;
+  const existing = {
+    id: "platform_product",
+    name: "Same title",
+    description: "Same description",
+    imageUrl: "https://example.com/product.jpg",
+    category: "Goods",
+    price: 1200,
+    calculatedPrice: 1200,
+    approvalStatus: "approved",
+    vendorStoreId: "platform_store",
+    shopifyProductId: "gid://shopify/Product/123",
+    shopifyVariantId: "gid://shopify/ProductVariant/456",
+    shopifyVariantCount: 1,
+    shopDomain: "shop.myshopify.com",
+    priceSyncStatus: "applied",
+    priceSyncError: null,
+    priceFormulaVersion: "shopify_direct_import_v1",
+    inventoryQuantity: 4,
+    inventorySyncError: null,
+    shippingWeightGrams: null,
+    vendorStore: { id: "platform_store", isPlatformStore: true },
+  };
+  const prismaClient = {
+    product: {
+      findFirst: async () => existing,
+      update: async () => {
+        updateCalls += 1;
+        throw new Error("unchanged products must not be updated");
+      },
+    },
+  };
+
+  const result = await syncShopifyProductPayload(
+    productPayload({
+      title: "Same title",
+      body_html: "<p>Same description</p>",
+      product_type: "Goods",
+    }),
+    {
+      prismaClient,
+      shopDomain: "shop.myshopify.com",
+      resolveIssue: false,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.created, false);
+  assert.equal(result.changed, false);
+  assert.equal(updateCalls, 0);
+});
+
 test("sync can preserve a policy failure until the Shopify boundary succeeds", async () => {
   const issues = createIssueDelegate();
   const existing = {
@@ -232,7 +285,7 @@ test("sync preserves a confirmed profile when Shopify echoes the same weight", a
     { prismaClient, shopDomain: "shop.myshopify.com" },
   );
 
-  assert.equal(updateArgs.data.shippingWeightGrams, 500);
+  assert.equal("shippingWeightGrams" in updateArgs.data, false);
   assert.equal("shippingWeightConfirmedAt" in updateArgs.data, false);
   assert.equal("shippingWeightSource" in updateArgs.data, false);
   assert.equal("shopifyWeightSyncStatus" in updateArgs.data, false);

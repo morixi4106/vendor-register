@@ -172,6 +172,25 @@ function getApprovalStatus(payload) {
   return "pending";
 }
 
+function valuesEqual(currentValue, nextValue) {
+  if (
+    currentValue &&
+    nextValue &&
+    typeof currentValue === "object" &&
+    typeof nextValue === "object"
+  ) {
+    return JSON.stringify(currentValue) === JSON.stringify(nextValue);
+  }
+
+  return currentValue === nextValue;
+}
+
+function setChangedValue(target, key, nextValue, currentValue) {
+  if (!valuesEqual(currentValue, nextValue)) {
+    target[key] = nextValue;
+  }
+}
+
 export function createShopifyProductSnapshot(payload) {
   const productId = normalizeShopifyGid(
     "Product",
@@ -540,40 +559,94 @@ export async function syncShopifyProductPayload(
       existingProduct.vendorStore?.isPlatformStore,
     );
     const now = new Date();
-    const updateData = {
-      name: snapshot.title || existingProduct.name,
-      description: snapshot.description || existingProduct.description,
-      imageUrl: snapshot.imageUrl || existingProduct.imageUrl,
-      category: snapshot.productType || existingProduct.category,
-      shopifyProductId: snapshot.id,
-      shopifyVariantId: snapshot.variantId || existingProduct.shopifyVariantId,
-      shopifyVariantCount: snapshot.variantCount,
+    const updateData = {};
+    setChangedValue(
+      updateData,
+      "name",
+      snapshot.title || existingProduct.name,
+      existingProduct.name,
+    );
+    setChangedValue(
+      updateData,
+      "description",
+      snapshot.description || existingProduct.description,
+      existingProduct.description,
+    );
+    setChangedValue(
+      updateData,
+      "imageUrl",
+      snapshot.imageUrl || existingProduct.imageUrl,
+      existingProduct.imageUrl,
+    );
+    setChangedValue(
+      updateData,
+      "category",
+      snapshot.productType || existingProduct.category,
+      existingProduct.category,
+    );
+    setChangedValue(
+      updateData,
+      "shopifyProductId",
+      snapshot.id,
+      existingProduct.shopifyProductId,
+    );
+    setChangedValue(
+      updateData,
+      "shopifyVariantId",
+      snapshot.variantId || existingProduct.shopifyVariantId,
+      existingProduct.shopifyVariantId,
+    );
+    setChangedValue(
+      updateData,
+      "shopifyVariantCount",
+      snapshot.variantCount,
+      existingProduct.shopifyVariantCount,
+    );
+    setChangedValue(
+      updateData,
+      "shopDomain",
       shopDomain,
-    };
+      existingProduct.shopDomain,
+    );
 
     if (isPlatformProduct && snapshot.price != null) {
-      Object.assign(updateData, {
-        price: snapshot.price,
-        calculatedPrice: snapshot.price,
-        calculatedAt: now,
-        approvalStatus: getApprovalStatus(payload),
-        priceSyncStatus: "applied",
-        priceSyncError: null,
-        priceAppliedAt: now,
-        priceFormulaVersion: DIRECT_IMPORT_FORMULA_VERSION,
-        priceSnapshotJson: {
-          source: "shopify_admin_platform_product",
-          shopifyPrice: snapshot.price,
-          vendorLabel: snapshot.vendor,
-          variantCount: snapshot.variantCount,
-          syncedAt: now.toISOString(),
-        },
-      });
+      const approvalStatus = getApprovalStatus(payload);
+      const priceStateChanged =
+        Number(existingProduct.price) !== snapshot.price ||
+        Number(existingProduct.calculatedPrice) !== snapshot.price ||
+        existingProduct.approvalStatus !== approvalStatus ||
+        existingProduct.priceSyncStatus !== "applied" ||
+        existingProduct.priceSyncError != null ||
+        existingProduct.priceFormulaVersion !== DIRECT_IMPORT_FORMULA_VERSION;
+
+      if (priceStateChanged) {
+        Object.assign(updateData, {
+          price: snapshot.price,
+          calculatedPrice: snapshot.price,
+          calculatedAt: now,
+          approvalStatus,
+          priceSyncStatus: "applied",
+          priceSyncError: null,
+          priceAppliedAt: now,
+          priceFormulaVersion: DIRECT_IMPORT_FORMULA_VERSION,
+          priceSnapshotJson: {
+            source: "shopify_admin_platform_product",
+            shopifyPrice: snapshot.price,
+            vendorLabel: snapshot.vendor,
+            variantCount: snapshot.variantCount,
+            syncedAt: now.toISOString(),
+          },
+        });
+      }
     }
 
-    if (snapshot.inventoryQuantity != null) {
+    if (
+      snapshot.inventoryQuantity != null &&
+      (existingProduct.inventoryQuantity !== snapshot.inventoryQuantity ||
+        existingProduct.inventorySyncError != null)
+    ) {
       updateData.inventoryQuantity = snapshot.inventoryQuantity;
-      updateData.inventorySyncedAt = new Date();
+      updateData.inventorySyncedAt = now;
       updateData.inventorySyncError = null;
     }
 
@@ -583,8 +656,8 @@ export async function syncShopifyProductPayload(
       const weightChanged =
         hasCurrentWeight && currentWeight !== snapshot.shippingWeightGrams;
 
-      updateData.shippingWeightGrams = snapshot.shippingWeightGrams;
       if (!hasCurrentWeight || weightChanged) {
+        updateData.shippingWeightGrams = snapshot.shippingWeightGrams;
         updateData.shippingWeightConfirmedAt = null;
         updateData.shippingWeightSource = SHIPPING_WEIGHT_SOURCE.SHOPIFY_UNVERIFIED;
         updateData.shopifyWeightSyncStatus = weightChanged
@@ -597,10 +670,13 @@ export async function syncShopifyProductPayload(
       }
     }
 
-    const product = await prismaClient.product.update({
-      where: { id: existingProduct.id },
-      data: updateData,
-    });
+    const changed = Object.keys(updateData).length > 0;
+    const product = changed
+      ? await prismaClient.product.update({
+          where: { id: existingProduct.id },
+          data: updateData,
+        })
+      : existingProduct;
 
     if (resolveIssue) {
       await resolveSyncIssue({
@@ -613,7 +689,13 @@ export async function syncShopifyProductPayload(
       });
     }
 
-    return { ok: true, created: false, product, source: "existing_mapping" };
+    return {
+      ok: true,
+      created: false,
+      changed,
+      product,
+      source: "existing_mapping",
+    };
   }
 
   const storeResolution = await resolveVendorStoreForShopifyProduct(payload, {
@@ -709,6 +791,7 @@ export async function syncShopifyProductPayload(
   return {
     ok: true,
     created: true,
+    changed: true,
     product,
     source: storeResolution.source,
   };
@@ -813,7 +896,12 @@ export async function reconcileShopifyProductCatalog(
     pageCount,
     scanned: results.length,
     created: results.filter((result) => result.ok && result.created).length,
-    updated: results.filter((result) => result.ok && !result.created).length,
+    updated: results.filter(
+      (result) => result.ok && !result.created && result.changed,
+    ).length,
+    unchanged: results.filter(
+      (result) => result.ok && !result.created && !result.changed,
+    ).length,
     unresolved: results.filter((result) => !result.ok).length,
     results,
   };

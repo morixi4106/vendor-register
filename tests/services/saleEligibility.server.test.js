@@ -95,6 +95,44 @@ test("dark deploy keeps legacy platform product sellable but records review requ
   assert.ok(result.inputHash);
 });
 
+test("sale eligibility input hash ignores unrelated Product.updatedAt changes", () => {
+  const base = platformProduct({
+    updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+  });
+  const options = {
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    operationalControl: {
+      checkoutHold: false,
+      checkoutControlState: "IDLE",
+    },
+    env: {
+      MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false",
+    },
+    evaluatedAt: new Date("2026-07-24T00:00:00.000Z"),
+  };
+  const first = evaluateSaleEligibilitySnapshot({
+    product: base,
+    ...options,
+  });
+  const second = evaluateSaleEligibilitySnapshot({
+    product: {
+      ...base,
+      updatedAt: new Date("2026-07-24T00:00:00.000Z"),
+    },
+    ...options,
+  });
+  const blocked = evaluateSaleEligibilitySnapshot({
+    product: {
+      ...base,
+      approvalStatus: "pending",
+    },
+    ...options,
+  });
+
+  assert.equal(first.inputHash, second.inputHash);
+  assert.notEqual(first.inputHash, blocked.inputHash);
+});
+
 test("enforcement blocks the same legacy product until governance is ready", () => {
   const result = evaluateSaleEligibilitySnapshot({
     product: platformProduct(),

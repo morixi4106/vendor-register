@@ -178,30 +178,88 @@ function buildInputHash({
   control,
   governanceGateEnabled,
 }) {
+  const store = product?.vendorStore || null;
+  const seller =
+    store?.seller || store?.vendorAuth?.seller || product?.seller || null;
+  const profile = product?.complianceProfile || null;
+  const countryPolicy = product?.countryPolicy || null;
+
   return crypto
     .createHash("sha256")
     .update(
       JSON.stringify({
         productId: product?.id || null,
-        productUpdatedAt: product?.updatedAt || null,
+        approvalStatus: product?.approvalStatus || null,
+        shopifyProductId: product?.shopifyProductId || null,
+        productEuStatus: product?.productEuStatus || null,
+        store: store
+          ? {
+              id: store.id,
+              isPlatformStore: store.isPlatformStore === true,
+              isTestStore: store.isTestStore === true,
+            }
+          : null,
+        seller: seller
+          ? {
+              id: seller.id,
+              status: seller.status,
+              euSellerStatus: seller.euSellerStatus,
+              updatedAt: seller.updatedAt,
+            }
+          : null,
+        countryPolicy: countryPolicy
+          ? {
+              allowedCountries: countryPolicy.allowedCountries,
+              blockedCountries: countryPolicy.blockedCountries,
+              requiresWarningCountries:
+                countryPolicy.requiresWarningCountries,
+              euSaleStatus: countryPolicy.euSaleStatus,
+              warningVersion: countryPolicy.warningVersion,
+            }
+          : null,
         destinationCountry: normalizeUpper(destinationCountry),
         salesChannel: normalizeUpper(salesChannel),
         checkoutHold: control?.checkoutHold === true,
         checkoutControlState: control?.checkoutControlState || null,
         governanceGateEnabled,
-        complianceProfileUpdatedAt:
-          product?.complianceProfile?.updatedAt || null,
+        complianceProfile: profile
+          ? {
+              legalSellerType: profile.legalSellerType,
+              conditionStatus: profile.conditionStatus,
+              countryOfOriginCode: profile.countryOfOriginCode,
+              customsDescriptionEn: profile.customsDescriptionEn,
+              applicabilityStatus: profile.applicabilityStatus,
+              verificationLevel: profile.verificationLevel,
+              applicabilityReasonCode: profile.applicabilityReasonCode,
+              applicabilityReasonText: profile.applicabilityReasonText,
+              applicabilitySourceUrl: profile.applicabilitySourceUrl,
+              applicabilityDecidedAt: profile.applicabilityDecidedAt,
+              applicabilityDecidedBy: profile.applicabilityDecidedBy,
+              nextReviewAt: profile.nextReviewAt,
+              authenticityConfirmedAt: profile.authenticityConfirmedAt,
+              ipRightsConfirmedAt: profile.ipRightsConfirmedAt,
+              approvalStatus: profile.approvalStatus,
+              updatedAt: profile.updatedAt,
+            }
+          : null,
         evidence: asArray(product?.complianceEvidence).map((entry) => [
           entry.id,
           entry.status,
+          entry.verificationLevel,
           entry.expiresAt,
           entry.reviewDueAt,
           entry.revokedAt,
+          entry.requirement?.code,
+          entry.requirement?.version,
         ]),
         decisions: asArray(product?.complianceDecisions).map((entry) => [
           entry.id,
           entry.decision,
+          entry.reasonCode,
+          entry.decidedAt,
           entry.reviewDueAt,
+          entry.requirement?.code,
+          entry.requirement?.version,
         ]),
       }),
     )
