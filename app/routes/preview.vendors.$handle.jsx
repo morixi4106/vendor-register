@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import prisma from "../db.server";
 import {
+  buildVendorPreviewDocumentHeaders,
   createAdminVendorPreviewLoader,
   createDisabledVendorPreviewAction,
 } from "../services/vendorPreviewAccess.server";
@@ -50,6 +51,8 @@ export const meta = () => [
   { title: "Storefront Preview" },
   { name: "robots", content: "noindex,nofollow" },
 ];
+
+export const headers = buildVendorPreviewDocumentHeaders;
 
 function normalizeHandle(value) {
   const normalized = String(value || "").trim();

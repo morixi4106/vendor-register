@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildVendorPreviewDocumentHeaders,
   createAdminVendorPreviewLoader,
   createDisabledVendorPreviewAction,
 } from "../../app/services/vendorPreviewAccess.server.js";
@@ -70,5 +71,24 @@ test("vendor preview purchase action is always hidden", async () => {
 
   assert.equal(response.status, 404);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
   assert.equal(response.headers.get("X-Robots-Tag"), "noindex, nofollow");
+});
+
+test("vendor preview document responses remain private after Remix header merging", () => {
+  const headers = buildVendorPreviewDocumentHeaders({
+    loaderHeaders: new Headers({
+      "Content-Language": "ja",
+      "Cache-Control": "public, max-age=3600",
+    }),
+    actionHeaders: new Headers({
+      "X-Action-Result": "hidden",
+    }),
+  });
+
+  assert.equal(headers.get("Content-Language"), "ja");
+  assert.equal(headers.get("X-Action-Result"), "hidden");
+  assert.equal(headers.get("Cache-Control"), "no-store");
+  assert.equal(headers.get("Referrer-Policy"), "no-referrer");
+  assert.equal(headers.get("X-Robots-Tag"), "noindex, nofollow");
 });
