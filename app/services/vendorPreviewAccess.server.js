@@ -30,6 +30,6 @@ export function createAdminVendorPreviewLoader({
 
 export function createDisabledVendorPreviewAction() {
   return async function action() {
-    throw buildHiddenPreviewResponse();
+    return buildHiddenPreviewResponse();
   };
 }

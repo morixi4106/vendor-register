@@ -60,19 +60,15 @@ test("vendor preview loads for an authenticated Shopify administrator", async ()
 test("vendor preview purchase action is always hidden", async () => {
   const action = createDisabledVendorPreviewAction();
 
-  await assert.rejects(
-    () =>
-      action({
-        request: new Request(
-          "https://example.com/preview/vendors/amber-cellar",
-          { method: "POST" },
-        ),
-        params: { handle: "amber-cellar" },
-      }),
-    (error) =>
-      error instanceof Response &&
-      error.status === 404 &&
-      error.headers.get("Cache-Control") === "no-store" &&
-      error.headers.get("X-Robots-Tag") === "noindex, nofollow",
-  );
+  const response = await action({
+    request: new Request(
+      "https://example.com/preview/vendors/amber-cellar",
+      { method: "POST" },
+    ),
+    params: { handle: "amber-cellar" },
+  });
+
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("X-Robots-Tag"), "noindex, nofollow");
 });
