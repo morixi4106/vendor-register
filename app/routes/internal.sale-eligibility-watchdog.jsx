@@ -34,7 +34,7 @@ export async function action({ request }) {
         ok: result.ok,
         protected: result.protected,
         action: result.action,
-        status: result.freshness?.status || "critical",
+        status: result.status || result.freshness?.status || "critical",
         code: result.reason || result.freshness?.reason || null,
       },
       {

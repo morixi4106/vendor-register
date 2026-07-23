@@ -76,7 +76,12 @@ export function cartValidationsGenerateRun(input) {
   )
     .trim()
     .toUpperCase();
-  const purchaseStopActive = operationalState !== "ALLOWED";
+  const watchdogStopActive =
+    String(input.shop?.watchdogPurchaseStop?.value || "")
+      .trim()
+      .toUpperCase() === "BLOCKED";
+  const purchaseStopActive =
+    operationalState !== "ALLOWED" || watchdogStopActive;
   const currentDate = String(input.shop?.localTime?.date || "");
   const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
   const unsupportedCartSize = cartLines.length > MAX_SUPPORTED_CART_LINES;

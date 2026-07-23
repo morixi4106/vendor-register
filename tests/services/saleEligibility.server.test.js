@@ -9,6 +9,7 @@ import {
   SALE_ELIGIBILITY_CHANNEL,
   SALE_ELIGIBILITY_POLICY_VERSION,
   evaluateSaleEligibilitySnapshot,
+  persistSaleEligibilityProjection,
 } from "../../app/services/saleEligibility.server.js";
 
 function platformProduct(overrides = {}) {
@@ -242,4 +243,114 @@ test("a recall remains retroactive even when recorded after purchase", async () 
     ),
     false,
   );
+});
+
+test("projection persistence appends the exact current revision atomically", async () => {
+  const createdRevisions = [];
+  const evaluatedAt = new Date("2026-07-24T00:00:00.000Z");
+  const expiresAt = new Date("2026-07-24T03:00:00.000Z");
+  const prismaClient = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    saleEligibilityProjection: {
+      async upsert(args) {
+        return {
+          ...args.create,
+          id: "current-1",
+          projectionRevision: 8,
+        };
+      },
+    },
+    saleEligibilityProjectionRevision: {
+      async create(args) {
+        createdRevisions.push(args.data);
+        return { id: "revision-8", ...args.data };
+      },
+    },
+  };
+
+  const result = await persistSaleEligibilityProjection(
+    {
+      productId: "product-1",
+      shopDomain: "example.myshopify.com",
+      vendorStoreId: "store-1",
+      destinationCountry: "",
+      salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+      status: "ELIGIBLE",
+      reasonCodes: [],
+      requirementVersions: [],
+      decisionIds: [],
+      policyVersion: SALE_ELIGIBILITY_POLICY_VERSION,
+      inputHash: "a".repeat(64),
+      evaluatedAt: evaluatedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    },
+    { prismaClient, evaluatedAt },
+  );
+
+  assert.equal(result.projectionRevision, 8);
+  assert.equal(createdRevisions.length, 1);
+  assert.equal(createdRevisions[0].projectionRevision, 8);
+  assert.equal(createdRevisions[0].evaluatedAt.getTime(), evaluatedAt.getTime());
+  assert.equal(createdRevisions[0].expiresAt.getTime(), expiresAt.getTime());
+});
+
+test("paid inspection uses the revision valid at order time instead of the current row", async () => {
+  const product = platformProduct({
+    updatedAt: new Date("2026-07-24T02:00:00.000Z"),
+  });
+  const prismaClient = {
+    saleEligibilityProjectionRevision: {
+      async findMany(args) {
+        assert.deepEqual(args.where.evaluatedAt, {
+          lte: new Date("2026-07-24T01:00:00.000Z"),
+        });
+        assert.deepEqual(args.where.expiresAt, {
+          gt: new Date("2026-07-24T01:00:00.000Z"),
+        });
+        return [
+          {
+            id: "revision-7",
+            ...buildProjection({
+              evaluatedAt: new Date("2026-07-24T00:00:00.000Z"),
+              expiresAt: new Date("2026-07-24T03:00:00.000Z"),
+            }),
+          },
+        ];
+      },
+    },
+    saleEligibilityProjection: {
+      async findMany() {
+        throw new Error("current projection must not prove historical state");
+      },
+    },
+    product: {
+      async findMany() {
+        return [product];
+      },
+    },
+  };
+
+  const result = await inspectPaidOrderSaleEligibility(
+    {
+      shopDomain: "example.myshopify.com",
+      matchedLines: [{ product }],
+      orderOccurredAt: new Date("2026-07-24T01:00:00.000Z"),
+    },
+    {
+      prismaClient,
+      operationalControl: {
+        checkoutHold: false,
+        checkoutControlState: "IDLE",
+      },
+      env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+      now: new Date("2026-07-24T02:00:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.evidence[0].projectionSource, "revision");
+  assert.equal(result.evidence[0].projectionRecordId, "revision-7");
+  assert.equal(result.evidence[0].projectionRevision, 7);
 });

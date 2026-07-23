@@ -185,3 +185,67 @@ test("handler failures mark the receipt failed for a later retry", async () => {
   });
   assert.equal(retry.retry, true);
 });
+
+test("a bare ok false result is retryable and cannot be marked processed", async () => {
+  const store = createReceiptStore();
+  await assert.rejects(
+    withShopifyWebhookReceipt(
+      {
+        ...baseInput,
+        handler: async () => ({
+          ok: false,
+          reason: "seller_mapping_temporarily_unavailable",
+        }),
+      },
+      { prismaClient: store.prisma },
+    ),
+    /seller_mapping_temporarily_unavailable/,
+  );
+
+  assert.equal(store.rows[0].processingStatus, "FAILED");
+  assert.equal(
+    store.rows[0].lastErrorCode,
+    "seller_mapping_temporarily_unavailable",
+  );
+});
+
+test("a quarantined result is an explicit safe terminal outcome", async () => {
+  const store = createReceiptStore();
+  const delivery = await withShopifyWebhookReceipt(
+    {
+      ...baseInput,
+      handler: async () => ({
+        ok: false,
+        quarantined: true,
+        reason: "paid_order_sale_eligibility_review_required",
+      }),
+    },
+    { prismaClient: store.prisma },
+  );
+
+  assert.equal(delivery.result.terminal, true);
+  assert.equal(delivery.result.retryable, false);
+  assert.equal(delivery.result.expectedSkip, true);
+  assert.equal(store.rows[0].processingStatus, "PROCESSED");
+  assert.equal(store.rows[0].metadataJson.expectedSkip, true);
+});
+
+test("an explicitly non-retryable failure is a terminal outcome", async () => {
+  const store = createReceiptStore();
+  const delivery = await withShopifyWebhookReceipt(
+    {
+      ...baseInput,
+      handler: async () => ({
+        ok: false,
+        retryable: false,
+        expectedSkip: true,
+        reason: "invalid_shopify_order_payload",
+      }),
+    },
+    { prismaClient: store.prisma },
+  );
+
+  assert.equal(delivery.result.terminal, true);
+  assert.equal(delivery.result.retryable, false);
+  assert.equal(store.rows[0].processingStatus, "PROCESSED");
+});

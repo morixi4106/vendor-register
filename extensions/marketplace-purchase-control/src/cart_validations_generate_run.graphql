@@ -9,6 +9,12 @@ query CartValidationsGenerateRunInput {
     ) {
       value
     }
+    watchdogPurchaseStop: metafield(
+      namespace: "vendor_register_watchdog"
+      key: "purchase_stop"
+    ) {
+      value
+    }
   }
   cart {
     lines {

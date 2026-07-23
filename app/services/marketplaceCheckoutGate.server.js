@@ -29,6 +29,13 @@ export const OPERATIONAL_PURCHASE_CONTROL = Object.freeze({
   ALLOWED: "ALLOWED",
   BLOCKED: "BLOCKED",
 });
+export const WATCHDOG_PURCHASE_STOP_NAMESPACE =
+  "vendor_register_watchdog";
+export const WATCHDOG_PURCHASE_STOP_KEY = "purchase_stop";
+export const WATCHDOG_PURCHASE_STOP = Object.freeze({
+  BLOCKED: "BLOCKED",
+  CLEARED: "CLEARED",
+});
 export const MARKETPLACE_CHECKOUT_BOUNDARY_MODE =
   "ONLINE_STORE_PUBLICATION_BOUNDARY";
 
@@ -142,6 +149,13 @@ const SHOP_OPERATIONAL_CONTROL_QUERY = `#graphql
       id
       metafield(namespace: "$app", key: "operational_purchase_control") {
         value
+      }
+      watchdogPurchaseStop: metafield(
+        namespace: "vendor_register_watchdog"
+        key: "purchase_stop"
+      ) {
+        value
+        compareDigest
       }
     }
   }
@@ -643,6 +657,77 @@ export async function syncShopOperationalPurchaseControl(
     ok: true,
     shopDomain,
     changed: beforeState !== normalizedState,
+    beforeState,
+    state: verifiedState,
+  };
+}
+
+export async function clearSharedWatchdogPurchaseVeto(
+  { shopDomain: rawShopDomain },
+  { graphQL = shopifyGraphQLWithOfflineSession } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  if (!shopDomain) {
+    return { ok: false, reason: "invalid_shop_domain" };
+  }
+
+  const currentResponse = await graphQL({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: SHOP_OPERATIONAL_CONTROL_QUERY,
+  });
+  const shop = currentResponse?.data?.shop || null;
+  if (!shop?.id) return { ok: false, reason: "shop_not_found" };
+
+  const beforeState = normalizeText(shop.watchdogPurchaseStop?.value);
+  if (beforeState !== WATCHDOG_PURCHASE_STOP.CLEARED) {
+    const { data } = await graphQL({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: PRODUCT_POLICY_MUTATION,
+      variables: {
+        metafields: [
+          {
+            ownerId: shop.id,
+            namespace: WATCHDOG_PURCHASE_STOP_NAMESPACE,
+            key: WATCHDOG_PURCHASE_STOP_KEY,
+            type: "single_line_text_field",
+            value: WATCHDOG_PURCHASE_STOP.CLEARED,
+            compareDigest:
+              shop.watchdogPurchaseStop?.compareDigest ?? null,
+          },
+        ],
+      },
+    });
+    const payload = data?.metafieldsSet;
+    assertNoUserErrors(payload, "metafieldsSet watchdog purchase veto");
+    if (!payload?.metafields?.[0]) {
+      throw new Error(
+        "metafieldsSet did not return the watchdog purchase veto metafield",
+      );
+    }
+  }
+
+  const verifiedResponse = await graphQL({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: SHOP_OPERATIONAL_CONTROL_QUERY,
+  });
+  const verifiedState = normalizeText(
+    verifiedResponse?.data?.shop?.watchdogPurchaseStop?.value,
+  );
+  if (verifiedState !== WATCHDOG_PURCHASE_STOP.CLEARED) {
+    const error = new Error(
+      "Shared watchdog purchase veto recovery verification failed",
+    );
+    error.reason = "watchdog_purchase_veto_recovery_failed";
+    throw error;
+  }
+
+  return {
+    ok: true,
+    shopDomain,
+    changed: beforeState !== WATCHDOG_PURCHASE_STOP.CLEARED,
     beforeState,
     state: verifiedState,
   };

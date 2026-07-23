@@ -5795,6 +5795,8 @@ export async function processShopifyOrderPaidSettlement(
   if (!shopDomain || !shopifyOrderId || lineItems.length === 0) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "invalid_shopify_order_payload",
     };
   }
@@ -5902,6 +5904,8 @@ export async function processShopifyOrderPaidSettlement(
   if (productReferenceClauses.length === 0) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "shopify_order_products_missing",
     };
   }
@@ -6477,6 +6481,8 @@ export async function processShopifyRefundSettlement(
   if (!shopDomain || !shopifyRefundId || refundLineItems.length === 0) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "invalid_shopify_refund_payload",
     };
   }
@@ -6523,6 +6529,8 @@ export async function processShopifyRefundSettlement(
   if (productReferenceClauses.length === 0) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "shopify_refund_products_missing",
     };
   }
@@ -6959,6 +6967,8 @@ export async function processShopifyOrderCancelledSettlement(
   if (!shopDomain || !shopifyOrderId) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "invalid_shopify_cancelled_order_payload",
     };
   }
@@ -7250,6 +7260,8 @@ export async function processShopifyDisputeSettlement(
   if (!shopDomain || !shopifyDisputeId || !shopifyOrderId) {
     return {
       ok: false,
+      terminal: true,
+      expectedSkip: true,
       reason: "invalid_shopify_dispute_payload",
     };
   }

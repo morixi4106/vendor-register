@@ -15,6 +15,7 @@
     "setup": "prisma generate && prisma migrate deploy",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
     "check:text": "node scripts/check-text-encoding.mjs",
+    "audit:production": "node scripts/audit-production-dependencies.mjs",
     "audit:operational-migration": "node scripts/audit-operational-migration.mjs",
     "watchdog:sale-eligibility": "node scripts/sale-eligibility-watchdog-agent.mjs",
     "test:pricing": "node --test tests/**/*.test.js",

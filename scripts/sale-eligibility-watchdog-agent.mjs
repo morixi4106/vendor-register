@@ -2,11 +2,22 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const SHOPIFY_API_VERSION = "2026-04";
+const SHOPIFY_WATCHDOG_REQUIRED_SCOPES = Object.freeze([
+  "read_products",
+  "read_publications",
+  "write_publications",
+]);
+const SHARED_VETO_NAMESPACE = "vendor_register_watchdog";
+const SHARED_VETO_KEY = "purchase_stop";
+const MAX_PRODUCT_SCAN_PAGES = 200;
 const SHOPIFY_CONTROL_QUERY = `#graphql
   query ExternalWatchdogPurchaseControl {
     shop {
       id
-      metafield(namespace: "$app", key: "operational_purchase_control") {
+      watchdogPurchaseStop: metafield(
+        namespace: "${SHARED_VETO_NAMESPACE}"
+        key: "${SHARED_VETO_KEY}"
+      ) {
         value
       }
     }
@@ -157,6 +168,13 @@ export async function runSaleEligibilityWatchdogAgent({
     if (!response.ok || !isWatchdogResponse(payload)) {
       throw new Error("sale_eligibility_watchdog_request_failed");
     }
+    if (payload.status === "critical" && payload.protected !== true) {
+      const direct = await enforceDirectShopifyPurchaseBlock({
+        env,
+        fetchImpl,
+      });
+      return buildDirectFallbackResult(direct);
+    }
     return payload;
   } catch (internalError) {
     const direct = await enforceDirectShopifyPurchaseBlock({
@@ -193,15 +211,15 @@ export async function enforceDirectShopifyPurchaseBlock({
   )
     .trim()
     .toLowerCase();
-  const accessToken = String(
-    env.SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN || "",
-  ).trim();
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopDomain)) {
     throw new Error("watchdog_shop_domain_invalid");
   }
-  if (accessToken.length < 32) {
-    throw new Error("watchdog_admin_access_token_invalid");
-  }
+  const token = await acquireShopifyWatchdogAccessToken({
+    shopDomain,
+    env,
+    fetchImpl,
+  });
+  const accessToken = token.accessToken;
 
   const graphQLEndpoint = new URL(
     `/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
@@ -229,17 +247,17 @@ export async function enforceDirectShopifyPurchaseBlock({
   const shop = current?.shop;
   if (!shop?.id) throw new Error("watchdog_shop_not_found");
   let controlChanged = false;
-  let appControlProtected =
-    String(shop.metafield?.value || "").toUpperCase() === "BLOCKED";
-  let appControlError = null;
+  let sharedVetoProtected =
+    String(shop.watchdogPurchaseStop?.value || "").toUpperCase() === "BLOCKED";
+  let sharedVetoError = null;
   try {
-    if (!appControlProtected) {
+    if (!sharedVetoProtected) {
       const updated = await graphQL(SHOPIFY_CONTROL_MUTATION, {
         metafields: [
           {
             ownerId: shop.id,
-            namespace: "$app",
-            key: "operational_purchase_control",
+            namespace: SHARED_VETO_NAMESPACE,
+            key: SHARED_VETO_KEY,
             type: "single_line_text_field",
             value: "BLOCKED",
           },
@@ -254,12 +272,12 @@ export async function enforceDirectShopifyPurchaseBlock({
       controlChanged = true;
     }
     const verified = await graphQL(SHOPIFY_CONTROL_QUERY);
-    appControlProtected =
-      String(verified?.shop?.metafield?.value || "").toUpperCase() ===
+    sharedVetoProtected =
+      String(verified?.shop?.watchdogPurchaseStop?.value || "").toUpperCase() ===
       "BLOCKED";
   } catch (error) {
-    appControlProtected = false;
-    appControlError = String(error?.message || "watchdog_app_control_failed");
+    sharedVetoProtected = false;
+    sharedVetoError = String(error?.message || "watchdog_shared_veto_failed");
   }
 
   const publicationStop = await enforceDirectShopifyPublicationStop({
@@ -272,9 +290,69 @@ export async function enforceDirectShopifyPurchaseBlock({
     ok: true,
     protected: true,
     changed: controlChanged || publicationStop.changed,
-    appControlProtected,
-    appControlError,
+    sharedVetoProtected,
+    sharedVetoError,
+    grantedScopes: token.grantedScopes,
+    tokenExpiresIn: token.expiresIn,
     publicationStop,
+  };
+}
+
+export async function acquireShopifyWatchdogAccessToken({
+  shopDomain,
+  env = process.env,
+  fetchImpl = fetch,
+} = {}) {
+  const clientId = String(env.SHOPIFY_WATCHDOG_CLIENT_ID || "").trim();
+  const clientSecret = String(
+    env.SHOPIFY_WATCHDOG_CLIENT_SECRET || "",
+  ).trim();
+  if (clientId.length < 8 || clientSecret.length < 16) {
+    throw new Error("watchdog_client_credentials_invalid");
+  }
+
+  const response = await fetchImpl(
+    `https://${shopDomain}/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      signal: AbortSignal.timeout(30_000),
+      redirect: "error",
+    },
+  );
+  const payload = await readJsonResponse(response);
+  const accessToken = String(payload?.access_token || "").trim();
+  const grantedScopes = String(payload?.scope || "")
+    .split(",")
+    .map((scope) => scope.trim().toLowerCase())
+    .filter(Boolean);
+  const missingScopes = SHOPIFY_WATCHDOG_REQUIRED_SCOPES.filter(
+    (scope) => !grantedScopes.includes(scope),
+  );
+  const unexpectedScopes = grantedScopes.filter(
+    (scope) => !SHOPIFY_WATCHDOG_REQUIRED_SCOPES.includes(scope),
+  );
+  if (!response.ok || accessToken.length < 16) {
+    throw new Error("watchdog_access_token_request_failed");
+  }
+  if (missingScopes.length > 0 || unexpectedScopes.length > 0) {
+    const error = new Error("watchdog_scope_set_mismatch");
+    error.missingScopes = missingScopes;
+    error.unexpectedScopes = unexpectedScopes;
+    throw error;
+  }
+
+  return {
+    accessToken,
+    grantedScopes,
+    expiresIn: Number(payload?.expires_in || 0),
   };
 }
 
@@ -299,7 +377,7 @@ function publicationIdsForProduct(product) {
 async function loadPublishedProducts(graphQL) {
   const products = [];
   let after = null;
-  for (let page = 0; page < 10; page += 1) {
+  for (let page = 0; page < MAX_PRODUCT_SCAN_PAGES; page += 1) {
     const data = await graphQL(SHOPIFY_PRODUCTS_PUBLICATION_QUERY, {
       first: 50,
       after,

@@ -170,14 +170,20 @@ The GitHub `production` environment must also contain:
 ```text
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<same value configured on Render>
 SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
-SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN=<independent watchdog app token>
+SHOPIFY_WATCHDOG_CLIENT_ID=<independent watchdog app client ID>
+SHOPIFY_WATCHDOG_CLIENT_SECRET=<independent watchdog app client secret>
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=true
 ```
 
 The watchdog app must be separate from the main application and limited to
-`read_products`, `read_publications`, and `write_publications`. Before go-live,
-perform a controlled Render/DB outage drill and prove that the watchdog can
-unpublish all products and verify zero remaining publications. Save the
-workflow run and recovery approval under
+`read_products`, `read_publications`, and `write_publications`. The workflow
+must acquire and validate a short-lived Admin API token on each run; do not
+store a generated Admin token as a long-lived secret. Before go-live, perform a
+controlled Render/DB outage drill and prove that the watchdog can set the
+merchant-owned purchase veto, unpublish all products, and verify zero remaining
+publications. Prove separately that an evidence-backed recovery clears the veto
+only after eligibility and publications are reverified. Save the workflow run
+and recovery approval under
 `INDEPENDENT_SALES_STOP_DRILL_COMPLETED`. Repeat the drill at least every 90
 days.
 

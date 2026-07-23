@@ -6,12 +6,65 @@ import {
   MARKETPLACE_CHECKOUT_POLICY,
   activateMarketplaceCheckoutGate,
   backfillMarketplaceCheckoutPolicies,
+  clearSharedWatchdogPurchaseVeto,
   enforceShopifyResourcePublicationBoundary,
   enforceUnresolvedShopifyProductPublicationBoundary,
   getMarketplaceCheckoutGateStatus,
   resolveMarketplaceCheckoutPolicy,
   syncMarketplaceCheckoutPolicyForProduct,
 } from "../../app/services/marketplaceCheckoutGate.server.js";
+
+test("shared watchdog veto is cleared with compare-and-set verification", async () => {
+  const calls = [];
+  const responses = [
+    {
+      data: {
+        shop: {
+          id: "gid://shopify/Shop/1",
+          watchdogPurchaseStop: {
+            value: "BLOCKED",
+            compareDigest: "digest-before",
+          },
+        },
+      },
+    },
+    {
+      data: {
+        metafieldsSet: {
+          metafields: [{ id: "gid://shopify/Metafield/1" }],
+          userErrors: [],
+        },
+      },
+    },
+    {
+      data: {
+        shop: {
+          id: "gid://shopify/Shop/1",
+          watchdogPurchaseStop: {
+            value: "CLEARED",
+            compareDigest: "digest-after",
+          },
+        },
+      },
+    },
+  ];
+  const graphQL = async (input) => {
+    calls.push(input);
+    return responses.shift();
+  };
+
+  const result = await clearSharedWatchdogPurchaseVeto(
+    { shopDomain: "shop-a.myshopify.com" },
+    { graphQL },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.state, "CLEARED");
+  assert.equal(calls[1].variables.metafields[0].namespace, "vendor_register_watchdog");
+  assert.equal(calls[1].variables.metafields[0].key, "purchase_stop");
+  assert.equal(calls[1].variables.metafields[0].compareDigest, "digest-before");
+});
 
 function createProduct(overrides = {}) {
   return {

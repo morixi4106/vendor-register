@@ -1005,6 +1005,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
   {
     prismaClient = prisma,
     syncShopControl = null,
+    clearSharedWatchdogVeto = null,
     syncCheckoutPolicy = null,
     restorePublications = null,
     inspectCheckoutValidation = null,
@@ -1114,6 +1115,9 @@ export async function recoverPlatformCheckoutEmergencyHold(
     await import("./shopifyCheckoutValidation.server.js");
   const syncShop =
     syncShopControl || checkoutGate.syncShopOperationalPurchaseControl;
+  const clearWatchdogVeto =
+    clearSharedWatchdogVeto ||
+    checkoutGate.clearSharedWatchdogPurchaseVeto;
   const syncPolicy =
     syncCheckoutPolicy || checkoutGate.syncMarketplaceCheckoutPolicyForProduct;
   const restore =
@@ -1359,6 +1363,65 @@ export async function recoverPlatformCheckoutEmergencyHold(
           afterStateJson: { state: shopResult?.state || null },
           errorCode: ok ? null : shopResult?.reason || "shop_recovery_failed",
         });
+        if (!ok) continue;
+
+        const vetoStartedAt = new Date();
+        try {
+          const vetoResult = await clearWatchdogVeto({
+            shopDomain: targetShopDomain,
+          });
+          const vetoCleared = vetoResult?.ok !== false;
+          if (!vetoCleared) {
+            failures.push({
+              targetType: "SHOP",
+              targetId: targetShopDomain,
+              ok: false,
+              error:
+                vetoResult.reason ||
+                "watchdog_purchase_veto_recovery_failed",
+            });
+          }
+          await upsertOperationalExecution(prismaClient, {
+            controlId: operationalControl.id,
+            targetSystem: "SHOPIFY",
+            targetType: "SHOP",
+            targetId: targetShopDomain,
+            operation: "CLEAR_SHARED_WATCHDOG_VETO_AFTER_RECOVERY",
+            status: vetoCleared ? "SUCCEEDED" : "FAILED",
+            startedAt: vetoStartedAt,
+            completedAt: new Date(),
+            afterStateJson: {
+              state: vetoResult?.state || null,
+            },
+            errorCode: vetoCleared
+              ? null
+              : vetoResult?.reason ||
+                "watchdog_purchase_veto_recovery_failed",
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          failures.push({
+            targetType: "SHOP",
+            targetId: targetShopDomain,
+            ok: false,
+            error: message,
+          });
+          await upsertOperationalExecution(prismaClient, {
+            controlId: operationalControl.id,
+            targetSystem: "SHOPIFY",
+            targetType: "SHOP",
+            targetId: targetShopDomain,
+            operation: "CLEAR_SHARED_WATCHDOG_VETO_AFTER_RECOVERY",
+            status: "FAILED",
+            startedAt: vetoStartedAt,
+            completedAt: new Date(),
+            errorCode:
+              error?.reason ||
+              "watchdog_purchase_veto_recovery_failed",
+            errorMessage: message,
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failures.push({

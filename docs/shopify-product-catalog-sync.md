@@ -71,7 +71,7 @@ sync interval (15) < warning < critical < projection TTL (1560)
 The application reports a critical monitoring configuration error instead of
 silently accepting values that violate this ordering.
 
-Both scheduled GitHub workflows also call:
+The dedicated `sale-eligibility-watchdog.yml` workflow calls:
 
 ```text
 POST /internal/sale-eligibility-watchdog
@@ -92,7 +92,9 @@ Configure the fallback in the GitHub `production` environment:
 ```text
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<same 32+ character secret configured on Render>
 SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
-SHOPIFY_WATCHDOG_ADMIN_ACCESS_TOKEN=<token owned by the independent watchdog app>
+SHOPIFY_WATCHDOG_CLIENT_ID=<independent watchdog app client ID>
+SHOPIFY_WATCHDOG_CLIENT_SECRET=<independent watchdog app client secret>
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=true
 ```
 
 The independent Shopify custom app must be restricted to:
@@ -101,9 +103,22 @@ The independent Shopify custom app must be restricted to:
 read_products,read_publications,write_publications
 ```
 
-Do not reuse the main application access token. The direct fallback is an
-emergency all-sales stop, so recovery requires an operator to verify the cause
-and deliberately restore the intended publications.
+Do not reuse the main application credentials. The workflow exchanges these
+credentials for a short-lived Shopify Admin API token on every run, validates
+the exact required scopes, keeps the token in memory only, and never stores it
+as a GitHub or Render secret.
+
+Before removing publications, the independent app writes the merchant-owned
+Shop metafield `vendor_register_watchdog.purchase_stop=BLOCKED`. The Checkout
+Validation Function treats this as a one-way veto: `BLOCKED` always stops the
+purchase, while a missing, `CLEARED`, or forged `ALLOWED` value never grants a
+purchase that the main app has not allowed.
+
+The direct fallback is an emergency all-sales stop, so recovery requires a
+different operator to verify the cause and deliberately restore the intended
+publications. Only the evidence-backed recovery path clears the shared veto,
+using compare-and-set verification after product eligibility and publication
+recovery have succeeded.
 
 Successful synchronization does not release a watchdog stop. A different
 authorized operator must verify recovery evidence and explicitly restore sales.

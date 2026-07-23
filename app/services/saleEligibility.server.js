@@ -342,44 +342,73 @@ export async function persistSaleEligibilityProjection(
   const expiresAt = new Date(
     result.expiresAt || buildProjectionExpiry(evaluatedAt),
   );
-  const projection = await prismaClient.saleEligibilityProjection.upsert({
-    where: {
-      shopDomain_productId_destinationCountry_salesChannel: {
+  const persist = async (tx) => {
+    const projection = await tx.saleEligibilityProjection.upsert({
+      where: {
+        shopDomain_productId_destinationCountry_salesChannel: {
+          shopDomain: result.shopDomain,
+          productId: result.productId,
+          destinationCountry: result.destinationCountry || "",
+          salesChannel: result.salesChannel,
+        },
+      },
+      create: {
         shopDomain: result.shopDomain,
         productId: result.productId,
+        vendorStoreId: result.vendorStoreId,
         destinationCountry: result.destinationCountry || "",
         salesChannel: result.salesChannel,
+        status: result.status,
+        reasonCodes: result.reasonCodes,
+        requirementVersions: result.requirementVersions,
+        decisionIds: result.decisionIds,
+        policyVersion: result.policyVersion,
+        inputHash: result.inputHash,
+        projectionRevision: 1,
+        evaluatedAt,
+        expiresAt,
       },
-    },
-    create: {
-      shopDomain: result.shopDomain,
-      productId: result.productId,
-      vendorStoreId: result.vendorStoreId,
-      destinationCountry: result.destinationCountry || "",
-      salesChannel: result.salesChannel,
-      status: result.status,
-      reasonCodes: result.reasonCodes,
-      requirementVersions: result.requirementVersions,
-      decisionIds: result.decisionIds,
-      policyVersion: result.policyVersion,
-      inputHash: result.inputHash,
-      projectionRevision: 1,
-      evaluatedAt,
-      expiresAt,
-    },
-    update: {
-      vendorStoreId: result.vendorStoreId,
-      status: result.status,
-      reasonCodes: result.reasonCodes,
-      requirementVersions: result.requirementVersions,
-      decisionIds: result.decisionIds,
-      policyVersion: result.policyVersion,
-      inputHash: result.inputHash,
-      projectionRevision: { increment: 1 },
-      evaluatedAt,
-      expiresAt,
-    },
-  });
+      update: {
+        vendorStoreId: result.vendorStoreId,
+        status: result.status,
+        reasonCodes: result.reasonCodes,
+        requirementVersions: result.requirementVersions,
+        decisionIds: result.decisionIds,
+        policyVersion: result.policyVersion,
+        inputHash: result.inputHash,
+        projectionRevision: { increment: 1 },
+        evaluatedAt,
+        expiresAt,
+      },
+    });
+
+    if (tx.saleEligibilityProjectionRevision?.create) {
+      await tx.saleEligibilityProjectionRevision.create({
+        data: {
+          shopDomain: projection.shopDomain,
+          productId: projection.productId,
+          vendorStoreId: projection.vendorStoreId,
+          destinationCountry: projection.destinationCountry,
+          salesChannel: projection.salesChannel,
+          status: projection.status,
+          reasonCodes: projection.reasonCodes,
+          requirementVersions: projection.requirementVersions,
+          decisionIds: projection.decisionIds,
+          policyVersion: projection.policyVersion,
+          inputHash: projection.inputHash,
+          projectionRevision: projection.projectionRevision,
+          evaluatedAt: projection.evaluatedAt,
+          expiresAt: projection.expiresAt,
+        },
+      });
+    }
+    return projection;
+  };
+  const projection =
+    prismaClient.saleEligibilityProjectionRevision?.create &&
+    prismaClient.$transaction
+      ? await prismaClient.$transaction(persist)
+      : await persist(prismaClient);
 
   return {
     ...result,
@@ -641,27 +670,58 @@ export async function inspectPaidOrderSaleEligibility(
     };
   }
 
+  const revisionHistoryAvailable = Boolean(
+    prismaClient?.saleEligibilityProjectionRevision?.findMany,
+  );
   const [control, projections, eligibilityProducts] = await Promise.all([
     operationalControl
       ? Promise.resolve(operationalControl)
       : getPlatformOperationalControl({ prismaClient }),
-    prismaClient.saleEligibilityProjection.findMany({
-      where: {
-        shopDomain: normalizedShopDomain,
-        productId: { in: productIds },
-        destinationCountry: "",
-        salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
-      },
-      select: {
-        productId: true,
-        status: true,
-        policyVersion: true,
-        inputHash: true,
-        projectionRevision: true,
-        evaluatedAt: true,
-        expiresAt: true,
-      },
-    }),
+    revisionHistoryAvailable
+      ? prismaClient.saleEligibilityProjectionRevision.findMany({
+          where: {
+            shopDomain: normalizedShopDomain,
+            productId: { in: productIds },
+            destinationCountry: "",
+            salesChannel:
+              SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+            evaluatedAt: { lte: occurredAt },
+            expiresAt: { gt: occurredAt },
+          },
+          select: {
+            id: true,
+            productId: true,
+            status: true,
+            policyVersion: true,
+            inputHash: true,
+            projectionRevision: true,
+            evaluatedAt: true,
+            expiresAt: true,
+          },
+          orderBy: [
+            { evaluatedAt: "desc" },
+            { projectionRevision: "desc" },
+          ],
+        })
+      : prismaClient.saleEligibilityProjection.findMany({
+          where: {
+            shopDomain: normalizedShopDomain,
+            productId: { in: productIds },
+            destinationCountry: "",
+            salesChannel:
+              SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+          },
+          select: {
+            id: true,
+            productId: true,
+            status: true,
+            policyVersion: true,
+            inputHash: true,
+            projectionRevision: true,
+            evaluatedAt: true,
+            expiresAt: true,
+          },
+        }),
     prismaClient?.product?.findMany
       ? prismaClient.product.findMany({
           where: { id: { in: productIds } },
@@ -672,9 +732,12 @@ export async function inspectPaidOrderSaleEligibility(
   const productsById = new Map(
     eligibilityProducts.map((product) => [product.id, product]),
   );
-  const projectionByProductId = new Map(
-    projections.map((projection) => [projection.productId, projection]),
-  );
+  const projectionByProductId = new Map();
+  for (const projection of projections) {
+    if (!projectionByProductId.has(projection.productId)) {
+      projectionByProductId.set(projection.productId, projection);
+    }
+  }
   const failures = [];
   const evidence = [];
 
@@ -745,6 +808,8 @@ export async function inspectPaidOrderSaleEligibility(
 
     evidence.push({
       productId,
+      projectionRecordId: projection?.id || null,
+      projectionSource: revisionHistoryAvailable ? "revision" : "legacy_current",
       status: projectionStatus,
       policyVersion: projection?.policyVersion || null,
       inputHash: projection?.inputHash || null,

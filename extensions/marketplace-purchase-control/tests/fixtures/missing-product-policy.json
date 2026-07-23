@@ -4,6 +4,7 @@
     "target": "cart.validations.generate.run",
     "input": {
       "shop": {
+        "watchdogPurchaseStop": null,
         "localTime": {
           "date": "2026-07-24"
         },

@@ -22,6 +22,18 @@ export const action = async ({ request }) => {
         payload,
         shop,
       });
+      if (
+        withdrawalReconciliation?.ok === false &&
+        withdrawalReconciliation?.skipped !== true
+      ) {
+        return {
+          ok: false,
+          retryable: true,
+          reason:
+            withdrawalReconciliation.reason ||
+            "withdrawal_cancellation_reconciliation_failed",
+        };
+      }
       return result;
     },
   });

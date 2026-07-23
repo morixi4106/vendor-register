@@ -47,6 +47,7 @@ describe("Default Integration Test", () => {
 
 function buildDirectInput({
   operationalState = "ALLOWED",
+  watchdogPurchaseStop = null,
   currentDate = "2026-07-24",
   evaluatedOn = "2026-07-24",
   expiresOnExclusive = "2026-07-25",
@@ -78,6 +79,9 @@ function buildDirectInput({
     shop: {
       localTime: { date: currentDate },
       operationalPurchaseControl: { value: operationalState },
+      watchdogPurchaseStop: watchdogPurchaseStop
+        ? { value: watchdogPurchaseStop }
+        : null,
     },
     cart: {
       lines: Array.from({ length: lineCount }, () => line),
@@ -109,6 +113,23 @@ describe("fail-closed operational and calendar boundaries", () => {
   test("allows only the explicit ALLOWED operational state", () => {
     const result = cartValidationsGenerateRun(buildDirectInput());
     expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  test("a shared watchdog veto can only block checkout", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({ watchdogPurchaseStop: "BLOCKED" }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("a non-blocking shared value cannot grant checkout", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        operationalState: "PARTIAL_FAILURE",
+        watchdogPurchaseStop: "ALLOWED",
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
   });
 
   test("expires exactly at the Shopify local calendar boundary", () => {

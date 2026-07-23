@@ -240,6 +240,37 @@ export async function failShopifyWebhookProcessing(
   });
 }
 
+export function normalizeShopifyWebhookHandlerResult(result) {
+  const normalized =
+    result && typeof result === "object" ? { ...result } : { ok: true };
+  if (normalized.ok !== false) {
+    return {
+      ...normalized,
+      ok: true,
+      terminal: true,
+      retryable: false,
+    };
+  }
+  if (
+    normalized.terminal === true ||
+    normalized.quarantined === true ||
+    normalized.retryable === false
+  ) {
+    return {
+      ...normalized,
+      terminal: true,
+      retryable: false,
+      expectedSkip:
+        normalized.expectedSkip === true || normalized.quarantined === true,
+    };
+  }
+  return {
+    ...normalized,
+    terminal: false,
+    retryable: true,
+  };
+}
+
 export async function withShopifyWebhookReceipt(
   { request, payload, topic, shop, handler },
   { prismaClient = prisma, now = new Date() } = {},
@@ -263,13 +294,24 @@ export async function withShopifyWebhookReceipt(
   }
 
   try {
-    const result = await handler();
+    const result = normalizeShopifyWebhookHandlerResult(await handler());
+    if (result.retryable === true) {
+      const error = new Error(
+        normalizeText(result.reason) || "webhook_handler_retry_required",
+      );
+      error.code =
+        normalizeText(result.reason) || "webhook_handler_retry_required";
+      error.result = result;
+      throw error;
+    }
     await completeShopifyWebhookProcessing(receipt, {
       prismaClient,
       now: new Date(),
       metadataJson: {
         handled: true,
-        resultOk: result?.ok !== false,
+        resultOk: result.ok === true,
+        terminal: result.terminal === true,
+        expectedSkip: result.expectedSkip === true,
         resultReason: normalizeText(result?.reason) || null,
       },
     });

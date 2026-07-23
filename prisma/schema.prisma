@@ -100,14 +100,15 @@ model Product {
   createdAt                       DateTime  @default(now())
   updatedAt                       DateTime  @updatedAt
 
-  vendorStore                VendorStore                  @relation(fields: [vendorStoreId], references: [id])
-  priceApplyLogs             ProductPriceApplyLog[]
-  countryPolicy              ProductCountryPolicy?
-  complianceProfile          ProductComplianceProfile?
-  complianceEvidence         ProductComplianceEvidence[]
-  complianceDecisions        ProductComplianceDecision[]
-  saleEligibilityProjections SaleEligibilityProjection[]
-  governanceCases            MarketplaceOperationalCase[]
+  vendorStore                        VendorStore                         @relation(fields: [vendorStoreId], references: [id])
+  priceApplyLogs                     ProductPriceApplyLog[]
+  countryPolicy                      ProductCountryPolicy?
+  complianceProfile                  ProductComplianceProfile?
+  complianceEvidence                 ProductComplianceEvidence[]
+  complianceDecisions                ProductComplianceDecision[]
+  saleEligibilityProjections         SaleEligibilityProjection[]
+  saleEligibilityProjectionRevisions SaleEligibilityProjectionRevision[]
+  governanceCases                    MarketplaceOperationalCase[]
 
   @@unique([shopDomain, shopifyProductId])
   @@unique([shopDomain, shopifyVariantId])
@@ -1066,6 +1067,32 @@ model SaleEligibilityProjection {
   @@index([status, expiresAt])
   @@index([vendorStoreId, status])
   @@map("sale_eligibility_projections")
+}
+
+model SaleEligibilityProjectionRevision {
+  id                  String   @id @default(cuid())
+  shopDomain          String
+  productId           String
+  vendorStoreId       String?
+  destinationCountry  String   @default("")
+  salesChannel        String
+  status              String
+  reasonCodes         Json
+  requirementVersions Json
+  decisionIds         Json
+  policyVersion       String
+  inputHash           String
+  projectionRevision  Int
+  evaluatedAt         DateTime
+  expiresAt           DateTime
+  createdAt           DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([shopDomain, productId, destinationCountry, salesChannel, projectionRevision])
+  @@index([shopDomain, productId, destinationCountry, salesChannel, evaluatedAt, expiresAt])
+  @@index([status, expiresAt])
+  @@map("sale_eligibility_projection_revisions")
 }
 
 model MarketplaceOperationalCase {

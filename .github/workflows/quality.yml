@@ -57,4 +57,4 @@ jobs:
         run: npm run build
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=low
+        run: npm run audit:production
