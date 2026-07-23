@@ -70,6 +70,8 @@ const MULTI_SELLER_SETTLEMENT_FLAGS = [
 ];
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAG =
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED";
+const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG =
+  "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
 const SELLER_ORDER_SHADOW_WRITE_FLAG = "SELLER_ORDER_SHADOW_WRITE_ENABLED";
 const VENDOR_ORDER_SELLER_ORDER_READ_FLAG = "VENDOR_ORDERS_USE_SELLER_ORDERS";
 const MULTI_SELLER_STOREFRONT_REQUIRED_FLAGS = [
@@ -1334,6 +1336,23 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
   const stripeKeyModesAcceptable =
     stripeEnv.modesMatch ||
     (!stripeConnectProductionEnabled && stripeKeysBothMissing);
+
+  checks.push(
+    createCheck({
+      id: "public_draft_order_checkout_disabled",
+      category: "app",
+      status: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG)
+        ? "fail"
+        : "pass",
+      title: "Public Draft Order checkout",
+      detail: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG)
+        ? "The public Draft Order checkout endpoint is enabled."
+        : "The public Draft Order checkout endpoint is disabled.",
+      action: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG)
+        ? "Set PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED=false before opening the storefront."
+        : "",
+    }),
+  );
 
   checks.push(
     createCheck({

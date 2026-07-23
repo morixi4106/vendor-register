@@ -12,6 +12,8 @@ import {
   inspectWithdrawalWorkerHeartbeat,
   loadLaunchIntegritySellerRows,
 } from "./productionReadiness.server.js";
+import { getMarketplaceCheckoutGateStatus } from "./marketplaceCheckoutGate.server.js";
+import { SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY } from "./operationalHealth.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "launch_monitor_72h";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -29,6 +31,7 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "withdrawal_processing_integrity",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
+  "marketplace_checkout_publication_boundary",
   "seller_order_unresolved_shadow_checks",
   "seller_ledger_repair_candidates",
   "test_store_pending_payout_runs",
@@ -237,9 +240,16 @@ export async function collectLaunchMonitorReport({
     dependencies.loadLaunchIntegritySellerRows || loadLaunchIntegritySellerRows;
   const inspectLaunchIntegrityImpl =
     dependencies.inspectLaunchIntegrity || inspectLaunchIntegrity;
+  const getMarketplaceCheckoutGateStatusImpl =
+    dependencies.getMarketplaceCheckoutGateStatus ||
+    getMarketplaceCheckoutGateStatus;
+  const inspectShopifyProductCatalogSyncHeartbeatImpl =
+    dependencies.inspectShopifyProductCatalogSyncHeartbeat ||
+    inspectShopifyProductCatalogSyncHeartbeat;
   const checks = [
     ...evaluateRenderSnapshot(renderSnapshot),
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
+    buildPublicDraftOrderCheckoutSafetyCheck(env),
   ];
   const windowStartedAt =
     parseDate(renderSnapshot.windowStartedAt) ||
@@ -305,6 +315,28 @@ export async function collectLaunchMonitorReport({
   }
 
   try {
+    const heartbeat = await inspectShopifyProductCatalogSyncHeartbeatImpl({
+      prismaClient,
+      now,
+    });
+    checks.push(
+      buildShopifyProductCatalogSyncHeartbeatCheck({
+        heartbeat,
+        env,
+      }),
+    );
+  } catch (error) {
+    checks.push(
+      issueCheck(
+        "shopify_product_catalog_sync_freshness",
+        CRITICAL_SEVERITY,
+        "Shopify商品カタログ同期の稼働状況を確認できません。",
+        safeErrorCode(error),
+      ),
+    );
+  }
+
+  try {
     const recentContacts = await prismaClient.contactInquiry.count({
       where: { createdAt: { gte: windowStartedAt } },
     });
@@ -334,6 +366,36 @@ export async function collectLaunchMonitorReport({
   }
 
   if (runHeavyChecks) {
+    let checkoutBoundaryCompleted = false;
+    let launchIntegrityCompleted = false;
+
+    try {
+      const shopDomain = String(
+        env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
+      ).trim();
+      if (!shopDomain) {
+        throw new Error("shopify_primary_shop_domain_missing");
+      }
+      const checkoutGate = await getMarketplaceCheckoutGateStatusImpl(
+        shopDomain,
+        { prismaClient, env },
+      );
+      const checkoutBoundaryCheck =
+        buildMarketplaceCheckoutPublicationBoundaryMonitorCheck(checkoutGate);
+      heavyChecks.push(checkoutBoundaryCheck);
+      checks.push(checkoutBoundaryCheck);
+      checkoutBoundaryCompleted = true;
+    } catch (error) {
+      const failure = issueCheck(
+        "marketplace_checkout_publication_boundary",
+        CRITICAL_SEVERITY,
+        "Shopify販売チャネルの公開境界を確認できません。",
+        safeErrorCode(error),
+      );
+      heavyChecks.push(failure);
+      checks.push(failure);
+    }
+
     try {
       const sellerRows = await loadLaunchIntegritySellerRowsImpl({
         prismaClient,
@@ -343,11 +405,15 @@ export async function collectLaunchMonitorReport({
         sellerRows,
         now,
       });
-      heavyChecks = buildLaunchIntegrityChecks({ launchIntegrity: integrity, env })
+      const integrityChecks = buildLaunchIntegrityChecks({
+        launchIntegrity: integrity,
+        env,
+      })
         .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
         .map(readinessCheckToMonitorCheck);
-      checks.push(...heavyChecks);
-      heavyCheckCompleted = true;
+      heavyChecks.push(...integrityChecks);
+      checks.push(...integrityChecks);
+      launchIntegrityCompleted = true;
     } catch (error) {
       const failure = issueCheck(
         "launch_integrity",
@@ -355,9 +421,11 @@ export async function collectLaunchMonitorReport({
         "台帳と出店者別注文の整合性確認に失敗しました。5分後に再試行します。",
         safeErrorCode(error),
       );
-      heavyChecks = [failure];
+      heavyChecks.push(failure);
       checks.push(failure);
     }
+    heavyCheckCompleted =
+      checkoutBoundaryCompleted && launchIntegrityCompleted;
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(
       (check) => READINESS_HEAVY_CHECK_IDS.has(check.id),
@@ -390,6 +458,162 @@ export async function collectLaunchMonitorReport({
             READINESS_HEAVY_CHECK_IDS.has(check.id),
           ),
   };
+}
+
+export async function inspectShopifyProductCatalogSyncHeartbeat({
+  prismaClient = prisma,
+  now = new Date(),
+} = {}) {
+  if (!prismaClient?.operationalHeartbeat?.findUnique) {
+    return {
+      available: false,
+      row: null,
+      minutesSinceSuccess: null,
+      stale: true,
+      failureUnresolved: false,
+    };
+  }
+
+  const row = await prismaClient.operationalHeartbeat.findUnique({
+    where: { key: SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY },
+  });
+  const lastSucceededAt = parseDate(row?.lastSucceededAt);
+  const lastFailedAt = parseDate(row?.lastFailedAt);
+  const minutesSinceSuccess = lastSucceededAt
+    ? Math.max(
+        0,
+        Math.floor(
+          (now.getTime() - lastSucceededAt.getTime()) / (60 * 1000),
+        ),
+      )
+    : null;
+
+  return {
+    available: true,
+    row,
+    minutesSinceSuccess,
+    stale: !lastSucceededAt,
+    failureUnresolved: Boolean(
+      lastFailedAt &&
+        (!lastSucceededAt || lastFailedAt.getTime() > lastSucceededAt.getTime()),
+    ),
+  };
+}
+
+export function buildShopifyProductCatalogSyncHeartbeatCheck({
+  heartbeat,
+  env = process.env,
+}) {
+  const warningMinutes = boundedNumber(
+    env?.SHOPIFY_PRODUCT_CATALOG_SYNC_WARNING_MINUTES,
+    30,
+    5,
+    24 * 60,
+  );
+  const criticalMinutes = boundedNumber(
+    env?.SHOPIFY_PRODUCT_CATALOG_SYNC_CRITICAL_MINUTES,
+    180,
+    warningMinutes,
+    7 * 24 * 60,
+  );
+  const age = Number(heartbeat?.minutesSinceSuccess);
+
+  if (heartbeat?.available !== true || !heartbeat?.row) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      CRITICAL_SEVERITY,
+      "Shopify商品カタログ同期の成功記録がありません。",
+      "heartbeat_missing",
+    );
+  }
+  if (heartbeat?.failureUnresolved) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      CRITICAL_SEVERITY,
+      "Shopify商品カタログ同期の直近実行が失敗しています。",
+      "latest_run_failed",
+    );
+  }
+  if (!Number.isFinite(age)) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      CRITICAL_SEVERITY,
+      "Shopify商品カタログ同期の最終成功時刻を確認できません。",
+      "last_success_missing",
+    );
+  }
+  if (age >= criticalMinutes) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      CRITICAL_SEVERITY,
+      `Shopify商品カタログ同期が${age}分成功していません。`,
+      "catalog_sync_critical",
+      age,
+    );
+  }
+  if (age >= warningMinutes) {
+    return issueCheck(
+      "shopify_product_catalog_sync_freshness",
+      WARNING_SEVERITY,
+      `Shopify商品カタログ同期の最終成功から${age}分経過しています。`,
+      "catalog_sync_stale",
+      age,
+    );
+  }
+  return okCheck(
+    "shopify_product_catalog_sync_freshness",
+    `Shopify商品カタログ同期は${age}分以内に成功しています。`,
+  );
+}
+
+export function buildMarketplaceCheckoutPublicationBoundaryMonitorCheck(
+  checkoutGate,
+) {
+  const configured =
+    checkoutGate?.publicationConfigurationReady !== false;
+  const exposedProductCount = boundedCount(
+    checkoutGate?.exposedProductCount,
+  );
+  const failedProductCount = boundedCount(checkoutGate?.failedProductCount);
+  const ready =
+    checkoutGate?.active === true &&
+    configured &&
+    exposedProductCount === 0 &&
+    failedProductCount === 0;
+
+  return ready
+    ? okCheck(
+        "marketplace_checkout_publication_boundary",
+        "第三者商品と未解決商品はShopifyの購入可能Publicationから除外されています。",
+      )
+    : issueCheck(
+        "marketplace_checkout_publication_boundary",
+        CRITICAL_SEVERITY,
+        "Shopify販売チャネルの公開境界に不整合があります。",
+        !configured
+          ? "publication_configuration_missing"
+          : exposedProductCount > 0
+            ? "governed_product_exposed"
+            : failedProductCount > 0
+              ? "publication_check_failed"
+              : "publication_boundary_inactive",
+        exposedProductCount + failedProductCount,
+      );
+}
+
+export function buildPublicDraftOrderCheckoutSafetyCheck(env = {}) {
+  return isEnabled(env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED)
+    ? issueCheck(
+        "public_draft_order_checkout_disabled",
+        CRITICAL_SEVERITY,
+        "The public Draft Order checkout endpoint is enabled.",
+        "public_draft_order_checkout_enabled",
+        1,
+      )
+    : okCheck(
+        "public_draft_order_checkout_disabled",
+        "The public Draft Order checkout endpoint is disabled.",
+      );
 }
 
 export function evaluateRenderSnapshot(snapshot = {}) {

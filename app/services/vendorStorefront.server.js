@@ -59,6 +59,8 @@ const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
 const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
   "複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。";
 const PUBLIC_CHECKOUT_SOURCE = "vendor_storefront";
+const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG =
+  "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = "jpy";
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
@@ -113,6 +115,10 @@ function normalizeBooleanInput(value) {
   return ["1", "true", "yes", "on"].includes(
     String(value).trim().toLowerCase(),
   );
+}
+
+export function isPublicDraftOrderCheckoutEnabled(env = process.env) {
+  return normalizeBooleanInput(env?.[PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG]);
 }
 
 function getMissingMultiSellerStorefrontCheckoutFlags(env = process.env) {
@@ -988,7 +994,13 @@ export async function recordBuyerWarningAcceptance({
 }
 
 function buildNotFoundResponse() {
-  return new Response("Not Found", { status: 404 });
+  return new Response("Not Found", {
+    status: 404,
+    headers: {
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
 }
 
 function buildMethodNotAllowedResponse() {
@@ -2099,6 +2111,10 @@ export function createVendorStorefrontAction({
   env = process.env,
 } = {}) {
   return async function action({ request, params }) {
+    if (!isPublicDraftOrderCheckoutEnabled(env)) {
+      throw buildNotFoundResponse();
+    }
+
     const vendorContext = await getActiveVendorContextByHandle(
       params.handle,
       prismaClient,
@@ -2174,6 +2190,10 @@ export function createPublicVendorDraftOrderCheckoutAction({
   env = process.env,
 } = {}) {
   return async function action({ request }) {
+    if (!isPublicDraftOrderCheckoutEnabled(env)) {
+      throw buildNotFoundResponse();
+    }
+
     if (request.method !== "POST") {
       return buildMethodNotAllowedResponse();
     }

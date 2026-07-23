@@ -6,6 +6,10 @@ import {
   backfillMarketplaceCheckoutPolicies,
   getShopifyPublicationDiagnostics,
 } from "../services/marketplaceCheckoutGate.server.js";
+import {
+  recordOperationalHeartbeatSafely,
+  SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
+} from "../services/operationalHealth.server.js";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server.js";
 
 export async function action({ request }) {
@@ -27,6 +31,12 @@ export async function action({ request }) {
     Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 250, 1000),
   );
 
+  await recordOperationalHeartbeatSafely({
+    key: SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
+    status: "started",
+    metadataJson: { limit },
+  });
+
   try {
     const shopDomain = await resolveShopDomain(
       process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN || null,
@@ -34,6 +44,17 @@ export async function action({ request }) {
     const result = await reconcileShopifyProductCatalog(shopDomain, { limit });
     const checkoutPolicies = await backfillMarketplaceCheckoutPolicies(shopDomain);
     const publications = await getShopifyPublicationDiagnostics(shopDomain);
+
+    await recordOperationalHeartbeatSafely({
+      key: SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
+      status: "succeeded",
+      metadataJson: {
+        shopDomain,
+        scanned: result.scanned,
+        unresolved: result.unresolved,
+        checkoutPolicyFailedCount: checkoutPolicies.failedCount,
+      },
+    });
 
     return json({
       ok: checkoutPolicies.ok,
@@ -47,6 +68,11 @@ export async function action({ request }) {
     });
   } catch (error) {
     console.error("Internal Shopify product catalog sync failed:", error);
+    await recordOperationalHeartbeatSafely({
+      key: SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
+      status: "failed",
+      errorCode: "shopify_product_catalog_sync_failed",
+    });
     return json(
       { ok: false, error: "shopify_product_catalog_sync_failed" },
       { status: 500 },

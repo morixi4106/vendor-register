@@ -168,12 +168,13 @@ test("governed products are removed from every attached publication", async () =
   });
 });
 
-test("governed products are removed from app, market, and company catalogs", async () => {
+test("governed products are removed from app, market, company, and uncataloged publications", async () => {
   const product = createProduct();
   const publicationIds = [
     "gid://shopify/Publication/app",
     "gid://shopify/Publication/market",
     "gid://shopify/Publication/company",
+    "gid://shopify/Publication/none",
   ];
   let publishableReadCount = 0;
   let unpublishInput = null;
@@ -198,6 +199,9 @@ test("governed products are removed from app, market, and company catalogs", asy
                 companyLocationPublications: publicationConnection([
                   publicationIds[2],
                 ]),
+                uncatalogedPublications: publicationConnection([
+                  publicationIds[3],
+                ]),
               },
             },
           };
@@ -216,6 +220,9 @@ test("governed products are removed from app, market, and company catalogs", asy
                 ),
                 companyLocationPublications: publicationConnection(
                   publishableReadCount === 1 ? [publicationIds[2]] : [],
+                ),
+                uncatalogedPublications: publicationConnection(
+                  publishableReadCount === 1 ? [publicationIds[3]] : [],
                 ),
               },
             },
@@ -245,6 +252,7 @@ test("governed products are removed from app, market, and company catalogs", asy
     { publicationId: publicationIds[0] },
     { publicationId: publicationIds[1] },
     { publicationId: publicationIds[2] },
+    { publicationId: publicationIds[3] },
   ]);
   assert.deepEqual(result.boundary.remainingPublicationIds, []);
 });

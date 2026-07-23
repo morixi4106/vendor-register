@@ -763,6 +763,25 @@ test("getProductionReadiness shows SellerOrder vendor reads fallback when shadow
   assert.match(check.detail, /fall back to the legacy ledger path/);
 });
 
+test("getProductionReadiness blocks launch when public Draft Order checkout is enabled", async () => {
+  const result = await getProductionReadiness({
+    prismaClient: createFakePrisma({
+      sellerRows: [createActiveSeller({ stripeAccount: false })],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
+    },
+  });
+  const check = result.checks.find(
+    (entry) => entry.id === "public_draft_order_checkout_disabled",
+  );
+
+  assert.equal(result.canGoLive, false);
+  assert.equal(check.status, "fail");
+});
+
 test("includeCheckoutGateInProductionReadiness blocks launch when the checkout boundary is inactive", () => {
   const result = includeCheckoutGateInProductionReadiness(
     {

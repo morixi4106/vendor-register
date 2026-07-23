@@ -9,6 +9,7 @@ import { vendorAdminSessionCookie } from '../../app/services/vendorManagement.se
 import { createPublicVendorDraftOrderCheckoutAction } from '../../app/services/vendorStorefront.server.js';
 
 process.env.PRIVACY_HASH_SECRET = 'test-privacy-hash-secret-with-at-least-32-chars';
+process.env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED = 'true';
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
@@ -24,6 +25,7 @@ const TRUSTED_SALES_CREDIT_METADATA = {
 };
 
 const MULTI_SELLER_CHECKOUT_ENV = {
+  PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: 'true',
   MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: 'true',
   MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED: 'true',
   MULTI_SELLER_SHOPIFY_REFUND_SETTLEMENT_ENABLED: 'true',
@@ -485,6 +487,24 @@ test('api.draft-order.checkout returns 405 for non-POST loader requests', async 
 
   assert.equal(response.status, 405);
   assert.equal(response.headers.get('Allow'), 'POST');
+});
+
+test('api.draft-order.checkout is hidden unless the public checkout flag is explicitly enabled', async () => {
+  const action = createPublicVendorDraftOrderCheckoutAction({ env: {} });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createValidBody()),
+  });
+
+  await assert.rejects(
+    () => action({ request }),
+    (error) =>
+      error instanceof Response &&
+      error.status === 404 &&
+      error.headers.get('Cache-Control') === 'no-store' &&
+      error.headers.get('X-Robots-Tag') === 'noindex, nofollow',
+  );
 });
 
 test('api.draft-order.checkout creates a server-trusted payload and ignores shopDomain tampering', async () => {

@@ -3,7 +3,10 @@ import test from "node:test";
 
 import {
   acquireLaunchMonitorRunLock,
+  buildMarketplaceCheckoutPublicationBoundaryMonitorCheck,
+  buildPublicDraftOrderCheckoutSafetyCheck,
   buildReport,
+  buildShopifyProductCatalogSyncHeartbeatCheck,
   collectLaunchMonitorReport,
   evaluateExternalPublicSnapshot,
   evaluateRenderSnapshot,
@@ -62,6 +65,80 @@ test("external probes fail closed for wrong redirects and password pages", () =>
   });
   assert.equal(find(checks, "public_root_redirect").severity, "critical");
   assert.equal(find(checks, "official_storefront").severity, "critical");
+});
+
+test("publication boundary monitor fails closed for exposed or unchecked products", () => {
+  const healthy = buildMarketplaceCheckoutPublicationBoundaryMonitorCheck({
+    active: true,
+    publicationConfigurationReady: true,
+    exposedProductCount: 0,
+    failedProductCount: 0,
+  });
+  assert.equal(healthy.severity, "ok");
+
+  const exposed = buildMarketplaceCheckoutPublicationBoundaryMonitorCheck({
+    active: false,
+    publicationConfigurationReady: true,
+    exposedProductCount: 1,
+    failedProductCount: 0,
+  });
+  assert.equal(exposed.severity, "critical");
+  assert.equal(exposed.errorCode, "governed_product_exposed");
+
+  const unconfigured =
+    buildMarketplaceCheckoutPublicationBoundaryMonitorCheck({
+      active: false,
+      publicationConfigurationReady: false,
+      exposedProductCount: 0,
+      failedProductCount: 0,
+    });
+  assert.equal(unconfigured.severity, "critical");
+  assert.equal(unconfigured.errorCode, "publication_configuration_missing");
+});
+
+test("public Draft Order checkout is critical unless it remains disabled", () => {
+  assert.equal(
+    buildPublicDraftOrderCheckoutSafetyCheck({}).severity,
+    "ok",
+  );
+  assert.equal(
+    buildPublicDraftOrderCheckoutSafetyCheck({
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
+    }).severity,
+    "critical",
+  );
+});
+
+test("catalog sync heartbeat warns at 30 minutes and becomes critical at 3 hours", () => {
+  const healthy = buildShopifyProductCatalogSyncHeartbeatCheck({
+    heartbeat: {
+      available: true,
+      row: { lastSucceededAt: NOW },
+      minutesSinceSuccess: 5,
+      failureUnresolved: false,
+    },
+  });
+  assert.equal(healthy.severity, "ok");
+
+  const warning = buildShopifyProductCatalogSyncHeartbeatCheck({
+    heartbeat: {
+      available: true,
+      row: { lastSucceededAt: NOW },
+      minutesSinceSuccess: 30,
+      failureUnresolved: false,
+    },
+  });
+  assert.equal(warning.severity, "warning");
+
+  const critical = buildShopifyProductCatalogSyncHeartbeatCheck({
+    heartbeat: {
+      available: true,
+      row: { lastSucceededAt: NOW },
+      minutesSinceSuccess: 180,
+      failureUnresolved: false,
+    },
+  });
+  assert.equal(critical.severity, "critical");
 });
 
 test("buildReport prioritizes critical over warning", () => {
@@ -195,12 +272,18 @@ test("failed heavy checks remain critical and are safe to reuse until retry", as
   const report = await collectLaunchMonitorReport({
     renderSnapshot: healthySnapshot(),
     prismaClient: basePrisma(),
-    env: { WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured" },
+    env: {
+      WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
+      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
+    },
     now: NOW,
     runHeavyChecks: true,
     dependencies: {
       inspectWithdrawalOperations: async () => withdrawalOperations(),
       inspectWithdrawalWorkerHeartbeat: async () => launchIntegrity().heartbeat,
+      inspectShopifyProductCatalogSyncHeartbeat: async () =>
+        catalogSyncHeartbeat(),
+      getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),
       loadLaunchIntegritySellerRows: async () => {
         throw Object.assign(new Error("query failed"), { code: "P1001" });
       },
@@ -438,6 +521,7 @@ async function collectReport({
     env: {
       WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
       MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
     },
     now: NOW,
     startedAt: new Date(NOW.getTime() - 60 * 60 * 1000),
@@ -446,6 +530,9 @@ async function collectReport({
     dependencies: {
       inspectWithdrawalOperations: async () => withdrawal,
       inspectWithdrawalWorkerHeartbeat: async () => integrity.heartbeat,
+      inspectShopifyProductCatalogSyncHeartbeat: async () =>
+        catalogSyncHeartbeat(),
+      getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),
       loadLaunchIntegritySellerRows: async () => [],
       inspectLaunchIntegrity: async () => integrity,
     },
@@ -515,6 +602,28 @@ function launchIntegrity(overrides = {}) {
     sellerOrderShadow: { available: true, unresolvedCount: 0 },
     ledgerRepairs: { available: true, productionCount: 0, testCount: 0 },
     testStores: { count: 2, pendingPayoutRunCount: 0 },
+    ...overrides,
+  };
+}
+
+function catalogSyncHeartbeat(overrides = {}) {
+  return {
+    available: true,
+    row: { lastSucceededAt: NOW },
+    minutesSinceSuccess: 0,
+    stale: false,
+    failureUnresolved: false,
+    ...overrides,
+  };
+}
+
+function checkoutGateStatus(overrides = {}) {
+  return {
+    exists: true,
+    active: true,
+    publicationConfigurationReady: true,
+    exposedProductCount: 0,
+    failedProductCount: 0,
     ...overrides,
   };
 }

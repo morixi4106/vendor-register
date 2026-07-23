@@ -6,6 +6,8 @@ import {
   createVendorStorefrontAction,
 } from '../../app/services/vendorStorefront.server.js';
 
+process.env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED = 'true';
+
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
 
@@ -155,6 +157,25 @@ test('vendors.$handle buildDraftOrderCheckoutInputFromStorefrontForm keeps vendo
     { key: 'seller_country', value: 'JP' },
     { key: 'seller_of_record', value: 'marketplace_seller' },
   ]);
+});
+
+test('vendors.$handle checkout action is hidden unless explicitly enabled', async () => {
+  const action = createVendorStorefrontAction({ env: {} });
+  const request = new Request('http://localhost/vendors/amber-cellar', {
+    method: 'POST',
+  });
+
+  await assert.rejects(
+    () =>
+      action({
+        request,
+        params: { handle: 'amber-cellar' },
+      }),
+    (error) =>
+      error instanceof Response &&
+      error.status === 404 &&
+      error.headers.get('Cache-Control') === 'no-store',
+  );
 });
 
 test('vendors.$handle action redirects to invoiceUrl on success', async () => {

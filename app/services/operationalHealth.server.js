@@ -1,6 +1,8 @@
 import prisma from "../db.server.js";
 
 export const WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY = "withdrawal_email_outbox";
+export const SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY =
+  "shopify_product_catalog_sync";
 
 export async function recordOperationalHeartbeat(
   { key, status, errorCode = null, metadataJson = null },

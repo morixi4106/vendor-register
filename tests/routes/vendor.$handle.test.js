@@ -6,6 +6,8 @@ import {
   createVendorStorefrontAction,
 } from '../../app/services/vendorStorefront.server.js';
 
+process.env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED = 'true';
+
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
 const UNAVAILABLE_PRODUCT_MESSAGE =

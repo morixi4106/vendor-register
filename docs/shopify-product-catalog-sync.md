@@ -14,6 +14,13 @@ SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN=<random secret>
 
 Do not reuse a Shopify, database, or email API credential.
 
+Keep the public Draft Order checkout disabled for the current Shopify standard
+checkout release:
+
+```text
+PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED=false
+```
+
 ## Run a catalog reconciliation
 
 Send an authenticated POST request to:
@@ -33,3 +40,23 @@ shipping rate, so checkout fails closed instead of creating an unsettled order.
 
 The Shopify admin page `/app/shopify-product-sync` remains available for visual
 review and manual assignment of unresolved products.
+
+## Scheduled reconciliation and monitoring
+
+`.github/workflows/shopify-product-catalog-sync.yml` runs the same authenticated
+reconciliation every 15 minutes. Add the Render token to the GitHub repository
+secret `SHOPIFY_PRODUCT_CATALOG_SYNC_TOKEN`. The workflow uses the existing
+`LAUNCH_MONITOR_URL` repository variable as the application base URL.
+
+Successful and failed runs are stored in `OperationalHeartbeat`. The launch
+monitor warns after 30 minutes without a successful run and becomes critical
+after 180 minutes. These defaults can be changed with:
+
+```text
+SHOPIFY_PRODUCT_CATALOG_SYNC_WARNING_MINUTES=30
+SHOPIFY_PRODUCT_CATALOG_SYNC_CRITICAL_MINUTES=180
+```
+
+The production readiness and launch monitor checks also fail if the public Draft
+Order endpoint is enabled, or if governed products remain attached to a Shopify
+publication.

@@ -88,6 +88,22 @@ const PRODUCT_POLICY_QUERY = `#graphql
           hasNextPage
         }
       }
+      uncatalogedPublications: resourcePublicationsV2(
+        first: 100
+        onlyPublished: false
+        catalogType: NONE
+      ) {
+        nodes {
+          isPublished
+          publishDate
+          publication {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
     }
   }
 `;
@@ -133,6 +149,22 @@ const PUBLISHABLE_PUBLICATION_STATE_QUERY = `#graphql
           first: 100
           onlyPublished: false
           catalogType: COMPANY_LOCATION
+        ) {
+          nodes {
+            isPublished
+            publishDate
+            publication {
+              id
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+        uncatalogedPublications: resourcePublicationsV2(
+          first: 100
+          onlyPublished: false
+          catalogType: NONE
         ) {
           nodes {
             isPublished
@@ -312,6 +344,7 @@ function getPublicationIds(state) {
     state?.appPublications,
     state?.marketPublications,
     state?.companyLocationPublications,
+    state?.uncatalogedPublications,
     // Backward-compatible input for tests and older serialized diagnostics.
     state?.resourcePublicationsV2,
   ].filter(Boolean);
