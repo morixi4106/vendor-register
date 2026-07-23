@@ -3,7 +3,11 @@ import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 
 import prisma from "../db.server";
-import { createVendorStorefrontAction } from "../services/vendorStorefront.server";
+import {
+  createAdminVendorPreviewLoader,
+  createDisabledVendorPreviewAction,
+} from "../services/vendorPreviewAccess.server";
+import { authenticate } from "../shopify.server";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 
 const PREVIEW_HEADERS = {
@@ -106,7 +110,7 @@ function getStatusTone(product) {
   return "info";
 }
 
-export const loader = async ({ params, request }) => {
+const loadVendorPreview = async ({ params, request }) => {
   const handle = normalizeHandle(params.handle);
   const url = new URL(request.url);
   const deliveryCountry = normalizeCountry(
@@ -214,7 +218,12 @@ export const loader = async ({ params, request }) => {
   );
 };
 
-export const action = createVendorStorefrontAction();
+export const loader = createAdminVendorPreviewLoader({
+  authenticateAdminImpl: (request) => authenticate.admin(request),
+  loadPreviewImpl: loadVendorPreview,
+});
+
+export const action = createDisabledVendorPreviewAction();
 
 function Metric({ label, value }) {
   return (
