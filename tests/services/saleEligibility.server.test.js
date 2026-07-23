@@ -296,6 +296,71 @@ test("projection persistence appends the exact current revision atomically", asy
   assert.equal(createdRevisions[0].expiresAt.getTime(), expiresAt.getTime());
 });
 
+test("projection persistence reuses materially identical evidence while it is fresh", async () => {
+  const evaluatedAt = new Date("2026-07-24T02:00:00.000Z");
+  const originalEvaluatedAt = new Date("2026-07-24T00:00:00.000Z");
+  const originalExpiresAt = new Date("2026-07-25T02:00:00.000Z");
+  const current = {
+    id: "current-1",
+    shopDomain: "example.myshopify.com",
+    productId: "product-1",
+    vendorStoreId: "store-1",
+    destinationCountry: "",
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    status: "ELIGIBLE",
+    reasonCodes: [],
+    requirementVersions: [],
+    decisionIds: [],
+    policyVersion: SALE_ELIGIBILITY_POLICY_VERSION,
+    inputHash: "a".repeat(64),
+    projectionRevision: 8,
+    evaluatedAt: originalEvaluatedAt,
+    expiresAt: originalExpiresAt,
+  };
+  const prismaClient = {
+    async $transaction(callback) {
+      return callback(this);
+    },
+    saleEligibilityProjection: {
+      async findUnique() {
+        return current;
+      },
+      async upsert() {
+        throw new Error("an unchanged fresh projection must not be rewritten");
+      },
+    },
+    saleEligibilityProjectionRevision: {
+      async create() {
+        throw new Error("an unchanged fresh projection must not append history");
+      },
+    },
+  };
+
+  const result = await persistSaleEligibilityProjection(
+    {
+      productId: current.productId,
+      shopDomain: current.shopDomain,
+      vendorStoreId: current.vendorStoreId,
+      destinationCountry: current.destinationCountry,
+      salesChannel: current.salesChannel,
+      status: current.status,
+      reasonCodes: current.reasonCodes,
+      requirementVersions: current.requirementVersions,
+      decisionIds: current.decisionIds,
+      policyVersion: current.policyVersion,
+      inputHash: current.inputHash,
+      evaluatedAt: evaluatedAt.toISOString(),
+      expiresAt: new Date("2026-07-25T04:00:00.000Z").toISOString(),
+    },
+    { prismaClient, evaluatedAt },
+  );
+
+  assert.equal(result.projectionReused, true);
+  assert.equal(result.projectionRevision, 8);
+  assert.equal(result.evaluatedAt, originalEvaluatedAt.toISOString());
+  assert.equal(result.expiresAt, originalExpiresAt.toISOString());
+});
+
 test("paid inspection uses the revision valid at order time instead of the current row", async () => {
   const product = platformProduct({
     updatedAt: new Date("2026-07-24T02:00:00.000Z"),

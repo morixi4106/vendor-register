@@ -17,6 +17,9 @@ export const SALE_ELIGIBILITY_POLICY_VERSION = "sale-eligibility-2026-07-v1";
 export const SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION = 2;
 export const SALE_ELIGIBILITY_PROJECTION_TTL_HOURS =
   OPERATIONAL_TIMING_DEFAULTS.projectionTtlMinutes / 60;
+const SALE_ELIGIBILITY_PROJECTION_REFRESH_LEAD_MS =
+  OPERATIONAL_TIMING_DEFAULTS.catalogSyncCriticalMinutes * 60 * 1000;
+const SALE_ELIGIBILITY_PROJECTION_TRANSACTION_ATTEMPTS = 3;
 
 export const SALE_ELIGIBILITY_STATUS = Object.freeze({
   LEGACY_REVIEW_REQUIRED: "LEGACY_REVIEW_REQUIRED",
@@ -92,6 +95,65 @@ function buildProjectionExpiry(evaluatedAt) {
     evaluatedAt.getTime() +
       OPERATIONAL_TIMING_DEFAULTS.projectionTtlMinutes * 60 * 1000,
   );
+}
+
+function projectionArraysEqual(left, right) {
+  return JSON.stringify(asArray(left)) === JSON.stringify(asArray(right));
+}
+
+function canReuseSaleEligibilityProjection(
+  current,
+  result,
+  evaluatedAt,
+  { forceRefresh = false } = {},
+) {
+  if (!current || forceRefresh) return false;
+  const currentExpiresAt = toValidDate(current.expiresAt);
+  if (
+    !currentExpiresAt ||
+    currentExpiresAt.getTime() <=
+      evaluatedAt.getTime() + SALE_ELIGIBILITY_PROJECTION_REFRESH_LEAD_MS
+  ) {
+    return false;
+  }
+
+  return (
+    String(current.vendorStoreId || "") ===
+      String(result.vendorStoreId || "") &&
+    String(current.status || "") === String(result.status || "") &&
+    String(current.policyVersion || "") ===
+      String(result.policyVersion || "") &&
+    String(current.inputHash || "") === String(result.inputHash || "") &&
+    projectionArraysEqual(current.reasonCodes, result.reasonCodes) &&
+    projectionArraysEqual(
+      current.requirementVersions,
+      result.requirementVersions,
+    ) &&
+    projectionArraysEqual(current.decisionIds, result.decisionIds)
+  );
+}
+
+async function runProjectionTransaction(prismaClient, callback) {
+  for (
+    let attempt = 1;
+    attempt <= SALE_ELIGIBILITY_PROJECTION_TRANSACTION_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await prismaClient.$transaction(callback, {
+        isolationLevel: "Serializable",
+      });
+    } catch (error) {
+      if (
+        error?.code !== "P2034" ||
+        attempt === SALE_ELIGIBILITY_PROJECTION_TRANSACTION_ATTEMPTS
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error("Sale eligibility projection transaction retry exhausted.");
 }
 
 function asArray(value) {
@@ -329,6 +391,7 @@ export async function persistSaleEligibilityProjection(
   {
     prismaClient = prisma,
     evaluatedAt = new Date(result?.evaluatedAt || Date.now()),
+    forceRefresh = false,
   } = {},
 ) {
   if (
@@ -343,15 +406,46 @@ export async function persistSaleEligibilityProjection(
     result.expiresAt || buildProjectionExpiry(evaluatedAt),
   );
   const persist = async (tx) => {
-    const projection = await tx.saleEligibilityProjection.upsert({
-      where: {
-        shopDomain_productId_destinationCountry_salesChannel: {
-          shopDomain: result.shopDomain,
-          productId: result.productId,
-          destinationCountry: result.destinationCountry || "",
-          salesChannel: result.salesChannel,
-        },
+    const uniqueWhere = {
+      shopDomain_productId_destinationCountry_salesChannel: {
+        shopDomain: result.shopDomain,
+        productId: result.productId,
+        destinationCountry: result.destinationCountry || "",
+        salesChannel: result.salesChannel,
       },
+    };
+    const current = tx.saleEligibilityProjection.findUnique
+      ? await tx.saleEligibilityProjection.findUnique({
+          where: uniqueWhere,
+          select: {
+            id: true,
+            shopDomain: true,
+            productId: true,
+            vendorStoreId: true,
+            destinationCountry: true,
+            salesChannel: true,
+            status: true,
+            reasonCodes: true,
+            requirementVersions: true,
+            decisionIds: true,
+            policyVersion: true,
+            inputHash: true,
+            projectionRevision: true,
+            evaluatedAt: true,
+            expiresAt: true,
+          },
+        })
+      : null;
+    if (
+      canReuseSaleEligibilityProjection(current, result, evaluatedAt, {
+        forceRefresh,
+      })
+    ) {
+      return { projection: current, reused: true };
+    }
+
+    const projection = await tx.saleEligibilityProjection.upsert({
+      where: uniqueWhere,
       create: {
         shopDomain: result.shopDomain,
         productId: result.productId,
@@ -402,18 +496,24 @@ export async function persistSaleEligibilityProjection(
         },
       });
     }
-    return projection;
+    return { projection, reused: false };
   };
-  const projection =
+  const outcome =
     prismaClient.saleEligibilityProjectionRevision?.create &&
     prismaClient.$transaction
-      ? await prismaClient.$transaction(persist)
+      ? await runProjectionTransaction(prismaClient, persist)
       : await persist(prismaClient);
+  const projection = outcome.projection;
+  const persistedEvaluatedAt =
+    toValidDate(projection.evaluatedAt) || evaluatedAt;
+  const persistedExpiresAt = toValidDate(projection.expiresAt) || expiresAt;
 
   return {
     ...result,
     projectionRevision: projection.projectionRevision,
-    expiresAt: projection.expiresAt.toISOString(),
+    evaluatedAt: persistedEvaluatedAt.toISOString(),
+    expiresAt: persistedExpiresAt.toISOString(),
+    projectionReused: outcome.reused,
   };
 }
 

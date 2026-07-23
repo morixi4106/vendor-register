@@ -20,6 +20,23 @@ function isShopifyAuthenticationFailureMessage(message = "") {
   );
 }
 
+function isShopifyThrottleError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bthrottl(?:e|ed|ing)\b/i.test(message);
+}
+
+function defaultSleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function buildThrottleRetryDelay(attempt, randomValue) {
+  const baseDelay = 200 * 2 ** attempt;
+  const jitter = Math.floor(
+    Math.max(0, Math.min(1, Number(randomValue) || 0)) * baseDelay,
+  );
+  return baseDelay + jitter;
+}
+
 async function loadOfflineAdminContext(shopDomain) {
   const { unauthenticated } = await import("../shopify.server.js");
   return unauthenticated.admin(shopDomain);
@@ -132,6 +149,9 @@ export async function getOfflineSessionForShopDomain(
 
 export function createShopifyGraphQLWithOfflineSession({
   getOfflineAdminContextForShopDomainImpl = getOfflineAdminContextForShopDomain,
+  sleepImpl = defaultSleep,
+  randomImpl = Math.random,
+  maxThrottleRetries = 2,
 } = {}) {
   return async function shopifyGraphQLWithOfflineSessionImpl({
     shopDomain,
@@ -140,36 +160,49 @@ export function createShopifyGraphQLWithOfflineSession({
     variables = {},
   }) {
     const context = await getOfflineAdminContextForShopDomainImpl(shopDomain);
+    const throttleRetryLimit = Math.max(
+      0,
+      Math.min(5, Math.floor(Number(maxThrottleRetries) || 0)),
+    );
 
-    try {
-      const response = await context.admin.graphql(query, {
-        apiVersion,
-        variables,
-      });
-      const payload = await response.json();
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const response = await context.admin.graphql(query, {
+          apiVersion,
+          variables,
+        });
+        const payload = await response.json();
 
-      if (payload.errors?.length) {
-        throw new Error(`Shopify GraphQL errors: ${JSON.stringify(payload.errors)}`);
+        if (payload.errors?.length) {
+          throw new Error(
+            `Shopify GraphQL errors: ${JSON.stringify(payload.errors)}`,
+          );
+        }
+
+        return {
+          data: payload.data,
+          shopDomain: context.shopDomain,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        if (isMissingOfflineSessionMessage(message)) {
+          throw createMissingOfflineSessionError(context.shopDomain);
+        }
+
+        if (isShopifyAuthenticationFailureMessage(message)) {
+          throw new Error(
+            `Shopify Admin authentication failed for shop ${context.shopDomain}: ${message}`,
+          );
+        }
+
+        if (isShopifyThrottleError(error) && attempt < throttleRetryLimit) {
+          await sleepImpl(buildThrottleRetryDelay(attempt, randomImpl()));
+          continue;
+        }
+
+        throw error;
       }
-
-      return {
-        data: payload.data,
-        shopDomain: context.shopDomain,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      if (isMissingOfflineSessionMessage(message)) {
-        throw createMissingOfflineSessionError(context.shopDomain);
-      }
-
-      if (isShopifyAuthenticationFailureMessage(message)) {
-        throw new Error(
-          `Shopify Admin authentication failed for shop ${context.shopDomain}: ${message}`,
-        );
-      }
-
-      throw error;
     }
   };
 }

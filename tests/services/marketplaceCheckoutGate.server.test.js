@@ -661,6 +661,132 @@ test("platform product sync persists and verifies a versioned eligibility projec
   assert.equal(projectionInput.update.projectionRevision.increment, 1);
 });
 
+test("product webhooks reuse same-day projections and refresh stale daily proof", async () => {
+  const product = createProduct({
+    vendorStoreId: "platform-store",
+    vendorStore: {
+      id: "platform-store",
+      isPlatformStore: true,
+      isTestStore: false,
+    },
+    complianceProfile: {
+      legalSellerType: "PLATFORM",
+      approvalStatus: "PENDING",
+    },
+    complianceEvidence: [],
+    complianceDecisions: [],
+  });
+  let currentProjection = null;
+  let storedProjection = null;
+  let upsertCount = 0;
+  let revisionCount = 0;
+  let mutationCount = 0;
+  const prismaClient = {
+    ...createPrismaMock({ products: [product] }),
+    async $transaction(callback) {
+      return callback(this);
+    },
+    saleEligibilityProjection: {
+      async findUnique() {
+        return currentProjection;
+      },
+      async upsert(args) {
+        upsertCount += 1;
+        currentProjection = {
+          id: "projection-1",
+          ...args.create,
+          projectionRevision:
+            Number(currentProjection?.projectionRevision || 0) + 1,
+        };
+        return currentProjection;
+      },
+    },
+    saleEligibilityProjectionRevision: {
+      async create(args) {
+        revisionCount += 1;
+        return { id: `revision-${revisionCount}`, ...args.data };
+      },
+    },
+  };
+  const graphQL = async ({ query, variables }) => {
+    if (query.includes("query MarketplaceCheckoutProductPolicy")) {
+      return {
+        data: {
+          shop: { ianaTimezone: "Asia/Tokyo" },
+          product: {
+            ...productState(
+              product,
+              [],
+              MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT,
+            ),
+            saleEligibilityProjection: storedProjection
+              ? { value: storedProjection, compareDigest: "projection-digest" }
+              : null,
+          },
+        },
+      };
+    }
+    if (query.includes("SetMarketplaceCheckoutProductPolicy")) {
+      mutationCount += 1;
+      const projection = variables.metafields.find(
+        (entry) => entry.key === "sale_eligibility_projection",
+      );
+      storedProjection = projection.value;
+      return {
+        data: {
+          metafieldsSet: {
+            metafields: variables.metafields.map((entry, index) => ({
+              id: `gid://shopify/Metafield/${index + 1}`,
+              key: entry.key,
+              value: entry.value,
+            })),
+            userErrors: [],
+          },
+        },
+      };
+    }
+    throw new Error("Unexpected GraphQL operation");
+  };
+  const options = {
+    prismaClient,
+    graphQL,
+    env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+    isPlatformCheckoutHoldActiveImpl: async () => false,
+  };
+
+  const first = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    options,
+  );
+  const second = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    options,
+  );
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.saleEligibility.projectionReused, true);
+  assert.equal(upsertCount, 1);
+  assert.equal(revisionCount, 1);
+  assert.equal(mutationCount, 1);
+
+  const staleProjection = JSON.parse(storedProjection);
+  staleProjection.d = "2000-01-01";
+  staleProjection.e = "2000-01-02";
+  storedProjection = JSON.stringify(staleProjection);
+
+  const refreshed = await syncMarketplaceCheckoutPolicyForProduct(
+    { product },
+    options,
+  );
+
+  assert.equal(refreshed.ok, true);
+  assert.equal(refreshed.saleEligibility.projectionReused, false);
+  assert.equal(upsertCount, 2);
+  assert.equal(revisionCount, 2);
+  assert.equal(mutationCount, 2);
+});
+
 test("a stale eligible projection cannot overwrite a newer blocked revision", async () => {
   const product = createProduct({
     vendorStoreId: "platform-store",

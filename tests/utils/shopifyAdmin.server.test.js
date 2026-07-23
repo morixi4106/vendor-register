@@ -66,6 +66,74 @@ test('shopifyGraphQLWithOfflineSession gets a background admin client from the r
   });
 });
 
+test('shopifyGraphQLWithOfflineSession briefly retries Shopify throttling', async () => {
+  let attempts = 0;
+  const delays = [];
+  const shopifyGraphQLWithOfflineSession = createShopifyGraphQLWithOfflineSession({
+    getOfflineAdminContextForShopDomainImpl: async (shopDomain) => ({
+      shopDomain,
+      session: { accessToken: 'offline-token' },
+      admin: {
+        graphql: async () => {
+          attempts += 1;
+          if (attempts < 3) {
+            throw new Error('GraphqlQueryError: Throttled');
+          }
+          return new Response(JSON.stringify({ data: { shop: { id: 'shop-1' } } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        },
+      },
+    }),
+    sleepImpl: async (milliseconds) => {
+      delays.push(milliseconds);
+    },
+    randomImpl: () => 0.5,
+    maxThrottleRetries: 2,
+  });
+
+  const result = await shopifyGraphQLWithOfflineSession({
+    shopDomain: 'b301ze-1a.myshopify.com',
+    apiVersion: '2026-04',
+    query: 'query ReadShop { shop { id } }',
+  });
+
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [300, 600]);
+  assert.equal(result.data.shop.id, 'shop-1');
+});
+
+test('shopifyGraphQLWithOfflineSession does not retry non-throttle failures', async () => {
+  let attempts = 0;
+  const shopifyGraphQLWithOfflineSession = createShopifyGraphQLWithOfflineSession({
+    getOfflineAdminContextForShopDomainImpl: async (shopDomain) => ({
+      shopDomain,
+      session: { accessToken: 'offline-token' },
+      admin: {
+        graphql: async () => {
+          attempts += 1;
+          throw new Error('Shopify GraphQL errors: invalid query');
+        },
+      },
+    }),
+    sleepImpl: async () => {
+      throw new Error('non-throttle failures must not sleep');
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      shopifyGraphQLWithOfflineSession({
+        shopDomain: 'b301ze-1a.myshopify.com',
+        apiVersion: '2026-04',
+        query: 'query Broken { broken }',
+      }),
+    /invalid query/,
+  );
+  assert.equal(attempts, 1);
+});
+
 test('getOfflineAdminContextForShopDomain reports the missing offline session for the requested shop', async () => {
   const getOfflineAdminContextForShopDomain = createGetOfflineAdminContextForShopDomain({
     resolveShopDomainImpl: async () => 'b301ze-1a.myshopify.com',

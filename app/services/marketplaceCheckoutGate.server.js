@@ -846,6 +846,26 @@ function addCalendarDays(dateValue, days) {
   return date.toISOString().slice(0, 10);
 }
 
+function saleEligibilityProjectionNeedsDailyRefresh({
+  value,
+  evaluatedAt,
+  shopTimeZone,
+}) {
+  const expectedDate = formatDateInTimeZone(evaluatedAt, shopTimeZone);
+  if (!expectedDate) return true;
+
+  try {
+    const projection = JSON.parse(String(value || ""));
+    const evaluatedOn =
+      Number(projection?.v) === SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION
+        ? projection?.d
+        : projection?.evaluatedOn;
+    return String(evaluatedOn || "") !== expectedDate;
+  } catch {
+    return true;
+  }
+}
+
 export function buildSaleEligibilityProjectionMetafield({
   ownerId,
   routingClass,
@@ -999,6 +1019,14 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
     prismaClient,
   });
   const evaluatedAt = new Date();
+  const policyFieldAvailable = Object.prototype.hasOwnProperty.call(
+    state,
+    "metafield",
+  );
+  const projectionFieldAvailable = Object.prototype.hasOwnProperty.call(
+    state,
+    "saleEligibilityProjection",
+  );
   const saleEligibilitySnapshot = evaluateSaleEligibilitySnapshot({
     product,
     shopDomain,
@@ -1013,7 +1041,17 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
   });
   const persistedProjection = await persistSaleEligibilityProjection(
     saleEligibilitySnapshot,
-    { prismaClient, evaluatedAt },
+    {
+      prismaClient,
+      evaluatedAt,
+      forceRefresh:
+        projectionFieldAvailable &&
+        saleEligibilityProjectionNeedsDailyRefresh({
+          value: state.saleEligibilityProjection?.value,
+          evaluatedAt,
+          shopTimeZone: state.shopTimeZone,
+        }),
+    },
   );
   const saleEligibility = persistedProjection || {
     ...saleEligibilitySnapshot,
@@ -1027,14 +1065,6 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
         ? MARKETPLACE_CHECKOUT_POLICY.GOVERNED
         : resolveMarketplaceCheckoutPolicy(product);
   const currentPolicy = normalizeText(state.metafield?.value);
-  const policyFieldAvailable = Object.prototype.hasOwnProperty.call(
-    state,
-    "metafield",
-  );
-  const projectionFieldAvailable = Object.prototype.hasOwnProperty.call(
-    state,
-    "saleEligibilityProjection",
-  );
   const projectionMetafield = buildSaleEligibilityProjectionMetafield({
     ownerId: shopifyProductId,
     routingClass: expectedPolicy,
