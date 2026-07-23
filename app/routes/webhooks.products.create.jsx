@@ -1,11 +1,7 @@
 import { authenticate } from "../shopify.server";
 import { Resend } from "resend";
-import { syncShopifyProductPayload } from "../services/shopifyProductSync.server.js";
 import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
-import {
-  enforceUnresolvedShopifyProductPublicationBoundary,
-  syncMarketplaceCheckoutPolicyForProduct,
-} from "../services/marketplaceCheckoutGate.server.js";
+import { processShopifyProductWebhook } from "../services/shopifyProductWebhook.server.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -14,24 +10,17 @@ export const action = async ({ request }) => {
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  const syncResult = await syncShopifyProductPayload(payload, {
-    shopDomain: shop,
+  const syncResult = await processShopifyProductWebhook({
+    payload,
+    topic,
+    shop,
   });
 
-  if (!syncResult.ok) {
+  if (!syncResult.ok && !syncResult.deferred) {
     console.warn("Shopify product requires store assignment:", {
       shop,
       productId: payload?.admin_graphql_api_id || payload?.id,
-      reason: syncResult.reason,
-    });
-    await enforceUnresolvedShopifyProductPublicationBoundary({
-      shopDomain: shop,
-      shopifyProductId: payload?.admin_graphql_api_id || payload?.id,
-    });
-  } else {
-    await syncMarketplaceCheckoutPolicyForProduct({
-      localProductId: syncResult.product.id,
-      shopDomain: shop,
+      reason: syncResult.syncResult?.reason || syncResult.reason,
     });
   }
 

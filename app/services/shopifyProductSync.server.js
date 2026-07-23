@@ -352,6 +352,58 @@ async function recordSyncIssue({
   });
 }
 
+export async function recordShopifyProductPolicySyncFailure(
+  {
+    payload,
+    shopDomain: rawShopDomain,
+    localProductId,
+    vendorStoreId,
+    reason = "marketplace_checkout_policy_sync_failed",
+  },
+  { prismaClient = prisma } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  const snapshot = createShopifyProductSnapshot(payload);
+
+  if (!shopDomain || !snapshot.id) {
+    throw new Error("invalid_shopify_product_identity");
+  }
+
+  return prismaClient.shopifyProductSyncIssue.upsert({
+    where: {
+      shopDomain_shopifyProductId: {
+        shopDomain,
+        shopifyProductId: snapshot.id,
+      },
+    },
+    create: {
+      shopDomain,
+      shopifyProductId: snapshot.id,
+      productTitle: snapshot.title,
+      vendorLabel: snapshot.vendor,
+      status: UNRESOLVED_ISSUE_STATUS,
+      reason,
+      candidateStoreIdsJson: [],
+      payloadJson: payload,
+      resolvedVendorStoreId: vendorStoreId || null,
+      localProductId: localProductId || null,
+      lastAttemptAt: new Date(),
+    },
+    update: {
+      productTitle: snapshot.title,
+      vendorLabel: snapshot.vendor,
+      status: UNRESOLVED_ISSUE_STATUS,
+      reason,
+      candidateStoreIdsJson: [],
+      payloadJson: payload,
+      resolvedVendorStoreId: vendorStoreId || null,
+      localProductId: localProductId || null,
+      resolvedAt: null,
+      lastAttemptAt: new Date(),
+    },
+  });
+}
+
 async function resolveSyncIssue({
   prismaClient,
   shopDomain,
