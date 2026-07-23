@@ -16,7 +16,9 @@ test("catalog sync agent sends one authenticated bounded request", async () => {
       request = { url: String(url), options };
       return jsonResponse({
         ok: true,
-        result: { scanned: 10, updated: 2, unresolved: 0 },
+        scanned: 10,
+        updated: 2,
+        unresolved: 0,
         checkoutPolicies: { failedCount: 0 },
       });
     },
@@ -56,7 +58,9 @@ test("catalog sync agent fails when synchronization is incomplete", async () => 
       fetchImpl: async () =>
         jsonResponse({
           ok: true,
-          result: { scanned: 10, updated: 0, unresolved: 1 },
+          scanned: 10,
+          updated: 0,
+          unresolved: 1,
           checkoutPolicies: { failedCount: 0 },
         }),
     }),

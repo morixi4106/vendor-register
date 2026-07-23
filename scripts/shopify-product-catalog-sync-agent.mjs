@@ -37,15 +37,15 @@ export async function runShopifyProductCatalogSyncAgent({
     throw new Error("catalog_sync_request_failed");
   }
 
-  const unresolved = toCount(payload?.result?.unresolved);
+  const unresolved = toCount(payload?.unresolved);
   const failed = toCount(payload?.checkoutPolicies?.failedCount);
   if (unresolved > 0 || failed > 0) {
     throw new Error("catalog_sync_incomplete");
   }
 
   return {
-    scanned: toCount(payload?.result?.scanned),
-    updated: toCount(payload?.result?.updated),
+    scanned: toCount(payload?.scanned),
+    updated: toCount(payload?.updated),
     unresolved,
     failed,
   };
