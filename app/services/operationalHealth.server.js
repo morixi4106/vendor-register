@@ -4,6 +4,25 @@ export const WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY = "withdrawal_email_outbox";
 export const SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY =
   "shopify_product_catalog_sync";
 
+export function evaluateShopifyProductCatalogSyncRun({
+  result,
+  checkoutPolicies,
+} = {}) {
+  const unresolved = Number(result?.unresolved || 0);
+  const checkoutPolicyFailedCount = Number(checkoutPolicies?.failedCount || 0);
+  const complete =
+    unresolved === 0 &&
+    checkoutPolicies?.ok === true &&
+    checkoutPolicyFailedCount === 0;
+
+  return {
+    complete,
+    errorCode: complete ? null : "shopify_product_catalog_sync_incomplete",
+    unresolved,
+    checkoutPolicyFailedCount,
+  };
+}
+
 export async function recordOperationalHeartbeat(
   { key, status, errorCode = null, metadataJson = null },
   { prismaClient = prisma, now = new Date() } = {},

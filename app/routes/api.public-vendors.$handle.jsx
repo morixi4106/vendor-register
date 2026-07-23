@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { isPublicDraftOrderCheckoutEnabled } from "../services/vendorStorefront.server.js";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 
 const PUBLIC_HEADERS = {
@@ -26,13 +27,21 @@ function normalizeHandle(value) {
 export const loader = async ({ params, request }) => {
   const handle = normalizeHandle(params.handle);
   const url = new URL(request.url);
-  const deliveryCountry = String(url.searchParams.get("deliveryCountry") || "").trim();
+  const deliveryCountry = String(
+    url.searchParams.get("deliveryCountry") || "",
+  ).trim();
   const filterByDeliveryEligibility =
     url.searchParams.get("filterEligible") === "1" ||
     url.searchParams.get("filterByDeliveryEligibility") === "1";
+  const draftOrderCheckoutEnabled = isPublicDraftOrderCheckoutEnabled(
+    process.env,
+  );
 
   if (!handle) {
-    return jsonResponse({ ok: false, error: "Vendor handle is required." }, { status: 400 });
+    return jsonResponse(
+      { ok: false, error: "Vendor handle is required." },
+      { status: 400 },
+    );
   }
 
   const vendor = await prisma.vendor.findUnique({
@@ -51,6 +60,7 @@ export const loader = async ({ params, request }) => {
           address: true,
           note: true,
           isTestStore: true,
+          isPlatformStore: true,
         },
       },
       seller: {
@@ -65,9 +75,13 @@ export const loader = async ({ params, request }) => {
     !vendor ||
     vendor.status !== "active" ||
     !vendor.vendorStore ||
-    vendor.vendorStore.isTestStore
+    vendor.vendorStore.isTestStore ||
+    (!vendor.vendorStore.isPlatformStore && !draftOrderCheckoutEnabled)
   ) {
-    return jsonResponse({ ok: false, error: "Vendor was not found." }, { status: 404 });
+    return jsonResponse(
+      { ok: false, error: "Vendor was not found." },
+      { status: 404 },
+    );
   }
 
   const products = await prisma.product.findMany({
@@ -98,10 +112,14 @@ export const loader = async ({ params, request }) => {
     products,
     deliveryCountry,
     filterByDeliveryEligibility,
+    draftOrderCheckoutEnabled,
   });
 
   if (!storefront) {
-    return jsonResponse({ ok: false, error: "Vendor was not found." }, { status: 404 });
+    return jsonResponse(
+      { ok: false, error: "Vendor was not found." },
+      { status: 404 },
+    );
   }
 
   return jsonResponse({
@@ -118,5 +136,8 @@ export const action = async ({ request }) => {
     });
   }
 
-  return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
+  return jsonResponse(
+    { ok: false, error: "Method not allowed." },
+    { status: 405 },
+  );
 };

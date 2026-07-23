@@ -53,7 +53,9 @@ function normalizeHandle(value) {
 }
 
 function normalizeCountry(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function formatCount(value) {
@@ -107,7 +109,9 @@ function getStatusTone(product) {
 export const loader = async ({ params, request }) => {
   const handle = normalizeHandle(params.handle);
   const url = new URL(request.url);
-  const deliveryCountry = normalizeCountry(url.searchParams.get("deliveryCountry"));
+  const deliveryCountry = normalizeCountry(
+    url.searchParams.get("deliveryCountry"),
+  );
   const filterEligible = url.searchParams.get("filterEligible") === "1";
 
   if (!handle) {
@@ -171,6 +175,7 @@ export const loader = async ({ params, request }) => {
     products,
     deliveryCountry,
     filterByDeliveryEligibility: false,
+    draftOrderCheckoutEnabled: true,
   });
 
   if (!storefront) {
@@ -231,9 +236,7 @@ function StatusBadge({ product }) {
   }
 
   return (
-    <span className={`preview-status preview-status--${tone}`}>
-      {label}
-    </span>
+    <span className={`preview-status preview-status--${tone}`}>{label}</span>
   );
 }
 
@@ -376,7 +379,8 @@ export default function PublicVendorPreviewPage() {
   const [useSalesCredit, setUseSalesCredit] = useState(true);
   const [salesCreditAmount, setSalesCreditAmount] = useState("100");
   const activeRestrictionProduct =
-    data.products.find((product) => product.id === restrictionProductId) || null;
+    data.products.find((product) => product.id === restrictionProductId) ||
+    null;
   const checkoutProduct =
     data.products.find((product) => product.id === checkoutProductId) ||
     data.products[0] ||
@@ -938,7 +942,9 @@ export default function PublicVendorPreviewPage() {
                 <span className="preview-chip">{data.store.category}</span>
               ) : null}
               {hasDeliveryCountry ? (
-                <span className="preview-chip">配送先: {data.deliveryCountry}</span>
+                <span className="preview-chip">
+                  配送先: {data.deliveryCountry}
+                </span>
               ) : (
                 <span className="preview-chip">配送先未選択</span>
               )}
@@ -991,7 +997,11 @@ export default function PublicVendorPreviewPage() {
                 name={`quantity:${checkoutProduct.id}`}
                 value="1"
               />
-              <input type="hidden" name="importResponsibilityAccepted" value="on" />
+              <input
+                type="hidden"
+                name="importResponsibilityAccepted"
+                value="on"
+              />
 
               <div>
                 <h2 style={{ margin: 0, fontSize: "22px", lineHeight: 1.3 }}>
@@ -1081,7 +1091,9 @@ export default function PublicVendorPreviewPage() {
                     name="useSalesCredit"
                     value="on"
                     checked={useSalesCredit}
-                    onChange={(event) => setUseSalesCredit(event.target.checked)}
+                    onChange={(event) =>
+                      setUseSalesCredit(event.target.checked)
+                    }
                   />
                   売上金を使う
                 </label>
@@ -1193,15 +1205,22 @@ export default function PublicVendorPreviewPage() {
 
         <section className="preview-metrics" aria-label="storefront metrics">
           <Metric label="商品数" value={formatCount(data.productCount)} />
-          <Metric label="表示中" value={formatCount(data.visibleProductCount)} />
+          <Metric
+            label="表示中"
+            value={formatCount(data.visibleProductCount)}
+          />
           <Metric label="非表示" value={formatCount(data.hiddenProductCount)} />
-          <Metric label="販売不可" value={formatCount(data.unavailableProductCount)} />
+          <Metric
+            label="販売不可"
+            value={formatCount(data.unavailableProductCount)}
+          />
         </section>
 
         <section className="preview-products">
           {data.products.map((product) => {
             const tone = getStatusTone(product);
-            const status = product.deliveryEligibility?.status || "UNKNOWN_COUNTRY";
+            const status =
+              product.deliveryEligibility?.status || "UNKNOWN_COUNTRY";
             const shouldShowStatus = status !== "AVAILABLE";
             const shouldShowStatusRow = shouldShowStatus || product.category;
 
@@ -1223,7 +1242,9 @@ export default function PublicVendorPreviewPage() {
                 <div className="preview-product-body">
                   <div className="preview-product-top">
                     <h2>{product.name}</h2>
-                    <span className="preview-price">{product.formattedPrice}</span>
+                    <span className="preview-price">
+                      {product.formattedPrice}
+                    </span>
                   </div>
 
                   {product.description ? (
@@ -1232,7 +1253,9 @@ export default function PublicVendorPreviewPage() {
 
                   {shouldShowStatusRow ? (
                     <div className="preview-status-row">
-                      {shouldShowStatus ? <StatusBadge product={product} /> : null}
+                      {shouldShowStatus ? (
+                        <StatusBadge product={product} />
+                      ) : null}
                       {product.category ? (
                         <span className="preview-status preview-status--info">
                           {product.category}

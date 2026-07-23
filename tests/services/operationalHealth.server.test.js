@@ -1,7 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { recordOperationalHeartbeat } from "../../app/services/operationalHealth.server.js";
+import {
+  evaluateShopifyProductCatalogSyncRun,
+  recordOperationalHeartbeat,
+} from "../../app/services/operationalHealth.server.js";
+
+test("evaluateShopifyProductCatalogSyncRun only accepts a complete sync", () => {
+  assert.deepEqual(
+    evaluateShopifyProductCatalogSyncRun({
+      result: { unresolved: 0 },
+      checkoutPolicies: { ok: true, failedCount: 0 },
+    }),
+    {
+      complete: true,
+      errorCode: null,
+      unresolved: 0,
+      checkoutPolicyFailedCount: 0,
+    },
+  );
+
+  assert.deepEqual(
+    evaluateShopifyProductCatalogSyncRun({
+      result: { unresolved: 2 },
+      checkoutPolicies: { ok: false, failedCount: 1 },
+    }),
+    {
+      complete: false,
+      errorCode: "shopify_product_catalog_sync_incomplete",
+      unresolved: 2,
+      checkoutPolicyFailedCount: 1,
+    },
+  );
+});
 
 test("recordOperationalHeartbeat records success and clears the last error", async () => {
   const calls = [];

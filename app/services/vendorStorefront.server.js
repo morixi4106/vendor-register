@@ -59,8 +59,7 @@ const SALES_CREDIT_PRODUCT_RESTRICTED_MESSAGE =
 const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
   "複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。";
 const PUBLIC_CHECKOUT_SOURCE = "vendor_storefront";
-const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG =
-  "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
+const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG = "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = "jpy";
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
@@ -2089,8 +2088,15 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
   };
 }
 
-export function createVendorStorefrontLoader({ prismaClient = prisma } = {}) {
+export function createVendorStorefrontLoader({
+  prismaClient = prisma,
+  env = process.env,
+} = {}) {
   return async function loader({ params }) {
+    if (!isPublicDraftOrderCheckoutEnabled(env)) {
+      throw buildNotFoundResponse();
+    }
+
     const storefront = await getVendorStorefrontByHandle(
       params.handle,
       prismaClient,

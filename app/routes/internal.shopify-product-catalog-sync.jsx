@@ -7,6 +7,7 @@ import {
   getShopifyPublicationDiagnostics,
 } from "../services/marketplaceCheckoutGate.server.js";
 import {
+  evaluateShopifyProductCatalogSyncRun,
   recordOperationalHeartbeatSafely,
   SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
 } from "../services/operationalHealth.server.js";
@@ -42,22 +43,28 @@ export async function action({ request }) {
       process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN || null,
     );
     const result = await reconcileShopifyProductCatalog(shopDomain, { limit });
-    const checkoutPolicies = await backfillMarketplaceCheckoutPolicies(shopDomain);
+    const checkoutPolicies =
+      await backfillMarketplaceCheckoutPolicies(shopDomain);
     const publications = await getShopifyPublicationDiagnostics(shopDomain);
+    const completion = evaluateShopifyProductCatalogSyncRun({
+      result,
+      checkoutPolicies,
+    });
 
     await recordOperationalHeartbeatSafely({
       key: SHOPIFY_PRODUCT_CATALOG_SYNC_HEARTBEAT_KEY,
-      status: "succeeded",
+      status: completion.complete ? "succeeded" : "failed",
+      errorCode: completion.errorCode,
       metadataJson: {
         shopDomain,
         scanned: result.scanned,
-        unresolved: result.unresolved,
-        checkoutPolicyFailedCount: checkoutPolicies.failedCount,
+        unresolved: completion.unresolved,
+        checkoutPolicyFailedCount: completion.checkoutPolicyFailedCount,
       },
     });
 
     return json({
-      ok: checkoutPolicies.ok,
+      ok: completion.complete,
       shopDomain,
       scanned: result.scanned,
       created: result.created,

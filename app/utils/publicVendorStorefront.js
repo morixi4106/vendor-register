@@ -1,5 +1,6 @@
 import {
   buildVendorCollectionHandle,
+  buildVendorCollectionUrl,
   buildVendorProxyStorefrontUrl,
 } from "./vendorCollectionHandles.js";
 import {
@@ -61,6 +62,7 @@ export function serializePublicVendorStorefront({
   products = [],
   deliveryCountry = null,
   filterByDeliveryEligibility = false,
+  draftOrderCheckoutEnabled = false,
 }) {
   const handle = normalizeText(vendor?.handle);
 
@@ -70,45 +72,57 @@ export function serializePublicVendorStorefront({
 
   const countryCode = normalizeCountryCode(deliveryCountry);
   const seller = vendor?.seller || null;
-  const serializedProducts = products
-    .map((product) => {
-      const price = getPublicProductDisplayPrice(product);
-      const shopDomain = normalizeShopDomain(product.shopDomain);
-      const inventoryQuantity = normalizeInventoryQuantity(product.inventoryQuantity);
-      const hasInventory = Number.isInteger(inventoryQuantity) && inventoryQuantity > 0;
-      const basePurchasable = Boolean(shopDomain && price > 0 && hasInventory);
-      const deliveryEligibility = evaluateProductDeliveryEligibility({
-        product,
-        seller,
-        deliveryCountry: countryCode,
-      });
-      const deliveryRestrictionSummary = buildDeliveryRestrictionSummary({
-        product,
-        seller,
-      });
-      const publicDeliveryEligibility =
-        serializePublicDeliveryEligibility(deliveryEligibility);
-      const isPurchasable =
-        basePurchasable &&
-        (!countryCode || publicDeliveryEligibility.isAvailable);
-
-      return {
-        id: product.id,
-        name: product.name,
-        description: product.description || "",
-        imageUrl: product.imageUrl || null,
-        category: product.category || null,
-        price,
-        currency: "JPY",
-        formattedPrice: formatPublicJpyPrice(price),
-        inventoryQuantity,
-        isInStock: hasInventory,
-        isPurchasable,
-        basePurchasable,
-        deliveryEligibility: publicDeliveryEligibility,
-        deliveryRestrictionSummary,
-      };
+  const isPlatformStore = store?.isPlatformStore === true;
+  const storefrontPurchasingEnabled =
+    isPlatformStore || draftOrderCheckoutEnabled;
+  const collectionUrl = isPlatformStore
+    ? buildVendorCollectionUrl(handle)
+    : draftOrderCheckoutEnabled
+      ? buildVendorProxyStorefrontUrl(handle)
+      : null;
+  const serializedProducts = products.map((product) => {
+    const price = getPublicProductDisplayPrice(product);
+    const shopDomain = normalizeShopDomain(product.shopDomain);
+    const inventoryQuantity = normalizeInventoryQuantity(
+      product.inventoryQuantity,
+    );
+    const hasInventory =
+      Number.isInteger(inventoryQuantity) && inventoryQuantity > 0;
+    const basePurchasable = Boolean(
+      storefrontPurchasingEnabled && shopDomain && price > 0 && hasInventory,
+    );
+    const deliveryEligibility = evaluateProductDeliveryEligibility({
+      product,
+      seller,
+      deliveryCountry: countryCode,
     });
+    const deliveryRestrictionSummary = buildDeliveryRestrictionSummary({
+      product,
+      seller,
+    });
+    const publicDeliveryEligibility =
+      serializePublicDeliveryEligibility(deliveryEligibility);
+    const isPurchasable =
+      basePurchasable &&
+      (!countryCode || publicDeliveryEligibility.isAvailable);
+
+    return {
+      id: product.id,
+      name: product.name,
+      description: product.description || "",
+      imageUrl: product.imageUrl || null,
+      category: product.category || null,
+      price,
+      currency: "JPY",
+      formattedPrice: formatPublicJpyPrice(price),
+      inventoryQuantity,
+      isInStock: hasInventory,
+      isPurchasable,
+      basePurchasable,
+      deliveryEligibility: publicDeliveryEligibility,
+      deliveryRestrictionSummary,
+    };
+  });
   const visibleProducts =
     filterByDeliveryEligibility && countryCode
       ? serializedProducts.filter(
@@ -121,14 +135,16 @@ export function serializePublicVendorStorefront({
     vendor: {
       handle,
       storeName: vendor?.storeName || store?.storeName || "",
+      isPlatformStore,
       collectionHandle: buildVendorCollectionHandle(handle),
-      collectionUrl: buildVendorProxyStorefrontUrl(handle),
+      collectionUrl,
     },
     store: {
       id: store.id,
       handle,
+      isPlatformStore,
       collectionHandle: buildVendorCollectionHandle(handle),
-      collectionUrl: buildVendorProxyStorefrontUrl(handle),
+      collectionUrl,
       storeName: store.storeName || vendor?.storeName || "",
       country: store.country || null,
       category: store.category || null,

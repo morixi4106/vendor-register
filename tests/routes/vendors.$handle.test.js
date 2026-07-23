@@ -1,31 +1,32 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import test from "node:test";
 
 import {
   buildDraftOrderCheckoutInputFromStorefrontForm,
   createVendorStorefrontAction,
-} from '../../app/services/vendorStorefront.server.js';
+  createVendorStorefrontLoader,
+} from "../../app/services/vendorStorefront.server.js";
 
-process.env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED = 'true';
+process.env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED = "true";
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
-  '注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。';
+  "注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。";
 
 function createVendorContext() {
   return {
     vendor: {
-      id: 'vendor_1',
-      handle: 'amber-cellar',
-      storeName: 'Amber Cellar',
-      managementEmail: 'owner@example.com',
+      id: "vendor_1",
+      handle: "amber-cellar",
+      storeName: "Amber Cellar",
+      managementEmail: "owner@example.com",
     },
     store: {
-      id: 'store_1',
-      storeName: 'Amber Cellar',
-      ownerName: 'Owner',
-      country: 'JP',
-      category: 'Wine',
-      note: 'Natural wine selection',
+      id: "store_1",
+      storeName: "Amber Cellar",
+      ownerName: "Owner",
+      country: "JP",
+      category: "Wine",
+      note: "Natural wine selection",
     },
   };
 }
@@ -33,19 +34,19 @@ function createVendorContext() {
 function createProducts() {
   return [
     {
-      id: 'prod_1',
-      name: 'Amber Wine',
-      description: 'Skin contact white',
+      id: "prod_1",
+      name: "Amber Wine",
+      description: "Skin contact white",
       imageUrl: null,
       price: 4200,
       calculatedPrice: 4200,
       inventoryQuantity: 10,
-      url: 'https://example.com/products/amber-wine',
-      shopDomain: 'shop-a.myshopify.com',
-      shopifyProductId: 'gid://shopify/Product/1',
-      approvalStatus: 'approved',
-      vendorStoreId: 'store_1',
-      productEuStatus: 'DISABLED',
+      url: "https://example.com/products/amber-wine",
+      shopDomain: "shop-a.myshopify.com",
+      shopifyProductId: "gid://shopify/Product/1",
+      approvalStatus: "approved",
+      vendorStoreId: "store_1",
+      productEuStatus: "DISABLED",
       countryPolicy: null,
       vendorStore: {
         isTestStore: false,
@@ -75,23 +76,23 @@ function createFakePrisma({ products = createProducts() } = {}) {
   return {
     vendor: {
       async findUnique({ where }) {
-        if (where.handle !== 'amber-cellar') {
+        if (where.handle !== "amber-cellar") {
           return null;
         }
 
         return {
-          id: 'vendor_1',
-          handle: 'amber-cellar',
-          storeName: 'Amber Cellar',
-          managementEmail: 'owner@example.com',
-          status: 'active',
+          id: "vendor_1",
+          handle: "amber-cellar",
+          storeName: "Amber Cellar",
+          managementEmail: "owner@example.com",
+          status: "active",
           vendorStore: {
-            id: 'store_1',
-            storeName: 'Amber Cellar',
-            ownerName: 'Owner',
-            country: 'JP',
-            category: 'Wine',
-            note: 'Natural wine selection',
+            id: "store_1",
+            storeName: "Amber Cellar",
+            ownerName: "Owner",
+            country: "JP",
+            category: "Wine",
+            note: "Natural wine selection",
           },
         };
       },
@@ -100,11 +101,17 @@ function createFakePrisma({ products = createProducts() } = {}) {
       async findMany({ where, select }) {
         return products
           .filter((product) => {
-            if (where?.vendorStoreId && product.vendorStoreId !== where.vendorStoreId) {
+            if (
+              where?.vendorStoreId &&
+              product.vendorStoreId !== where.vendorStoreId
+            ) {
               return false;
             }
 
-            if (where?.approvalStatus && product.approvalStatus !== where.approvalStatus) {
+            if (
+              where?.approvalStatus &&
+              product.approvalStatus !== where.approvalStatus
+            ) {
               return false;
             }
 
@@ -126,21 +133,21 @@ function buildFormData(entries) {
 
 function buildValidEntries(overrides = []) {
   return [
-    ['quantity:prod_1', '1'],
-    ['firstName', 'Taro'],
-    ['lastName', 'Yamada'],
-    ['email', 'taro@example.com'],
-    ['phone', '09012345678'],
-    ['address1', '1-2-3 Jingumae'],
-    ['city', 'Shibuya'],
-    ['province', 'Tokyo'],
-    ['postalCode', '150-0001'],
-    ['country', 'JP'],
+    ["quantity:prod_1", "1"],
+    ["firstName", "Taro"],
+    ["lastName", "Yamada"],
+    ["email", "taro@example.com"],
+    ["phone", "09012345678"],
+    ["address1", "1-2-3 Jingumae"],
+    ["city", "Shibuya"],
+    ["province", "Tokyo"],
+    ["postalCode", "150-0001"],
+    ["country", "JP"],
     ...overrides,
   ];
 }
 
-test('vendors.$handle buildDraftOrderCheckoutInputFromStorefrontForm keeps vendor/store metadata', async () => {
+test("vendors.$handle buildDraftOrderCheckoutInputFromStorefrontForm keeps vendor/store metadata", async () => {
   const result = await buildDraftOrderCheckoutInputFromStorefrontForm({
     formData: buildFormData(buildValidEntries()),
     vendorContext: createVendorContext(),
@@ -149,60 +156,87 @@ test('vendors.$handle buildDraftOrderCheckoutInputFromStorefrontForm keeps vendo
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.payload.tags, [
-    'vendor-storefront',
-    'vendor:amber-cellar',
+    "vendor-storefront",
+    "vendor:amber-cellar",
   ]);
   assert.deepEqual(result.payload.customAttributes, [
-    { key: 'seller_name', value: 'Amber Cellar' },
-    { key: 'seller_country', value: 'JP' },
-    { key: 'seller_of_record', value: 'marketplace_seller' },
+    { key: "seller_name", value: "Amber Cellar" },
+    { key: "seller_country", value: "JP" },
+    { key: "seller_of_record", value: "marketplace_seller" },
   ]);
 });
 
-test('vendors.$handle checkout action is hidden unless explicitly enabled', async () => {
+test("vendors.$handle checkout action is hidden unless explicitly enabled", async () => {
   const action = createVendorStorefrontAction({ env: {} });
-  const request = new Request('http://localhost/vendors/amber-cellar', {
-    method: 'POST',
+  const request = new Request("http://localhost/vendors/amber-cellar", {
+    method: "POST",
   });
 
   await assert.rejects(
     () =>
       action({
         request,
-        params: { handle: 'amber-cellar' },
+        params: { handle: "amber-cellar" },
       }),
     (error) =>
       error instanceof Response &&
       error.status === 404 &&
-      error.headers.get('Cache-Control') === 'no-store',
+      error.headers.get("Cache-Control") === "no-store",
   );
 });
 
-test('vendors.$handle action redirects to invoiceUrl on success', async () => {
+test("vendors.$handle storefront loader is hidden unless explicitly enabled", async () => {
+  let queried = false;
+  const loader = createVendorStorefrontLoader({
+    env: {},
+    prismaClient: {
+      vendor: {
+        async findUnique() {
+          queried = true;
+          return null;
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => loader({ params: { handle: "amber-cellar" } }),
+    (error) =>
+      error instanceof Response &&
+      error.status === 404 &&
+      error.headers.get("Cache-Control") === "no-store",
+  );
+  assert.equal(queried, false);
+});
+
+test("vendors.$handle action redirects to invoiceUrl on success", async () => {
   const action = createVendorStorefrontAction({
     prismaClient: createFakePrisma(),
     draftOrderCheckoutImpl: async () => ({
-      invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+      invoiceUrl: "https://shop-a.myshopify.com/invoices/1",
     }),
   });
-  const request = new Request('http://localhost/vendors/amber-cellar', {
-    method: 'POST',
+  const request = new Request("http://localhost/vendors/amber-cellar", {
+    method: "POST",
     body: buildFormData(buildValidEntries()),
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
     },
   });
 
   const response = await action({
     request,
-    params: { handle: 'amber-cellar' },
+    params: { handle: "amber-cellar" },
   });
 
   assert.equal(response.status, 302);
-  assert.equal(response.headers.get('Location'), 'https://shop-a.myshopify.com/invoices/1');
+  assert.equal(
+    response.headers.get("Location"),
+    "https://shop-a.myshopify.com/invoices/1",
+  );
 });
 
-test('vendors.$handle action ignores a tampered shopDomain form value', async () => {
+test("vendors.$handle action ignores a tampered shopDomain form value", async () => {
   let receivedPayload = null;
   const action = createVendorStorefrontAction({
     prismaClient: createFakePrisma(),
@@ -210,51 +244,55 @@ test('vendors.$handle action ignores a tampered shopDomain form value', async ()
       receivedPayload = payload;
 
       return {
-        invoiceUrl: 'https://shop-a.myshopify.com/invoices/1',
+        invoiceUrl: "https://shop-a.myshopify.com/invoices/1",
       };
     },
   });
-  const request = new Request('http://localhost/vendors/amber-cellar', {
-    method: 'POST',
-    body: buildFormData(buildValidEntries([['shopDomain', 'evil-shop.myshopify.com']])),
+  const request = new Request("http://localhost/vendors/amber-cellar", {
+    method: "POST",
+    body: buildFormData(
+      buildValidEntries([["shopDomain", "evil-shop.myshopify.com"]]),
+    ),
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
     },
   });
 
   const response = await action({
     request,
-    params: { handle: 'amber-cellar' },
+    params: { handle: "amber-cellar" },
   });
 
   assert.equal(response.status, 302);
-  assert.equal(receivedPayload.shopDomain, 'shop-a.myshopify.com');
+  assert.equal(receivedPayload.shopDomain, "shop-a.myshopify.com");
 });
 
-test('vendors.$handle action sanitizes service failures for alias traffic too', async () => {
+test("vendors.$handle action sanitizes service failures for alias traffic too", async () => {
   const action = createVendorStorefrontAction({
     prismaClient: createFakePrisma(),
     draftOrderCheckoutImpl: async () => {
-      const error = new Error('draftOrderCreate failed');
-      error.userErrors = [{ field: ['input', 'lineItems'], message: 'Variant is invalid' }];
+      const error = new Error("draftOrderCreate failed");
+      error.userErrors = [
+        { field: ["input", "lineItems"], message: "Variant is invalid" },
+      ];
       throw error;
     },
   });
-  const request = new Request('http://localhost/vendors/amber-cellar', {
-    method: 'POST',
+  const request = new Request("http://localhost/vendors/amber-cellar", {
+    method: "POST",
     body: buildFormData(buildValidEntries()),
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
     },
   });
 
   const response = await action({
     request,
-    params: { handle: 'amber-cellar' },
+    params: { handle: "amber-cellar" },
   });
   const payload = await response.json();
 
   assert.equal(response.status, 500);
   assert.equal(payload.error, GENERIC_CHECKOUT_ERROR_MESSAGE);
-  assert.equal('details' in payload, false);
+  assert.equal("details" in payload, false);
 });

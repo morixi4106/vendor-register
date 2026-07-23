@@ -25,6 +25,7 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
     store: {
       id: "store_1",
       storeName: "Test Store",
+      isPlatformStore: true,
       country: "Japan",
       category: "Cosmetics",
       address: "Tokyo",
@@ -50,7 +51,9 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
   });
 
   assert.equal(storefront.vendor.handle, "vendor");
+  assert.equal(storefront.vendor.isPlatformStore, true);
   assert.equal(storefront.store.collectionHandle, "vendor-vendor");
+  assert.equal(storefront.store.collectionUrl, "/collections/vendor-vendor");
   assert.equal(storefront.deliveryCountry, null);
   assert.equal(storefront.productCount, 1);
   assert.equal(storefront.visibleProductCount, 1);
@@ -61,14 +64,48 @@ test("serializePublicVendorStorefront exposes theme-safe storefront data", () =>
   assert.equal(storefront.products[0].isInStock, true);
   assert.equal(storefront.products[0].isPurchasable, true);
   assert.equal(storefront.products[0].basePurchasable, true);
-  assert.equal(storefront.products[0].deliveryEligibility.status, "UNKNOWN_COUNTRY");
-  assert.equal(storefront.products[0].deliveryRestrictionSummary.hasRestrictions, true);
+  assert.equal(
+    storefront.products[0].deliveryEligibility.status,
+    "UNKNOWN_COUNTRY",
+  );
+  assert.equal(
+    storefront.products[0].deliveryRestrictionSummary.hasRestrictions,
+    true,
+  );
   assert.equal(
     storefront.products[0].deliveryRestrictionSummary.unavailableCountries.some(
       (country) => country.code === "FR",
     ),
     true,
   );
+});
+
+test("serializePublicVendorStorefront keeps third-party stores read-only while draft checkout is disabled", () => {
+  const storefront = serializePublicVendorStorefront({
+    vendor: {
+      handle: "vendor",
+      storeName: "Test Store",
+    },
+    store: {
+      id: "store_1",
+      storeName: "Test Store",
+      isPlatformStore: false,
+    },
+    products: [
+      {
+        id: "product_1",
+        name: "Serum",
+        price: 1000,
+        calculatedPrice: 1000,
+        inventoryQuantity: 3,
+        shopDomain: "shop-a.myshopify.com",
+      },
+    ],
+  });
+
+  assert.equal(storefront.store.collectionUrl, null);
+  assert.equal(storefront.products[0].basePurchasable, false);
+  assert.equal(storefront.products[0].isPurchasable, false);
 });
 
 test("serializePublicVendorStorefront can filter products by selected delivery country", () => {
@@ -83,6 +120,7 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
     store: {
       id: "store_1",
       storeName: "Test Store",
+      isPlatformStore: true,
     },
     deliveryCountry: "FR",
     filterByDeliveryEligibility: true,
@@ -128,7 +166,10 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
     storefront.products[0].deliveryEligibility.message,
     "配送先国によって、関税・税金・通関手数料が発生する場合があります。",
   );
-  assert.equal("internalMessage" in storefront.products[0].deliveryEligibility, false);
+  assert.equal(
+    "internalMessage" in storefront.products[0].deliveryEligibility,
+    false,
+  );
   assert.equal(
     storefront.products[0].deliveryRestrictionSummary.hasRestrictions,
     false,
