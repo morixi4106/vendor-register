@@ -79,12 +79,19 @@ therefore require every extension `dist` output and treat a deploy bundle as
 optional. A deployment-package audit must opt into strict deploy-bundle
 verification; once opted in, a missing or malformed bundle fails closed.
 
-The implementation run recorded in the proposed risk decision found no target
-toolchain package in 136 artifacts. Its artifact-set SHA-256 is
-`CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9`.
-The exact artifact count and artifact-set SHA-256 are recomputed after every
-clean build and must match the human-reviewed evidence before an accepted
-decision can pass.
+The implementation runs recorded in the proposed risk decision found no target
+toolchain package in 136 artifacts. Build bytes differ across the supported
+Windows development and Linux CI environments, so the decision records an
+exact artifact-set SHA-256 for each supported platform:
+
+| Platform | Artifact-set SHA-256 |
+| -------- | ------------------- |
+| Linux | `EF426851D1D2A2F4CAED031AE65DF3604E96296988FD16BCF384464D2DB5081F` |
+| Windows | `CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9` |
+
+The exact artifact count and the current platform's artifact-set SHA-256 are
+recomputed after every clean build and must match the human-reviewed evidence
+before an accepted decision can pass. An unlisted platform fails closed.
 
 Artifact hashes may legitimately change with source, Shopify CLI, or build
 environment changes. Presence, manifest integrity, imports, metafile inputs,
@@ -183,14 +190,14 @@ coverage denominator.
 | --------------------------------------- | -----: | -------: | --------: | --------------------------------------- |
 | `audit-production-dependencies.mjs`     | 98.88% |   90.14% |    86.36% | 71-72, 190-191, 203                     |
 | `artifact-reachability.mjs`             | 98.00% |   92.07% |   100.00% | 107-111, 113-117, 191-194, 356-358, 492-493 |
-| `audit-policy.mjs`                      | 100.00% |  86.70% |   100.00% | none                                    |
+| `audit-policy.mjs`                      | 100.00% |  87.31% |   100.00% | none                                    |
 | `audit-report.mjs`                      | 100.00% |  94.03% |   100.00% | none                                    |
 | `clean-audit-artifacts.mjs`             | 95.51% |   88.37% |   100.00% | 41-42, 52-53, 74-77                     |
 | `generate-risk-path-snapshot.mjs`       | 100.00% |  92.00% |   100.00% | none                                    |
 | `npm-tree-verification.mjs`             | 100.00% |  90.00% |   100.00% | none                                    |
 | `package-lock-graph.mjs`                | 97.80% |   91.30% |   100.00% | 436-444, 598-602                        |
 | `scan-security-documents.mjs`           | 100.00% | 100.00% |   100.00% | none                                    |
-| **Aggregate**                           | **98.62%** | **90.49%** | **98.21%** |                                     |
+| **Aggregate**                           | **98.63%** | **90.59%** | **98.22%** |                                     |
 
 The uncovered cleanup lines are secondary containment checks for filesystem
 states that are prevented by the earlier normalized-path and realpath checks.
@@ -226,12 +233,12 @@ Local verification on Windows with Node.js `24.13.1` and npm `11.8.0`:
 - PASS: Prisma format, validate, and client generation;
 - PASS: lint with zero errors (28 pre-existing warnings);
 - PASS: text-encoding and security-document secret/PII scans;
-- PASS: 686 of 689 application tests, with three intentional skips;
+- PASS: 688 of 691 application tests, with three intentional skips;
 - PASS: all 30 Checkout Function tests;
-- PASS: all 123 executed production-audit tests, with two Windows-only
+- PASS: all 125 executed production-audit tests, with two Windows-only
   symlink tests skipped;
-- PASS: production-audit coverage at 98.62% lines, 90.49% branches, and
-  98.21% functions, including all nine audit implementation files;
+- PASS: production-audit coverage at 98.63% lines, 90.59% branches, and
+  98.22% functions, including all nine audit implementation files;
 - PASS: production Shopify extension build and Remix build;
 - PASS: clean artifact verification for 136 artifacts and 84 production SBOM
   components;

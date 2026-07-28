@@ -78,7 +78,8 @@ function braceAuditReport() {
 
 function artifactReport(overrides = {}) {
   return {
-    artifactSetSha256: RISK.evidenceSha256,
+    artifactSetSha256:
+      RISK.artifactEvidenceSha256ByPlatform[process.platform],
     ok: true,
     targetMatches: [],
     ...overrides,
@@ -91,12 +92,14 @@ function evaluateToolchain({
   risk = acceptedRisk(),
   artifacts = artifactReport(),
   now = new Date("2026-07-28T00:00:00.000Z"),
+  platform = process.platform,
 } = {}) {
   return evaluateToolchainAudit({
     artifactReport: artifacts,
     lockfile,
     nonRuntimeVulnerabilities: report.vulnerabilities,
     now,
+    platform,
     report,
     risk,
   });
@@ -388,6 +391,60 @@ test("binds accepted risk evidence to the audited artifact set", () => {
   );
 });
 
+test("checks artifact evidence before upstream reporting and acceptance", () => {
+  const result = evaluateToolchain({
+    artifacts: artifactReport({
+      artifactSetSha256: "A".repeat(64),
+    }),
+    risk: {
+      ...acceptedRisk(),
+      acceptedAt: null,
+      acceptedBy: null,
+      status: "proposed",
+      upstreamUrls: [],
+    },
+  });
+  for (const code of [
+    "evidence_artifact_hash_mismatch",
+    "risk_not_accepted",
+    "upstream_urls_invalid",
+  ]) {
+    assert.ok(result.blocking.some((item) => item.code === code), code);
+  }
+});
+
+test("binds artifact evidence to an explicitly supported build platform", () => {
+  for (const platform of ["linux", "win32"]) {
+    const result = evaluateToolchain({
+      artifacts: artifactReport({
+        artifactSetSha256:
+          RISK.artifactEvidenceSha256ByPlatform[platform],
+      }),
+      platform,
+    });
+    assert.equal(result.ok, true, platform);
+  }
+
+  const unsupported = evaluateToolchain({
+    artifacts: artifactReport({
+      artifactSetSha256: "A".repeat(64),
+    }),
+    platform: "darwin",
+  });
+  assert.equal(unsupported.ok, false);
+  assert.ok(
+    unsupported.blocking.some(
+      (item) => item.code === "risk_evidence_platform_unsupported",
+    ),
+  );
+  assert.equal(
+    unsupported.blocking.some(
+      (item) => item.code === "evidence_artifact_hash_mismatch",
+    ),
+    false,
+  );
+});
+
 test("blocks target matches even when the artifact scanner reports ok", () => {
   const result = evaluateToolchain({
     artifacts: artifactReport({
@@ -542,7 +599,10 @@ test("validates every risk identity and evidence field", () => {
       approvedPathCount: 0,
       approvedPathLines: ["duplicate", "duplicate"],
       approvedPathSetSha256: "invalid",
-      evidenceSha256: "invalid",
+      artifactEvidenceSha256ByPlatform: {
+        linux: "invalid",
+        win32: "invalid",
+      },
       packageName: "other",
       rationale: "short",
       requiredParent: {},
@@ -677,7 +737,26 @@ test("validates version, parent, path, and evidence branches independently", () 
     [{ rationale: null }, "risk_evidence_invalid"],
     [{ rationale: 42 }, "risk_evidence_invalid"],
     [{ rationale: "short" }, "risk_evidence_invalid"],
-    [{ evidenceSha256: "invalid" }, "risk_evidence_invalid"],
+    [{ artifactEvidenceSha256ByPlatform: null }, "risk_evidence_invalid"],
+    [
+      {
+        artifactEvidenceSha256ByPlatform: {
+          linux: "invalid",
+          win32: "A".repeat(64),
+        },
+      },
+      "risk_evidence_invalid",
+    ],
+    [
+      {
+        artifactEvidenceSha256ByPlatform: {
+          darwin: "A".repeat(64),
+          linux: "B".repeat(64),
+          win32: "C".repeat(64),
+        },
+      },
+      "risk_evidence_invalid",
+    ],
   ];
 
   for (const [overrides, code] of variants) {

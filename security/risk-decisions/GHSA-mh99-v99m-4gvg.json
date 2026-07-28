@@ -13,7 +13,10 @@
   "approvedPathSetSha256": "EB886FD2CAB6919948F0C4C3633DF0297C75F521BC84D5805DFC95A7E8F48352",
   "expiresAt": "2026-08-27T23:59:59.999Z",
   "rationale": "The affected package is present only in reviewed Shopify extension build-tool paths, is unreachable from the root production dependency graph, and is rejected if found in application source or deployable artifacts.",
-  "evidenceSha256": "CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9",
+  "artifactEvidenceSha256ByPlatform": {
+    "linux": "EF426851D1D2A2F4CAED031AE65DF3604E96296988FD16BCF384464D2DB5081F",
+    "win32": "CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9"
+  },
   "upstreamUrls": [],
   "acceptedBy": null,
   "acceptedAt": null

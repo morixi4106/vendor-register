@@ -21,6 +21,8 @@ const REACT_ROUTER_ADVISORIES = new Set([
 const NEVER_ALLOW_SEVERITIES = new Set(["high", "critical"]);
 
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const ARTIFACT_EVIDENCE_PLATFORMS = ["linux", "win32"];
+const SHA256_PATTERN = /^[A-F0-9]{64}$/;
 
 function parseUtcTimestamp(value) {
   if (!UTC_TIMESTAMP_PATTERN.test(String(value || ""))) return null;
@@ -146,7 +148,7 @@ function validUpstreamUrls(urls) {
 
 export function validateToolchainRiskDefinition(
   risk,
-  { now = new Date() } = {},
+  { now = new Date(), platform = process.platform } = {},
 ) {
   const errors = [];
   if (!risk || typeof risk !== "object") {
@@ -213,12 +215,27 @@ export function validateToolchainRiskDefinition(
   ) {
     errors.push("path_fingerprint_invalid");
   }
+  const evidenceByPlatform = risk.artifactEvidenceSha256ByPlatform;
+  const evidenceKeys =
+    evidenceByPlatform &&
+    typeof evidenceByPlatform === "object" &&
+    !Array.isArray(evidenceByPlatform)
+      ? Object.keys(evidenceByPlatform).sort()
+      : [];
+  const validEvidenceMap =
+    JSON.stringify(evidenceKeys) ===
+      JSON.stringify(ARTIFACT_EVIDENCE_PLATFORMS) &&
+    evidenceKeys.every((key) =>
+      SHA256_PATTERN.test(String(evidenceByPlatform[key] || "")),
+    );
   if (
     typeof risk.rationale !== "string" ||
     risk.rationale.trim().length < 40 ||
-    !/^[A-F0-9]{64}$/.test(String(risk.evidenceSha256 || ""))
+    !validEvidenceMap
   ) {
     errors.push("risk_evidence_invalid");
+  } else if (!evidenceByPlatform[platform]) {
+    errors.push("risk_evidence_platform_unsupported");
   }
 
   return {
@@ -232,6 +249,7 @@ export function evaluateToolchainAudit({
   lockfile,
   nonRuntimeVulnerabilities,
   now = new Date(),
+  platform = process.platform,
   report,
   risk,
 }) {
@@ -249,12 +267,15 @@ export function evaluateToolchainAudit({
       accepted: [],
       blocking,
       ok: true,
-      riskValidation: validateToolchainRiskDefinition(risk, { now }),
+      riskValidation: validateToolchainRiskDefinition(risk, { now, platform }),
       warnings,
     };
   }
 
-  const riskValidation = validateToolchainRiskDefinition(risk, { now });
+  const riskValidation = validateToolchainRiskDefinition(risk, {
+    now,
+    platform,
+  });
   if (!riskValidation.ok) {
     for (const error of riskValidation.errors) {
       blocking.push({
@@ -445,8 +466,11 @@ export function evaluateToolchainAudit({
       severity: "critical",
     });
   } else if (
-    String(risk?.evidenceSha256 || "") !==
-    String(artifactReport.artifactSetSha256 || "")
+    SHA256_PATTERN.test(
+      String(risk?.artifactEvidenceSha256ByPlatform?.[platform] || ""),
+    ) &&
+    String(risk.artifactEvidenceSha256ByPlatform[platform]) !==
+      String(artifactReport.artifactSetSha256 || "")
   ) {
     blocking.push({
       code: "evidence_artifact_hash_mismatch",
