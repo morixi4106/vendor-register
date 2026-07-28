@@ -51,6 +51,15 @@ The temporary acceptance is deliberately fail-closed:
   mandatory and fail closed when incomplete;
 - two real upstream tracking URLs are required before acceptance can become
   active;
+- an accepted decision must identify the exact repository, pull request,
+  reviewed commit, failed pre-acceptance Quality run, and explicit GitHub PR
+  approval comment;
+- the reviewed Quality run must retain machine-readable evidence proving that
+  `risk_not_accepted` was its only audit failure and that every other audit
+  check passed;
+- the acceptance commit may change only the risk decision's acceptance
+  metadata; a code, dependency, evidence, URL, or expiry change requires a new
+  review run and a new approval comment;
 - the acceptance cannot extend beyond 2026-08-27;
 - any other high or critical advisory fails CI.
 
@@ -70,9 +79,22 @@ URLs have been recorded.
    update the fingerprint merely to make CI pass.
 5. Reject the change if any affected path is production runtime reachable, is
    extraneous, cannot be resolved, or appears in a deployable artifact.
-6. Once the upstream dependencies no longer install the affected version,
-   delete the risk-decision record and remove this exception instead of
-   extending it.
+6. Publish both upstream reports and record their public URLs while the
+   decision remains `proposed`.
+7. Let the Ubuntu Quality workflow finish. Its production audit must report
+   exactly `risk_not_accepted`; retain the uploaded
+   `production-audit-review-evidence-<run-id>` artifact.
+8. Review that exact PR head, Quality run, expiry, path snapshot, artifact
+   evidence, SBOM result, and upstream URLs. Post the exact acceptance command
+   produced from the risk record as a PR comment from an OWNER, MEMBER, or
+   COLLABORATOR account.
+9. In a separate commit, change only the acceptance metadata in the risk
+   decision. The final Quality run retrieves the reviewed run's artifact,
+   verifies the GitHub run and approval comment, and rejects any unrelated
+   post-review diff.
+10. Once the upstream dependencies no longer install the affected version,
+    delete the risk-decision record and remove this exception instead of
+    extending it.
 
 `postcss` is pinned to `8.5.24` through both `overrides` and `resolutions`.
 This removes its independent advisory and is not part of the Shopify toolchain

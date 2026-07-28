@@ -11,6 +11,10 @@ import {
 import { verifyBuildArtifacts } from "./security/artifact-reachability.mjs";
 import { collectReachableLocations } from "./security/package-lock-graph.mjs";
 import { collectNpmTreeEvidence } from "./security/npm-tree-verification.mjs";
+import {
+  buildRiskReviewEvidence,
+  writeRiskReviewEvidence,
+} from "./security/risk-acceptance-provenance.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
@@ -228,9 +232,7 @@ export function evaluateProductionAuditReport(
         !toolchainBlockingCodes.has("advisory_chain_unresolved") &&
         !toolchainBlockingCodes.has("unexpected_high_or_critical"),
     ),
-    npmTreeVerification: npmTreeReport
-      ? status(npmTreeReport.ok)
-      : "skipped",
+    npmTreeVerification: npmTreeReport ? status(npmTreeReport.ok) : "skipped",
     pathPolicy: riskStatus(
       !riskErrors.has("path_fingerprint_invalid") &&
         !toolchainBlockingCodes.has("dependency_paths_added") &&
@@ -239,9 +241,8 @@ export function evaluateProductionAuditReport(
     ),
     productionSbom: npmTreeReport
       ? status(
-          !npmTreeErrors.has(
-            "toolchain_target_present_in_production_sbom",
-          ) && !npmTreeErrors.has("production_sbom_root_mismatch"),
+          !npmTreeErrors.has("toolchain_target_present_in_production_sbom") &&
+            !npmTreeErrors.has("production_sbom_root_mismatch"),
         )
       : "skipped",
     remixArtifacts: artifactClassStatus(
@@ -374,6 +375,23 @@ export function main() {
     npmTreeReport,
     risk,
   });
+  if (process.env.PRODUCTION_AUDIT_WRITE_REVIEW_EVIDENCE === "true") {
+    try {
+      writeRiskReviewEvidence(
+        buildRiskReviewEvidence({
+          artifactReport,
+          evaluation,
+          npmTreeReport,
+          risk,
+        }),
+      );
+    } catch (error) {
+      console.error(
+        `Risk review evidence could not be written: ${error.message}`,
+      );
+      return 1;
+    }
+  }
 
   printArtifactSummary(artifactReport);
   console.log(

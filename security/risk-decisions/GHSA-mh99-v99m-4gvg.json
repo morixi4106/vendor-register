@@ -19,5 +19,10 @@
   },
   "upstreamUrls": [],
   "acceptedBy": null,
-  "acceptedAt": null
+  "acceptedAt": null,
+  "reviewedRepository": null,
+  "reviewedPullRequest": null,
+  "reviewedCommitSha": null,
+  "reviewedCiRunId": null,
+  "acceptanceCommentId": null
 }

@@ -150,11 +150,38 @@ Record the two real URLs in:
 
 `security/risk-decisions/GHSA-mh99-v99m-4gvg.json`
 
-Then a human reviewer, in a separate explicit decision change, may change:
+Keep the record `proposed` and push that URL-only change. The Ubuntu Quality
+workflow must upload a `production-audit-review-evidence-<run-id>` artifact
+and fail only with `risk_not_accepted`.
 
-```json
-"status": "accepted"
+After reviewing that exact PR head and run, a human repository owner,
+member, or collaborator posts this exact PR comment with the real values:
+
+```text
+/accept-toolchain-risk GHSA-MH99-V99M-4GVG
+repository: morixi4106/vendor-register
+pull-request: #<PR number>
+reviewed-commit: <40-character PR head SHA>
+reviewed-ci-run: <Quality workflow run ID>
+expires-at: 2026-08-27T23:59:59.999Z
 ```
 
-Do not alter the advisory ID, package version, path count, path fingerprint, or
-expiry date unless a fresh dependency review proves the new values.
+Only after that comment exists may a separate acceptance-only commit change:
+
+```json
+"status": "accepted",
+"acceptedBy": "<GitHub login>",
+"acceptedAt": "<UTC timestamp after the approval comment>",
+"reviewedRepository": "morixi4106/vendor-register",
+"reviewedPullRequest": 2,
+"reviewedCommitSha": "<reviewed PR head SHA>",
+"reviewedCiRunId": "<reviewed Quality run ID as a string>",
+"acceptanceCommentId": "<GitHub PR comment ID as a string>"
+```
+
+The final workflow retrieves the reviewed run and its evidence artifact from
+GitHub, verifies the approval comment, and confirms that only acceptance
+metadata changed after review. Do not alter the upstream URLs, advisory ID,
+package version, path count, path fingerprint, evidence hashes, rationale, or
+expiry date in the acceptance commit. Any such change requires a new review
+run and approval comment.

@@ -39,9 +39,14 @@ const APPROVED_PATH_LINES = fs
 function acceptedRisk(overrides = {}) {
   return {
     ...RISK,
+    acceptanceCommentId: "987654321",
     acceptedAt: "2026-07-28T00:00:00.000Z",
     acceptedBy: "security-owner",
     approvedPathLines: APPROVED_PATH_LINES,
+    reviewedCiRunId: "30380150062",
+    reviewedCommitSha: "a".repeat(40),
+    reviewedPullRequest: 2,
+    reviewedRepository: "morixi4106/vendor-register",
     status: "accepted",
     upstreamUrls: [
       "https://github.com/Shopify/shopify-function-javascript/issues/123",
@@ -78,8 +83,7 @@ function braceAuditReport() {
 
 function artifactReport(overrides = {}) {
   return {
-    artifactSetSha256:
-      RISK.artifactEvidenceSha256ByPlatform[process.platform],
+    artifactSetSha256: RISK.artifactEvidenceSha256ByPlatform[process.platform],
     ok: true,
     targetMatches: [],
     ...overrides,
@@ -409,7 +413,10 @@ test("checks artifact evidence before upstream reporting and acceptance", () => 
     "risk_not_accepted",
     "upstream_urls_invalid",
   ]) {
-    assert.ok(result.blocking.some((item) => item.code === code), code);
+    assert.ok(
+      result.blocking.some((item) => item.code === code),
+      code,
+    );
   }
 });
 
@@ -417,8 +424,7 @@ test("binds artifact evidence to an explicitly supported build platform", () => 
   for (const platform of ["linux", "win32"]) {
     const result = evaluateToolchain({
       artifacts: artifactReport({
-        artifactSetSha256:
-          RISK.artifactEvidenceSha256ByPlatform[platform],
+        artifactSetSha256: RISK.artifactEvidenceSha256ByPlatform[platform],
       }),
       platform,
     });
@@ -640,6 +646,36 @@ test("validates acceptance metadata branches independently", () => {
     assert.equal(validation.ok, false);
     assert.ok(
       validation.errors.includes("acceptance_metadata_invalid"),
+      JSON.stringify(overrides),
+    );
+  }
+});
+
+test("validates acceptance provenance branches independently", () => {
+  const variants = [
+    { reviewedRepository: null },
+    { reviewedRepository: "invalid" },
+    { reviewedPullRequest: null },
+    { reviewedPullRequest: 0 },
+    { reviewedPullRequest: "2" },
+    { reviewedCommitSha: null },
+    { reviewedCommitSha: "A".repeat(40) },
+    { reviewedCommitSha: "a".repeat(39) },
+    { reviewedCiRunId: null },
+    { reviewedCiRunId: "0" },
+    { reviewedCiRunId: 30380150062 },
+    { acceptanceCommentId: null },
+    { acceptanceCommentId: "0" },
+    { acceptanceCommentId: 987654321 },
+  ];
+  for (const overrides of variants) {
+    const validation = validateToolchainRiskDefinition(
+      acceptedRisk(overrides),
+      { now: new Date("2026-07-28T00:00:00.000Z") },
+    );
+    assert.equal(validation.ok, false);
+    assert.ok(
+      validation.errors.includes("acceptance_provenance_invalid"),
       JSON.stringify(overrides),
     );
   }

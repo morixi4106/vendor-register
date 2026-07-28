@@ -23,6 +23,10 @@ const NEVER_ALLOW_SEVERITIES = new Set(["high", "critical"]);
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const ARTIFACT_EVIDENCE_PLATFORMS = ["linux", "win32"];
 const SHA256_PATTERN = /^[A-F0-9]{64}$/;
+const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GIT_COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const POSITIVE_INTEGER_STRING_PATTERN = /^[1-9]\d*$/;
 
 function parseUtcTimestamp(value) {
   if (!UTC_TIMESTAMP_PATTERN.test(String(value || ""))) return null;
@@ -157,12 +161,27 @@ export function validateToolchainRiskDefinition(
   if (risk.status !== "accepted") errors.push("risk_not_accepted");
   if (
     risk.status === "accepted" &&
-    (typeof risk.acceptedBy !== "string" ||
-      risk.acceptedBy.trim().length < 2 ||
+    (String(risk.acceptedBy || "").length < 2 ||
+      !GITHUB_LOGIN_PATTERN.test(String(risk.acceptedBy || "")) ||
       !parseUtcTimestamp(risk.acceptedAt) ||
       parseUtcTimestamp(risk.acceptedAt).getTime() > now.getTime())
   ) {
     errors.push("acceptance_metadata_invalid");
+  }
+  if (
+    risk.status === "accepted" &&
+    (typeof risk.reviewedRepository !== "string" ||
+      !GITHUB_REPOSITORY_PATTERN.test(risk.reviewedRepository) ||
+      !Number.isSafeInteger(risk.reviewedPullRequest) ||
+      risk.reviewedPullRequest < 1 ||
+      typeof risk.reviewedCommitSha !== "string" ||
+      !GIT_COMMIT_SHA_PATTERN.test(risk.reviewedCommitSha) ||
+      typeof risk.reviewedCiRunId !== "string" ||
+      !POSITIVE_INTEGER_STRING_PATTERN.test(risk.reviewedCiRunId) ||
+      typeof risk.acceptanceCommentId !== "string" ||
+      !POSITIVE_INTEGER_STRING_PATTERN.test(risk.acceptanceCommentId))
+  ) {
+    errors.push("acceptance_provenance_invalid");
   }
   if (risk.advisoryId !== "GHSA-MH99-V99M-4GVG") {
     errors.push("advisory_mismatch");

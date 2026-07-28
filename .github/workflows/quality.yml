@@ -6,6 +6,7 @@ on:
   pull_request:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -21,12 +22,39 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
+
+      - name: Read risk acceptance workflow inputs
+        id: risk-acceptance
+        run: >-
+          node scripts/security/risk-acceptance-provenance.mjs
+          emit-workflow-outputs
+
+      - name: Download reviewed production audit evidence
+        if: steps.risk-acceptance.outputs.accepted == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ steps.risk-acceptance.outputs.reviewed_artifact_name }}
+          path: .audit/reviewed
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.risk-acceptance.outputs.reviewed_run_id }}
+
+      - name: Verify accepted risk provenance
+        if: steps.risk-acceptance.outputs.accepted == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RISK_CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          RISK_CURRENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RISK_CURRENT_PR_NUMBER: ${{ github.event.pull_request.number || steps.risk-acceptance.outputs.reviewed_pull_request }}
+        run: node scripts/security/risk-acceptance-provenance.mjs verify
 
       - name: Install dependencies
         run: npm ci
@@ -81,4 +109,17 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Audit production dependencies
+        env:
+          PRODUCTION_AUDIT_WRITE_REVIEW_EVIDENCE: "true"
+          RISK_REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RISK_REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
         run: npm run audit:production
+
+      - name: Upload production audit review evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-audit-review-evidence-${{ github.run_id }}
+          path: .audit/production-audit-review-evidence.json
+          if-no-files-found: error
+          retention-days: 45

@@ -84,10 +84,10 @@ toolchain package in 136 artifacts. Build bytes differ across the supported
 Windows development and Linux CI environments, so the decision records an
 exact artifact-set SHA-256 for each supported platform:
 
-| Platform | Artifact-set SHA-256 |
-| -------- | ------------------- |
-| Linux | `EF426851D1D2A2F4CAED031AE65DF3604E96296988FD16BCF384464D2DB5081F` |
-| Windows | `CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9` |
+| Platform | Artifact-set SHA-256                                               |
+| -------- | ------------------------------------------------------------------ |
+| Linux    | `EF426851D1D2A2F4CAED031AE65DF3604E96296988FD16BCF384464D2DB5081F` |
+| Windows  | `CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9` |
 
 The exact artifact count and the current platform's artifact-set SHA-256 are
 recomputed after every clean build and must match the human-reviewed evidence
@@ -129,21 +129,21 @@ deployment-package audit can still require the deploy bundle explicitly.
 
 The clean inventory is classified as follows:
 
-| Required class                  | Count |
-| ------------------------------- | ----: |
-| Remix server entry              |     1 |
-| Remix server chunks             |     1 |
-| Remix client entry              |     1 |
-| Remix client runtime manifest   |     1 |
-| Remix client route bundles      |   123 |
-| Remix client styles             |     1 |
-| Shopify Function JavaScript     |     1 |
-| Shopify Function WASM           |     1 |
-| UI extension entry bundle       |     1 |
-| UI extension page bundle        |     1 |
-| UI extension metafiles          |     2 |
-| UI extension source maps        |     2 |
-| **Total**                       | **136** |
+| Required class                |   Count |
+| ----------------------------- | ------: |
+| Remix server entry            |       1 |
+| Remix server chunks           |       1 |
+| Remix client entry            |       1 |
+| Remix client runtime manifest |       1 |
+| Remix client route bundles    |     123 |
+| Remix client styles           |       1 |
+| Shopify Function JavaScript   |       1 |
+| Shopify Function WASM         |       1 |
+| UI extension entry bundle     |       1 |
+| UI extension page bundle      |       1 |
+| UI extension metafiles        |       2 |
+| UI extension source maps      |       2 |
+| **Total**                     | **136** |
 
 ## Independent npm verification
 
@@ -186,18 +186,19 @@ Every listed implementation file is explicitly passed through
 `--test-coverage-include`, so an unloaded helper cannot disappear from the
 coverage denominator.
 
-| File                                    | Lines  | Branches | Functions | Uncovered lines                         |
-| --------------------------------------- | -----: | -------: | --------: | --------------------------------------- |
-| `audit-production-dependencies.mjs`     | 98.88% |   90.14% |    86.36% | 71-72, 190-191, 203                     |
-| `artifact-reachability.mjs`             | 98.00% |   92.07% |   100.00% | 107-111, 113-117, 191-194, 356-358, 492-493 |
-| `audit-policy.mjs`                      | 100.00% |  87.31% |   100.00% | none                                    |
-| `audit-report.mjs`                      | 100.00% |  94.03% |   100.00% | none                                    |
-| `clean-audit-artifacts.mjs`             | 95.51% |   88.37% |   100.00% | 41-42, 52-53, 74-77                     |
-| `generate-risk-path-snapshot.mjs`       | 100.00% |  92.00% |   100.00% | none                                    |
-| `npm-tree-verification.mjs`             | 100.00% |  90.00% |   100.00% | none                                    |
-| `package-lock-graph.mjs`                | 97.80% |   91.30% |   100.00% | 436-444, 598-602                        |
-| `scan-security-documents.mjs`           | 100.00% | 100.00% |   100.00% | none                                    |
-| **Aggregate**                           | **98.63%** | **90.59%** | **98.22%** |                                     |
+| File                                |      Lines |   Branches |  Functions | Uncovered lines                             |
+| ----------------------------------- | ---------: | ---------: | ---------: | ------------------------------------------- |
+| `audit-production-dependencies.mjs` |     98.92% |     90.14% |     86.36% | 75-76, 194-195, 207                         |
+| `artifact-reachability.mjs`         |     98.00% |     92.07% |    100.00% | 107-111, 113-117, 191-194, 356-358, 492-493 |
+| `audit-policy.mjs`                  |    100.00% |     88.10% |    100.00% | none                                        |
+| `audit-report.mjs`                  |    100.00% |     94.03% |    100.00% | none                                        |
+| `clean-audit-artifacts.mjs`         |     95.51% |     88.37% |    100.00% | 41-42, 52-53, 74-77                         |
+| `generate-risk-path-snapshot.mjs`   |    100.00% |     92.00% |    100.00% | none                                        |
+| `npm-tree-verification.mjs`         |    100.00% |     90.00% |    100.00% | none                                        |
+| `package-lock-graph.mjs`            |     97.80% |     91.30% |    100.00% | 436-444, 598-602                            |
+| `risk-acceptance-provenance.mjs`    |     99.21% |     86.16% |     96.30% | 318-319, 341-342                            |
+| `scan-security-documents.mjs`       |    100.00% |    100.00% |    100.00% | none                                        |
+| **Aggregate**                       | **98.72%** | **90.05%** | **97.96%** |                                             |
 
 The uncovered cleanup lines are secondary containment checks for filesystem
 states that are prevented by the earlier normalized-path and realpath checks.
@@ -221,7 +222,7 @@ The full Windows run has exactly three intentional skips:
    symlink-creation constraint and runs on Ubuntu. Archive limits, traversal,
    regular-file checks, and Windows path normalization are not skipped.
 3. `getVendorOrdersPageData returns mapped orders when read_draft_orders is
-   granted` in `tests/services/vendorManagement.server.test.js`. This is an
+granted` in `tests/services/vendorManagement.server.test.js`. This is an
    explicitly disabled legacy Draft Order path. Public Draft Order checkout is
    disabled and this skip is unrelated to the security audit. It remains
    visible rather than being counted as executed coverage.
@@ -233,12 +234,12 @@ Local verification on Windows with Node.js `24.13.1` and npm `11.8.0`:
 - PASS: Prisma format, validate, and client generation;
 - PASS: lint with zero errors (28 pre-existing warnings);
 - PASS: text-encoding and security-document secret/PII scans;
-- PASS: 688 of 691 application tests, with three intentional skips;
+- PASS: 701 of 704 application tests, with three intentional skips;
 - PASS: all 30 Checkout Function tests;
-- PASS: all 125 executed production-audit tests, with two Windows-only
+- PASS: 138 of 140 production-audit tests, with two Windows-only
   symlink tests skipped;
-- PASS: production-audit coverage at 98.63% lines, 90.59% branches, and
-  98.22% functions, including all nine audit implementation files;
+- PASS: production-audit coverage at 98.72% lines, 90.05% branches, and
+  97.96% functions, including all ten audit implementation files;
 - PASS: production Shopify extension build and Remix build;
 - PASS: clean artifact verification for 136 artifacts and 84 production SBOM
   components;
@@ -246,7 +247,8 @@ Local verification on Windows with Node.js `24.13.1` and npm `11.8.0`:
   remains after cleanup;
 - PASS: no whitespace errors from `git diff --check`.
 
-GitHub-hosted Ubuntu execution is NOT VERIFIED until this branch is pushed and
-the Quality workflow runs. The policy remains intentionally blocking because
-the upstream report URLs are empty and the proposed decision has not been
-accepted by a human reviewer.
+The earlier branch revision was exercised by the GitHub-hosted Ubuntu Quality
+workflow. The current acceptance-provenance revision remains UNVERIFIED on
+Ubuntu until it is pushed and that workflow runs again. The policy remains
+intentionally blocking because the upstream report URLs are empty and the
+proposed decision has not been accepted by a human reviewer.
