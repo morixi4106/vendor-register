@@ -150,6 +150,8 @@ test("builds stable risk core hashes without acceptance metadata", () => {
     riskCoreSha256(risk),
     riskCoreSha256({ ...risk, expiresAt: "2026-08-26T00:00:00.000Z" }),
   );
+  assert.deepEqual(riskCore(null), {});
+  assert.equal(riskCoreSha256(null), riskCoreSha256({}));
 });
 
 test("builds review evidence from audit results", () => {
@@ -190,6 +192,12 @@ test("builds review evidence from audit results", () => {
   assert.equal(missing.pullRequestNumber, null);
   assert.equal(missing.artifactCount, null);
   assert.equal(missing.productionSbomComponentCount, null);
+
+  const unsafeInteger = buildRiskReviewEvidence({
+    env: { RISK_REVIEW_PR_NUMBER: "999999999999999999999" },
+    risk: {},
+  });
+  assert.equal(unsafeInteger.pullRequestNumber, null);
 });
 
 test("writes evidence only below the repository audit directory", () => {
@@ -215,6 +223,14 @@ test("writes evidence only below the repository audit directory", () => {
         ),
       /outside \.audit/,
     );
+    assert.throws(
+      () =>
+        writeRiskReviewEvidence(
+          { ok: true },
+          { outputPath: path.join(REPOSITORY_ROOT, ".audit") },
+        ),
+      /outside \.audit/,
+    );
   } finally {
     fs.rmSync(path.dirname(relative), { force: true, recursive: true });
   }
@@ -227,6 +243,7 @@ test("formats artifact names and explicit acceptance comments", () => {
     "production-audit-review-evidence-30380150062",
   );
   assert.throws(() => reviewArtifactName("0"), /invalid/);
+  assert.throws(() => reviewArtifactName(), /invalid/);
   assert.match(
     expectedAcceptanceComment(risk),
     /^\/accept-toolchain-risk GHSA-MH99-V99M-4GVG\n/,
@@ -306,6 +323,19 @@ test("rejects every broken review provenance boundary", () => {
       current: currentContext({ changedPaths: ["app/root.jsx"] }),
     },
     {
+      code: "acceptance_diff_not_metadata_only",
+      current: currentContext({ changedPaths: [] }),
+    },
+    {
+      code: "acceptance_diff_not_metadata_only",
+      current: currentContext({
+        changedPaths: [
+          "security/risk-decisions/GHSA-mh99-v99m-4gvg.json",
+          "app/root.jsx",
+        ],
+      }),
+    },
+    {
       code: "reviewed_ci_run_invalid",
       reviewRun: reviewRun(risk, { conclusion: "success" }),
     },
@@ -353,6 +383,202 @@ test("rejects every broken review provenance boundary", () => {
   }
 });
 
+test("rejects mutated review run, evidence, and approver fields", () => {
+  const risk = acceptedRisk();
+  const variants = [
+    {
+      code: "acceptance_review_target_invalid",
+      current: currentContext({ headSha: risk.reviewedCommitSha }),
+    },
+    {
+      code: "acceptance_review_target_invalid",
+      current: currentContext({ headSha: "invalid" }),
+    },
+    {
+      code: "acceptance_review_target_invalid",
+      current: currentContext({ pullRequestNumber: 3 }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { id: 1 }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, {
+        repository: { full_name: "other/repo" },
+      }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { head_sha: "c".repeat(40) }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { event: "push" }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { status: "in_progress" }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { name: "Other workflow" }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { pull_requests: null }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { pull_requests: [{ number: 99 }] }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { auditOk: true }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { schemaVersion: 2 }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { repository: "other/repo" }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { pullRequestNumber: 99 }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { runId: "1" }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { headSha: "c".repeat(40) }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { riskStatus: "accepted" }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { riskCoreSha256: "D".repeat(64) }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { checks: {} }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, {
+        checks: {
+          artifactReachability: "failed",
+          riskAcceptance: "failed",
+        },
+      }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, {
+        checks: { riskAcceptance: "failed" },
+      }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { artifactCount: 0 }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { artifactCount: 1.5 }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { artifactSetSha256: "invalid" }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { artifactSetSha256: null }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { productionSbomComponentCount: 0 }),
+    },
+    {
+      code: "reviewed_audit_evidence_invalid",
+      evidence: reviewEvidence(risk, { productionSbomComponentCount: 1.5 }),
+    },
+    {
+      acceptanceComment: approvalComment(risk, { id: 1 }),
+      code: "acceptance_comment_invalid",
+    },
+    {
+      acceptanceComment: approvalComment(risk, {
+        author_association: "CONTRIBUTOR",
+      }),
+      code: "acceptance_comment_invalid",
+    },
+    {
+      acceptanceComment: approvalComment(risk, {
+        user: { login: "another-user" },
+      }),
+      code: "acceptance_comment_invalid",
+    },
+    {
+      acceptanceComment: approvalComment(risk, { body: null }),
+      code: "acceptance_comment_invalid",
+    },
+    {
+      acceptanceComment: approvalComment(risk, { created_at: "invalid" }),
+      code: "acceptance_timeline_invalid",
+    },
+    {
+      code: "acceptance_timeline_invalid",
+      reviewRun: reviewRun(risk, { updated_at: "invalid" }),
+    },
+    {
+      code: "acceptance_timeline_invalid",
+      current: currentContext({
+        now: new Date("2026-07-28T00:25:00.000Z"),
+      }),
+    },
+    {
+      acceptanceComment: approvalComment(risk, {
+        created_at: "2026-07-28T00:40:00.000Z",
+      }),
+      code: "acceptance_timeline_invalid",
+    },
+    {
+      code: "acceptance_timeline_invalid",
+      risk: acceptedRisk({ acceptedAt: "invalid" }),
+    },
+  ];
+
+  for (const variant of variants) {
+    const variantRisk = variant.risk || risk;
+    const result = validateAcceptedRiskProvenance({
+      acceptanceComment:
+        variant.acceptanceComment || approvalComment(variantRisk),
+      current: variant.current || currentContext(),
+      evidence: variant.evidence || reviewEvidence(variantRisk),
+      isReviewedCommitAncestor: true,
+      reviewRun: variant.reviewRun || reviewRun(variantRisk),
+      risk: variantRisk,
+    });
+    assert.equal(result.ok, false, variant.code);
+    assert.ok(result.errors.includes(variant.code), variant.code);
+  }
+
+  const empty = validateAcceptedRiskProvenance();
+  assert.equal(empty.ok, false);
+  assert.deepEqual(empty.errors, [
+    "acceptance_comment_invalid",
+    "acceptance_review_target_invalid",
+    "acceptance_timeline_invalid",
+    "reviewed_audit_evidence_invalid",
+    "reviewed_ci_run_invalid",
+  ]);
+});
+
 test("emits safe workflow outputs for proposed and accepted risks", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "risk-outputs-"));
   const outputPath = path.join(directory, "output.txt");
@@ -392,6 +618,14 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
           risk: acceptedRisk({ reviewedPullRequest: 0 }),
         }),
       /pull request number is invalid/,
+    );
+    assert.throws(
+      () =>
+        emitWorkflowOutputs({
+          env: { GITHUB_OUTPUT: outputPath },
+          risk: acceptedRisk({ reviewedCiRunId: "not-a-run" }),
+        }),
+      /CI run ID is invalid/,
     );
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -443,6 +677,54 @@ test("verifies accepted provenance through bounded GitHub API reads", async () =
           options.headers.Authorization === `Bearer ${"g".repeat(40)}`,
       ),
     );
+
+    const futurePullRequest = await verifyAcceptedRiskProvenance({
+      collectGit: () => ({
+        changedPaths: ["app/root.jsx"],
+        isReviewedCommitAncestor: true,
+      }),
+      collectRiskStatus: () => "accepted",
+      env: {
+        GITHUB_API_URL: "https://api.github.test",
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: risk.reviewedRepository,
+        GITHUB_TOKEN: "g".repeat(40),
+        RISK_CURRENT_BASE_SHA: "c".repeat(40),
+        RISK_CURRENT_HEAD_SHA: CURRENT_SHA,
+        RISK_CURRENT_PR_NUMBER: "3",
+      },
+      evidencePath: evidenceFile.filePath,
+      fetchImpl,
+      now: new Date("2026-07-28T01:00:00.000Z"),
+      riskPath: riskFile.filePath,
+    });
+    assert.deepEqual(futurePullRequest, { ok: true, skipped: false });
+
+    let collectedBaseStatus = false;
+    const mainPush = await verifyAcceptedRiskProvenance({
+      collectGit: () => ({
+        changedPaths: ["app/root.jsx"],
+        isReviewedCommitAncestor: true,
+      }),
+      collectRiskStatus: () => {
+        collectedBaseStatus = true;
+        return "accepted";
+      },
+      env: {
+        GITHUB_API_URL: "https://api.github.test",
+        GITHUB_EVENT_NAME: "push",
+        GITHUB_REPOSITORY: risk.reviewedRepository,
+        GITHUB_TOKEN: "g".repeat(40),
+        RISK_CURRENT_HEAD_SHA: CURRENT_SHA,
+        RISK_CURRENT_PR_NUMBER: "2",
+      },
+      evidencePath: evidenceFile.filePath,
+      fetchImpl,
+      now: new Date("2026-07-28T01:00:00.000Z"),
+      riskPath: riskFile.filePath,
+    });
+    assert.deepEqual(mainPush, { ok: true, skipped: false });
+    assert.equal(collectedBaseStatus, false);
 
     await assert.rejects(
       () =>
@@ -514,8 +796,10 @@ test("fails closed for missing, unsafe, and malformed provenance JSON", async ()
   const empty = path.join(directory, "empty.json");
   const invalid = path.join(directory, "invalid.json");
   const notAFile = path.join(directory, "directory.json");
+  const oversized = path.join(directory, "oversized.json");
   fs.writeFileSync(empty, "");
   fs.writeFileSync(invalid, "{");
+  fs.writeFileSync(oversized, " ".repeat(1024 * 1024 + 1));
   fs.mkdirSync(notAFile);
   try {
     await assert.rejects(
@@ -533,6 +817,10 @@ test("fails closed for missing, unsafe, and malformed provenance JSON", async ()
     await assert.rejects(
       () => verifyAcceptedRiskProvenance({ riskPath: invalid }),
       /invalid JSON/,
+    );
+    await assert.rejects(
+      () => verifyAcceptedRiskProvenance({ riskPath: oversized }),
+      /not a safe JSON file/,
     );
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -590,11 +878,20 @@ test("collects changed paths only from reviewed commit ancestry", () => {
     isReviewedCommitAncestor: true,
   });
   assert.throws(() => collectGitEvidence("not-a-sha", head), /ancestry/);
+  const parent = execFileSync("git", ["rev-parse", "HEAD^"], {
+    cwd: REPOSITORY_ROOT,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(
+    collectGitEvidence(head, parent).isReviewedCommitAncestor,
+    false,
+  );
   assert.equal(collectRiskStatusAtCommit(head), "proposed");
   assert.throws(
     () => collectRiskStatusAtCommit("not-a-sha"),
     /base SHA is invalid/,
   );
+  assert.throws(() => collectRiskStatusAtCommit(), /base SHA is invalid/);
   const root = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], {
     cwd: REPOSITORY_ROOT,
     encoding: "utf8",

@@ -196,9 +196,9 @@ coverage denominator.
 | `generate-risk-path-snapshot.mjs`   |    100.00% |     92.00% |    100.00% | none                                        |
 | `npm-tree-verification.mjs`         |    100.00% |     90.00% |    100.00% | none                                        |
 | `package-lock-graph.mjs`            |     97.80% |     91.30% |    100.00% | 436-444, 598-602                            |
-| `risk-acceptance-provenance.mjs`    |     99.21% |     86.16% |     96.30% | 318-319, 341-342                            |
+| `risk-acceptance-provenance.mjs`    |     99.21% |     97.04% |     96.30% | 318-319, 341-342                            |
 | `scan-security-documents.mjs`       |    100.00% |    100.00% |    100.00% | none                                        |
-| **Aggregate**                       | **98.72%** | **90.05%** | **97.96%** |                                             |
+| **Aggregate**                       | **98.72%** | **91.87%** | **97.96%** |                                             |
 
 The uncovered cleanup lines are secondary containment checks for filesystem
 states that are prevented by the earlier normalized-path and realpath checks.
@@ -234,11 +234,11 @@ Local verification on Windows with Node.js `24.13.1` and npm `11.8.0`:
 - PASS: Prisma format, validate, and client generation;
 - PASS: lint with zero errors (28 pre-existing warnings);
 - PASS: text-encoding and security-document secret/PII scans;
-- PASS: 701 of 704 application tests, with three intentional skips;
+- PASS: 702 of 705 application tests, with three intentional skips;
 - PASS: all 30 Checkout Function tests;
-- PASS: 138 of 140 production-audit tests, with two Windows-only
+- PASS: 139 of 141 production-audit tests, with two Windows-only
   symlink tests skipped;
-- PASS: production-audit coverage at 98.72% lines, 90.05% branches, and
+- PASS: production-audit coverage at 98.72% lines, 91.87% branches, and
   97.96% functions, including all ten audit implementation files;
 - PASS: production Shopify extension build and Remix build;
 - PASS: clean artifact verification for 136 artifacts and 84 production SBOM

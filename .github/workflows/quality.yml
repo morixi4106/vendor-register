@@ -116,7 +116,7 @@ jobs:
         run: npm run audit:production
 
       - name: Upload production audit review evidence
-        if: always()
+        if: always() && hashFiles('.audit/production-audit-review-evidence.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-audit-review-evidence-${{ github.run_id }}
