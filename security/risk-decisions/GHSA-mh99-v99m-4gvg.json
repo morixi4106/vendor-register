@@ -1,0 +1,20 @@
+{
+  "status": "proposed",
+  "advisoryId": "GHSA-MH99-V99M-4GVG",
+  "packageName": "brace-expansion",
+  "allowedVersions": ["2.1.2"],
+  "requiredParent": {
+    "packageName": "minimatch",
+    "allowedVersions": ["9.0.9"],
+    "expectedPhysicalInstallCount": 1
+  },
+  "approvedPathsFile": "security/risk-decisions/GHSA-mh99-v99m-4gvg.approved-paths.txt",
+  "approvedPathCount": 125,
+  "approvedPathSetSha256": "EB886FD2CAB6919948F0C4C3633DF0297C75F521BC84D5805DFC95A7E8F48352",
+  "expiresAt": "2026-08-27T23:59:59.999Z",
+  "rationale": "The affected package is present only in reviewed Shopify extension build-tool paths, is unreachable from the root production dependency graph, and is rejected if found in application source or deployable artifacts.",
+  "evidenceSha256": "CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9",
+  "upstreamUrls": [],
+  "acceptedBy": null,
+  "acceptedAt": null
+}
