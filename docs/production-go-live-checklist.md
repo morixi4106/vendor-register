@@ -165,15 +165,33 @@ release and after material schema or backup-provider changes.
 
 ### Independent Shopify watchdog
 
-The GitHub `production` environment must also contain:
+Keep the watchdog disabled until its independent Shopify app and credentials
+have been verified. The job-level enable switch must be a **Repository
+Variable**, because GitHub evaluates the job condition before environment-level
+variables are made available:
+
+```text
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=false
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+LAUNCH_MONITOR_URL=https://vendor-register-pbjl.onrender.com
+```
+
+Store the following values as **Environment Secrets** in a dedicated GitHub
+Environment named `watchdog`:
 
 ```text
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<same value configured on Render>
-SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
 SHOPIFY_WATCHDOG_CLIENT_ID=<independent watchdog app client ID>
 SHOPIFY_WATCHDOG_CLIENT_SECRET=<independent watchdog app client secret>
-SALE_ELIGIBILITY_WATCHDOG_ENABLED=true
 ```
+
+The `watchdog` Environment must not require reviewers because the scheduled job
+cannot wait for human approval. Restrict its deployment branches to `main`.
+Do not use the reviewer-protected `production` Environment for this five-minute
+job. After all credentials and scopes have been verified, move any temporary
+repository-level watchdog secrets into the `watchdog` Environment, delete the
+repository-level copies, and then set the Repository Variable
+`SALE_ELIGIBILITY_WATCHDOG_ENABLED=true`.
 
 The watchdog app must be separate from the main application and limited to
 `read_products`, `read_publications`, and `write_publications`. The workflow

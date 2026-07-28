@@ -28,14 +28,28 @@
 全Publicationから非公開化します。最後に公開残存が0件であることを
 再取得して確認します。
 
-必要なGitHub `production` 環境の値:
+実行フラグと公開情報はRepository Variablesへ置きます。ジョブレベルの
+`if`で使う`SALE_ELIGIBILITY_WATCHDOG_ENABLED`はEnvironment Variableでは
+参照できません。
+
+```text
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=false
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+LAUNCH_MONITOR_URL=https://vendor-register-pbjl.onrender.com
+```
+
+秘密値は、承認待ちのないGitHub `watchdog` Environmentへ置きます。
 
 ```text
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<Renderにも設定する32文字以上の専用秘密値>
-SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
 SHOPIFY_WATCHDOG_CLIENT_ID=<独立WatchdogアプリのClient ID>
 SHOPIFY_WATCHDOG_CLIENT_SECRET=<独立WatchdogアプリのClient secret>
 ```
+
+`watchdog` Environmentは`main`ブランチだけに制限します。定期実行を
+止めるRequired reviewersは設定しません。認証情報と権限の検証が終わる
+まで、Repository Variableの
+`SALE_ELIGIBILITY_WATCHDOG_ENABLED`を`true`にしません。
 
 Watchdogアプリの権限は
 `read_products,read_publications,write_publications` のみに制限します。
@@ -81,22 +95,28 @@ LAUNCH_MONITOR_FROM_EMAIL=<未設定時はMAIL_FROM>
 
 ## GitHub Actions
 
-Secrets:
+Repository Secrets:
 
 ```text
 LAUNCH_MONITOR_TOKEN
-SALE_ELIGIBILITY_WATCHDOG_TOKEN
-SHOPIFY_WATCHDOG_CLIENT_ID
-SHOPIFY_WATCHDOG_CLIENT_SECRET
 RENDER_API_KEY
 RESEND_API_KEY
 MAIL_FROM
 ADMIN_EMAIL
 ```
 
-Variables:
+`watchdog` Environment Secrets:
 
 ```text
+SALE_ELIGIBILITY_WATCHDOG_TOKEN
+SHOPIFY_WATCHDOG_CLIENT_ID
+SHOPIFY_WATCHDOG_CLIENT_SECRET
+```
+
+Repository Variables:
+
+```text
+PRODUCTION_INTEGRITY_MONITOR_ENABLED=false
 LAUNCH_MONITOR_URL=https://vendor-register-pbjl.onrender.com
 RENDER_OWNER_ID=<Render workspace ID>
 RENDER_SERVICE_ID=<Render Web service ID>
@@ -104,7 +124,13 @@ LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION=https://oja-immanuel-bacchus.com/
 LAUNCH_MONITOR_STOREFRONT_URL=https://oja-immanuel-bacchus.com/
 LAUNCH_MONITOR_STOREFRONT_MARKER=Oja Immanuel Bacchus
 SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=false
 ```
+
+`Production integrity monitor`の手動実行は`dry_run=true`が既定です。この
+モードは公開URLとRenderログだけを読み、内部監視API、DB、通知を使用
+しません。定期本実行はRepository Variable
+`PRODUCTION_INTEGRITY_MONITOR_ENABLED=true`の場合だけ動きます。
 
 ## Render Cron
 
