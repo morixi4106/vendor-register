@@ -31,12 +31,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Remove stale build artifacts
+        run: node scripts/security/clean-audit-artifacts.mjs --all --apply
+
       - name: Check Prisma schema
         run: |
-          npx prisma format --schema=prisma/schema.prisma
+          npm exec --offline -- prisma format --schema=prisma/schema.prisma
           git diff --exit-code -- prisma/schema.prisma
-          npx prisma validate --schema=prisma/schema.prisma
-          npx prisma generate --schema=prisma/schema.prisma
+          npm exec --offline -- prisma validate --schema=prisma/schema.prisma
+          npm exec --offline -- prisma generate --schema=prisma/schema.prisma
 
       - name: Lint
         run: npm run lint
@@ -44,8 +47,14 @@ jobs:
       - name: Check text encoding
         run: npm run check:text
 
+      - name: Check security documents
+        run: node scripts/security/scan-security-documents.mjs
+
       - name: Test
         run: npm run test:pricing
+
+      - name: Enforce production audit coverage
+        run: npm run audit:production:test
 
       - name: Test checkout validation function
         run: |
@@ -53,8 +62,23 @@ jobs:
           git diff --exit-code -- extensions/marketplace-purchase-control/generated/api.ts
           npm run test:checkout-function
 
-      - name: Build
+      - name: Build Shopify extensions for artifact verification
+        run: >-
+          npm exec --offline -- shopify app build
+          --config production
+          --no-color
+          --skip-dependencies-installation
+
+      - name: Build Remix app for artifact verification
         run: npm run build
 
       - name: Audit production dependencies
         run: npm run audit:production
+
+      - name: Remove generated Shopify manifests
+        run: node scripts/security/clean-audit-artifacts.mjs --apply
+
+      - name: Check generated repository diff
+        run: |
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
