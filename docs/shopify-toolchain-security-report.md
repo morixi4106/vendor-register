@@ -32,7 +32,6 @@ GHSA-mh99-v99m-4gvg as high severity.
 - Node.js 24.13.1
 - npm 11.8.0
 - @shopify/shopify_function 2.0.1
-- @graphql-codegen/cli 5.0.6
 - graphql-config 5.1.3
 - minimatch 9.0.9
 - brace-expansion 2.1.2
@@ -113,10 +112,12 @@ Environment and versions:
 - minimatch 9.0.9
 - brace-expansion 2.1.2
 
-`npm audit` reports GHSA-mh99-v99m-4gvg as high severity. A clean production
-Shopify app build confirms that these packages are build-time dependencies and
-are not present in the generated UI extension JavaScript, source map inputs,
-or metafile inputs.
+`npm audit` reports GHSA-mh99-v99m-4gvg as high severity. In our tested app, a
+clean production Shopify app build did not include ts-morph, minimatch, or
+brace-expansion in the generated UI extension bundles, source-map inputs, or
+metafile inputs. They remain installed in the package dependency graph, but we
+found no evidence that they are included in the deployable UI runtime
+artifacts.
 
 Reproduction:
 
