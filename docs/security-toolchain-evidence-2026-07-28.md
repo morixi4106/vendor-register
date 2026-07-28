@@ -247,8 +247,19 @@ Local verification on Windows with Node.js `24.13.1` and npm `11.8.0`:
   remains after cleanup;
 - PASS: no whitespace errors from `git diff --check`.
 
-The earlier branch revision was exercised by the GitHub-hosted Ubuntu Quality
-workflow. The current acceptance-provenance revision remains UNVERIFIED on
-Ubuntu until it is pushed and that workflow runs again. The policy remains
-intentionally blocking because the upstream report URLs are empty and the
-proposed decision has not been accepted by a human reviewer.
+GitHub-hosted Ubuntu Quality run `30384063088` verified commit
+`c27a9abbc77b29c6990e2e06ad6109bb1431547e`:
+
+- PASS: 704 of 705 application tests, with the one pre-existing legacy skip;
+- PASS: all 141 production-audit tests, with no skips;
+- PASS: production-audit coverage at 98.85% lines, 91.97% branches, and
+  97.96% functions;
+- PASS: all 30 Checkout Function tests;
+- PASS: production Shopify extension and Remix builds;
+- PASS: generated repository diff and untracked-file checks;
+- PASS: artifact and SBOM evidence generation and artifact upload.
+
+The final policy remains intentionally blocking with exactly
+`risk_not_accepted` and `upstream_urls_invalid`. Every non-acceptance audit
+check passed. The uploaded artifact is named
+`production-audit-review-evidence-30384063088` and is retained for 45 days.
