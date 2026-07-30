@@ -55,7 +55,10 @@ This project currently uses Shopify checkout as the customer payment surface, th
 - If using Wise as the receiving account, enter the Wise account details only if Shopify accepts that account type for the store's region and currency.
 - Run a small live order and confirm the Shopify payout can reach the account.
 
-The app cannot verify this bank account through code, so this remains a manual production check.
+The app cannot verify the destination bank account or bank arrival through the
+Order API. Save the payout report and bank-arrival evidence under the
+`SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` operational attestation. Production
+readiness remains blocked until that attestation is current.
 
 ## 2. Production mode environment
 
@@ -293,6 +296,13 @@ The page checks:
 - Active sellers have the payout records required by the selected payout provider.
 - Wise API env is configured when `SELLER_PAYOUT_PROVIDER=wise`.
 
+`canGoLive` is strict: every failed check and every unresolved warning/manual
+check blocks release. A non-pass check can be excluded only when the service
+marks it `scope_excluded` with a reason, such as Stripe Connect, third-party
+seller payout, or EU returns being disabled for a domestic platform-direct
+launch. `codeCanGoLive` only means that no code/configuration check has failed;
+it is not release approval.
+
 ## 6. Live smoke test
 
 Before public launch, open Shopify Admin > vendor-register >
@@ -307,18 +317,25 @@ order, refund, cancellation, ledger adjustment, or product publication.
    page with a real card.
 4. Enter the Shopify order number or Order GID in the E2E page.
 5. Wait until the page confirms the MarketplaceOrder, SellerOrder,
-   SellerOrderLine, shadow comparison, and paid ledger credit all match.
+   SellerOrderLine, shadow comparison, and paid ledger credit all match. The
+   probe also requires a live successful Shopify Payments `SALE` or `CAPTURE`
+   transaction whose amount and currency match the order.
 6. In Shopify Admin, fully refund the same order. Choose inventory restocking
    according to the actual operating policy.
 7. Wait until the page confirms the Shopify refund, refunded quantities,
-   refund ledger debit, and absence of a duplicate cancellation debit.
+   refund ledger debit, and absence of a duplicate cancellation debit. The
+   refund transaction must be `SUCCESS`, use Shopify Payments, match the full
+   order amount and currency, and point to the original successful payment
+   transaction.
 8. Confirm the E2E page shows `Passed` and Production readiness contains the
    release-bound automatic evidence.
 
 The E2E evidence is invalid for a different Render commit or Shopify app
 version. Run the flow again after a release change. Test orders, orders created
-before the run, third-party products, partial refunds, and manually entered
-attestations do not satisfy this gate.
+before the run (with no time tolerance), manually marked-paid orders,
+non-Shopify Payments transactions, third-party products, partial refunds,
+store-credit/manual refunds, and manually entered attestations do not satisfy
+this gate.
 
 Payout verification remains separate:
 

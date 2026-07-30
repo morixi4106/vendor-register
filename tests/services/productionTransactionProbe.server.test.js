@@ -20,6 +20,8 @@ const REFUND_ID = "gid://shopify/Refund/9876";
 const LINE_ID = "gid://shopify/LineItem/10";
 const PRODUCT_ID = "gid://shopify/Product/20";
 const VARIANT_ID = "gid://shopify/ProductVariant/30";
+const PAYMENT_TRANSACTION_ID = "gid://shopify/OrderTransaction/40";
+const REFUND_TRANSACTION_ID = "gid://shopify/OrderTransaction/50";
 const RELEASE_ENV = {
   RENDER_GIT_COMMIT: "a".repeat(40),
   SHOPIFY_APP_VERSION: "app-version-1",
@@ -34,9 +36,57 @@ function shopifyOrder({
   financialStatus = "PAID",
   refundedAmount = "0",
   refunds = [],
+  transactions,
+  transactionCount,
   testOrder = false,
   createdAt = "2026-07-29T01:01:00.000Z",
 } = {}) {
+  const paymentTransactions =
+    transactions ||
+    [
+      {
+        id: PAYMENT_TRANSACTION_ID,
+        kind: "SALE",
+        status: "SUCCESS",
+        gateway: "shopify_payments",
+        formattedGateway: "Shopify Payments",
+        manualPaymentGateway: false,
+        test: testOrder,
+        processedAt: "2026-07-29T01:01:30.000Z",
+        amountSet: {
+          shopMoney: { amount: "1114", currencyCode: "JPY" },
+        },
+        parentTransaction: null,
+      },
+    ];
+  const normalizedRefunds = refunds.map((refund, index) => ({
+    ...refund,
+    transactions: refund.transactions || {
+      nodes: [
+        {
+          id:
+            index === 0
+              ? REFUND_TRANSACTION_ID
+              : `gid://shopify/OrderTransaction/refund-${index}`,
+          kind: "REFUND",
+          status: "SUCCESS",
+          gateway: "shopify_payments",
+          formattedGateway: "Shopify Payments",
+          manualPaymentGateway: false,
+          test: testOrder,
+          processedAt: "2026-07-29T01:10:00.000Z",
+          amountSet: {
+            shopMoney: {
+              amount: refundedAmount === "0" ? "1114" : refundedAmount,
+              currencyCode: "JPY",
+            },
+          },
+          parentTransaction: { id: PAYMENT_TRANSACTION_ID },
+        },
+      ],
+      pageInfo: { hasNextPage: false },
+    },
+  }));
   return {
     id: ORDER_ID,
     name: "#1234",
@@ -62,7 +112,11 @@ function shopifyOrder({
     totalRefundedSet: {
       shopMoney: { amount: refundedAmount, currencyCode: "JPY" },
     },
-    refunds,
+    transactionsCount: {
+      count: transactionCount ?? paymentTransactions.length,
+    },
+    transactions: paymentTransactions,
+    refunds: normalizedRefunds,
     lineItems: {
       nodes: [
         {
@@ -274,6 +328,11 @@ test("Shopify snapshot stores commercial evidence without buyer PII or presentat
 
   assert.equal(snapshot.commercialEvidence.totalAmount, 1114);
   assert.equal(snapshot.commercialEvidence.lines[0].unitAmount, 244);
+  assert.deepEqual(
+    snapshot.transactions.map((transaction) => transaction.id),
+    [PAYMENT_TRANSACTION_ID],
+  );
+  assert.equal(snapshot.transactions[0].gateway, "shopify_payments");
   assert.doesNotMatch(serialized, /buyer@example\.com/);
   assert.doesNotMatch(serialized, /Private Buyer/);
   assert.doesNotMatch(serialized, /Private Address/);
@@ -437,7 +496,7 @@ test("attaching an order rejects orders created before the verification run", as
     {
       prismaClient,
       graphQL: graphQLFor(
-        shopifyOrder({ createdAt: "2026-07-28T00:00:00.000Z" }),
+        shopifyOrder({ createdAt: "2026-07-29T00:59:59.999Z" }),
       ),
     },
   );
@@ -622,6 +681,63 @@ test("paid inspection never accepts a ledger entry assigned to another seller", 
   assert.equal(state.attestation, null);
 });
 
+test("paid inspection rejects a manually marked or non-Shopify Payments transaction", async () => {
+  const { prismaClient, state } = refreshPrisma();
+  const manualTransaction = {
+    ...shopifyOrder().transactions[0],
+    gateway: "manual",
+    formattedGateway: "Manual",
+    manualPaymentGateway: true,
+  };
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({ transactions: [manualTransaction] }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(
+    state.probe.lastErrorCode,
+    "shopify_payment_transaction_not_shopify_payments",
+  );
+  assert.equal(state.attestation, null);
+});
+
+test("paid inspection rejects a test transaction on a non-test order", async () => {
+  const { prismaClient, state } = refreshPrisma();
+  const testTransaction = {
+    ...shopifyOrder().transactions[0],
+    test: true,
+  };
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(shopifyOrder({ transactions: [testTransaction] })),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(
+    state.probe.lastErrorCode,
+    "shopify_payment_transaction_is_test",
+  );
+});
+
 test("paid order advances to refund without writing an attestation", async () => {
   const { prismaClient, state } = refreshPrisma();
   const result = await refreshProductionTransactionProbe(
@@ -717,6 +833,88 @@ test("a refund ledger identifier mismatch never passes", async () => {
   assert.equal(result.pending, true);
   assert.equal(result.stage, "refund");
   assert.equal(state.probe.lastErrorCode, "refund_ledger_identifier_mismatch");
+  assert.equal(state.attestation, null);
+});
+
+test("a pending Shopify refund transaction never completes the probe", async () => {
+  const { prismaClient, state } = refreshPrisma({
+    probe: probeRecord({ status: "AWAITING_REFUND" }),
+    order: marketplaceOrder({ refunded: true }),
+    ledgerEntries: [paidLedger(), refundLedger()],
+  });
+  const pendingRefund = {
+    ...shopifyOrder({
+      financialStatus: "REFUNDED",
+      refundedAmount: "1114",
+      refunds: [{ id: REFUND_ID }],
+    }).refunds[0],
+  };
+  pendingRefund.transactions.nodes[0].status = "PENDING";
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          financialStatus: "REFUNDED",
+          refundedAmount: "1114",
+          refunds: [pendingRefund],
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "refund");
+  assert.equal(
+    state.probe.lastErrorCode,
+    "shopify_refund_transaction_missing",
+  );
+  assert.equal(state.attestation, null);
+});
+
+test("a refund not linked to the captured Shopify Payments transaction never passes", async () => {
+  const { prismaClient, state } = refreshPrisma({
+    probe: probeRecord({ status: "AWAITING_REFUND" }),
+    order: marketplaceOrder({ refunded: true }),
+    ledgerEntries: [paidLedger(), refundLedger()],
+  });
+  const unrelatedRefund = shopifyOrder({
+    financialStatus: "REFUNDED",
+    refundedAmount: "1114",
+    refunds: [{ id: REFUND_ID }],
+  }).refunds[0];
+  unrelatedRefund.transactions.nodes[0].parentTransaction = {
+    id: "gid://shopify/OrderTransaction/unrelated",
+  };
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          financialStatus: "REFUNDED",
+          refundedAmount: "1114",
+          refunds: [unrelatedRefund],
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "refund");
+  assert.equal(
+    state.probe.lastErrorCode,
+    "shopify_refund_transaction_parent_mismatch",
+  );
   assert.equal(state.attestation, null);
 });
 

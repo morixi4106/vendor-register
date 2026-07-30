@@ -556,6 +556,8 @@ export default function ProductionReadinessPage() {
     optionalCount: displayChecks.filter(
       (check) => check.displayStatus === "optional",
     ).length,
+    decisionRequiredCount: Number(data.summary?.decisionRequiredCount || 0),
+    releaseBlockingCount: Number(data.summary?.releaseBlockingCount || 0),
   };
   const orderedChecks = [...blockingChecks, ...nonBlockingChecks].sort(
     (a, b) =>
@@ -855,7 +857,7 @@ export default function ProductionReadinessPage() {
               data.canGoLive ? "readiness-badge--pass" : "readiness-badge--fail"
             }`}
           >
-            {data.canGoLive ? "コード上のブロッカーなし" : "要対応あり"}
+            {data.canGoLive ? "公開条件を満たしています" : "公開前の対応が必要"}
           </span>
         </div>
       </section>
@@ -1443,7 +1445,15 @@ export default function ProductionReadinessPage() {
             }
             compact
           />
-          <Metric label="要対応" value={displaySummary.blockingCount} />
+          <Metric
+            label="公開ブロッカー"
+            value={displaySummary.releaseBlockingCount}
+          />
+          <Metric label="コードエラー" value={displaySummary.blockingCount} />
+          <Metric
+            label="判断待ち"
+            value={displaySummary.decisionRequiredCount}
+          />
           <Metric label="注意" value={displaySummary.warningCount} />
           <Metric label="外部確認" value={displaySummary.manualCount} />
           <Metric label="任意" value={displaySummary.optionalCount} />
@@ -1693,14 +1703,22 @@ function decorateCheckForDisplay(check, data) {
     check.category === "stripe" &&
     !stripeConnectEnabled &&
     check.status === "warning";
-  const displayStatus = isOptionalStripe ? "optional" : check.status;
+  const isScopeExcluded =
+    check.releaseDisposition === "scope_excluded" &&
+    check.releaseBlocking === false;
+  const displayStatus =
+    isOptionalStripe || isScopeExcluded ? "optional" : check.status;
 
   return {
     ...check,
     displayStatus,
     displayTitle: CHECK_TITLE_LABELS[check.id] || check.title,
-    displayDetail: checkDetailForDisplay(check, data, { isOptionalStripe }),
-    displayAction: checkActionForDisplay(check, data, { isOptionalStripe }),
+    displayDetail: isScopeExcluded
+      ? check.releaseDispositionReason || check.detail
+      : checkDetailForDisplay(check, data, { isOptionalStripe }),
+    displayAction: isScopeExcluded
+      ? ""
+      : checkActionForDisplay(check, data, { isOptionalStripe }),
     actionLink: checkActionLinkForDisplay(check),
   };
 }
