@@ -625,10 +625,15 @@ model ShopifyPayoutEvidence {
   releaseId                  String
   releaseFingerprint         String
   payoutId                   String
+  shopifyPayoutGid           String?
+  shopifyLegacyResourceId    String?
   payoutStatus               String    @default("SUBMITTED")
   amount                     Int
   currencyCode               String
   shopifyPayoutDate          DateTime
+  shopifyVerifiedAt          DateTime?
+  shopifyExternalTraceIdHash String?
+  shopifyVerificationJson    Json?
   bankDepositedAt            DateTime
   bankReferenceMasked        String
   evidenceReference          String
@@ -646,6 +651,7 @@ model ShopifyPayoutEvidence {
   updatedAt                  DateTime  @updatedAt
 
   @@unique([shopDomain, payoutId, releaseId])
+  @@unique([shopDomain, shopifyPayoutGid])
   @@index([releaseId, status, submittedAt])
   @@index([shopDomain, status, submittedAt])
   @@map("shopify_payout_evidence")

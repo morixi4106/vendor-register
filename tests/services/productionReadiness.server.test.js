@@ -32,6 +32,7 @@ const REQUIRED_SCOPE_STRING = [
   "read_draft_orders",
   "write_draft_orders",
   "read_shopify_payments_disputes",
+  "read_shopify_payments_payouts",
 ].join(",");
 
 const TEST_RELEASE_ENV = {
@@ -39,6 +40,8 @@ const TEST_RELEASE_ENV = {
   SHOPIFY_APP_VERSION: "app-v1",
   PAYMENT_PROVIDER: "shopify_payments",
   SELLER_PAYOUT_PROVIDER: "manual",
+  LAUNCH_MONITOR_ENABLED: "true",
+  SALE_ELIGIBILITY_WATCHDOG_TOKEN: "w".repeat(32),
 };
 
 function getProductionReadiness(options = {}) {
@@ -140,13 +143,19 @@ function createFakePrisma({
         checkoutHold: false,
       }),
     },
+    operationalHeartbeat: {
+      findUnique: async () =>
+        heartbeat !== undefined
+          ? heartbeat
+          : {
+              key: "withdrawal_email_outbox",
+              lastSucceededAt: new Date("2099-01-01T00:00:00.000Z"),
+              lastFailedAt: null,
+            },
+      findMany: async () => buildReleaseMonitoringHeartbeats(),
+    },
   };
 
-  if (heartbeat !== undefined) {
-    fakePrisma.operationalHeartbeat = {
-      findUnique: async () => heartbeat,
-    };
-  }
   if (shadowChecks !== undefined) {
     fakePrisma.sellerOrderShadowCheck = {
       findMany: async () => shadowChecks,
@@ -176,7 +185,9 @@ function buildPayoutEvidence() {
     id: "payout_evidence_1",
     releaseId: "aaaaaaaaaaaa:app-v1",
     releaseFingerprint: "e".repeat(64),
-    payoutId: "po_123",
+    payoutId: "gid://shopify/ShopifyPaymentsPayout/123",
+    shopifyPayoutGid: "gid://shopify/ShopifyPaymentsPayout/123",
+    shopifyLegacyResourceId: "123",
     payoutStatus: "DEPOSITED",
     status: "APPROVED",
     amount: 250,
@@ -184,6 +195,13 @@ function buildPayoutEvidence() {
     shopifyPayoutDate: new Date("2026-07-20T00:00:00Z"),
     bankDepositedAt: new Date("2026-07-23T00:00:00Z"),
     bankReferenceMasked: "reference-****1234",
+    shopifyVerifiedAt: new Date("2026-07-23T00:00:00Z"),
+    shopifyExternalTraceIdHash: "f".repeat(64),
+    shopifyVerificationJson: {
+      source: "shopify_admin_graphql",
+      status: "PAID",
+      transactionType: "DEPOSIT",
+    },
     evidenceReference: `test:${SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY}`,
     evidenceHash: "d".repeat(64),
     submittedBy: "shopify_user:submitter",
@@ -191,6 +209,38 @@ function buildPayoutEvidence() {
     singleOperatorWaiver: false,
     singleOperatorWaiverReason: null,
   };
+}
+
+function buildReleaseMonitoringHeartbeats() {
+  return [
+    {
+      key: "production_integrity_monitor",
+      metadataJson: {
+        lastCheckedAt: "2099-01-01T00:00:00.000Z",
+        lastOverallStatus: "healthy",
+        lastReport: {
+          checkMode: "full",
+          overallStatus: "healthy",
+          criticalCount: 0,
+          warningCount: 0,
+          agent: { source: "github_actions", schedulerEnabled: true },
+          checks: [],
+        },
+      },
+    },
+    {
+      key: "sale_eligibility_watchdog",
+      metadataJson: {
+        checkedAt: "2099-01-01T00:00:00.000Z",
+        mode: "live",
+        status: "healthy",
+        action: "none",
+        source: "github_actions",
+        credentialValidation: true,
+        schedulerEnabled: true,
+      },
+    },
+  ];
 }
 
 function buildPayoutEvidenceMetadata() {
@@ -619,6 +669,7 @@ test("getProductionReadiness treats write grants as satisfying paired Shopify re
     "write_validations",
     "write_draft_orders",
     "read_shopify_payments_disputes",
+    "read_shopify_payments_payouts",
   ].join(",");
 
   const result = await getProductionReadiness({

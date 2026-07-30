@@ -770,6 +770,7 @@ export function buildReport({
     : warningCount
       ? WARNING_SEVERITY
       : HEALTHY_STATUS;
+  const agent = asObject(renderSnapshot.agent);
   return {
     checkedAt: now.toISOString(),
     windowStartedAt:
@@ -780,6 +781,13 @@ export function buildReport({
     criticalCount,
     warningCount,
     checkMode,
+    agent: {
+      source:
+        agent.source === "github_actions" ? "github_actions" : "local_agent",
+      runId: stableProbeCode(agent.runId, "unknown"),
+      eventName: stableProbeCode(agent.eventName, "unknown"),
+      schedulerEnabled: agent.schedulerEnabled === true,
+    },
     checks,
   };
 }
@@ -826,7 +834,9 @@ export function resolveNotificationKind({
   now = new Date(),
 }) {
   const status = String(report?.overallStatus || HEALTHY_STATUS);
-  if (!previousStatus) return "started";
+  if (!previousStatus) {
+    return status === HEALTHY_STATUS ? "started" : "alert";
+  }
   if (status === HEALTHY_STATUS) {
     return previousStatus === HEALTHY_STATUS ? null : "recovered";
   }

@@ -55,22 +55,31 @@ This project currently uses Shopify checkout as the customer payment surface, th
 - If using Wise as the receiving account, enter the Wise account details only if Shopify accepts that account type for the store's region and currency.
 - Run a small live order and confirm the Shopify payout can reach the account.
 
-The app cannot verify the destination bank account or bank arrival through the
-Order API. Use `/app/shopify-payout-evidence` to register:
+The Order API does not prove bank arrival. The app therefore requires
+`read_shopify_payments_payouts` and uses
+`/app/shopify-payout-evidence` to combine Shopify's Payout record with
+separate bank evidence:
 
-- Shopify Payout ID and `DEPOSITED` status
-- payout amount and currency
-- Shopify payout date and actual bank deposit date
-- a masked bank-statement reference
+- Shopify Payout ID
+- actual bank deposit date
+- the last four characters of the bank-statement reference
 - an access-controlled evidence location
 - the evidence file's SHA-256
 
-The submitter and reviewer must normally be different Shopify users. A store
-owner can use the explicit single-operator exception only when no independent
-reviewer exists; the reason and residual risk are recorded. An approved record
-creates the `SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` attestation for the current
-release. Production readiness fails closed if the approved record, hash, or
-release binding no longer matches.
+The server obtains payout status, transaction type, net amount, currency,
+issued date, and external trace ID from Shopify. It accepts only a `PAID`
+`DEPOSIT`, compares the bank-reference suffix, hashes the full external trace
+ID, and never stores that full value. The bank date cannot be in the future and
+must be within 90 days. A verified Shopify Payout GID can be used for only one
+release.
+
+The submitter and reviewer must be different Shopify users for release
+readiness. A store owner may record a single-operator waiver for audit
+continuity, but that record is explicitly ineligible for a green release.
+Only independent approval creates the
+`SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` attestation. Production readiness fails
+closed if the Shopify verification, approved record, hash, bank-evidence date,
+or release binding no longer matches.
 
 ## 2. Production mode environment
 
@@ -219,6 +228,44 @@ only after eligibility and publications are reverified. Save the workflow run
 and recovery approval under
 `INDEPENDENT_SALES_STOP_DRILL_COMPLETED`. Repeat the drill at least every 90
 days.
+
+### Production integrity monitor activation
+
+Keep these controls distinct:
+
+```text
+LAUNCH_MONITOR_ENABLED=true
+PRODUCTION_INTEGRITY_MONITOR_ENABLED=true
+```
+
+The first value enables the authenticated Render endpoint. The second is a
+Repository Variable that enables scheduled GitHub Actions runs. A dry run
+checks only Render log access and public HTTP transport; it does not prove the
+internal endpoint, database checks, persistent run lock, heartbeat, or email
+notification path.
+
+Before removing storefront password protection:
+
+1. Enable the Render endpoint and confirm its token is at least 32 random
+   characters.
+2. Keep `PRODUCTION_INTEGRITY_MONITOR_ENABLED=false`.
+3. Manually run **Production integrity monitor** with `dry_run=false` and
+   `expect_password_critical=true`.
+4. The run passes only when the full authenticated report contains exactly one
+   non-healthy check: `official_storefront/password_page`, and the first
+   Critical alert was sent. Any other warning or Critical fails the run.
+5. Confirm the Critical email was received and the release-readiness page
+   records the prelaunch password probe. This evidence does not make the
+   release green.
+6. Set the Repository Variable
+   `PRODUCTION_INTEGRITY_MONITOR_ENABLED=true` only after the full path is
+   proven.
+7. Immediately after the separately approved password removal, manually run a
+   normal full check and require `healthy` or `recovered`. Scheduled runs must
+   remain fresh thereafter.
+
+Do not select `expect_password_critical` for scheduled or post-launch runs.
+Dry-run and expected-Critical modes are intentionally incompatible.
 
 ### Unsupported sales surfaces
 

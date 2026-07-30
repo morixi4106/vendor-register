@@ -129,7 +129,18 @@ SALE_ELIGIBILITY_WATCHDOG_ENABLED=false
 
 `Production integrity monitor`の手動実行は`dry_run=true`が既定です。この
 モードは公開URLとRenderログだけを読み、内部監視API、DB、通知を使用
-しません。定期本実行はRepository Variable
+しないため、公開可否のGREEN証拠にはなりません。
+
+パスワード保護中に監視の全経路を確認するときは、手動実行で
+`dry_run=false`、`expect_password_critical=true`を選びます。内部API、DB、
+Heartbeat、実行ロック、通知まで実行し、非正常項目が
+`official_storefront/password_page`の1件だけで、初回Critical通知が送信
+された場合に限ってWorkflowを成功させます。この証拠も一般公開GREEN
+ではなく、公開前配線確認です。パスワード解除後は
+`expect_password_critical=false`でfull runを実行し、`healthy`または
+`recovered`を確認します。
+
+定期本実行はRepository Variable
 `PRODUCTION_INTEGRITY_MONITOR_ENABLED=true`の場合だけ動きます。手動・定期の
 どちらも`main`ブランチからだけ監視用Secretへアクセスできます。
 

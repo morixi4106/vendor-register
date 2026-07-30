@@ -32,6 +32,10 @@ import {
   getProductionProbeSigningSecret,
   inspectProductionReleaseEvidence,
 } from "./productionRelease.server.js";
+import {
+  buildReleaseMonitoringChecks,
+  inspectReleaseMonitoringReadiness,
+} from "./releaseMonitoringReadiness.server.js";
 
 const STRIPE_ACCOUNT_PROBE_LIMIT = 10;
 const STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES = new Set([
@@ -127,6 +131,7 @@ const REQUIRED_OPERATIONAL_SHOPIFY_SCOPES = [
   "read_draft_orders",
   "write_draft_orders",
   "read_shopify_payments_disputes",
+  "read_shopify_payments_payouts",
 ];
 
 const WRITE_SCOPES_THAT_SATISFY_READ_SCOPES = {
@@ -2797,9 +2802,14 @@ export async function getProductionReadiness({
   const withdrawalOperations = await inspectWithdrawalOperations({
     prismaClient,
   });
-  const [operationalReadiness, platformOperationalControl] = await Promise.all([
+  const [
+    operationalReadiness,
+    platformOperationalControl,
+    releaseMonitoring,
+  ] = await Promise.all([
     inspectOperationalReadiness({ prismaClient, now, env }),
     getPlatformOperationalControl({ prismaClient }),
+    inspectReleaseMonitoringReadiness({ prismaClient, now, env }),
   ]);
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
   const directReturns = await inspectDirectReturnReadiness({ prismaClient });
@@ -2866,6 +2876,7 @@ export async function getProductionReadiness({
       inspection: operationalReadiness,
       control: platformOperationalControl,
     }),
+    ...buildReleaseMonitoringChecks(releaseMonitoring),
     ...buildShopifyChecks({ configuredScopes, grantedScopes }),
     ...buildSellerChecks({
       sellerRows: marketplaceSellerRows,
@@ -2924,6 +2935,7 @@ export async function getProductionReadiness({
     integrity: launchIntegrity,
     marketplaceGovernance,
     operationalReadiness,
+    releaseMonitoring,
     platformOperationalControl,
     withdrawals: { ...withdrawalOperations, directReturns },
     checks: releaseSummary.checks,

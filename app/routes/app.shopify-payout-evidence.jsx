@@ -76,10 +76,6 @@ export async function action({ request }) {
     result = await submitShopifyPayoutEvidence({
       shopDomain: session.shop,
       payoutId: formData.get("payoutId"),
-      payoutStatus: "DEPOSITED",
-      amount: formData.get("amount"),
-      currencyCode: formData.get("currencyCode"),
-      shopifyPayoutDate: formData.get("shopifyPayoutDate"),
       bankDepositedAt: formData.get("bankDepositedAt"),
       bankReferenceMasked: formData.get("bankReferenceMasked"),
       evidenceReference: formData.get("evidenceReference"),
@@ -130,7 +126,7 @@ export default function ShopifyPayoutEvidencePage() {
           <p className="eyebrow">PRODUCTION EVIDENCE</p>
           <h1>Shopify Payments着金証拠</h1>
           <p>
-            ShopifyのPayoutと銀行着金を照合した証拠を登録し、別の確認者が承認します。
+            Payout IDをShopify APIへ照合し、銀行着金証拠を別の確認者が承認します。
             銀行明細全体や口座番号は保存しないでください。
           </p>
         </div>
@@ -160,7 +156,9 @@ export default function ShopifyPayoutEvidencePage() {
           role="status"
         >
           {actionData.ok
-            ? "処理が完了しました。画面を再読み込みすると最新状態を確認できます。"
+            ? actionData.readinessEligible === false
+              ? "単独確認の記録を保存しました。この記録だけでは本番公開条件を満たしません。別の確認者による承認が必要です。"
+              : "処理が完了しました。画面を再読み込みすると最新状態を確認できます。"
             : `処理できませんでした: ${reasonLabel(actionData.reason)}`}
         </div>
       ) : null}
@@ -168,7 +166,7 @@ export default function ShopifyPayoutEvidencePage() {
       <section className="payout-section">
         <h2>証拠を登録</h2>
         <p className="section-copy">
-          マスキング済みの証拠ファイルをアクセス制限された保存先へ置き、その参照先とSHA-256を登録します。
+          金額・通貨・送金日はShopifyから取得します。証拠ファイルはアクセス制限された保存先へ置き、その参照先とSHA-256を登録します。
         </p>
         <Form method="post" className="evidence-form">
           <input type="hidden" name="intent" value="submit" />
@@ -177,33 +175,15 @@ export default function ShopifyPayoutEvidencePage() {
             <input name="payoutId" required maxLength={160} />
           </label>
           <label>
-            <span>金額（最小通貨単位。JPYは円）</span>
-            <input name="amount" type="number" min="1" step="1" required />
-          </label>
-          <label>
-            <span>通貨</span>
-            <input
-              name="currencyCode"
-              defaultValue="JPY"
-              pattern="[A-Za-z]{3}"
-              maxLength={3}
-              required
-            />
-          </label>
-          <label>
-            <span>Shopify送金日</span>
-            <input name="shopifyPayoutDate" type="date" required />
-          </label>
-          <label>
             <span>銀行着金日</span>
             <input name="bankDepositedAt" type="date" required />
           </label>
           <label className="wide">
-            <span>銀行明細の参照番号（マスキング済み）</span>
+            <span>銀行明細の参照番号（末尾4文字のみ）</span>
             <input
               name="bankReferenceMasked"
               maxLength={160}
-              placeholder="例: 振込参照番号の末尾4桁のみ"
+              placeholder="例: 1234"
               required
             />
           </label>
@@ -228,7 +208,7 @@ export default function ShopifyPayoutEvidencePage() {
             />
           </label>
           <button type="submit" disabled={busy || !data.release.configured}>
-            証拠を登録
+            Shopifyと照合して登録
           </button>
         </Form>
       </section>
@@ -300,7 +280,7 @@ export default function ShopifyPayoutEvidencePage() {
                       />
                       <input type="hidden" name="evidenceId" value={item.id} />
                       <p>
-                        第二確認者を用意できない場合だけ、ストア所有者が残存リスクを明示して承認します。
+                        第二確認者を用意できない場合の監査記録です。この操作では本番公開条件は合格になりません。
                       </p>
                       <label>
                         <span>確認文</span>
@@ -384,6 +364,7 @@ function statusLabel(status) {
     {
       SUBMITTED: "確認待ち",
       APPROVED: "承認済み",
+      APPROVED_WITH_WAIVER: "単独確認（公開判定対象外）",
       REJECTED: "差し戻し",
     }[status] || status
   );
@@ -396,11 +377,24 @@ function reasonLabel(reason) {
       shop_domain_mismatch: "対象ショップが現在のReleaseと一致しません",
       invalid_shop_domain: "ショップドメインが不正です",
       invalid_payout_id: "Payout IDを確認してください",
-      payout_not_deposited: "銀行着金済みのPayoutだけ登録できます",
-      invalid_payout_amount: "金額を確認してください",
-      invalid_currency_code: "通貨コードを確認してください",
-      invalid_payout_dates: "送金日と着金日を確認してください",
-      invalid_bank_deposit_date: "着金日は送金日以降の日付にしてください",
+      invalid_payout_dates: "着金日を確認してください",
+      invalid_bank_deposit_date:
+        "着金日はShopify送金日以降かつ90日以内の過去日にしてください",
+      shopify_payout_not_found: "ShopifyでPayoutを確認できませんでした",
+      shopify_payout_not_paid: "Shopify上でPAIDのPayoutではありません",
+      shopify_payout_not_deposit: "銀行へのDEPOSITではありません",
+      shopify_payout_trace_missing:
+        "Shopifyから銀行参照番号を取得できませんでした",
+      bank_reference_mismatch:
+        "銀行参照番号の末尾がShopifyのPayoutと一致しません",
+      shopify_payout_scope_missing:
+        "Shopify Payments Payoutの読取権限がありません。アプリ権限を更新してください",
+      shopify_payout_verification_failed:
+        "Shopify Payoutの照合に失敗しました",
+      shopify_payout_verification_required:
+        "Shopify APIで照合済みの証拠ではありません",
+      payout_evidence_already_used:
+        "このPayoutは別のReleaseですでに使用されています",
       bank_reference_required: "マスキング済み参照番号が必要です",
       evidence_reference_required: "証拠ファイルの保存先が必要です",
       evidence_hash_required: "証拠ファイルのSHA-256が必要です",
