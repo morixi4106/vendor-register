@@ -56,9 +56,21 @@ This project currently uses Shopify checkout as the customer payment surface, th
 - Run a small live order and confirm the Shopify payout can reach the account.
 
 The app cannot verify the destination bank account or bank arrival through the
-Order API. Save the payout report and bank-arrival evidence under the
-`SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` operational attestation. Production
-readiness remains blocked until that attestation is current.
+Order API. Use `/app/shopify-payout-evidence` to register:
+
+- Shopify Payout ID and `DEPOSITED` status
+- payout amount and currency
+- Shopify payout date and actual bank deposit date
+- a masked bank-statement reference
+- an access-controlled evidence location
+- the evidence file's SHA-256
+
+The submitter and reviewer must normally be different Shopify users. A store
+owner can use the explicit single-operator exception only when no independent
+reviewer exists; the reason and residual risk are recorded. An approved record
+creates the `SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` attestation for the current
+release. Production readiness fails closed if the approved record, hash, or
+release binding no longer matches.
 
 ## 2. Production mode environment
 
@@ -168,15 +180,33 @@ release and after material schema or backup-provider changes.
 
 ### Independent Shopify watchdog
 
-The GitHub `production` environment must also contain:
+Keep the watchdog disabled until its independent Shopify app and credentials
+have been verified. The job-level enable switch must be a **Repository
+Variable**, because GitHub evaluates the job condition before environment-level
+variables are made available:
+
+```text
+SALE_ELIGIBILITY_WATCHDOG_ENABLED=false
+SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
+LAUNCH_MONITOR_URL=https://vendor-register-pbjl.onrender.com
+```
+
+Store the following values as **Environment Secrets** in a dedicated GitHub
+Environment named `watchdog`:
 
 ```text
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<same value configured on Render>
-SHOPIFY_WATCHDOG_SHOP_DOMAIN=<production-shop.myshopify.com>
 SHOPIFY_WATCHDOG_CLIENT_ID=<independent watchdog app client ID>
 SHOPIFY_WATCHDOG_CLIENT_SECRET=<independent watchdog app client secret>
-SALE_ELIGIBILITY_WATCHDOG_ENABLED=true
 ```
+
+The `watchdog` Environment must not require reviewers because the scheduled job
+cannot wait for human approval. Restrict its deployment branches to `main`.
+Do not use the reviewer-protected `production` Environment for this five-minute
+job. After all credentials and scopes have been verified, move any temporary
+repository-level watchdog secrets into the `watchdog` Environment, delete the
+repository-level copies, and then set the Repository Variable
+`SALE_ELIGIBILITY_WATCHDOG_ENABLED=true`.
 
 The watchdog app must be separate from the main application and limited to
 `read_products`, `read_publications`, and `write_publications`. The workflow

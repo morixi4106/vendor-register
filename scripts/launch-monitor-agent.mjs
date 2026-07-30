@@ -1,17 +1,21 @@
-await main().catch(async (error) => {
-  await sendFallbackAlert(error).catch(() => {});
+const DRY_RUN = process.argv.includes("--dry-run");
+
+await main({ dryRun: DRY_RUN }).catch(async (error) => {
+  if (!DRY_RUN) {
+    await sendFallbackAlert(error).catch(() => {});
+  }
   console.error(`launch monitor agent failed: ${safeError(error)}`);
   process.exitCode = 1;
 });
 
-async function main() {
+async function main({ dryRun = false } = {}) {
   const required = [
     "LAUNCH_MONITOR_URL",
-    "LAUNCH_MONITOR_TOKEN",
     "RENDER_API_KEY",
     "RENDER_OWNER_ID",
     "RENDER_SERVICE_ID",
   ];
+  if (!dryRun) required.push("LAUNCH_MONITOR_TOKEN");
 
   for (const key of required) {
     if (!String(process.env[key] || "").trim()) {
@@ -74,7 +78,7 @@ async function main() {
 
   snapshot.publicEndpoints = await probePublicEndpoints();
 
-  if (process.argv.includes("--dry-run")) {
+  if (dryRun) {
     console.log(
       JSON.stringify({
         ok: true,

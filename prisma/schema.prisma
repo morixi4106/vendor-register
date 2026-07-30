@@ -619,6 +619,38 @@ model OperationalReadinessAttestation {
   @@map("operational_readiness_attestations")
 }
 
+model ShopifyPayoutEvidence {
+  id                         String    @id @default(cuid())
+  shopDomain                 String
+  releaseId                  String
+  releaseFingerprint         String
+  payoutId                   String
+  payoutStatus               String    @default("SUBMITTED")
+  amount                     Int
+  currencyCode               String
+  shopifyPayoutDate          DateTime
+  bankDepositedAt            DateTime
+  bankReferenceMasked        String
+  evidenceReference          String
+  evidenceHash               String
+  status                     String    @default("SUBMITTED")
+  submittedBy                String
+  submittedAt                DateTime  @default(now())
+  reviewedBy                 String?
+  reviewedAt                 DateTime?
+  rejectionReason            String?
+  singleOperatorWaiver       Boolean   @default(false)
+  singleOperatorWaiverReason String?
+  metadataJson               Json?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@unique([shopDomain, payoutId, releaseId])
+  @@index([releaseId, status, submittedAt])
+  @@index([shopDomain, status, submittedAt])
+  @@map("shopify_payout_evidence")
+}
+
 model ProductionTransactionProbe {
   id                 String    @id @default(cuid())
   activeKey          String?   @unique

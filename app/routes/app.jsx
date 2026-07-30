@@ -17,12 +17,15 @@ export default function App() {
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <NavMenu>
-        <Link to="/app" rel="home">ホーム</Link>
+        <Link to="/app" rel="home">
+          ホーム
+        </Link>
         <Link to="/app/vendor-stores">店舗一覧</Link>
         <Link to="/app/sellers">出店者管理</Link>
         <Link to="/app/payout-runs">出金管理</Link>
         <Link to="/app/production-readiness">本番確認</Link>
         <Link to="/app/production-transaction-probe">本番注文・返金 E2E</Link>
+        <Link to="/app/shopify-payout-evidence">Shopify着金証拠</Link>
         <Link to="/app/launch-monitor">公開監視</Link>
         <Link to="/app/marketplace-governance">販売責任・案件管理</Link>
         <Link to="/app/seller-order-shadow">SellerOrder検証</Link>

@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "2-57/5 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Read Render logs and public URLs only; do not call the internal monitor or send notifications"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -14,6 +20,7 @@ concurrency:
 
 jobs:
   monitor:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.PRODUCTION_INTEGRITY_MONITOR_ENABLED == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -38,4 +45,9 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-        run: node scripts/launch-monitor-agent.mjs
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            node scripts/launch-monitor-agent.mjs --dry-run
+          else
+            node scripts/launch-monitor-agent.mjs
+          fi

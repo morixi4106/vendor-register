@@ -11,6 +11,7 @@ import {
 import {
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   OPERATIONAL_READINESS_DEFINITIONS,
+  SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
 
 const REQUIRED_SCOPE_STRING = [
@@ -105,11 +106,15 @@ function createFakePrisma({
           evidenceHash:
             definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
               ? "b".repeat(64)
-              : null,
+              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                ? "d".repeat(64)
+                : null,
           confirmedBy:
             definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
               ? "system:production-transaction-probe"
-              : "test_operator",
+              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                ? "shopify_user:reviewer"
+                : "test_operator",
           confirmedAt: new Date("2026-07-23T00:00:00Z"),
           expiresAt: new Date("2099-01-01T00:00:00Z"),
           metadataJson:
@@ -121,8 +126,13 @@ function createFakePrisma({
                   releaseFingerprint: "c".repeat(64),
                   completedAt: "2026-07-23T00:00:00.000Z",
                 }
-              : null,
+              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                ? buildPayoutEvidenceMetadata()
+                : null,
         })),
+    },
+    shopifyPayoutEvidence: {
+      findUnique: async () => buildPayoutEvidence(),
     },
     platformOperationalControl: {
       findUnique: async () => ({
@@ -159,6 +169,43 @@ function createFakePrisma({
   }
 
   return fakePrisma;
+}
+
+function buildPayoutEvidence() {
+  return {
+    id: "payout_evidence_1",
+    releaseId: "aaaaaaaaaaaa:app-v1",
+    releaseFingerprint: "e".repeat(64),
+    payoutId: "po_123",
+    payoutStatus: "DEPOSITED",
+    status: "APPROVED",
+    amount: 250,
+    currencyCode: "JPY",
+    shopifyPayoutDate: new Date("2026-07-20T00:00:00Z"),
+    bankDepositedAt: new Date("2026-07-23T00:00:00Z"),
+    bankReferenceMasked: "reference-****1234",
+    evidenceReference: `test:${SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY}`,
+    evidenceHash: "d".repeat(64),
+    submittedBy: "shopify_user:submitter",
+    reviewedBy: "shopify_user:reviewer",
+    singleOperatorWaiver: false,
+    singleOperatorWaiverReason: null,
+  };
+}
+
+function buildPayoutEvidenceMetadata() {
+  const evidence = buildPayoutEvidence();
+  return {
+    verificationSource: "shopify_payout_evidence",
+    payoutEvidenceId: evidence.id,
+    releaseId: evidence.releaseId,
+    releaseFingerprint: evidence.releaseFingerprint,
+    payoutId: evidence.payoutId,
+    payoutStatus: evidence.payoutStatus,
+    amount: evidence.amount,
+    currencyCode: evidence.currencyCode,
+    approvalMode: "INDEPENDENT",
+  };
 }
 
 test("getProductionReadiness blocks an EU product without a valid international shipping profile", async () => {

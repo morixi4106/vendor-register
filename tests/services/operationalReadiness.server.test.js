@@ -10,6 +10,7 @@ import {
   recoverPlatformCheckoutEmergencyHold,
   setAutomatedEmailHold,
   setPlatformCheckoutHold,
+  SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
 
 test("operational attestation requires evidence and receives a finite validity window", async () => {
@@ -159,6 +160,114 @@ test("live order refund E2E cannot be manually attested", async () => {
   );
   assert.equal(automated.ok, true);
   assert.equal(writes, 1);
+});
+
+test("Shopify payout readiness cannot be manually attested", async () => {
+  let writes = 0;
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async upsert() {
+        writes += 1;
+        return {};
+      },
+    },
+  };
+  const result = await recordOperationalReadinessAttestation(
+    {
+      checkKey: SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+      evidenceReference: "manual-note",
+      evidenceHash: "a".repeat(64),
+      confirmedBy: "operator@example.com",
+    },
+    { prismaClient },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "verified_payout_evidence_required");
+  assert.equal(writes, 0);
+});
+
+test("Shopify payout readiness fails closed when the approved record changes", async () => {
+  const evidence = {
+    id: "payout_evidence_1",
+    releaseId: "aaaaaaaaaaaa:app-v1",
+    releaseFingerprint: "c".repeat(64),
+    payoutId: "po_123",
+    payoutStatus: "DEPOSITED",
+    status: "APPROVED",
+    amount: 250,
+    currencyCode: "JPY",
+    shopifyPayoutDate: new Date("2026-07-28T00:00:00Z"),
+    bankDepositedAt: new Date("2026-07-30T00:00:00Z"),
+    bankReferenceMasked: "reference-****1234",
+    evidenceReference: "secure-evidence:payout-1",
+    evidenceHash: "b".repeat(64),
+    submittedBy: "shopify_user:submitter",
+    reviewedBy: "shopify_user:reviewer",
+    singleOperatorWaiver: false,
+    singleOperatorWaiverReason: null,
+  };
+  const attestation = {
+    checkKey: SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    status: "CONFIRMED",
+    evidenceReference: evidence.evidenceReference,
+    evidenceHash: evidence.evidenceHash,
+    confirmedBy: evidence.reviewedBy,
+    confirmedAt: new Date("2026-07-30T01:00:00Z"),
+    expiresAt: new Date("2026-10-28T01:00:00Z"),
+    metadataJson: {
+      verificationSource: "shopify_payout_evidence",
+      payoutEvidenceId: evidence.id,
+      releaseId: evidence.releaseId,
+      releaseFingerprint: evidence.releaseFingerprint,
+      payoutId: evidence.payoutId,
+      payoutStatus: evidence.payoutStatus,
+      amount: evidence.amount,
+      currencyCode: evidence.currencyCode,
+      approvalMode: "INDEPENDENT",
+    },
+  };
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [attestation];
+      },
+    },
+    shopifyPayoutEvidence: {
+      async findUnique() {
+        return evidence;
+      },
+    },
+  };
+  const matching = await inspectOperationalReadiness({
+    prismaClient,
+    now: new Date("2026-07-30T02:00:00Z"),
+    env: {
+      RENDER_GIT_COMMIT: "a".repeat(40),
+      SHOPIFY_APP_VERSION: "app-v1",
+    },
+  });
+  assert.equal(
+    matching.rows.find(
+      (row) => row.definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    ).ready,
+    true,
+  );
+
+  evidence.evidenceHash = "d".repeat(64);
+  const changed = await inspectOperationalReadiness({
+    prismaClient,
+    now: new Date("2026-07-30T02:00:00Z"),
+    env: {
+      RENDER_GIT_COMMIT: "a".repeat(40),
+      SHOPIFY_APP_VERSION: "app-v1",
+    },
+  });
+  const row = changed.rows.find(
+    (entry) => entry.definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+  );
+  assert.equal(row.ready, false);
+  assert.equal(row.reason, "payout_evidence_invalid");
 });
 
 function buildProbe(scenarioId, expectedResult) {

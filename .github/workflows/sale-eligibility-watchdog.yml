@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   watchdog:
-    if: ${{ vars.SALE_ELIGIBILITY_WATCHDOG_ENABLED == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && vars.SALE_ELIGIBILITY_WATCHDOG_ENABLED == 'true' }}
+    environment: watchdog
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
