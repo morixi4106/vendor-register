@@ -1,5 +1,5 @@
 {
-  "status": "accepted",
+  "status": "proposed",
   "advisoryId": "GHSA-MH99-V99M-4GVG",
   "packageName": "brace-expansion",
   "allowedVersions": ["2.1.2"],
@@ -21,11 +21,11 @@
     "https://github.com/Shopify/shopify-function-javascript/issues/129",
     "https://community.shopify.dev/t/ui-extensions-toolchain-installs-brace-expansion-2-1-2-affected-by-ghsa-mh99-v99m-4gvg/36425"
   ],
-  "acceptedBy": "morixi4106",
-  "acceptedAt": "2026-07-30T04:34:59.263Z",
-  "reviewedRepository": "morixi4106/vendor-register",
-  "reviewedPullRequest": 2,
-  "reviewedCommitSha": "2f65a4768c9b84c25357244b9de3a65fb25aa016",
-  "reviewedCiRunId": "30513938068",
-  "acceptanceCommentId": "5126500648"
+  "acceptedBy": null,
+  "acceptedAt": null,
+  "reviewedRepository": null,
+  "reviewedPullRequest": null,
+  "reviewedCommitSha": null,
+  "reviewedCiRunId": null,
+  "acceptanceCommentId": null
 }

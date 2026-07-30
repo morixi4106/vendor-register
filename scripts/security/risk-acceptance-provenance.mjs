@@ -327,6 +327,33 @@ export function collectRiskStatusAtCommit(commitSha) {
   if (!GIT_COMMIT_SHA_PATTERN.test(String(commitSha || ""))) {
     throw new Error("Current pull request base SHA is invalid.");
   }
+
+  const commit = runGit(["cat-file", "-e", `${commitSha}^{commit}`]);
+  if (commit.error || commit.status !== 0) {
+    throw new Error("Git could not inspect the pull request base commit.");
+  }
+
+  const listing = runGit([
+    "ls-tree",
+    "-z",
+    "--name-only",
+    "--full-tree",
+    commitSha,
+    "--",
+    RISK_RELATIVE_PATH,
+  ]);
+  if (listing.error || listing.status !== 0) {
+    throw new Error("Git could not inspect the base risk definition.");
+  }
+  const listedPaths = listing.stdout.split("\0").filter(Boolean);
+  if (listedPaths.length === 0) return "absent";
+  if (
+    listedPaths.length !== 1 ||
+    listedPaths[0].replaceAll("\\", "/") !== RISK_RELATIVE_PATH
+  ) {
+    throw new Error("Git returned an unexpected base risk definition path.");
+  }
+
   const shown = runGit(["show", `${commitSha}:${RISK_RELATIVE_PATH}`]);
   if (
     shown.error ||

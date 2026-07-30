@@ -886,20 +886,31 @@ test("collects changed paths only from reviewed commit ancestry", () => {
     collectGitEvidence(head, parent).isReviewedCommitAncestor,
     false,
   );
-  assert.equal(collectRiskStatusAtCommit(head), "proposed");
+  const headRisk = JSON.parse(
+    execFileSync(
+      "git",
+      ["show", `${head}:security/risk-decisions/GHSA-mh99-v99m-4gvg.json`],
+      {
+        cwd: REPOSITORY_ROOT,
+        encoding: "utf8",
+      },
+    ),
+  );
+  assert.equal(collectRiskStatusAtCommit(head), headRisk.status);
   assert.throws(
     () => collectRiskStatusAtCommit("not-a-sha"),
     /base SHA is invalid/,
   );
   assert.throws(() => collectRiskStatusAtCommit(), /base SHA is invalid/);
+  assert.throws(
+    () => collectRiskStatusAtCommit("f".repeat(40)),
+    /could not inspect the pull request base commit/,
+  );
   const root = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], {
     cwd: REPOSITORY_ROOT,
     encoding: "utf8",
   }).trim();
   if (root !== head) {
-    assert.throws(
-      () => collectRiskStatusAtCommit(root),
-      /could not read the base risk definition/,
-    );
+    assert.equal(collectRiskStatusAtCommit(root), "absent");
   }
 });
