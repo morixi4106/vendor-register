@@ -27,6 +27,43 @@ test("payout evidence requires a SHA-256 evidence hash", async () => {
   assert.equal(database.records.size, 0);
 });
 
+test("bank reference input is limited to exactly four alphanumeric suffix characters", async () => {
+  for (const bankReferenceMasked of ["123", "reference-1234", "****"]) {
+    const database = buildDatabase();
+    const rejected = await submit(
+      validSubmission({ bankReferenceMasked }),
+      { database },
+    );
+
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, "bank_reference_suffix_invalid");
+    assert.equal(database.records.size, 0);
+  }
+});
+
+test("bank reference suffix is normalized before it is stored", async () => {
+  const database = buildDatabase();
+  const accepted = await submit(
+    validSubmission({ bankReferenceMasked: "aB12" }),
+    { database },
+  );
+
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.evidence.bankReferenceMasked, "AB12");
+});
+
+test("a payout deposited on the Shopify issue date is accepted by calendar date", async () => {
+  const database = buildDatabase();
+  const accepted = await submit(validSubmission(), {
+    database,
+    verification: validVerification({
+      issuedAt: new Date("2026-07-30T09:00:00.000Z"),
+    }),
+  });
+
+  assert.equal(accepted.ok, true);
+});
+
 test("Shopify values replace operator-supplied financial facts", async () => {
   const database = buildDatabase();
   const accepted = await submit(validSubmission(), { database });
@@ -146,7 +183,7 @@ test("Shopify payout verification requires PAID DEPOSIT and matching trace suffi
     {
       shopDomain: "shop.myshopify.com",
       payoutId: "123",
-      bankReferenceMasked: "****1234",
+      bankReferenceMasked: "1234",
     },
     {
       now: NOW,
@@ -182,7 +219,7 @@ function validSubmission(overrides = {}) {
     shopDomain: "shop.myshopify.com",
     payoutId: PAYOUT_GID,
     bankDepositedAt: "2026-07-30",
-    bankReferenceMasked: "reference-****1234",
+    bankReferenceMasked: "1234",
     evidenceReference: "secure-evidence:payout-2026-07-30",
     evidenceHash: "b".repeat(64),
     submittedBy: "shopify_user:submitter",
@@ -190,7 +227,7 @@ function validSubmission(overrides = {}) {
   };
 }
 
-function validVerification() {
+function validVerification(overrides = {}) {
   return {
     ok: true,
     id: PAYOUT_GID,
@@ -201,15 +238,24 @@ function validVerification() {
     currencyCode: "JPY",
     issuedAt: new Date("2026-07-28T00:00:00.000Z"),
     externalTraceIdHash: "f".repeat(64),
+    ...overrides,
   };
 }
 
-function submit(input, { database, env = ENV } = {}) {
+function submit(
+  input,
+  {
+    database,
+    env = ENV,
+    now = NOW,
+    verification = validVerification(),
+  } = {},
+) {
   return submitShopifyPayoutEvidence(input, {
     prismaClient: database,
     env,
-    now: NOW,
-    verifyShopifyPayoutImpl: async () => validVerification(),
+    now,
+    verifyShopifyPayoutImpl: async () => verification,
   });
 }
 

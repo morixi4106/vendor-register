@@ -21,6 +21,13 @@ export const SHOPIFY_PAYOUT_EVIDENCE_STATUS = Object.freeze({
 const SINGLE_OPERATOR_CONFIRMATION = "単独運用リスクを受諾";
 const SHOPIFY_API_VERSION = "2026-04";
 const MAX_PAYOUT_AGE_DAYS = 90;
+const PAYOUT_EVIDENCE_TIME_ZONE = "Asia/Tokyo";
+const PAYOUT_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: PAYOUT_EVIDENCE_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 const SHOPIFY_PAYOUT_QUERY = `#graphql
   query VerifyShopifyPaymentsPayout($id: ID!) {
     node(id: $id) {
@@ -103,12 +110,11 @@ export async function submitShopifyPayoutEvidence(
   }
 
   const bankDepositedAt = normalized.data.bankDepositedAt;
-  if (
-    bankDepositedAt.getTime() < shopifyVerification.issuedAt.getTime() ||
-    bankDepositedAt.getTime() > now.getTime() ||
-    now.getTime() - bankDepositedAt.getTime() >
-      MAX_PAYOUT_AGE_DAYS * 86_400_000
-  ) {
+  if (!isBankDepositDateValid({
+    bankDepositedAt,
+    shopifyPayoutDate: shopifyVerification.issuedAt,
+    now,
+  })) {
     return { ok: false, reason: "invalid_bank_deposit_date" };
   }
 
@@ -409,7 +415,8 @@ function normalizeSubmission(input, { now }) {
   const shopDomain = normalizeShopDomain(input.shopDomain);
   const payoutId = normalizePayoutId(input.payoutId);
   const bankDepositedAt = parseDate(input.bankDepositedAt);
-  const bankReferenceMasked = clean(input.bankReferenceMasked);
+  const rawBankReference = clean(input.bankReferenceMasked);
+  const bankReferenceMasked = rawBankReference.toUpperCase();
   const evidenceReference = clean(input.evidenceReference);
   const evidenceHash = clean(input.evidenceHash).toLowerCase();
 
@@ -420,11 +427,14 @@ function normalizeSubmission(input, { now }) {
   if (!bankDepositedAt) {
     return { ok: false, reason: "invalid_payout_dates" };
   }
-  if (bankDepositedAt.getTime() > now.getTime()) {
+  if (comparePayoutDates(bankDepositedAt, now) > 0) {
     return { ok: false, reason: "invalid_bank_deposit_date" };
   }
-  if (!bankReferenceMasked || bankReferenceMasked.length > 160) {
+  if (!rawBankReference) {
     return { ok: false, reason: "bank_reference_required" };
+  }
+  if (!/^[a-z0-9]{4}$/i.test(rawBankReference)) {
+    return { ok: false, reason: "bank_reference_suffix_invalid" };
   }
   if (!evidenceReference || evidenceReference.length > 500) {
     return { ok: false, reason: "evidence_reference_required" };
@@ -480,10 +490,11 @@ function hasCurrentShopifyVerification(evidence, now) {
     verifiedAt &&
       verifiedAt.getTime() <= now.getTime() &&
       payoutDate &&
-      bankDate &&
-      bankDate.getTime() <= now.getTime() &&
-      now.getTime() - bankDate.getTime() <=
-        MAX_PAYOUT_AGE_DAYS * 86_400_000 &&
+      isBankDepositDateValid({
+        bankDepositedAt: bankDate,
+        shopifyPayoutDate: payoutDate,
+        now,
+      }) &&
       clean(evidence?.shopifyPayoutGid) === clean(evidence?.payoutId) &&
       /^[a-f0-9]{64}$/.test(clean(evidence?.shopifyExternalTraceIdHash)) &&
       clean(verification.source) === "shopify_admin_graphql" &&
@@ -558,6 +569,52 @@ function normalizeShopDomain(value) {
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .split("/")[0];
+}
+
+function isBankDepositDateValid({
+  bankDepositedAt,
+  shopifyPayoutDate,
+  now,
+}) {
+  const bankDay = payoutDayNumber(bankDepositedAt);
+  const payoutDay = payoutDayNumber(shopifyPayoutDate);
+  const currentDay = payoutDayNumber(now);
+  if (
+    bankDay === null ||
+    payoutDay === null ||
+    currentDay === null
+  ) {
+    return false;
+  }
+  return (
+    bankDay >= payoutDay &&
+    bankDay <= currentDay &&
+    currentDay - bankDay <= MAX_PAYOUT_AGE_DAYS
+  );
+}
+
+function comparePayoutDates(left, right) {
+  const leftDay = payoutDayNumber(left);
+  const rightDay = payoutDayNumber(right);
+  if (leftDay === null || rightDay === null) return Number.NaN;
+  return leftDay - rightDay;
+}
+
+function payoutDayNumber(value) {
+  const date = parseDate(value);
+  if (!date) return null;
+  const parts = Object.fromEntries(
+    PAYOUT_DATE_FORMATTER.formatToParts(date).map((part) => [
+      part.type,
+      part.value,
+    ]),
+  );
+  const timestamp = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+  );
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 86_400_000) : null;
 }
 
 function parseDate(value) {
