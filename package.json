@@ -1,5 +1,6 @@
 {
   "name": "vendor-register",
+  "version": "0.0.0",
   "private": true,
   "scripts": {
     "build": "remix vite:build",
@@ -16,6 +17,7 @@
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
     "check:text": "node scripts/check-text-encoding.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs",
+    "audit:production:test": "node --test --experimental-test-coverage --test-coverage-include=scripts/audit-production-dependencies.mjs --test-coverage-include=scripts/security/audit-policy.mjs --test-coverage-include=scripts/security/artifact-reachability.mjs --test-coverage-include=scripts/security/audit-report.mjs --test-coverage-include=scripts/security/clean-audit-artifacts.mjs --test-coverage-include=scripts/security/generate-risk-path-snapshot.mjs --test-coverage-include=scripts/security/npm-tree-verification.mjs --test-coverage-include=scripts/security/package-lock-graph.mjs --test-coverage-include=scripts/security/risk-acceptance-provenance.mjs --test-coverage-include=scripts/security/scan-security-documents.mjs --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=95 tests/scripts/audit-production-dependencies.test.js tests/scripts/audit-entrypoint.test.js tests/scripts/audit-report.test.js tests/scripts/artifact-reachability.test.js tests/scripts/generate-risk-path-snapshot.test.js tests/scripts/npm-tree-verification.test.js tests/scripts/package-lock-graph.test.js tests/scripts/risk-acceptance-provenance.test.js tests/scripts/scan-security-documents.test.js",
     "audit:operational-migration": "node scripts/audit-operational-migration.mjs",
     "watchdog:sale-eligibility": "node scripts/sale-eligibility-watchdog-agent.mjs",
     "test:pricing": "node --test tests/**/*.test.js",
@@ -75,6 +77,7 @@
     "@graphql-codegen/client-preset": "4.7.0",
     "@graphql-codegen/typescript-operations": "4.5.0",
     "minimatch": "9.0.9",
+    "postcss": "8.5.24",
     "vite": "^6.2.2",
     "lodash": "4.18.1",
     "morgan": "1.11.0",
@@ -90,6 +93,7 @@
     "@graphql-codegen/client-preset": "4.7.0",
     "@graphql-codegen/typescript-operations": "4.5.0",
     "minimatch": "9.0.9",
+    "postcss": "8.5.24",
     "vite": "^6.2.2",
     "lodash": "4.18.1",
     "morgan": "1.11.0",
