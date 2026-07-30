@@ -10,13 +10,13 @@ import {
 import { useEffect } from "react";
 
 import {
+  attachOrderToProductionTransactionProbe,
   buildProductionTransactionProbePage,
   cancelProductionTransactionProbe,
   createProductionTransactionProbe,
   getProductionTransactionProbePageData,
   refreshProductionTransactionProbe,
   serializeProductionTransactionProbe,
-  attachOrderToProductionTransactionProbe,
 } from "../services/productionTransactionProbe.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
@@ -33,13 +33,10 @@ export async function loader({ request }) {
     roles: OPERATOR_ROLES,
   });
   const releaseExpectation = await getReleaseExpectation(session.shop);
-  const data = await getProductionTransactionProbePageData(
-    {
-      shopDomain: session.shop,
-      releaseExpectation,
-    },
-    {},
-  );
+  const data = await getProductionTransactionProbePageData({
+    shopDomain: session.shop,
+    releaseExpectation,
+  });
   const displayProbe =
     data.activeProbe ||
     data.recentProbes.find(
@@ -116,7 +113,7 @@ export async function action({ request }) {
   }
 
   return json(result, {
-    status: result.ok ? 200 : 400,
+    status: result.ok ? 200 : result.reason?.includes("conflict") ? 409 : 400,
     headers: privateHeaders(),
   });
 }
@@ -160,16 +157,17 @@ export default function ProductionTransactionProbePage() {
           <p style={styles.eyebrow}>PRODUCTION E2E</p>
           <h1 style={styles.title}>本番注文・返金 E2E確認</h1>
           <p style={styles.lead}>
-            Shopifyの実注文、アプリの売上反映、全額返金、台帳差引を読み取り専用で照合します。
+            Shopifyの実注文と、アプリの注文・売上台帳・全額返金を照合します。
           </p>
         </div>
         <StatusBadge tone={page.tone} label={page.statusLabel} />
       </header>
 
       <section style={styles.notice}>
-        <strong>この画面はShopifyへ書き込みません。</strong>
+        <strong>この画面から注文や返金は実行されません。</strong>
         <span>
-          購入と返金だけは人がShopify上で実行します。アプリは結果を確認し、全項目一致後に本番確認の証跡を自動登録します。
+          購入と全額返金はShopifyで行います。この画面は結果を読み取り、
+          現在のリリースに紐づく検証証跡だけを記録します。
         </span>
       </section>
 
@@ -177,7 +175,7 @@ export default function ProductionTransactionProbePage() {
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>準備が必要です</h2>
           <p style={styles.text}>
-            migration適用後に利用できます。本番DBへの適用が完了するまでは実行しないでください。
+            データベースmigrationの適用後に利用できます。適用完了までは実行しないでください。
           </p>
         </section>
       ) : (
@@ -185,7 +183,7 @@ export default function ProductionTransactionProbePage() {
           <section style={styles.section}>
             <div style={styles.sectionHeading}>
               <div>
-                <h2 style={styles.sectionTitle}>次にすること</h2>
+                <h2 style={styles.sectionTitle}>次に行うこと</h2>
                 <p style={styles.text}>{page.instruction}</p>
               </div>
               <span style={styles.release}>
@@ -209,8 +207,8 @@ export default function ProductionTransactionProbePage() {
                 <label style={styles.label}>
                   Shopify注文番号
                   <span style={styles.hint}>
-                    少額の運営直販商品を実カードで購入後、#1234 またはOrder
-                    GIDを入力
+                    確認開始後に運営直販商品を実カードで購入し、#1234またはOrder
+                    GIDを入力します。
                   </span>
                   <input
                     style={styles.input}
@@ -239,7 +237,7 @@ export default function ProductionTransactionProbePage() {
                   </button>
                 </refreshFetcher.Form>
                 <span style={styles.hint}>
-                  画面を開いている間は15秒ごとに確認します。
+                  この画面を開いている間は15秒ごとに確認します。
                 </span>
               </div>
             ) : null}
@@ -262,39 +260,57 @@ export default function ProductionTransactionProbePage() {
 
           <section style={styles.section}>
             <h2 style={styles.sectionTitle}>進行状況</h2>
-            <div style={styles.timeline}>
+            <ol style={styles.steps}>
               {page.steps.map((step, index) => (
-                <div key={step.id} style={styles.step}>
-                  <span style={step.done ? styles.stepDone : styles.stepIndex}>
-                    {step.done ? "完了" : index + 1}
+                <li key={step.id} style={styles.step}>
+                  <span
+                    style={{
+                      ...styles.stepNumber,
+                      ...(step.done ? styles.stepNumberDone : {}),
+                    }}
+                    aria-hidden="true"
+                  >
+                    {step.done ? "✓" : index + 1}
                   </span>
-                  <div>
+                  <span>
                     <strong>{step.label}</strong>
-                    <p style={styles.stepText}>{step.detail}</p>
-                  </div>
-                </div>
+                    <span style={styles.stepDetail}>{step.detail}</span>
+                  </span>
+                </li>
               ))}
-            </div>
+            </ol>
           </section>
 
           {probe ? (
             <section style={styles.section}>
-              <h2 style={styles.sectionTitle}>自動照合</h2>
-              <Inspection title="注文・売上" inspection={probe.paidEvidence} />
-              <Inspection
-                title="全額返金・台帳差引"
-                inspection={probe.refundEvidence}
-              />
+              <div style={styles.sectionHeading}>
+                <h2 style={styles.sectionTitle}>照合結果</h2>
+                <span style={styles.hint}>
+                  最終確認: {formatDate(probe.lastCheckedAt)}
+                </span>
+              </div>
+              <dl style={styles.summary}>
+                <Summary label="状態" value={statusLabel(probe.status)} />
+                <Summary
+                  label="Shopify注文"
+                  value={probe.orderEvidence.shopifyOrderName || "未登録"}
+                />
+                <Summary
+                  label="開始日時"
+                  value={formatDate(probe.startedAt)}
+                />
+                <Summary
+                  label="完了日時"
+                  value={formatDate(probe.completedAt)}
+                />
+              </dl>
+              <Inspection title="売上反映" inspection={probe.paidEvidence} />
+              <Inspection title="全額返金" inspection={probe.refundEvidence} />
             </section>
           ) : null}
 
           <section style={styles.section}>
-            <div style={styles.sectionHeading}>
-              <h2 style={styles.sectionTitle}>確認履歴</h2>
-              <Link to="/app/production-readiness" style={styles.link}>
-                本番確認へ戻る
-              </Link>
-            </div>
+            <h2 style={styles.sectionTitle}>最近の確認</h2>
             {data.recentProbes.length === 0 ? (
               <p style={styles.text}>まだ確認履歴はありません。</p>
             ) : (
@@ -304,7 +320,7 @@ export default function ProductionTransactionProbePage() {
                     <tr>
                       <th style={styles.th}>開始日時</th>
                       <th style={styles.th}>状態</th>
-                      <th style={styles.th}>注文ID</th>
+                      <th style={styles.th}>注文</th>
                       <th style={styles.th}>Release</th>
                     </tr>
                   </thead>
@@ -313,7 +329,9 @@ export default function ProductionTransactionProbePage() {
                       <tr key={item.id}>
                         <td style={styles.td}>{formatDate(item.startedAt)}</td>
                         <td style={styles.td}>{statusLabel(item.status)}</td>
-                        <td style={styles.td}>{item.shopifyOrderId || "-"}</td>
+                        <td style={styles.td}>
+                          {item.orderEvidence.shopifyOrderName || "-"}
+                        </td>
                         <td style={styles.td}>{item.releaseId}</td>
                       </tr>
                     ))}
@@ -324,67 +342,81 @@ export default function ProductionTransactionProbePage() {
           </section>
         </>
       )}
+
+      <footer style={styles.footer}>
+        <Link to="/app/production-readiness">本番確認へ戻る</Link>
+      </footer>
     </main>
   );
 }
 
+function Summary({ label, value }) {
+  return (
+    <div style={styles.summaryItem}>
+      <dt style={styles.summaryLabel}>{label}</dt>
+      <dd style={styles.summaryValue}>{value}</dd>
+    </div>
+  );
+}
+
 function Inspection({ title, inspection }) {
-  const checks = Array.isArray(inspection?.checks) ? inspection.checks : [];
+  if (!inspection || !Array.isArray(inspection.checks)) return null;
   return (
     <div style={styles.inspection}>
       <h3 style={styles.inspectionTitle}>{title}</h3>
-      {checks.length === 0 ? (
-        <p style={styles.hint}>注文登録後に結果が表示されます。</p>
-      ) : (
-        <div style={styles.checks}>
-          {checks.map((item) => (
-            <div key={item.id} style={styles.check}>
-              <span
-                style={item.passed ? styles.checkPassed : styles.checkPending}
-              >
-                {item.passed ? "一致" : "待機"}
-              </span>
-              <span>{checkLabel(item.id)}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <ul style={styles.checks}>
+        {inspection.checks.map((item) => (
+          <li key={item.id} style={styles.check}>
+            <span
+              style={item.passed ? styles.checkPassed : styles.checkPending}
+              aria-hidden="true"
+            >
+              {item.passed ? "✓" : "•"}
+            </span>
+            <span>
+              <strong>{checkLabel(item.id)}</strong>
+              {!item.passed ? (
+                <span style={styles.checkReason}>
+                  {reasonLabel(item.code)}
+                </span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
 
 function ResultMessage({ result, fallbackReason }) {
-  const reason = result?.reason || fallbackReason;
-  if (!result && !reason) return null;
-  const isError = result?.ok === false;
-  return (
-    <div
-      role={isError ? "alert" : "status"}
-      style={isError ? styles.error : styles.result}
-    >
-      {isError
-        ? reasonLabel(reason)
-        : result?.stage === "complete"
-          ? "すべて一致しました。本番確認の証跡を自動登録しました。"
-          : "確認結果を更新しました。反映待ちの項目がある場合は、そのまま待ってください。"}
-    </div>
-  );
+  if (result?.ok === false) {
+    return (
+      <p role="alert" style={styles.error}>
+        {reasonLabel(result.reason)}
+      </p>
+    );
+  }
+  if (result?.ok === true && !result.pending) {
+    return (
+      <p role="status" style={styles.success}>
+        更新しました。
+      </p>
+    );
+  }
+  if (fallbackReason) {
+    return <p style={styles.pending}>{reasonLabel(fallbackReason)}</p>;
+  }
+  return null;
 }
 
 function StatusBadge({ tone, label }) {
-  const palette =
+  const toneStyle =
     tone === "success"
-      ? ["#e8fff4", "#087a55"]
+      ? styles.badgeSuccess
       : tone === "warning"
-        ? ["#fff8dc", "#7a4f01"]
-        : ["#f2f4f7", "#475467"];
-  return (
-    <span
-      style={{ ...styles.badge, background: palette[0], color: palette[1] }}
-    >
-      {label}
-    </span>
-  );
+        ? styles.badgeWarning
+        : styles.badgeNeutral;
+  return <span style={{ ...styles.badge, ...toneStyle }}>{label}</span>;
 }
 
 async function getReleaseExpectation(shopDomain) {
@@ -427,9 +459,9 @@ function statusLabel(status) {
     {
       AWAITING_ORDER: "注文待ち",
       AWAITING_SETTLEMENT: "売上反映待ち",
-      AWAITING_REFUND: "返金待ち",
+      AWAITING_REFUND: "全額返金待ち",
       PASSED: "完了",
-      INVALIDATED: "Release変更で無効",
+      INVALIDATED: "リリース変更で無効",
       CANCELLED: "中止",
     }[status] || status
   );
@@ -439,28 +471,47 @@ function reasonLabel(reason) {
   return (
     {
       production_transaction_probe_input_invalid:
-        "現在のRelease情報を確認できません。RenderとShopify Appのバージョン設定を確認してください。",
+        "現在のリリース情報を確認できません。RenderとShopify Appのバージョン設定を確認してください。",
+      production_transaction_probe_unavailable:
+        "migrationが未適用のため、この機能を利用できません。",
+      production_transaction_probe_conflict:
+        "別の更新と競合しました。画面を更新して状態を確認してください。",
+      shopify_order_already_used:
+        "この注文は別の確認ですでに使用されています。新しい実注文を指定してください。",
       order_reference_invalid:
-        "注文番号は #1234 またはOrder GIDで入力してください。",
+        "注文番号は#1234またはShopify Order GIDで入力してください。",
       shopify_order_not_found: "Shopifyで注文を確認できませんでした。",
+      shopify_order_reference_ambiguous:
+        "注文番号を一意に特定できません。Order GIDを入力してください。",
       shopify_test_order_not_allowed:
-        "テスト注文は証跡に使えません。Shopify Payments本番モードの実注文を指定してください。",
-      order_predates_probe: "確認開始前に作られた注文は使用できません。",
+        "テスト注文は証跡に利用できません。本番モードの実注文を指定してください。",
+      order_predates_probe:
+        "確認開始前に作成された注文は利用できません。",
+      order_not_paid:
+        "支払い済みで未返金の注文を指定してください。",
+      order_already_refunded:
+        "すでに返金が始まっている注文は利用できません。新しい実注文で確認してください。",
       order_contains_non_platform_product:
-        "運営直販以外の商品が含まれるため、この確認には使用できません。",
+        "運営直販以外の商品が含まれるため、この確認には利用できません。",
+      local_product_mapping_missing:
+        "Shopify商品とアプリの商品を照合できません。",
       release_changed:
-        "確認中にReleaseが変わりました。新しい確認を開始してください。",
+        "確認中にリリースが変わりました。現在のリリースで新しく確認してください。",
       marketplace_order_missing:
-        "注文Webhookの反映待ちです。数十秒待って再確認してください。",
-      paid_ledger_count_mismatch: "売上台帳の反映待ち、または件数不一致です。",
-      seller_order_shadow_not_matched: "SellerOrderの照合が完了していません。",
+        "注文Webhookの反映待ちです。少し待って再確認してください。",
+      paid_ledger_count_mismatch:
+        "売上台帳の反映待ち、または件数不一致です。",
+      seller_order_shadow_not_matched:
+        "SellerOrderの比較がまだ一致していません。",
       shopify_order_not_fully_refunded:
         "Shopifyで同じ注文を全額返金してから再確認してください。",
       refund_ledger_count_mismatch:
-        "返金Webhookと台帳差引の反映待ち、または件数不一致です。",
+        "返金Webhookと返金台帳の反映待ち、または件数不一致です。",
       active_probe_not_found:
         "有効な確認がありません。画面を更新して新しく開始してください。",
-    }[reason] || `確認を完了できませんでした（${reason || "unknown"}）。`
+      production_transaction_probe_failed:
+        "確認処理に失敗しました。しばらく待って再度お試しください。",
+    }[reason] || "まだ合格条件を満たしていません。"
   );
 }
 
@@ -473,12 +524,13 @@ function checkLabel(id) {
       marketplace_total: "注文合計が一致",
       seller_orders: "SellerOrderが1件",
       platform_store: "運営直販店舗の注文",
-      seller_order_lines: "商品行と数量が一致",
+      seller_order_lines: "商品行と数量・金額が一致",
       paid_ledger_count: "売上台帳が1回だけ計上",
       paid_ledger_direction: "売上がcredit方向",
       paid_ledger_currency: "売上台帳の通貨が一致",
-      paid_ledger_amount: "出店者支払対象額が一致",
-      seller_order_shadow: "旧計算とSellerOrderが一致",
+      paid_ledger_amount: "売上台帳の金額が一致",
+      paid_ledger_seller: "売上台帳の販売者が一致",
+      seller_order_shadow: "既存計算とSellerOrderが一致",
       shopify_financial_status: "Shopifyが全額返金済み",
       shopify_refund_total: "Shopify返金総額が一致",
       shopify_refund_record: "返金レコードが1件",
@@ -487,9 +539,10 @@ function checkLabel(id) {
       refund_ledger_count: "返金台帳が1回だけ計上",
       refund_ledger_direction: "返金がdebit方向",
       refund_ledger_currency: "返金台帳の通貨が一致",
-      refund_ledger_identifiers: "返金IDが一意",
-      reversal_amount: "売上と差引額が一致",
-      cancellation_no_double_debit: "キャンセルとの二重差引なし",
+      refund_ledger_seller: "返金台帳の販売者が一致",
+      refund_ledger_identifiers: "Shopify返金IDが一致",
+      reversal_amount: "売上と差引金額が一致",
+      cancellation_no_double_debit: "キャンセルとの二重差引がない",
     }[id] || id
   );
 }
@@ -498,7 +551,7 @@ const styles = {
   page: {
     display: "grid",
     gap: 20,
-    maxWidth: 1280,
+    maxWidth: 1180,
     margin: "0 auto",
     padding: 24,
     color: "#101828",
@@ -508,7 +561,7 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 16,
-    padding: "24px 0 16px",
+    padding: "16px 0 20px",
     borderBottom: "1px solid #dfe3e8",
   },
   eyebrow: {
@@ -528,6 +581,9 @@ const styles = {
     fontWeight: 700,
     whiteSpace: "nowrap",
   },
+  badgeSuccess: { background: "#ecfdf3", color: "#067647" },
+  badgeWarning: { background: "#fffaeb", color: "#b54708" },
+  badgeNeutral: { background: "#f2f4f7", color: "#344054" },
   notice: {
     display: "grid",
     gap: 6,
@@ -599,87 +655,99 @@ const styles = {
     textDecoration: "underline",
     cursor: "pointer",
   },
-  result: {
-    padding: 12,
-    border: "1px solid #84e1bc",
-    borderRadius: 6,
-    background: "#ecfdf3",
-    color: "#067647",
-  },
   error: {
+    margin: 0,
     padding: 12,
     border: "1px solid #fda29b",
     borderRadius: 6,
     background: "#fef3f2",
     color: "#b42318",
   },
-  timeline: { display: "grid", gap: 0 },
-  step: {
-    display: "grid",
-    gridTemplateColumns: "72px minmax(0, 1fr)",
-    gap: 14,
-    padding: "14px 0",
-    borderBottom: "1px solid #eaecf0",
-  },
-  stepIndex: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 34,
-    height: 30,
+  success: {
+    margin: 0,
+    padding: 12,
+    border: "1px solid #84e1bc",
     borderRadius: 6,
-    background: "#f2f4f7",
+    background: "#ecfdf3",
+    color: "#067647",
+  },
+  pending: {
+    margin: 0,
+    padding: 12,
+    background: "#fffaeb",
+    color: "#b54708",
+  },
+  steps: {
+    display: "grid",
+    gap: 14,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  step: { display: "grid", gridTemplateColumns: "34px 1fr", gap: 12 },
+  stepNumber: {
+    display: "grid",
+    placeItems: "center",
+    width: 30,
+    height: 30,
+    border: "1px solid #98a2b3",
+    borderRadius: "50%",
     color: "#475467",
     fontWeight: 700,
   },
-  stepDone: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 52,
-    height: 30,
-    borderRadius: 6,
-    background: "#e8fff4",
-    color: "#087a55",
-    fontSize: 12,
-    fontWeight: 700,
+  stepNumberDone: {
+    borderColor: "#12b76a",
+    background: "#ecfdf3",
+    color: "#067647",
   },
-  stepText: { margin: "4px 0 0", color: "#667085", lineHeight: 1.5 },
-  inspection: {
+  stepDetail: {
+    display: "block",
+    marginTop: 4,
+    color: "#667085",
+    lineHeight: 1.6,
+  },
+  summary: {
     display: "grid",
-    gap: 10,
-    paddingTop: 4,
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 1,
+    margin: 0,
+    background: "#dfe3e8",
+    border: "1px solid #dfe3e8",
   },
-  inspectionTitle: { margin: 0, fontSize: 16 },
+  summaryItem: { padding: 14, background: "#fff" },
+  summaryLabel: { color: "#667085", fontSize: 12 },
+  summaryValue: { margin: "5px 0 0", fontWeight: 700 },
+  inspection: { display: "grid", gap: 10, paddingTop: 8 },
+  inspectionTitle: { margin: 0, fontSize: 17 },
   checks: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     gap: 8,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
   },
-  check: {
-    display: "grid",
-    gridTemplateColumns: "48px minmax(0, 1fr)",
-    alignItems: "center",
-    gap: 10,
-    minHeight: 42,
-    padding: "8px 10px",
-    background: "#f7f8fa",
-    borderRadius: 6,
+  check: { display: "grid", gridTemplateColumns: "22px 1fr", gap: 8 },
+  checkPassed: { color: "#067647", fontWeight: 700 },
+  checkPending: { color: "#b54708", fontWeight: 700 },
+  checkReason: {
+    display: "block",
+    marginTop: 2,
+    color: "#667085",
+    fontWeight: 400,
   },
-  checkPassed: { color: "#087a55", fontWeight: 700, fontSize: 12 },
-  checkPending: { color: "#8a5a00", fontWeight: 700, fontSize: 12 },
-  link: { color: "#175cd3", fontWeight: 700 },
   tableWrap: { overflowX: "auto" },
-  table: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
+  table: { width: "100%", borderCollapse: "collapse", minWidth: 680 },
   th: {
     padding: "10px 8px",
-    borderBottom: "1px solid #d0d5dd",
+    borderBottom: "1px solid #dfe3e8",
     textAlign: "left",
-    fontSize: 13,
+    color: "#475467",
   },
   td: {
     padding: "12px 8px",
     borderBottom: "1px solid #eaecf0",
+    verticalAlign: "top",
     overflowWrap: "anywhere",
   },
+  footer: { padding: "4px 0 24px" },
 };

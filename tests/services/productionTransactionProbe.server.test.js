@@ -135,6 +135,7 @@ function marketplaceOrder({ refunded = false, lineOverrides = {} } = {}) {
     sellerOrders: [
       {
         id: "seller_order_1",
+        sellerId: "seller_1",
         vendorStoreId: "platform_store_1",
         sellerPayableAmount: 244,
         sellerRefundAmount: refunded ? 244 : 0,
@@ -159,12 +160,13 @@ function marketplaceOrder({ refunded = false, lineOverrides = {} } = {}) {
 function paidLedger() {
   return {
     id: "ledger_paid_1",
+    sellerId: "seller_1",
     entryType: "shopify_order_paid",
     stripeObjectId: ORDER_ID,
     amount: 244,
     currencyCode: "jpy",
     direction: "credit",
-    metadataJson: { shopifyOrderId: ORDER_ID },
+    metadataJson: { shopDomain: SHOP, shopifyOrderId: ORDER_ID },
     occurredAt: new Date("2026-07-29T01:02:00.000Z"),
   };
 }
@@ -172,12 +174,14 @@ function paidLedger() {
 function refundLedger({ refundId = REFUND_ID } = {}) {
   return {
     id: "ledger_refund_1",
+    sellerId: "seller_1",
     entryType: "refund",
     stripeObjectId: refundId,
     amount: 244,
     currencyCode: "jpy",
     direction: "debit",
     metadataJson: {
+      shopDomain: SHOP,
       shopifyOrderId: ORDER_ID,
       shopifyRefundId: refundId,
     },
@@ -211,10 +215,20 @@ function refreshPrisma({
       async findUnique() {
         return state.probe;
       },
-      async update({ data }) {
+      async updateMany({ where, data }) {
+        const statusMatches =
+          !where.status?.in || where.status.in.includes(state.probe.status);
+        if (
+          where.id !== state.probe.id ||
+          where.activeKey !== state.probe.activeKey ||
+          where.releaseFingerprint !== state.probe.releaseFingerprint ||
+          !statusMatches
+        ) {
+          return { count: 0 };
+        }
         state.probe = { ...state.probe, ...data };
         state.updates.push(data);
-        return state.probe;
+        return { count: 1 };
       },
     },
     marketplaceOrder: {
@@ -297,10 +311,10 @@ test("starting a probe reuses the same release and invalidates an older release"
       async findUnique() {
         return existing;
       },
-      async update({ data }) {
+      async updateMany({ data }) {
         updates.push(data);
         existing = null;
-        return { ...current, ...data };
+        return { count: 1 };
       },
       async create({ data }) {
         creates.push(data);
@@ -369,6 +383,38 @@ test("attaching an order rejects test orders before persisting evidence", async 
   assert.equal(updated, false);
 });
 
+test("attaching an order rejects an order that already contains refund evidence", async () => {
+  const probe = probeRecord({ status: "AWAITING_ORDER" });
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return probe;
+      },
+    },
+  };
+  const result = await attachOrderToProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      orderReference: ORDER_ID,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          financialStatus: "PAID",
+          refundedAmount: "1",
+          refunds: [{ id: REFUND_ID }],
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "order_already_refunded");
+});
+
 test("attaching an order rejects orders created before the verification run", async () => {
   const probe = probeRecord({ status: "AWAITING_ORDER" });
   const prismaClient = {
@@ -432,16 +478,17 @@ test("attaching an order fails closed when a Shopify product is not mapped local
 });
 
 test("attaching an order only accepts mapped approved platform products", async () => {
-  const probe = probeRecord({ status: "AWAITING_ORDER" });
+  let probe = probeRecord({ status: "AWAITING_ORDER" });
   let persisted = null;
   const prismaClient = {
     productionTransactionProbe: {
       async findUnique() {
         return probe;
       },
-      async update({ data }) {
+      async updateMany({ data }) {
         persisted = data;
-        return { ...probe, ...data };
+        probe = { ...probe, ...data };
+        return { count: 1 };
       },
     },
     product: {
@@ -486,6 +533,54 @@ test("attaching an order only accepts mapped approved platform products", async 
   assert.doesNotMatch(JSON.stringify(persisted), /Private Buyer/);
 });
 
+test("attaching an order fails closed when another request wins the transition", async () => {
+  const probe = probeRecord({ status: "AWAITING_ORDER" });
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return probe;
+      },
+      async updateMany() {
+        return { count: 0 };
+      },
+    },
+    product: {
+      async findMany() {
+        return [
+          {
+            id: "product_local_1",
+            shopifyProductId: PRODUCT_ID,
+            shopifyVariantId: VARIANT_ID,
+            vendorStoreId: "platform_store_1",
+            approvalStatus: "approved",
+            vendorStore: {
+              id: "platform_store_1",
+              isPlatformStore: true,
+              isTestStore: false,
+            },
+          },
+        ];
+      },
+    },
+  };
+  const result = await attachOrderToProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      orderReference: ORDER_ID,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(shopifyOrder()),
+      now: new Date("2026-07-29T01:04:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "production_transaction_probe_conflict");
+});
+
 test("paid inspection waits when SellerOrder line evidence differs", async () => {
   const { prismaClient, state } = refreshPrisma({
     order: marketplaceOrder({ lineOverrides: { quantity: 2 } }),
@@ -503,6 +598,27 @@ test("paid inspection waits when SellerOrder line evidence differs", async () =>
   assert.equal(result.pending, true);
   assert.equal(result.stage, "settlement");
   assert.equal(state.probe.lastErrorCode, "seller_order_lines_mismatch");
+  assert.equal(state.attestation, null);
+});
+
+test("paid inspection never accepts a ledger entry assigned to another seller", async () => {
+  const wrongSellerLedger = { ...paidLedger(), sellerId: "seller_other" };
+  const { prismaClient, state } = refreshPrisma({
+    ledgerEntries: [wrongSellerLedger],
+  });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    { prismaClient, graphQL: graphQLFor(shopifyOrder()) },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(state.probe.lastErrorCode, "paid_ledger_seller_mismatch");
   assert.equal(state.attestation, null);
 });
 

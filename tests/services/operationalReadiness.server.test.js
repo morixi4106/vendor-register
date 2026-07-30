@@ -262,6 +262,40 @@ test("live order refund evidence is valid only for the current release", async (
   assert.equal(row.reason, "release_mismatch");
 });
 
+test("live order refund evidence fails closed when the deployed release is unknown", async () => {
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [
+          {
+            checkKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+            status: "CONFIRMED",
+            evidenceReference: "production-transaction-probe:probe_1",
+            confirmedBy: "system:production-transaction-probe",
+            confirmedAt: new Date("2026-07-29T00:00:00Z"),
+            expiresAt: new Date("2026-10-27T00:00:00Z"),
+            metadataJson: {
+              verificationSource: "production_transaction_probe",
+              releaseId: "aaaaaaaaaaaa:app-v1",
+            },
+          },
+        ];
+      },
+    },
+  };
+  const inspection = await inspectOperationalReadiness({
+    prismaClient,
+    now: new Date("2026-07-29T01:00:00Z"),
+    env: {},
+  });
+  const row = inspection.rows.find(
+    (entry) => entry.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  );
+
+  assert.equal(row.ready, false);
+  assert.equal(row.reason, "release_unconfigured");
+});
+
 test("emergency hold is persisted before all platform products are unpublished", async () => {
   const events = [];
   const prismaClient = {

@@ -27,7 +27,8 @@ export const loader = async ({ request }) => {
     getProductionReadiness,
     includeCheckoutGateInProductionReadiness,
     includeCheckoutValidationInProductionReadiness,
-  } = await import("../services/productionReadiness.server.js");
+  } =
+    await import("../services/productionReadiness.server.js");
   const { getMarketplaceCheckoutGateStatus } =
     await import("../services/marketplaceCheckoutGate.server.js");
 
@@ -45,7 +46,8 @@ export const loader = async ({ request }) => {
       available: false,
       exists: false,
       active: false,
-      message: "Online Storeの公開権限と商品同期状態を確認してください。",
+      message:
+        "Online Storeの公開権限と商品同期状態を確認してください。",
     };
   }
 
@@ -91,7 +93,8 @@ export const action = async ({ request }) => {
     const {
       CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
       recordOperationalReadinessAttestation,
-    } = await import("../services/operationalReadiness.server.js");
+    } =
+      await import("../services/operationalReadiness.server.js");
     const checkKey = String(formData.get("checkKey") || "");
     let metadataJson = null;
     if (checkKey === CHECKOUT_VALIDATION_LIVE_PROBE_KEY) {
@@ -101,9 +104,8 @@ export const action = async ({ request }) => {
       } = await import("../services/productionRelease.server.js");
       const { inspectMarketplaceCheckoutValidation } =
         await import("../services/shopifyCheckoutValidation.server.js");
-      const checkoutValidation = await inspectMarketplaceCheckoutValidation(
-        session.shop,
-      );
+      const checkoutValidation =
+        await inspectMarketplaceCheckoutValidation(session.shop);
       const expectedRelease = buildProductionReleaseExpectation({
         checkoutValidation,
       });
@@ -223,7 +225,9 @@ export const action = async ({ request }) => {
         hold: activating,
         reason: formData.get("reason"),
         changedBy: operator.actorKey,
-        releaseEvidenceReference: formData.get("releaseEvidenceReference"),
+        releaseEvidenceReference: formData.get(
+          "releaseEvidenceReference",
+        ),
         shopDomain: session.shop,
       },
     );
@@ -278,7 +282,8 @@ export const action = async ({ request }) => {
         ensureMarketplaceCheckoutValidation,
         inspectMarketplaceCheckoutValidation,
         stageMarketplaceCheckoutValidation,
-      } = await import("../services/shopifyCheckoutValidation.server.js");
+      } =
+        await import("../services/shopifyCheckoutValidation.server.js");
       const {
         backfillMarketplaceCheckoutPolicies,
         syncShopOperationalPurchaseControl,
@@ -287,16 +292,21 @@ export const action = async ({ request }) => {
         await import("../services/operationalReadiness.server.js");
       const activating = intent === "activate_checkout_validation";
 
-      const inspection = await inspectMarketplaceCheckoutValidation(
-        session.shop,
-      );
+      const inspection =
+        await inspectMarketplaceCheckoutValidation(session.shop);
       if (!inspection.ok) {
-        return json({ checkoutValidation: inspection }, { status: 400 });
+        return json(
+          { checkoutValidation: inspection },
+          { status: 400 },
+        );
       }
       if (!inspection.exists) {
         const staged = await stageMarketplaceCheckoutValidation(session.shop);
         if (!staged.ok || staged.validation?.enabled !== false) {
-          return json({ checkoutValidation: staged }, { status: 400 });
+          return json(
+            { checkoutValidation: staged },
+            { status: 400 },
+          );
         }
       }
 
@@ -330,16 +340,16 @@ export const action = async ({ request }) => {
               ok: false,
               active: false,
               reason:
-                shopControl.reason || "shop_operational_control_sync_failed",
+                shopControl.reason ||
+                "shop_operational_control_sync_failed",
             },
           },
           { status: 400 },
         );
       }
       if (!activating) {
-        const stagedInspection = await inspectMarketplaceCheckoutValidation(
-          session.shop,
-        );
+        const stagedInspection =
+          await inspectMarketplaceCheckoutValidation(session.shop);
         return json(
           {
             checkoutValidation: {
@@ -352,7 +362,8 @@ export const action = async ({ request }) => {
             },
           },
           {
-            status: stagedInspection.ok && stagedInspection.exists ? 200 : 400,
+            status:
+              stagedInspection.ok && stagedInspection.exists ? 200 : 400,
           },
         );
       }
@@ -367,7 +378,9 @@ export const action = async ({ request }) => {
       } = await import("../services/productionRelease.server.js");
       const operationalReadiness = await inspectOperationalReadiness();
       const replayEvidence = operationalReadiness.rows?.find(
-        (row) => row.definition?.key === "CHECKOUT_VALIDATION_REPLAY_COMPLETED",
+        (row) =>
+          row.definition?.key ===
+          "CHECKOUT_VALIDATION_REPLAY_COMPLETED",
       );
       if (!replayEvidence?.ready) {
         return json(
@@ -385,7 +398,8 @@ export const action = async ({ request }) => {
         );
       }
       const liveProbeEvidence = operationalReadiness.rows?.find(
-        (row) => row.definition?.key === CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
+        (row) =>
+          row.definition?.key === CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
       );
       const expectedRelease = buildProductionReleaseExpectation({
         checkoutValidation: inspection,
@@ -423,10 +437,7 @@ export const action = async ({ request }) => {
         { status: result.ok && result.active ? 200 : 400 },
       );
     } catch (error) {
-      console.error(
-        "Marketplace checkout validation activation failed:",
-        error,
-      );
+      console.error("Marketplace checkout validation activation failed:", error);
       return json(
         {
           checkoutValidation: {
@@ -516,8 +527,7 @@ export default function ProductionReadinessPage() {
   const navigation = useNavigation();
   const submittingIntent = navigation.formData?.get("intent");
   const isCarrierSubmitting =
-    navigation.state === "submitting" &&
-    submittingIntent === "register_carrier";
+    navigation.state === "submitting" && submittingIntent === "register_carrier";
   const isCheckoutGateSubmitting =
     navigation.state === "submitting" &&
     submittingIntent === "activate_checkout_gate";
@@ -906,7 +916,9 @@ export default function ProductionReadinessPage() {
         {actionData?.legalEmailControl ? (
           <div
             className={`readiness-result ${
-              actionData.legalEmailControl.ok ? "" : "readiness-result--error"
+              actionData.legalEmailControl.ok
+                ? ""
+                : "readiness-result--error"
             }`}
           >
             {actionData.legalEmailControl.ok
@@ -1021,149 +1033,150 @@ export default function ProductionReadinessPage() {
                     {row.definition.automated ? (
                       <div className="readiness-inline-form">
                         <p>
-                          この項目は実注文と全額返金の自動照合が完了した場合だけ記録されます。
+                          この項目は、実注文と全額返金の自動照合が完了した場合だけ記録されます。
                         </p>
                         <Link
                           className="readiness-button"
                           to="/app/production-transaction-probe"
                         >
-                          E2E確認を開く
+                          本番注文・返金 E2E を確認
                         </Link>
                       </div>
                     ) : (
                       <Form method="post" className="readiness-inline-form">
-                        <input
-                          type="hidden"
-                          name="intent"
-                          value="record_operational_attestation"
-                        />
-                        <input
-                          type="hidden"
-                          name="checkKey"
-                          value={row.definition.key}
-                        />
-                        <input type="hidden" name="status" value="CONFIRMED" />
-                        <input
-                          aria-label={`${row.definition.label}の証跡参照`}
-                          name="evidenceReference"
-                          placeholder="チケット番号、保存先URL、確認記録"
-                          required
-                        />
-                        <input
-                          aria-label={`${row.definition.label}のSHA-256`}
-                          name="evidenceHash"
-                          placeholder="SHA-256（任意）"
-                        />
-                        <input
-                          aria-label={`${row.definition.label}のメモ`}
-                          name="notes"
-                          placeholder="確認内容"
-                        />
-                        {row.definition.key ===
-                        "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED" ? (
-                          <fieldset className="readiness-release-manifest">
-                            <legend>
-                              現在のリリースと実チェックアウト結果
-                            </legend>
-                            {[
-                              ["releaseId", "Release ID"],
-                              ["renderCommit", "Render commit"],
-                              ["migrationVersion", "Migration"],
-                              ["shopifyAppVersion", "Shopify app version"],
-                              ["shopDomain", "Shop domain"],
-                              ["functionHandle", "Function handle"],
-                              ["functionUid", "Function UID"],
-                              ["functionId", "Shopify Function ID"],
-                              ["functionApiVersion", "Function API version"],
-                              ["validationId", "Validation ID"],
-                              ["policyVersion", "Policy version"],
-                              [
-                                "projectionSchemaVersion",
-                                "Projection schema version",
-                              ],
-                            ].map(([name, label]) => (
-                              <label key={name}>
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="record_operational_attestation"
+                      />
+                      <input
+                        type="hidden"
+                        name="checkKey"
+                        value={row.definition.key}
+                      />
+                      <input type="hidden" name="status" value="CONFIRMED" />
+                      <input
+                        aria-label={`${row.definition.label}の証跡参照`}
+                        name="evidenceReference"
+                        placeholder="チケット番号、保存先URL、確認記録"
+                        required
+                      />
+                      <input
+                        aria-label={`${row.definition.label}のSHA-256`}
+                        name="evidenceHash"
+                        placeholder="SHA-256（任意）"
+                      />
+                      <input
+                        aria-label={`${row.definition.label}のメモ`}
+                        name="notes"
+                        placeholder="確認内容"
+                      />
+                      {row.definition.key ===
+                      "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED" ? (
+                        <fieldset className="readiness-release-manifest">
+                          <legend>現在のリリースと実チェックアウト結果</legend>
+                          {[
+                            ["releaseId", "Release ID"],
+                            ["renderCommit", "Render commit"],
+                            ["migrationVersion", "Migration"],
+                            ["shopifyAppVersion", "Shopify app version"],
+                            ["shopDomain", "Shop domain"],
+                            ["functionHandle", "Function handle"],
+                            ["functionUid", "Function UID"],
+                            ["functionId", "Shopify Function ID"],
+                            ["functionApiVersion", "Function API version"],
+                            ["validationId", "Validation ID"],
+                            ["policyVersion", "Policy version"],
+                            [
+                              "projectionSchemaVersion",
+                              "Projection schema version",
+                            ],
+                          ].map(([name, label]) => (
+                            <label key={name}>
+                              <span>{label}</span>
+                              <input
+                                name={name}
+                                defaultValue={
+                                  data.productionRelease?.expected?.[name] ||
+                                  ""
+                                }
+                                required
+                              />
+                            </label>
+                          ))}
+                          <input
+                            type="hidden"
+                            name="liveProbeChallenge"
+                            value={data.liveProbeChallenge?.token || ""}
+                            required
+                          />
+                          {[
+                            [
+                              "directProductAllowed",
+                              "直販商品が購入できた",
+                            ],
+                            [
+                              "blockedProductRejected",
+                              "BLOCKED商品が拒否された",
+                            ],
+                            [
+                              "globalStopRejected",
+                              "全体停止中に購入が拒否された",
+                            ],
+                            [
+                              "shopPayObserved",
+                              "Shop Payでも期待どおりになった",
+                            ],
+                          ].map(([name, label]) => (
+                            <div key={name} className="readiness-probe-row">
+                              <label>
+                                <input
+                                  name={`${name}Passed`}
+                                  type="checkbox"
+                                  required
+                                />
                                 <span>{label}</span>
-                                <input
-                                  name={name}
-                                  defaultValue={
-                                    data.productionRelease?.expected?.[name] ||
-                                    ""
-                                  }
-                                  required
-                                />
                               </label>
-                            ))}
-                            <input
-                              type="hidden"
-                              name="liveProbeChallenge"
-                              value={data.liveProbeChallenge?.token || ""}
-                              required
-                            />
-                            {[
-                              ["directProductAllowed", "直販商品が購入できた"],
-                              [
-                                "blockedProductRejected",
-                                "BLOCKED商品が拒否された",
-                              ],
-                              [
-                                "globalStopRejected",
-                                "全体停止中に購入が拒否された",
-                              ],
-                              [
-                                "shopPayObserved",
-                                "Shop Payでも期待どおりになった",
-                              ],
-                            ].map(([name, label]) => (
-                              <div key={name} className="readiness-probe-row">
-                                <label>
-                                  <input
-                                    name={`${name}Passed`}
-                                    type="checkbox"
-                                    required
-                                  />
-                                  <span>{label}</span>
-                                </label>
-                                <input
-                                  name={`${name}ObservedAt`}
-                                  type="datetime-local"
-                                  aria-label={`${label}の実行日時`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}ProjectionRevision`}
-                                  placeholder="対象商品のProjection revision"
-                                  aria-label={`${label}のProjection revision`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}ActualResult`}
-                                  placeholder="実際の結果"
-                                  aria-label={`${label}の実際の結果`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}EvidenceReference`}
-                                  placeholder="このシナリオの証跡URL・実行ID"
-                                  aria-label={`${label}の証跡参照`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}EvidenceHash`}
-                                  placeholder="証跡SHA-256（任意）"
-                                  aria-label={`${label}の証跡SHA-256`}
-                                />
-                              </div>
-                            ))}
-                          </fieldset>
-                        ) : null}
-                        <button
-                          className="readiness-button"
-                          disabled={navigation.state !== "idle"}
-                          type="submit"
-                        >
-                          確認を記録
-                        </button>
+                              <input
+                                name={`${name}ObservedAt`}
+                                type="datetime-local"
+                                aria-label={`${label}の実行日時`}
+                                required
+                              />
+                              <input
+                                name={`${name}ProjectionRevision`}
+                                placeholder="対象商品のProjection revision"
+                                aria-label={`${label}のProjection revision`}
+                                required
+                              />
+                              <input
+                                name={`${name}ActualResult`}
+                                placeholder="実際の結果"
+                                aria-label={`${label}の実際の結果`}
+                                required
+                              />
+                              <input
+                                name={`${name}EvidenceReference`}
+                                placeholder="このシナリオの証跡URL・実行ID"
+                                aria-label={`${label}の証跡参照`}
+                                required
+                              />
+                              <input
+                                name={`${name}EvidenceHash`}
+                                placeholder="証跡SHA-256（任意）"
+                                aria-label={`${label}の証跡SHA-256`}
+                              />
+                            </div>
+                          ))}
+                        </fieldset>
+                      ) : null}
+                      <button
+                        className="readiness-button"
+                        disabled={navigation.state !== "idle"}
+                        type="submit"
+                      >
+                        確認を記録
+                      </button>
                       </Form>
                     )}
                   </td>
@@ -1245,7 +1258,9 @@ export default function ProductionReadinessPage() {
         {actionData?.operationalControl ? (
           <div
             className={`readiness-result ${
-              actionData.operationalControl.ok ? "" : "readiness-result--error"
+              actionData.operationalControl.ok
+                ? ""
+                : "readiness-result--error"
             }`}
           >
             {actionData.operationalControl.ok
@@ -1267,8 +1282,7 @@ export default function ProductionReadinessPage() {
               状態: {data.checkoutValidation?.active ? "有効" : "無効"}
             </p>
             <p className="readiness-tool__text">
-              Shopify標準チェックアウト、Shop Payなどを含む購入処理をShopify
-              Functionsで検証します。制御関数の実行失敗時も購入を拒否します。
+              Shopify標準チェックアウト、Shop Payなどを含む購入処理をShopify Functionsで検証します。制御関数の実行失敗時も購入を拒否します。
             </p>
           </div>
           <div className="readiness-inline-form">
@@ -1319,9 +1333,9 @@ export default function ProductionReadinessPage() {
               : actionData.checkoutValidation.ok &&
                   actionData.checkoutValidation.staged
                 ? "購入制御を無効状態で準備しました。実ストアのFunction再生と正常・遮断確認を記録してから有効化してください。"
-                : `購入制御を有効化できませんでした: ${
-                    actionData.checkoutValidation.reason || "unknown"
-                  }`}
+              : `購入制御を有効化できませんでした: ${
+                  actionData.checkoutValidation.reason || "unknown"
+                }`}
           </div>
         ) : null}
       </section>
@@ -1329,11 +1343,11 @@ export default function ProductionReadinessPage() {
       <section className="readiness-card">
         <div className="readiness-tool">
           <div className="readiness-tool__body">
-            <h2 className="readiness-tool__title">第三者商品の公開境界</h2>
+            <h2 className="readiness-tool__title">
+              第三者商品の公開境界
+            </h2>
             <p className="readiness-tool__text">
-              運営直販商品だけをOnline
-              Storeへ公開し、店舗別精算が必要な商品はApp ProxyとDraft
-              Orderの購入導線に限定します。
+              運営直販商品だけをOnline Storeへ公開し、店舗別精算が必要な商品はApp ProxyとDraft Orderの購入導線に限定します。
             </p>
             <p className="readiness-tool__text">
               状態: {data.checkoutGate?.active ? "有効" : "無効"}
@@ -1343,7 +1357,11 @@ export default function ProductionReadinessPage() {
             </p>
           </div>
           <Form method="post">
-            <input type="hidden" name="intent" value="activate_checkout_gate" />
+            <input
+              type="hidden"
+              name="intent"
+              value="activate_checkout_gate"
+            />
             <button
               className="readiness-button"
               type="submit"

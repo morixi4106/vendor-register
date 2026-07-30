@@ -100,10 +100,7 @@ const ORDER_FIELDS = `#graphql
     lineItems(first: 250) {
       nodes {
         id
-        title
         quantity
-        currentQuantity
-        sku
         product {
           id
         }
@@ -331,6 +328,13 @@ export async function fetchShopifyOrderForProductionProbe(
         : "shopify_order_not_found",
     };
   }
+  const lineItemIds = snapshot.commercialEvidence.lines.map((line) => line.id);
+  if (
+    lineItemIds.some((id) => !id) ||
+    new Set(lineItemIds).size !== lineItemIds.length
+  ) {
+    return { ok: false, reason: "shopify_order_line_items_invalid" };
+  }
   return { ok: true, order: nodes[0], snapshot };
 }
 
@@ -347,6 +351,32 @@ function buildReleaseContext(releaseExpectation) {
 
 function activeKey(shopDomain) {
   return `production-transaction-probe:${normalizeShop(shopDomain)}`;
+}
+
+async function transitionActiveProbe(
+  {
+    probe,
+    expectedStatuses,
+    data,
+    conflictReason = "production_transaction_probe_conflict",
+  },
+  { prismaClient },
+) {
+  const result = await prismaClient.productionTransactionProbe.updateMany({
+    where: {
+      id: probe.id,
+      activeKey: activeKey(probe.shopDomain),
+      releaseFingerprint: probe.releaseFingerprint,
+      status: { in: expectedStatuses },
+    },
+    data,
+  });
+  const latest = await prismaClient.productionTransactionProbe.findUnique({
+    where: { id: probe.id },
+  });
+  return result.count === 1
+    ? { ok: true, probe: latest }
+    : { ok: false, reason: conflictReason, probe: latest };
 }
 
 export async function createProductionTransactionProbe(
@@ -370,16 +400,21 @@ export async function createProductionTransactionProbe(
     if (existing.releaseFingerprint === release.releaseFingerprint) {
       return { ok: true, existing: true, probe: existing };
     }
-    await prismaClient.productionTransactionProbe.update({
-      where: { id: existing.id },
-      data: {
-        activeKey: null,
-        status: PRODUCTION_TRANSACTION_PROBE_STATUS.INVALIDATED,
-        invalidatedAt: now,
-        lastCheckedAt: now,
-        lastErrorCode: "release_changed",
+    const invalidated = await transitionActiveProbe(
+      {
+        probe: existing,
+        expectedStatuses: ACTIVE_PROBE_STATUSES,
+        data: {
+          activeKey: null,
+          status: PRODUCTION_TRANSACTION_PROBE_STATUS.INVALIDATED,
+          invalidatedAt: now,
+          lastCheckedAt: now,
+          lastErrorCode: "release_changed",
+        },
       },
-    });
+      { prismaClient },
+    );
+    if (!invalidated.ok) return invalidated;
   }
   try {
     const probe = await prismaClient.productionTransactionProbe.create({
@@ -525,12 +560,11 @@ export async function attachOrderToProductionTransactionProbe(
   if (snapshot.cancelledAt) {
     return { ok: false, reason: "order_already_cancelled" };
   }
-  if (
-    !["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(
-      snapshot.financialStatus,
-    )
-  ) {
+  if (snapshot.financialStatus !== "PAID") {
     return { ok: false, reason: "order_not_paid" };
+  }
+  if (snapshot.refundedAmount > 0 || snapshot.refundIds.length > 0) {
+    return { ok: false, reason: "order_already_refunded" };
   }
   if (
     snapshot.commercialEvidence.totalAmount <= 0 ||
@@ -554,18 +588,33 @@ export async function attachOrderToProductionTransactionProbe(
     attachedBy: clean(actorKey) || probe.startedBy,
     attachedAt: now.toISOString(),
   };
-  const updated = await prismaClient.productionTransactionProbe.update({
-    where: { id: probe.id },
-    data: {
-      shopifyOrderId: snapshot.shopifyOrderId,
-      status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
-      orderAttachedAt: now,
-      lastCheckedAt: now,
-      lastErrorCode: null,
-      orderEvidenceJson,
-    },
-  });
-  return { ok: true, probe: updated, snapshot };
+  try {
+    const transitioned = await transitionActiveProbe(
+      {
+        probe,
+        expectedStatuses: [
+          PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_ORDER,
+        ],
+        data: {
+          shopifyOrderId: snapshot.shopifyOrderId,
+          status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
+          orderAttachedAt: now,
+          lastCheckedAt: now,
+          lastErrorCode: null,
+          orderEvidenceJson,
+        },
+      },
+      { prismaClient },
+    );
+    return transitioned.ok
+      ? { ok: true, probe: transitioned.probe, snapshot }
+      : transitioned;
+  } catch (error) {
+    if (error?.code === "P2002") {
+      return { ok: false, reason: "shopify_order_already_used" };
+    }
+    throw error;
+  }
 }
 
 async function loadLocalOrderEvidence(probe, prismaClient) {
@@ -584,7 +633,7 @@ async function loadLocalOrderEvidence(probe, prismaClient) {
       },
     },
   });
-  const ledgerEntries = await prismaClient.ledgerEntry.findMany({
+  const candidateLedgerEntries = await prismaClient.ledgerEntry.findMany({
     where: {
       entryType: { in: SETTLEMENT_ENTRY_TYPES },
       OR: [
@@ -599,6 +648,11 @@ async function loadLocalOrderEvidence(probe, prismaClient) {
     },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
   });
+  const ledgerEntries = candidateLedgerEntries.filter(
+    (entry) =>
+      normalizeShop(asObject(entry.metadataJson).shopDomain) ===
+      probe.shopDomain,
+  );
   const shadowCheck = prismaClient?.sellerOrderShadowCheck?.findFirst
     ? await prismaClient.sellerOrderShadowCheck.findFirst({
         where: {
@@ -671,6 +725,9 @@ function buildPaidInspection({ probe, snapshot, local }) {
     });
   const paidEntries = local.ledgerEntries.filter(
     (entry) => entry.entryType === "shopify_order_paid",
+  );
+  const expectedSellerIds = new Set(
+    sellerOrders.map((sellerOrder) => sellerOrder.sellerId).filter(Boolean),
   );
   const expectedPaidAmount = sellerOrderExpectedPaidAmount(sellerOrders);
   const actualPaidAmount = paidEntries.reduce(
@@ -751,6 +808,14 @@ function buildPaidInspection({ probe, snapshot, local }) {
       { expectedAmount: expectedPaidAmount, actualAmount: actualPaidAmount },
     ),
     check(
+      "paid_ledger_seller",
+      paidEntries.length > 0 &&
+        paidEntries.every((entry) => expectedSellerIds.has(entry.sellerId)) &&
+        new Set(paidEntries.map((entry) => entry.sellerId)).size ===
+          expectedSellerIds.size,
+      "paid_ledger_seller_mismatch",
+    ),
+    check(
       "seller_order_shadow",
       local.shadowCheck?.status === "matched",
       "seller_order_shadow_not_matched",
@@ -771,6 +836,9 @@ function buildPaidInspection({ probe, snapshot, local }) {
 
 function buildRefundInspection({ snapshot, local, paidInspection }) {
   const sellerOrders = local.marketplaceOrder?.sellerOrders || [];
+  const expectedSellerIds = new Set(
+    sellerOrders.map((sellerOrder) => sellerOrder.sellerId).filter(Boolean),
+  );
   const refundEntries = local.ledgerEntries.filter(
     (entry) => entry.entryType === "refund",
   );
@@ -856,6 +924,14 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
       "refund_ledger_currency_mismatch",
     ),
     check(
+      "refund_ledger_seller",
+      refundEntries.length > 0 &&
+        refundEntries.every((entry) => expectedSellerIds.has(entry.sellerId)) &&
+        new Set(refundEntries.map((entry) => entry.sellerId)).size ===
+          expectedSellerIds.size,
+      "refund_ledger_seller_mismatch",
+    ),
+    check(
       "refund_ledger_identifiers",
       nonEmptyRefundIds.length === refundEntries.length &&
         ledgerRefundIds.length === refundEntries.length &&
@@ -896,17 +972,25 @@ function pendingReason(inspection) {
 }
 
 async function invalidateProbeForReleaseChange(probe, { prismaClient, now }) {
-  const updated = await prismaClient.productionTransactionProbe.update({
-    where: { id: probe.id },
-    data: {
-      activeKey: null,
-      status: PRODUCTION_TRANSACTION_PROBE_STATUS.INVALIDATED,
-      invalidatedAt: now,
-      lastCheckedAt: now,
-      lastErrorCode: "release_changed",
+  const transitioned = await transitionActiveProbe(
+    {
+      probe,
+      expectedStatuses: ACTIVE_PROBE_STATUSES,
+      data: {
+        activeKey: null,
+        status: PRODUCTION_TRANSACTION_PROBE_STATUS.INVALIDATED,
+        invalidatedAt: now,
+        lastCheckedAt: now,
+        lastErrorCode: "release_changed",
+      },
     },
-  });
-  return { ok: false, reason: "release_changed", probe: updated };
+    { prismaClient },
+  );
+  return {
+    ok: false,
+    reason: transitioned.ok ? "release_changed" : transitioned.reason,
+    probe: transitioned.probe,
+  };
 }
 
 export async function refreshProductionTransactionProbe(
@@ -938,14 +1022,20 @@ export async function refreshProductionTransactionProbe(
     { graphQL },
   );
   if (!fetched.ok) {
-    const updated = await prismaClient.productionTransactionProbe.update({
-      where: { id: probe.id },
-      data: {
-        lastCheckedAt: now,
-        lastErrorCode: fetched.reason,
+    const transitioned = await transitionActiveProbe(
+      {
+        probe,
+        expectedStatuses: ACTIVE_PROBE_STATUSES,
+        data: {
+          lastCheckedAt: now,
+          lastErrorCode: fetched.reason,
+        },
       },
-    });
-    return { ...fetched, probe: updated };
+      { prismaClient },
+    );
+    return transitioned.ok
+      ? { ...fetched, probe: transitioned.probe }
+      : transitioned;
   }
   const local = await loadLocalOrderEvidence(probe, prismaClient);
   const paidInspection = buildPaidInspection({
@@ -954,21 +1044,26 @@ export async function refreshProductionTransactionProbe(
     local,
   });
   if (!paidInspection.passed) {
-    const updated = await prismaClient.productionTransactionProbe.update({
-      where: { id: probe.id },
-      data: {
-        status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
-        lastCheckedAt: now,
-        lastErrorCode: pendingReason(paidInspection),
-        paidEvidenceJson: paidInspection,
-        marketplaceOrderId: paidInspection.marketplaceOrderId,
+    const transitioned = await transitionActiveProbe(
+      {
+        probe,
+        expectedStatuses: ACTIVE_PROBE_STATUSES,
+        data: {
+          status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
+          lastCheckedAt: now,
+          lastErrorCode: pendingReason(paidInspection),
+          paidEvidenceJson: paidInspection,
+          marketplaceOrderId: paidInspection.marketplaceOrderId,
+        },
       },
-    });
+      { prismaClient },
+    );
+    if (!transitioned.ok) return transitioned;
     return {
       ok: true,
       pending: true,
       stage: "settlement",
-      probe: updated,
+      probe: transitioned.probe,
       paidInspection,
     };
   }
@@ -978,23 +1073,28 @@ export async function refreshProductionTransactionProbe(
     paidInspection,
   });
   if (!refundInspection.passed) {
-    const updated = await prismaClient.productionTransactionProbe.update({
-      where: { id: probe.id },
-      data: {
-        status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_REFUND,
-        paidVerifiedAt: probe.paidVerifiedAt || now,
-        lastCheckedAt: now,
-        lastErrorCode: pendingReason(refundInspection),
-        paidEvidenceJson: paidInspection,
-        refundEvidenceJson: refundInspection,
-        marketplaceOrderId: paidInspection.marketplaceOrderId,
+    const transitioned = await transitionActiveProbe(
+      {
+        probe,
+        expectedStatuses: ACTIVE_PROBE_STATUSES,
+        data: {
+          status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_REFUND,
+          paidVerifiedAt: probe.paidVerifiedAt || now,
+          lastCheckedAt: now,
+          lastErrorCode: pendingReason(refundInspection),
+          paidEvidenceJson: paidInspection,
+          refundEvidenceJson: refundInspection,
+          marketplaceOrderId: paidInspection.marketplaceOrderId,
+        },
       },
-    });
+      { prismaClient },
+    );
+    if (!transitioned.ok) return transitioned;
     return {
       ok: true,
       pending: true,
       stage: "refund",
-      probe: updated,
+      probe: transitioned.probe,
       paidInspection,
       refundInspection,
     };
@@ -1015,8 +1115,13 @@ export async function refreshProductionTransactionProbe(
   };
   const evidenceHash = hashEvidence(finalEvidence);
   const complete = async (tx) => {
-    const updated = await tx.productionTransactionProbe.update({
-      where: { id: probe.id },
+    const claimed = await tx.productionTransactionProbe.updateMany({
+      where: {
+        id: probe.id,
+        activeKey: activeKey(probe.shopDomain),
+        releaseFingerprint: probe.releaseFingerprint,
+        status: { in: ACTIVE_PROBE_STATUSES },
+      },
       data: {
         activeKey: null,
         status: PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED,
@@ -1031,6 +1136,24 @@ export async function refreshProductionTransactionProbe(
         finalEvidenceJson: finalEvidence,
         marketplaceOrderId: paidInspection.marketplaceOrderId,
       },
+    });
+    if (claimed.count !== 1) {
+      const latest = await tx.productionTransactionProbe.findUnique({
+        where: { id: probe.id },
+      });
+      if (
+        latest?.status === PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED &&
+        latest?.releaseFingerprint === probe.releaseFingerprint &&
+        latest?.shopifyOrderId === probe.shopifyOrderId
+      ) {
+        return { updated: latest, attestation: null, alreadyCompleted: true };
+      }
+      const conflict = new Error("production_transaction_probe_conflict");
+      conflict.code = "PROBE_CONFLICT";
+      throw conflict;
+    }
+    const updated = await tx.productionTransactionProbe.findUnique({
+      where: { id: probe.id },
     });
     const attestation = await recordOperationalReadinessAttestation(
       {
@@ -1057,16 +1180,29 @@ export async function refreshProductionTransactionProbe(
     }
     return { updated, attestation };
   };
-  const transactionResult =
-    typeof prismaClient.$transaction === "function"
-      ? await prismaClient.$transaction(complete)
-      : await complete(prismaClient);
+  let transactionResult;
+  try {
+    transactionResult =
+      typeof prismaClient.$transaction === "function"
+        ? await prismaClient.$transaction(complete, {
+            isolationLevel: "Serializable",
+          })
+        : await complete(prismaClient);
+  } catch (error) {
+    if (error?.code === "PROBE_CONFLICT" || error?.code === "P2034") {
+      return {
+        ok: false,
+        reason: "production_transaction_probe_conflict",
+      };
+    }
+    throw error;
+  }
   return {
     ok: true,
     pending: false,
     stage: "complete",
     probe: transactionResult.updated,
-    attestation: transactionResult.attestation.attestation,
+    attestation: transactionResult.attestation?.attestation || null,
     paidInspection,
     refundInspection,
   };
@@ -1082,16 +1218,19 @@ export async function cancelProductionTransactionProbe(
   if (!probe || !ACTIVE_PROBE_STATUSES.includes(probe.status)) {
     return { ok: false, reason: "active_probe_not_found" };
   }
-  const updated = await prismaClient.productionTransactionProbe.update({
-    where: { id: probe.id },
-    data: {
-      activeKey: null,
-      status: PRODUCTION_TRANSACTION_PROBE_STATUS.CANCELLED,
-      lastCheckedAt: now,
-      lastErrorCode: `cancelled_by:${clean(actorKey) || "unknown"}`,
+  return transitionActiveProbe(
+    {
+      probe,
+      expectedStatuses: ACTIVE_PROBE_STATUSES,
+      data: {
+        activeKey: null,
+        status: PRODUCTION_TRANSACTION_PROBE_STATUS.CANCELLED,
+        lastCheckedAt: now,
+        lastErrorCode: `cancelled_by:${clean(actorKey) || "unknown"}`,
+      },
     },
-  });
-  return { ok: true, probe: updated };
+    { prismaClient },
+  );
 }
 
 export async function getProductionTransactionProbePageData(
@@ -1109,11 +1248,25 @@ export async function getProductionTransactionProbePageData(
     };
   }
   const shop = normalizeShop(shopDomain);
-  const probes = await prismaClient.productionTransactionProbe.findMany({
-    where: { shopDomain: shop },
-    orderBy: { createdAt: "desc" },
-    take: 10,
-  });
+  let probes;
+  try {
+    probes = await prismaClient.productionTransactionProbe.findMany({
+      where: { shopDomain: shop },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+  } catch (error) {
+    if (["P2021", "P2022"].includes(error?.code)) {
+      return {
+        available: false,
+        reason: "production_transaction_probe_unavailable",
+        release,
+        activeProbe: null,
+        recentProbes: [],
+      };
+    }
+    throw error;
+  }
   return {
     available: true,
     release,
@@ -1162,27 +1315,27 @@ export function buildProductionTransactionProbePage({
   const copy = {
     RELEASE_UNCONFIGURED: {
       tone: "warning",
-      statusLabel: "Release未設定",
+      statusLabel: "リリース未設定",
       instruction:
-        "Render commitとShopify App versionを設定し、現在のReleaseを特定できる状態にしてください。",
+        "Render commitとShopify App versionを設定し、現在のリリースを特定できる状態にしてください。",
     },
     NOT_STARTED: {
       tone: "neutral",
       statusLabel: "未開始",
       instruction:
-        "確認を開始してから、Shopify標準商品ページで運営直販商品を1点だけ実カードで購入してください。",
+        "確認を開始してから、Shopify標準商品ページで少額の運営直販商品を実カードで購入してください。",
     },
     AWAITING_ORDER: {
       tone: "warning",
       statusLabel: "注文待ち",
       instruction:
-        "Shopify Paymentsが本番モードであることを確認し、少額の運営直販商品を1点購入して注文番号を入力してください。",
+        "Shopify Paymentsが本番モードであることを確認し、確認開始後に作成した実注文の番号を入力してください。",
     },
     AWAITING_SETTLEMENT: {
       tone: "warning",
       statusLabel: "売上反映待ち",
       instruction:
-        "注文Webhook、SellerOrder、売上台帳の反映を待っています。Shopify側ではまだ返金しないでください。",
+        "注文Webhook、SellerOrder、Shadow Check、売上台帳の反映を待っています。まだ返金しないでください。",
     },
     AWAITING_REFUND: {
       tone: "warning",
@@ -1194,13 +1347,13 @@ export function buildProductionTransactionProbePage({
       tone: "success",
       statusLabel: "完了",
       instruction:
-        "注文、売上、全額返金、台帳差引が一致し、本番確認の証跡を自動登録しました。",
+        "注文、売上、全額返金、台帳差引が一致し、現在のリリースへ証跡を登録しました。",
     },
     INVALIDATED: {
       tone: "warning",
       statusLabel: "無効",
       instruction:
-        "確認中または確認後にReleaseが変わりました。現在のReleaseで新しく確認してください。",
+        "確認中または確認後にリリースが変わりました。現在のリリースで新しく確認してください。",
     },
     CANCELLED: {
       tone: "neutral",
@@ -1223,25 +1376,25 @@ export function buildProductionTransactionProbePage({
     {
       id: "start",
       label: "確認を開始",
-      detail: "現在のRelease IDと開始時刻を固定します。",
+      detail: "現在のリリースIDと開始時刻を固定します。",
     },
     {
       id: "order",
       label: "実注文を登録",
       detail:
-        "テスト注文、開始前の注文、第三者商品を含む注文は受け付けません。",
+        "テスト注文、開始前の注文、第三者商品、返金開始済みの注文は受け付けません。",
     },
     {
       id: "settlement",
       label: "売上反映を照合",
       detail:
-        "MarketplaceOrder、SellerOrder、旧計算、売上台帳の件数・金額・通貨を比較します。",
+        "MarketplaceOrder、SellerOrder、商品行、Shadow Check、売上台帳を比較します。",
     },
     {
       id: "refund",
       label: "全額返金を照合",
       detail:
-        "Shopify返金、商品数量、返金台帳、二重差引の有無を比較して証跡を確定します。",
+        "Shopify返金、商品数量、返金台帳、二重差引がないことを確認します。",
     },
   ];
   return {

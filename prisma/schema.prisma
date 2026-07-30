@@ -645,6 +645,7 @@ model ProductionTransactionProbe {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  @@unique([shopDomain, shopifyOrderId])
   @@index([shopDomain, status, createdAt])
   @@index([shopifyOrderId])
   @@index([marketplaceOrderId])

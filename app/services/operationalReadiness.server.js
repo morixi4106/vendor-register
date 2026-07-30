@@ -1119,7 +1119,8 @@ export async function recoverPlatformCheckoutEmergencyHold(
   const syncShop =
     syncShopControl || checkoutGate.syncShopOperationalPurchaseControl;
   const clearWatchdogVeto =
-    clearSharedWatchdogVeto || checkoutGate.clearSharedWatchdogPurchaseVeto;
+    clearSharedWatchdogVeto ||
+    checkoutGate.clearSharedWatchdogPurchaseVeto;
   const syncPolicy =
     syncCheckoutPolicy || checkoutGate.syncMarketplaceCheckoutPolicyForProduct;
   const restore =
@@ -1379,7 +1380,8 @@ export async function recoverPlatformCheckoutEmergencyHold(
               targetId: targetShopDomain,
               ok: false,
               error:
-                vetoResult.reason || "watchdog_purchase_veto_recovery_failed",
+                vetoResult.reason ||
+                "watchdog_purchase_veto_recovery_failed",
             });
           }
           await upsertOperationalExecution(prismaClient, {
@@ -1396,7 +1398,8 @@ export async function recoverPlatformCheckoutEmergencyHold(
             },
             errorCode: vetoCleared
               ? null
-              : vetoResult?.reason || "watchdog_purchase_veto_recovery_failed",
+              : vetoResult?.reason ||
+                "watchdog_purchase_veto_recovery_failed",
           });
         } catch (error) {
           const message =
@@ -1417,7 +1420,8 @@ export async function recoverPlatformCheckoutEmergencyHold(
             startedAt: vetoStartedAt,
             completedAt: new Date(),
             errorCode:
-              error?.reason || "watchdog_purchase_veto_recovery_failed",
+              error?.reason ||
+              "watchdog_purchase_veto_recovery_failed",
             errorMessage: message,
           });
         }
@@ -1735,10 +1739,10 @@ export async function inspectOperationalReadiness({
     const attestation = byKey.get(definition.key) || null;
     const metadata = asMetadataObject(attestation?.metadataJson);
     const releaseRequired = definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY;
+    const releaseConfigured = !releaseRequired || Boolean(currentReleaseId);
     const releaseMatches =
       !releaseRequired ||
-      !currentReleaseId ||
-      metadata.releaseId === currentReleaseId;
+      (releaseConfigured && metadata.releaseId === currentReleaseId);
     const expired = Boolean(
       attestation?.expiresAt &&
       attestation.expiresAt.getTime() <= now.getTime(),
@@ -1757,13 +1761,15 @@ export async function inspectOperationalReadiness({
       ready,
       reason: !attestation
         ? "missing"
-        : !releaseMatches
-          ? "release_mismatch"
-          : expired
-            ? "expired"
-            : ready
-              ? null
-              : "not_confirmed",
+        : !releaseConfigured
+          ? "release_unconfigured"
+          : !releaseMatches
+            ? "release_mismatch"
+            : expired
+              ? "expired"
+              : ready
+                ? null
+                : "not_confirmed",
     };
   });
 

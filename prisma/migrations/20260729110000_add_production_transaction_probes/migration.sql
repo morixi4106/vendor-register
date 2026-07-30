@@ -38,3 +38,6 @@ ON "production_transaction_probes"("shopifyOrderId");
 
 CREATE INDEX "production_transaction_probes_marketplaceOrderId_idx"
 ON "production_transaction_probes"("marketplaceOrderId");
+
+CREATE UNIQUE INDEX "production_transaction_probes_shopDomain_shopifyOrderId_key"
+ON "production_transaction_probes"("shopDomain", "shopifyOrderId");
