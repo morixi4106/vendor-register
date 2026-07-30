@@ -37,6 +37,8 @@ export const CHECKOUT_VALIDATION_LIVE_PROBE_KEY =
   "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED";
 export const LIVE_ORDER_REFUND_E2E_CHECK_KEY =
   "LIVE_ORDER_REFUND_E2E_COMPLETED";
+export const SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY =
+  "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED";
 
 export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
   {
@@ -85,7 +87,7 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 30,
   },
   {
-    key: "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED",
+    key: SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
     label: "Shopify Payments入金口座・実入金の確認",
     validityDays: 90,
   },
@@ -1124,8 +1126,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
   const syncShop =
     syncShopControl || checkoutGate.syncShopOperationalPurchaseControl;
   const clearWatchdogVeto =
-    clearSharedWatchdogVeto ||
-    checkoutGate.clearSharedWatchdogPurchaseVeto;
+    clearSharedWatchdogVeto || checkoutGate.clearSharedWatchdogPurchaseVeto;
   const syncPolicy =
     syncCheckoutPolicy || checkoutGate.syncMarketplaceCheckoutPolicyForProduct;
   const restore =
@@ -1385,8 +1386,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
               targetId: targetShopDomain,
               ok: false,
               error:
-                vetoResult.reason ||
-                "watchdog_purchase_veto_recovery_failed",
+                vetoResult.reason || "watchdog_purchase_veto_recovery_failed",
             });
           }
           await upsertOperationalExecution(prismaClient, {
@@ -1403,8 +1403,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
             },
             errorCode: vetoCleared
               ? null
-              : vetoResult?.reason ||
-                "watchdog_purchase_veto_recovery_failed",
+              : vetoResult?.reason || "watchdog_purchase_veto_recovery_failed",
           });
         } catch (error) {
           const message =
@@ -1425,8 +1424,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
             startedAt: vetoStartedAt,
             completedAt: new Date(),
             errorCode:
-              error?.reason ||
-              "watchdog_purchase_veto_recovery_failed",
+              error?.reason || "watchdog_purchase_veto_recovery_failed",
             errorMessage: message,
           });
         }
@@ -1546,6 +1544,7 @@ export async function recordOperationalReadinessAttestation(
     scopeType = "PLATFORM",
     scopeId = "GLOBAL",
     metadataJson = null,
+    verifiedPayoutEvidence = null,
   },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
@@ -1588,6 +1587,18 @@ export async function recordOperationalReadinessAttestation(
     !isCompleteCheckoutValidationLiveProbe(normalizedMetadata)
   ) {
     return { ok: false, reason: "checkout_live_probe_manifest_incomplete" };
+  }
+  if (
+    normalizedKey === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY &&
+    !isCompleteShopifyPayoutEvidenceAttestation({
+      metadata: normalizedMetadata,
+      evidenceReference: normalizedReference,
+      evidenceHash: normalizedHash,
+      confirmedBy: normalizedActor,
+      payoutEvidence: verifiedPayoutEvidence,
+    })
+  ) {
+    return { ok: false, reason: "verified_payout_evidence_required" };
   }
 
   const confirmed =
@@ -1686,6 +1697,51 @@ export function isCompleteCheckoutValidationLiveProbe(metadataJson) {
   );
 }
 
+export function isCompleteShopifyPayoutEvidenceAttestation({
+  metadata,
+  evidenceReference,
+  evidenceHash,
+  confirmedBy,
+  payoutEvidence,
+} = {}) {
+  const normalizedMetadata = asMetadataObject(metadata);
+  const evidence = payoutEvidence || {};
+  const approvalMode = normalizeUpper(normalizedMetadata.approvalMode);
+  const independentlyApproved =
+    approvalMode === "INDEPENDENT" &&
+    normalizeText(evidence.submittedBy) !== normalizeText(evidence.reviewedBy);
+  const documentedSingleOperatorWaiver =
+    approvalMode === "SINGLE_OPERATOR_WAIVER" &&
+    evidence.singleOperatorWaiver === true &&
+    normalizeText(evidence.singleOperatorWaiverReason).length >= 30;
+
+  return Boolean(
+    normalizedMetadata.verificationSource === "shopify_payout_evidence" &&
+    normalizeText(normalizedMetadata.payoutEvidenceId) ===
+      normalizeText(evidence.id) &&
+    normalizeText(normalizedMetadata.releaseId) ===
+      normalizeText(evidence.releaseId) &&
+    normalizeSha256(normalizedMetadata.releaseFingerprint) ===
+      normalizeSha256(evidence.releaseFingerprint) &&
+    normalizeText(normalizedMetadata.payoutId) ===
+      normalizeText(evidence.payoutId) &&
+    normalizeUpper(normalizedMetadata.payoutStatus) === "DEPOSITED" &&
+    normalizeUpper(evidence.payoutStatus) === "DEPOSITED" &&
+    normalizeUpper(evidence.status) === "APPROVED" &&
+    Number(normalizedMetadata.amount) === Number(evidence.amount) &&
+    Number(evidence.amount) > 0 &&
+    normalizeUpper(normalizedMetadata.currencyCode) ===
+      normalizeUpper(evidence.currencyCode) &&
+    evidenceReference === normalizeText(evidence.evidenceReference) &&
+    normalizeSha256(evidenceHash) === normalizeSha256(evidence.evidenceHash) &&
+    confirmedBy === normalizeText(evidence.reviewedBy) &&
+    normalizeText(evidence.bankReferenceMasked) &&
+    Number.isFinite(new Date(evidence.shopifyPayoutDate).getTime()) &&
+    Number.isFinite(new Date(evidence.bankDepositedAt).getTime()) &&
+    (independentlyApproved || documentedSingleOperatorWaiver),
+  );
+}
+
 function isCompleteLiveProbeScenario(value, scenarioId) {
   const probe = asMetadataObject(value);
   const observedAt = new Date(probe.observedAt);
@@ -1740,14 +1796,36 @@ export async function inspectOperationalReadiness({
     renderCommit && shopifyAppVersion
       ? `${renderCommit.slice(0, 12)}:${shopifyAppVersion}`
       : null;
+  const payoutAttestation = byKey.get(SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY);
+  const payoutEvidenceId = normalizeText(
+    asMetadataObject(payoutAttestation?.metadataJson).payoutEvidenceId,
+  );
+  const payoutEvidence =
+    payoutEvidenceId && prismaClient.shopifyPayoutEvidence
+      ? await prismaClient.shopifyPayoutEvidence.findUnique({
+          where: { id: payoutEvidenceId },
+        })
+      : null;
   const rows = OPERATIONAL_READINESS_DEFINITIONS.map((definition) => {
     const attestation = byKey.get(definition.key) || null;
     const metadata = asMetadataObject(attestation?.metadataJson);
-    const releaseRequired = definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY;
+    const releaseRequired = [
+      LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    ].includes(definition.key);
     const releaseConfigured = !releaseRequired || Boolean(currentReleaseId);
     const releaseMatches =
       !releaseRequired ||
       (releaseConfigured && metadata.releaseId === currentReleaseId);
+    const payoutEvidenceValid =
+      definition.key !== SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY ||
+      isCompleteShopifyPayoutEvidenceAttestation({
+        metadata,
+        evidenceReference: attestation?.evidenceReference,
+        evidenceHash: attestation?.evidenceHash,
+        confirmedBy: attestation?.confirmedBy,
+        payoutEvidence,
+      });
     const expired = Boolean(
       attestation?.expiresAt &&
       attestation.expiresAt.getTime() <= now.getTime(),
@@ -1758,7 +1836,8 @@ export async function inspectOperationalReadiness({
       attestation?.confirmedBy &&
       attestation?.confirmedAt &&
       !expired &&
-      releaseMatches,
+      releaseMatches &&
+      payoutEvidenceValid,
     );
     return {
       definition,
@@ -1772,9 +1851,11 @@ export async function inspectOperationalReadiness({
             ? "release_mismatch"
             : expired
               ? "expired"
-              : ready
-                ? null
-                : "not_confirmed",
+              : !payoutEvidenceValid
+                ? "payout_evidence_invalid"
+                : ready
+                  ? null
+                  : "not_confirmed",
     };
   });
 
