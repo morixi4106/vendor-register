@@ -2649,7 +2649,7 @@ export async function getProductionReadiness({
     prismaClient,
   });
   const [operationalReadiness, platformOperationalControl] = await Promise.all([
-    inspectOperationalReadiness({ prismaClient, now }),
+    inspectOperationalReadiness({ prismaClient, now, env }),
     getPlatformOperationalControl({ prismaClient }),
   ]);
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);

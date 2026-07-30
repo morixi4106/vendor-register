@@ -35,6 +35,8 @@ export const OPERATIONAL_ATTESTATION_STATUS = Object.freeze({
 });
 export const CHECKOUT_VALIDATION_LIVE_PROBE_KEY =
   "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED";
+export const LIVE_ORDER_REFUND_E2E_CHECK_KEY =
+  "LIVE_ORDER_REFUND_E2E_COMPLETED";
 
 export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
   {
@@ -98,9 +100,10 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 7,
   },
   {
-    key: "LIVE_ORDER_REFUND_E2E_COMPLETED",
+    key: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
     label: "本番注文・返金・台帳のE2E確認",
     validityDays: 90,
+    automated: true,
   },
 ]);
 
@@ -1116,8 +1119,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
   const syncShop =
     syncShopControl || checkoutGate.syncShopOperationalPurchaseControl;
   const clearWatchdogVeto =
-    clearSharedWatchdogVeto ||
-    checkoutGate.clearSharedWatchdogPurchaseVeto;
+    clearSharedWatchdogVeto || checkoutGate.clearSharedWatchdogPurchaseVeto;
   const syncPolicy =
     syncCheckoutPolicy || checkoutGate.syncMarketplaceCheckoutPolicyForProduct;
   const restore =
@@ -1377,8 +1379,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
               targetId: targetShopDomain,
               ok: false,
               error:
-                vetoResult.reason ||
-                "watchdog_purchase_veto_recovery_failed",
+                vetoResult.reason || "watchdog_purchase_veto_recovery_failed",
             });
           }
           await upsertOperationalExecution(prismaClient, {
@@ -1395,8 +1396,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
             },
             errorCode: vetoCleared
               ? null
-              : vetoResult?.reason ||
-                "watchdog_purchase_veto_recovery_failed",
+              : vetoResult?.reason || "watchdog_purchase_veto_recovery_failed",
           });
         } catch (error) {
           const message =
@@ -1417,8 +1417,7 @@ export async function recoverPlatformCheckoutEmergencyHold(
             startedAt: vetoStartedAt,
             completedAt: new Date(),
             errorCode:
-              error?.reason ||
-              "watchdog_purchase_veto_recovery_failed",
+              error?.reason || "watchdog_purchase_veto_recovery_failed",
             errorMessage: message,
           });
         }
@@ -1562,6 +1561,20 @@ export async function recordOperationalReadinessAttestation(
   }
   const normalizedMetadata = asMetadataObject(metadataJson);
   if (
+    normalizedKey === LIVE_ORDER_REFUND_E2E_CHECK_KEY &&
+    !isCompleteProductionTransactionProbeAttestation({
+      metadata: normalizedMetadata,
+      evidenceReference: normalizedReference,
+      evidenceHash: normalizedHash,
+      confirmedBy: normalizedActor,
+    })
+  ) {
+    return {
+      ok: false,
+      reason: "production_transaction_probe_required",
+    };
+  }
+  if (
     normalizedKey === CHECKOUT_VALIDATION_LIVE_PROBE_KEY &&
     !isCompleteCheckoutValidationLiveProbe(normalizedMetadata)
   ) {
@@ -1606,6 +1619,26 @@ export async function recordOperationalReadinessAttestation(
   );
 
   return { ok: true, attestation, definition };
+}
+
+function isCompleteProductionTransactionProbeAttestation({
+  metadata,
+  evidenceReference,
+  evidenceHash,
+  confirmedBy,
+}) {
+  const probeId = normalizeText(metadata?.probeId);
+  const completedAt = new Date(metadata?.completedAt);
+  return Boolean(
+    metadata?.verificationSource === "production_transaction_probe" &&
+    confirmedBy === "system:production-transaction-probe" &&
+    probeId &&
+    evidenceReference === `production-transaction-probe:${probeId}` &&
+    evidenceHash &&
+    normalizeText(metadata?.releaseId) &&
+    normalizeSha256(metadata?.releaseFingerprint) &&
+    Number.isFinite(completedAt.getTime()),
+  );
 }
 
 export function isCompleteCheckoutValidationLiveProbe(metadataJson) {
@@ -1661,6 +1694,7 @@ function isCompleteLiveProbeScenario(value, scenarioId) {
 export async function inspectOperationalReadiness({
   prismaClient = prisma,
   now = new Date(),
+  env = process.env,
 } = {}) {
   if (!prismaClient?.operationalReadinessAttestation?.findMany) {
     return {
@@ -1691,8 +1725,20 @@ export async function inspectOperationalReadiness({
   const byKey = new Map(
     attestations.map((attestation) => [attestation.checkKey, attestation]),
   );
+  const renderCommit = normalizeText(env.RENDER_GIT_COMMIT || env.GIT_COMMIT);
+  const shopifyAppVersion = normalizeText(env.SHOPIFY_APP_VERSION);
+  const currentReleaseId =
+    renderCommit && shopifyAppVersion
+      ? `${renderCommit.slice(0, 12)}:${shopifyAppVersion}`
+      : null;
   const rows = OPERATIONAL_READINESS_DEFINITIONS.map((definition) => {
     const attestation = byKey.get(definition.key) || null;
+    const metadata = asMetadataObject(attestation?.metadataJson);
+    const releaseRequired = definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY;
+    const releaseMatches =
+      !releaseRequired ||
+      !currentReleaseId ||
+      metadata.releaseId === currentReleaseId;
     const expired = Boolean(
       attestation?.expiresAt &&
       attestation.expiresAt.getTime() <= now.getTime(),
@@ -1702,7 +1748,8 @@ export async function inspectOperationalReadiness({
       attestation?.evidenceReference &&
       attestation?.confirmedBy &&
       attestation?.confirmedAt &&
-      !expired,
+      !expired &&
+      releaseMatches,
     );
     return {
       definition,
@@ -1710,11 +1757,13 @@ export async function inspectOperationalReadiness({
       ready,
       reason: !attestation
         ? "missing"
-        : expired
-          ? "expired"
-          : ready
-            ? null
-            : "not_confirmed",
+        : !releaseMatches
+          ? "release_mismatch"
+          : expired
+            ? "expired"
+            : ready
+              ? null
+              : "not_confirmed",
     };
   });
 
@@ -1737,10 +1786,16 @@ export function buildOperationalReadinessChecks({ inspection, control } = {}) {
       ? `証跡 ${row.attestation.evidenceReference} / 有効期限 ${row.attestation.expiresAt.toISOString()}`
       : row.reason === "expired"
         ? "確認証跡の有効期限が切れています。"
-        : "有効な確認証跡が登録されていません。",
+        : row.reason === "release_mismatch"
+          ? "確認後にデプロイが更新されました。現在のリリースで再確認してください。"
+          : row.reason === "release_unconfigured"
+            ? "現在のリリースIDを特定できないため、実決済証跡を有効化できません。"
+            : "有効な確認証跡が登録されていません。",
     action: row.ready
       ? ""
-      : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
+      : row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+        ? "本番注文・返金 E2E確認画面で、実注文と全額返金を自動照合してください。"
+        : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
   }));
 
   const checkoutControlState = normalizeUpper(

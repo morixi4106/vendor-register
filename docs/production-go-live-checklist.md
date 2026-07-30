@@ -295,17 +295,36 @@ The page checks:
 
 ## 6. Live smoke test
 
-Before public launch:
+Before public launch, open Shopify Admin > vendor-register >
+`Production order/refund E2E` (`/app/production-transaction-probe`).
 
-1. Create or approve one real seller.
-2. Register or verify the seller's payout recipient if Wise mode is enabled.
-3. Register one low-value product.
-4. Place one low-value real order.
-5. Confirm `orders/paid` creates a seller ledger credit.
-6. Refund one order and confirm the ledger debit.
-7. Cancel one order and confirm no double debit.
-8. Create, approve, externally transfer, and mark paid one payout run.
-9. Confirm the payout ledger balance decreases by the payout amount.
-10. Confirm Shopify payout reaches the platform bank or Wise receiving account.
+The automated evidence flow is deliberately read-only. It never creates an
+order, refund, cancellation, ledger adjustment, or product publication.
 
-For Wise mode, replace step 8 with a sandbox Wise transfer first, then a low-value live transfer only after explicit approval.
+1. Start a new verification run before placing the order.
+2. Confirm Shopify Payments is in live mode.
+3. Buy one low-value platform-direct product from the standard Shopify product
+   page with a real card.
+4. Enter the Shopify order number or Order GID in the E2E page.
+5. Wait until the page confirms the MarketplaceOrder, SellerOrder,
+   SellerOrderLine, shadow comparison, and paid ledger credit all match.
+6. In Shopify Admin, fully refund the same order. Choose inventory restocking
+   according to the actual operating policy.
+7. Wait until the page confirms the Shopify refund, refunded quantities,
+   refund ledger debit, and absence of a duplicate cancellation debit.
+8. Confirm the E2E page shows `Passed` and Production readiness contains the
+   release-bound automatic evidence.
+
+The E2E evidence is invalid for a different Render commit or Shopify app
+version. Run the flow again after a release change. Test orders, orders created
+before the run, third-party products, partial refunds, and manually entered
+attestations do not satisfy this gate.
+
+Payout verification remains separate:
+
+1. Create, approve, externally transfer, and mark paid one payout run.
+2. Confirm the payout ledger balance decreases by the payout amount.
+3. Confirm Shopify payout reaches the platform bank or Wise receiving account.
+
+For Wise mode, perform a sandbox Wise transfer before the low-value live
+transfer, and run the live transfer only after explicit approval.

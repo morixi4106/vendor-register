@@ -5,6 +5,7 @@ import {
   applyPlatformCheckoutEmergencyHold,
   buildOperationalReadinessChecks,
   inspectOperationalReadiness,
+  LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   recordOperationalReadinessAttestation,
   recoverPlatformCheckoutEmergencyHold,
   setAutomatedEmailHold,
@@ -117,6 +118,49 @@ test("checkout live probe attestation requires a complete release manifest and f
   assert.equal(saved.metadataJson.probes.globalStopRejected.passed, true);
 });
 
+test("live order refund E2E cannot be manually attested", async () => {
+  let writes = 0;
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async upsert() {
+        writes += 1;
+        return {};
+      },
+    },
+  };
+
+  const manual = await recordOperationalReadinessAttestation(
+    {
+      checkKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      evidenceReference: "manual-note",
+      confirmedBy: "operator@example.com",
+    },
+    { prismaClient },
+  );
+  assert.equal(manual.ok, false);
+  assert.equal(manual.reason, "production_transaction_probe_required");
+  assert.equal(writes, 0);
+
+  const automated = await recordOperationalReadinessAttestation(
+    {
+      checkKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      evidenceReference: "production-transaction-probe:probe_1",
+      evidenceHash: "b".repeat(64),
+      confirmedBy: "system:production-transaction-probe",
+      metadataJson: {
+        verificationSource: "production_transaction_probe",
+        probeId: "probe_1",
+        releaseId: "aaaaaaaaaaaa:app-v1",
+        releaseFingerprint: "c".repeat(64),
+        completedAt: "2026-07-29T00:00:00.000Z",
+      },
+    },
+    { prismaClient },
+  );
+  assert.equal(automated.ok, true);
+  assert.equal(writes, 1);
+});
+
 function buildProbe(scenarioId, expectedResult) {
   return {
     scenarioId,
@@ -163,6 +207,59 @@ test("readiness inspection marks expired evidence as blocking", async () => {
         check.status === "fail",
     ),
   );
+});
+
+test("live order refund evidence is valid only for the current release", async () => {
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [
+          {
+            checkKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+            status: "CONFIRMED",
+            evidenceReference: "production-transaction-probe:probe_1",
+            confirmedBy: "system:production-transaction-probe",
+            confirmedAt: new Date("2026-07-29T00:00:00Z"),
+            expiresAt: new Date("2026-10-27T00:00:00Z"),
+            metadataJson: {
+              verificationSource: "production_transaction_probe",
+              releaseId: "aaaaaaaaaaaa:app-v1",
+            },
+          },
+        ];
+      },
+    },
+  };
+  const base = {
+    prismaClient,
+    now: new Date("2026-07-29T01:00:00Z"),
+  };
+  const matching = await inspectOperationalReadiness({
+    ...base,
+    env: {
+      RENDER_GIT_COMMIT: "a".repeat(40),
+      SHOPIFY_APP_VERSION: "app-v1",
+    },
+  });
+  assert.equal(
+    matching.rows.find(
+      (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+    ).ready,
+    true,
+  );
+
+  const changed = await inspectOperationalReadiness({
+    ...base,
+    env: {
+      RENDER_GIT_COMMIT: "b".repeat(40),
+      SHOPIFY_APP_VERSION: "app-v2",
+    },
+  });
+  const row = changed.rows.find(
+    (entry) => entry.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  );
+  assert.equal(row.ready, false);
+  assert.equal(row.reason, "release_mismatch");
 });
 
 test("emergency hold is persisted before all platform products are unpublished", async () => {
