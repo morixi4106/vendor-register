@@ -13,9 +13,43 @@ test("watchdog agent calls the authenticated internal endpoint once", async () =
     env: {
       LAUNCH_MONITOR_URL: "https://example.test",
       SALE_ELIGIBILITY_WATCHDOG_TOKEN: "x".repeat(48),
+      SHOPIFY_WATCHDOG_SHOP_DOMAIN: "example.myshopify.com",
+      SHOPIFY_WATCHDOG_CLIENT_ID: "watchdog-client-id",
+      SHOPIFY_WATCHDOG_CLIENT_SECRET: "watchdog-client-secret-value",
+      GITHUB_ACTIONS: "true",
+      GITHUB_RUN_ID: "12345",
+      SALE_ELIGIBILITY_WATCHDOG_ENABLED: "true",
     },
     fetchImpl: async (url, init) => {
       calls.push({ url: String(url), init });
+      if (String(url).endsWith("/admin/oauth/access_token")) {
+        return Response.json({
+          access_token: "short-lived-watchdog-token",
+          scope: "read_products,read_publications,write_publications",
+          expires_in: 86399,
+        });
+      }
+      if (String(url).includes("/admin/api/2026-04/graphql.json")) {
+        const body = JSON.parse(init.body);
+        if (body.query.includes("ExternalWatchdogPurchaseControl")) {
+          return Response.json({
+            data: {
+              shop: {
+                id: "gid://shopify/Shop/1",
+                watchdogPurchaseStop: null,
+              },
+            },
+          });
+        }
+        return Response.json({
+          data: {
+            products: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        });
+      }
       return new Response(
         JSON.stringify({
           ok: true,
@@ -33,13 +67,93 @@ test("watchdog agent calls the authenticated internal endpoint once", async () =
   });
 
   assert.equal(result.status, "healthy");
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 4);
+  const internalCall = calls.find(
+    (call) =>
+      call.url ===
+      "https://example.test/internal/sale-eligibility-watchdog",
+  );
   assert.equal(
-    calls[0].url,
+    internalCall.url,
     "https://example.test/internal/sale-eligibility-watchdog",
   );
-  assert.equal(calls[0].init.method, "POST");
-  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"x".repeat(48)}`);
+  assert.equal(internalCall.init.method, "POST");
+  assert.equal(
+    internalCall.init.headers.Authorization,
+    `Bearer ${"x".repeat(48)}`,
+  );
+  assert.equal(
+    internalCall.init.headers["X-Watchdog-Credentials-Verified"],
+    "true",
+  );
+  assert.equal(
+    internalCall.init.headers["X-Watchdog-Scheduler-Enabled"],
+    "true",
+  );
+});
+
+test("validation-only watchdog verifies credentials without mutation", async () => {
+  const graphQLBodies = [];
+  let validationRequest = null;
+  const result = await runSaleEligibilityWatchdogAgent({
+    validationOnly: true,
+    env: {
+      LAUNCH_MONITOR_URL: "https://example.test",
+      SALE_ELIGIBILITY_WATCHDOG_TOKEN: "x".repeat(48),
+      SHOPIFY_WATCHDOG_SHOP_DOMAIN: "example.myshopify.com",
+      SHOPIFY_WATCHDOG_CLIENT_ID: "watchdog-client-id",
+      SHOPIFY_WATCHDOG_CLIENT_SECRET: "watchdog-client-secret-value",
+      GITHUB_ACTIONS: "true",
+    },
+    fetchImpl: async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/admin/oauth/access_token")) {
+        return Response.json({
+          access_token: "short-lived-watchdog-token",
+          scope: "read_products,read_publications,write_publications",
+          expires_in: 86399,
+        });
+      }
+      if (target.includes("/admin/api/2026-04/graphql.json")) {
+        const body = JSON.parse(init.body);
+        graphQLBodies.push(body.query);
+        if (body.query.includes("ExternalWatchdogPurchaseControl")) {
+          return Response.json({
+            data: {
+              shop: {
+                id: "gid://shopify/Shop/1",
+                watchdogPurchaseStop: null,
+              },
+            },
+          });
+        }
+        return Response.json({
+          data: {
+            products: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        });
+      }
+      validationRequest = init;
+      return Response.json({
+        ok: true,
+        protected: false,
+        action: "validated",
+        status: "validated",
+        code: null,
+      });
+    },
+  });
+
+  assert.equal(result.status, "validated");
+  assert.equal(result.credentialValidation, true);
+  assert.equal(validationRequest.headers["X-Watchdog-Mode"], "validate");
+  assert.equal(
+    graphQLBodies.some((query) => /\bmutation\b/.test(query)),
+    false,
+  );
 });
 
 test("watchdog agent fails closed for an invalid endpoint response", async () => {

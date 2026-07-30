@@ -5,6 +5,7 @@ import {
   approveShopifyPayoutEvidence,
   getSingleOperatorPayoutConfirmationText,
   submitShopifyPayoutEvidence,
+  verifyShopifyPayout,
 } from "../../app/services/shopifyPayoutEvidence.server.js";
 
 const ENV = {
@@ -13,47 +14,42 @@ const ENV = {
   SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.myshopify.com",
 };
 const NOW = new Date("2026-07-30T12:00:00.000Z");
+const PAYOUT_GID = "gid://shopify/ShopifyPaymentsPayout/123";
 
-test("payout evidence requires structured deposited evidence and SHA-256", async () => {
+test("payout evidence requires a SHA-256 evidence hash", async () => {
   const database = buildDatabase();
-  const rejected = await submitShopifyPayoutEvidence(
-    {
-      ...validSubmission(),
-      evidenceHash: "",
-    },
-    { prismaClient: database, env: ENV, now: NOW },
-  );
+  const rejected = await submit(validSubmission({ evidenceHash: "" }), {
+    database,
+  });
 
   assert.equal(rejected.ok, false);
   assert.equal(rejected.reason, "evidence_hash_required");
   assert.equal(database.records.size, 0);
+});
 
-  const accepted = await submitShopifyPayoutEvidence(validSubmission(), {
-    prismaClient: database,
-    env: ENV,
-    now: NOW,
-  });
+test("Shopify values replace operator-supplied financial facts", async () => {
+  const database = buildDatabase();
+  const accepted = await submit(validSubmission(), { database });
+
   assert.equal(accepted.ok, true);
   assert.equal(accepted.evidence.status, "SUBMITTED");
   assert.equal(accepted.evidence.payoutStatus, "DEPOSITED");
+  assert.equal(accepted.evidence.amount, 250);
+  assert.equal(accepted.evidence.currencyCode, "JPY");
+  assert.equal(accepted.evidence.shopifyPayoutGid, PAYOUT_GID);
   assert.equal(accepted.evidence.releaseId, "aaaaaaaaaaaa:app-v1");
 });
 
 test("another operator cannot replace pending payout evidence", async () => {
   const database = buildDatabase();
-  const submitted = await submitShopifyPayoutEvidence(validSubmission(), {
-    prismaClient: database,
-    env: ENV,
-    now: NOW,
-  });
+  const submitted = await submit(validSubmission(), { database });
 
-  const rejected = await submitShopifyPayoutEvidence(
-    {
-      ...validSubmission(),
+  const rejected = await submit(
+    validSubmission({
       evidenceHash: "c".repeat(64),
       submittedBy: "shopify_user:different",
-    },
-    { prismaClient: database, env: ENV, now: NOW },
+    }),
+    { database },
   );
 
   assert.equal(rejected.ok, false);
@@ -64,13 +60,9 @@ test("another operator cannot replace pending payout evidence", async () => {
   );
 });
 
-test("a different operator can approve payout evidence and create the release attestation", async () => {
+test("a different operator can approve API-verified payout evidence", async () => {
   const database = buildDatabase();
-  const submitted = await submitShopifyPayoutEvidence(validSubmission(), {
-    prismaClient: database,
-    env: ENV,
-    now: NOW,
-  });
+  const submitted = await submit(validSubmission(), { database });
 
   const approved = await approveShopifyPayoutEvidence(
     {
@@ -86,25 +78,17 @@ test("a different operator can approve payout evidence and create the release at
 
   assert.equal(approved.ok, true);
   assert.equal(approved.approvalMode, "INDEPENDENT");
+  assert.equal(approved.readinessEligible, true);
   assert.equal(approved.evidence.status, "APPROVED");
   assert.equal(
     database.attestation.metadataJson.verificationSource,
     "shopify_payout_evidence",
   );
-  assert.equal(
-    database.attestation.metadataJson.payoutEvidenceId,
-    submitted.evidence.id,
-  );
-  assert.equal(database.attestation.evidenceHash, "b".repeat(64));
 });
 
 test("the submitter cannot approve the same payout without an explicit owner waiver", async () => {
   const database = buildDatabase();
-  const submitted = await submitShopifyPayoutEvidence(validSubmission(), {
-    prismaClient: database,
-    env: ENV,
-    now: NOW,
-  });
+  const submitted = await submit(validSubmission(), { database });
 
   const rejected = await approveShopifyPayoutEvidence(
     {
@@ -118,15 +102,11 @@ test("the submitter cannot approve the same payout without an explicit owner wai
   assert.equal(database.attestation, null);
 });
 
-test("the account owner can record a documented single-operator exception", async () => {
+test("a single-operator waiver is recorded but cannot make readiness green", async () => {
   const database = buildDatabase();
-  const submitted = await submitShopifyPayoutEvidence(validSubmission(), {
-    prismaClient: database,
-    env: ENV,
-    now: NOW,
-  });
+  const submitted = await submit(validSubmission(), { database });
   const waiverReason =
-    "第二確認者が存在しない一人運用のため、銀行明細とShopify Payoutを本人が照合した残存リスクを受諾します。";
+    "第二確認者を用意できない一人運用のため、銀行明細とShopify Payoutを本人が照合した残存リスクを記録します。";
 
   const approved = await approveShopifyPayoutEvidence(
     {
@@ -142,24 +122,95 @@ test("the account owner can record a documented single-operator exception", asyn
 
   assert.equal(approved.ok, true);
   assert.equal(approved.approvalMode, "SINGLE_OPERATOR_WAIVER");
-  assert.equal(approved.evidence.singleOperatorWaiver, true);
-  assert.equal(approved.evidence.singleOperatorWaiverReason, waiverReason);
+  assert.equal(approved.readinessEligible, false);
+  assert.equal(approved.evidence.status, "APPROVED_WITH_WAIVER");
+  assert.equal(database.attestation, null);
 });
 
-function validSubmission() {
+test("the same Shopify payout cannot be reused for a later release", async () => {
+  const database = buildDatabase();
+  const first = await submit(validSubmission(), { database });
+  assert.equal(first.ok, true);
+
+  const reused = await submit(validSubmission(), {
+    database,
+    env: { ...ENV, SHOPIFY_APP_VERSION: "app-v2" },
+  });
+  assert.equal(reused.ok, false);
+  assert.equal(reused.reason, "payout_evidence_already_used");
+});
+
+test("Shopify payout verification requires PAID DEPOSIT and matching trace suffix", async () => {
+  const calls = [];
+  const result = await verifyShopifyPayout(
+    {
+      shopDomain: "shop.myshopify.com",
+      payoutId: "123",
+      bankReferenceMasked: "****1234",
+    },
+    {
+      now: NOW,
+      graphQL: async (request) => {
+        calls.push(request);
+        return {
+          data: {
+            node: {
+              id: PAYOUT_GID,
+              legacyResourceId: "123",
+              issuedAt: "2026-07-28T00:00:00.000Z",
+              status: "PAID",
+              transactionType: "DEPOSIT",
+              externalTraceId: "bank-transfer-1234",
+              net: { amount: "250", currencyCode: "JPY" },
+            },
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.amount, 250);
+  assert.equal(result.currencyCode, "JPY");
+  assert.equal(calls[0].apiVersion, "2026-04");
+  assert.equal(calls[0].variables.id, PAYOUT_GID);
+  assert.equal(result.externalTraceIdHash.length, 64);
+});
+
+function validSubmission(overrides = {}) {
   return {
     shopDomain: "shop.myshopify.com",
-    payoutId: "po_123",
-    payoutStatus: "DEPOSITED",
-    amount: "250",
-    currencyCode: "JPY",
-    shopifyPayoutDate: "2026-07-28",
+    payoutId: PAYOUT_GID,
     bankDepositedAt: "2026-07-30",
     bankReferenceMasked: "reference-****1234",
     evidenceReference: "secure-evidence:payout-2026-07-30",
     evidenceHash: "b".repeat(64),
     submittedBy: "shopify_user:submitter",
+    ...overrides,
   };
+}
+
+function validVerification() {
+  return {
+    ok: true,
+    id: PAYOUT_GID,
+    legacyResourceId: "123",
+    status: "PAID",
+    transactionType: "DEPOSIT",
+    amount: 250,
+    currencyCode: "JPY",
+    issuedAt: new Date("2026-07-28T00:00:00.000Z"),
+    externalTraceIdHash: "f".repeat(64),
+  };
+}
+
+function submit(input, { database, env = ENV } = {}) {
+  return submitShopifyPayoutEvidence(input, {
+    prismaClient: database,
+    env,
+    now: NOW,
+    verifyShopifyPayoutImpl: async () => validVerification(),
+  });
 }
 
 function buildDatabase() {
@@ -169,17 +220,22 @@ function buildDatabase() {
     nextId: 1,
   };
   database.shopifyPayoutEvidence = {
-    async findUnique({ where }) {
-      if (where.id) return database.records.get(where.id) || null;
-      const composite = where.shopDomain_payoutId_releaseId;
+    async findFirst({ where }) {
       return (
         [...database.records.values()].find(
           (record) =>
-            record.shopDomain === composite.shopDomain &&
-            record.payoutId === composite.payoutId &&
-            record.releaseId === composite.releaseId,
+            record.shopDomain === where.shopDomain &&
+            where.OR.some((candidate) =>
+              Object.entries(candidate).every(
+                ([key, value]) => record[key] === value,
+              ),
+            ),
         ) || null
       );
+    },
+    async findUnique({ where }) {
+      if (where.id) return database.records.get(where.id) || null;
+      return null;
     },
     async create({ data }) {
       const record = {

@@ -1,6 +1,12 @@
 const DRY_RUN = process.argv.includes("--dry-run");
+const EXPECT_PASSWORD_CRITICAL = process.argv.includes(
+  "--expect-password-critical",
+);
 
-await main({ dryRun: DRY_RUN }).catch(async (error) => {
+await main({
+  dryRun: DRY_RUN,
+  expectPasswordCritical: EXPECT_PASSWORD_CRITICAL,
+}).catch(async (error) => {
   if (!DRY_RUN) {
     await sendFallbackAlert(error).catch(() => {});
   }
@@ -8,7 +14,13 @@ await main({ dryRun: DRY_RUN }).catch(async (error) => {
   process.exitCode = 1;
 });
 
-async function main({ dryRun = false } = {}) {
+async function main({
+  dryRun = false,
+  expectPasswordCritical = false,
+} = {}) {
+  if (dryRun && expectPasswordCritical) {
+    throw new Error("incompatible_monitor_modes");
+  }
   const required = [
     "LAUNCH_MONITOR_URL",
     "RENDER_API_KEY",
@@ -46,6 +58,17 @@ async function main({ dryRun = false } = {}) {
       appRoot: { ok: false, code: "not_checked" },
       storefront: { ok: false, code: "not_checked" },
     },
+    agent: {
+      source:
+        String(process.env.GITHUB_ACTIONS || "").toLowerCase() === "true"
+          ? "github_actions"
+          : "local_agent",
+      runId: String(process.env.GITHUB_RUN_ID || "local"),
+      eventName: String(process.env.GITHUB_EVENT_NAME || "manual"),
+      schedulerEnabled: isEnabled(
+        process.env.PRODUCTION_INTEGRITY_MONITOR_ENABLED,
+      ),
+    },
   };
 
   const queries = [
@@ -79,10 +102,22 @@ async function main({ dryRun = false } = {}) {
   snapshot.publicEndpoints = await probePublicEndpoints();
 
   if (dryRun) {
+    const expectedPasswordProtection =
+      snapshot.publicEndpoints.storefront.code === "password_page";
+    const transportReady =
+      snapshot.queryErrors.length === 0 &&
+      snapshot.publicEndpoints.appRoot.ok === true &&
+      (snapshot.publicEndpoints.storefront.ok === true ||
+        expectedPasswordProtection);
     console.log(
       JSON.stringify({
-        ok: true,
+        ok: transportReady,
         dryRun: true,
+        verificationLevel: "external_transport_only",
+        internalEndpointChecked: false,
+        databaseChecked: false,
+        notificationChecked: false,
+        expectedPasswordProtection,
         windowStartedAt: snapshot.windowStartedAt,
         windowEndedAt: snapshot.windowEndedAt,
         requests: snapshot.requests,
@@ -91,6 +126,9 @@ async function main({ dryRun = false } = {}) {
         publicEndpoints: snapshot.publicEndpoints,
       }),
     );
+    if (!transportReady) {
+      throw new Error("launch_monitor_dry_run_failed");
+    }
     return;
   }
 
@@ -113,7 +151,10 @@ async function main({ dryRun = false } = {}) {
 
   console.log(
     JSON.stringify({
-      ok: true,
+      ok:
+        payload.status !== "critical" ||
+        (expectPasswordCritical &&
+          isExpectedPasswordCriticalPayload(payload)),
       active: payload.active,
       completed: payload.completed || false,
       status: payload.status,
@@ -123,12 +164,39 @@ async function main({ dryRun = false } = {}) {
       warningCount: payload.checks.filter((check) => check.status === "warning")
         .length,
       notificationKind: payload.notificationKind || null,
+      expectedPasswordCritical:
+        expectPasswordCritical &&
+        isExpectedPasswordCriticalPayload(payload),
     }),
   );
 
   if (payload.status === "critical") {
+    if (
+      !expectPasswordCritical ||
+      !isExpectedPasswordCriticalPayload(payload)
+    ) {
+      process.exitCode = 2;
+    }
+  } else if (expectPasswordCritical) {
     process.exitCode = 2;
   }
+}
+
+function isExpectedPasswordCriticalPayload(payload) {
+  if (
+    payload?.status !== "critical" ||
+    payload?.notificationKind !== "alert" ||
+    !Array.isArray(payload?.checks)
+  ) {
+    return false;
+  }
+  const issues = payload.checks.filter((check) => check.status !== "healthy");
+  return (
+    issues.length === 1 &&
+    issues[0]?.id === "official_storefront" &&
+    issues[0]?.status === "critical" &&
+    issues[0]?.code === "password_page"
+  );
 }
 
 function isMonitorResponse(payload) {
@@ -328,6 +396,14 @@ function boundedNumber(value, fallback, min, max) {
   return Number.isFinite(parsed)
     ? Math.min(max, Math.max(min, parsed))
     : fallback;
+}
+
+function isEnabled(value) {
+  return ["1", "true", "yes", "on"].includes(
+    String(value || "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 function safeError(error) {

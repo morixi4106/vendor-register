@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "1-56/5 * * * *"
   workflow_dispatch:
+    inputs:
+      validation_only:
+        description: "Validate the dedicated Shopify credentials and internal heartbeat without changing purchase state"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -14,7 +20,7 @@ concurrency:
 
 jobs:
   watchdog:
-    if: ${{ github.ref == 'refs/heads/main' && vars.SALE_ELIGIBILITY_WATCHDOG_ENABLED == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.SALE_ELIGIBILITY_WATCHDOG_ENABLED == 'true') }}
     environment: watchdog
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -32,6 +38,12 @@ jobs:
           LAUNCH_MONITOR_URL: ${{ vars.LAUNCH_MONITOR_URL }}
           SALE_ELIGIBILITY_WATCHDOG_TOKEN: ${{ secrets.SALE_ELIGIBILITY_WATCHDOG_TOKEN }}
           SHOPIFY_WATCHDOG_SHOP_DOMAIN: ${{ vars.SHOPIFY_WATCHDOG_SHOP_DOMAIN }}
+          SALE_ELIGIBILITY_WATCHDOG_ENABLED: ${{ vars.SALE_ELIGIBILITY_WATCHDOG_ENABLED }}
           SHOPIFY_WATCHDOG_CLIENT_ID: ${{ secrets.SHOPIFY_WATCHDOG_CLIENT_ID }}
           SHOPIFY_WATCHDOG_CLIENT_SECRET: ${{ secrets.SHOPIFY_WATCHDOG_CLIENT_SECRET }}
-        run: node scripts/sale-eligibility-watchdog-agent.mjs
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.validation_only }}" = "true" ]; then
+            node scripts/sale-eligibility-watchdog-agent.mjs --validate-only
+          else
+            node scripts/sale-eligibility-watchdog-agent.mjs
+          fi

@@ -140,6 +140,7 @@ const PUBLICATION_CONNECTION_KEYS = [
 export async function runSaleEligibilityWatchdogAgent({
   env = process.env,
   fetchImpl = fetch,
+  validationOnly = false,
 } = {}) {
   const baseUrl = String(
     env.SALE_ELIGIBILITY_WATCHDOG_URL ||
@@ -149,18 +150,42 @@ export async function runSaleEligibilityWatchdogAgent({
   ).trim();
   const token = String(env.SALE_ELIGIBILITY_WATCHDOG_TOKEN || "").trim();
   if (!baseUrl || token.length < 32) {
-    const direct = await enforceDirectShopifyPurchaseBlock({
+    if (validationOnly) {
+      throw new Error("watchdog_internal_endpoint_configuration_invalid");
+    }
+    const direct = await enforceDirectShopifyPurchaseBlock({ env, fetchImpl });
+    return buildDirectFallbackResult(direct);
+  }
+
+  let credentialInspection = null;
+  let credentialError = null;
+  try {
+    credentialInspection = await inspectDirectShopifyWatchdogAccess({
       env,
       fetchImpl,
     });
-    return buildDirectFallbackResult(direct);
+  } catch (error) {
+    credentialError = error;
+    if (validationOnly) throw error;
   }
 
   try {
     const endpoint = new URL("/internal/sale-eligibility-watchdog", baseUrl);
     const response = await fetchImpl(endpoint, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Watchdog-Mode": validationOnly ? "validate" : "live",
+        "X-Watchdog-Source":
+          String(env.GITHUB_ACTIONS || "").toLowerCase() === "true"
+            ? "github_actions"
+            : "local_agent",
+        "X-Watchdog-Credentials-Verified":
+          credentialInspection?.ok === true ? "true" : "false",
+        "X-Watchdog-Run-Id": String(env.GITHUB_RUN_ID || "local"),
+        "X-Watchdog-Scheduler-Enabled":
+          isEnabled(env.SALE_ELIGIBILITY_WATCHDOG_ENABLED) ? "true" : "false",
+      },
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
       redirect: "error",
     });
@@ -168,6 +193,14 @@ export async function runSaleEligibilityWatchdogAgent({
     if (!response.ok || !isWatchdogResponse(payload)) {
       throw new Error("sale_eligibility_watchdog_request_failed");
     }
+    if (validationOnly) {
+      return {
+        ...payload,
+        credentialValidation: true,
+        grantedScopes: credentialInspection.grantedScopes,
+      };
+    }
+    if (credentialError) throw credentialError;
     if (payload.status === "critical" && payload.protected !== true) {
       const direct = await enforceDirectShopifyPurchaseBlock({
         env,
@@ -188,6 +221,63 @@ export async function runSaleEligibilityWatchdogAgent({
     error.cause = internalError;
     throw error;
   }
+}
+
+export async function inspectDirectShopifyWatchdogAccess({
+  env = process.env,
+  fetchImpl = fetch,
+} = {}) {
+  const shopDomain = String(
+    env.SHOPIFY_WATCHDOG_SHOP_DOMAIN || env.SHOPIFY_PRIMARY_SHOP_DOMAIN || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopDomain)) {
+    throw new Error("watchdog_shop_domain_invalid");
+  }
+  const token = await acquireShopifyWatchdogAccessToken({
+    shopDomain,
+    env,
+    fetchImpl,
+  });
+  const endpoint = new URL(
+    `/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+    `https://${shopDomain}`,
+  );
+  const graphQL = async (query, variables = {}) => {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token.accessToken,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(30_000),
+      redirect: "error",
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok || payload?.errors?.length) {
+      throw new Error("watchdog_shopify_graphql_failed");
+    }
+    return payload.data;
+  };
+  const [control, products] = await Promise.all([
+    graphQL(SHOPIFY_CONTROL_QUERY),
+    graphQL(SHOPIFY_PRODUCTS_PUBLICATION_QUERY, {
+      first: 1,
+      after: null,
+    }),
+  ]);
+  if (!control?.shop?.id || !products?.products) {
+    throw new Error("watchdog_shopify_read_probe_failed");
+  }
+  return {
+    ok: true,
+    shopDomain,
+    grantedScopes: token.grantedScopes,
+    tokenExpiresIn: token.expiresIn,
+    readProbeCompleted: true,
+  };
 }
 
 function buildDirectFallbackResult(direct) {
@@ -456,15 +546,25 @@ function isWatchdogResponse(payload) {
     typeof payload === "object" &&
     payload.ok === true &&
     typeof payload.protected === "boolean" &&
-    ["none", "already_protected", "emergency_hold_applied"].includes(
+    ["none", "already_protected", "emergency_hold_applied", "validated"].includes(
       payload.action,
     ) &&
-    ["healthy", "warning", "critical"].includes(payload.status),
+    ["healthy", "warning", "critical", "validated"].includes(payload.status),
+  );
+}
+
+function isEnabled(value) {
+  return ["1", "true", "yes", "on"].includes(
+    String(value || "")
+      .trim()
+      .toLowerCase(),
   );
 }
 
 if (isDirectExecution()) {
-  runSaleEligibilityWatchdogAgent()
+  runSaleEligibilityWatchdogAgent({
+    validationOnly: process.argv.includes("--validate-only"),
+  })
     .then((result) => {
       console.log(
         `Sale eligibility watchdog succeeded: status=${result.status}, action=${result.action}, protected=${result.protected}`,

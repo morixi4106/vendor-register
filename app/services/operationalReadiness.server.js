@@ -1596,6 +1596,7 @@ export async function recordOperationalReadinessAttestation(
       evidenceHash: normalizedHash,
       confirmedBy: normalizedActor,
       payoutEvidence: verifiedPayoutEvidence,
+      now,
     })
   ) {
     return { ok: false, reason: "verified_payout_evidence_required" };
@@ -1703,6 +1704,7 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
   evidenceHash,
   confirmedBy,
   payoutEvidence,
+  now = new Date(),
 } = {}) {
   const normalizedMetadata = asMetadataObject(metadata);
   const evidence = payoutEvidence || {};
@@ -1710,10 +1712,24 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
   const independentlyApproved =
     approvalMode === "INDEPENDENT" &&
     normalizeText(evidence.submittedBy) !== normalizeText(evidence.reviewedBy);
-  const documentedSingleOperatorWaiver =
-    approvalMode === "SINGLE_OPERATOR_WAIVER" &&
-    evidence.singleOperatorWaiver === true &&
-    normalizeText(evidence.singleOperatorWaiverReason).length >= 30;
+  const bankDepositedAt = new Date(evidence.bankDepositedAt);
+  const shopifyVerifiedAt = new Date(evidence.shopifyVerifiedAt);
+  const verification = asMetadataObject(evidence.shopifyVerificationJson);
+  const payoutIsRecent = Boolean(
+    Number.isFinite(bankDepositedAt.getTime()) &&
+      bankDepositedAt.getTime() <= now.getTime() &&
+      now.getTime() - bankDepositedAt.getTime() <= 90 * 24 * 60 * 60 * 1000,
+  );
+  const shopifyVerified = Boolean(
+    Number.isFinite(shopifyVerifiedAt.getTime()) &&
+      shopifyVerifiedAt.getTime() <= now.getTime() &&
+      normalizeText(evidence.shopifyPayoutGid) ===
+        normalizeText(evidence.payoutId) &&
+      normalizeSha256(evidence.shopifyExternalTraceIdHash) &&
+      normalizeText(verification.source) === "shopify_admin_graphql" &&
+      normalizeUpper(verification.status) === "PAID" &&
+      normalizeUpper(verification.transactionType) === "DEPOSIT",
+  );
 
   return Boolean(
     normalizedMetadata.verificationSource === "shopify_payout_evidence" &&
@@ -1737,8 +1753,9 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
     confirmedBy === normalizeText(evidence.reviewedBy) &&
     normalizeText(evidence.bankReferenceMasked) &&
     Number.isFinite(new Date(evidence.shopifyPayoutDate).getTime()) &&
-    Number.isFinite(new Date(evidence.bankDepositedAt).getTime()) &&
-    (independentlyApproved || documentedSingleOperatorWaiver),
+    payoutIsRecent &&
+    shopifyVerified &&
+    independentlyApproved,
   );
 }
 
@@ -1825,6 +1842,7 @@ export async function inspectOperationalReadiness({
         evidenceHash: attestation?.evidenceHash,
         confirmedBy: attestation?.confirmedBy,
         payoutEvidence,
+        now,
       });
     const expired = Boolean(
       attestation?.expiresAt &&

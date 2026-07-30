@@ -10,6 +10,11 @@ on:
         required: true
         type: boolean
         default: true
+      expect_password_critical:
+        description: "Prelaunch only: require the full run to report exactly one password_page Critical and send its first alert"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,12 +47,15 @@ jobs:
           LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION: ${{ vars.LAUNCH_MONITOR_EXPECTED_ROOT_LOCATION }}
           LAUNCH_MONITOR_STOREFRONT_URL: ${{ vars.LAUNCH_MONITOR_STOREFRONT_URL }}
           LAUNCH_MONITOR_STOREFRONT_MARKER: ${{ vars.LAUNCH_MONITOR_STOREFRONT_MARKER }}
+          PRODUCTION_INTEGRITY_MONITOR_ENABLED: ${{ vars.PRODUCTION_INTEGRITY_MONITOR_ENABLED }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             node scripts/launch-monitor-agent.mjs --dry-run
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.expect_password_critical }}" = "true" ]; then
+            node scripts/launch-monitor-agent.mjs --expect-password-critical
           else
             node scripts/launch-monitor-agent.mjs
           fi
