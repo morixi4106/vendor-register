@@ -17,7 +17,10 @@
     "linux": "EF426851D1D2A2F4CAED031AE65DF3604E96296988FD16BCF384464D2DB5081F",
     "win32": "CD60A21E6C79EB963AC87347910B5ACE96EF5D765F2662D9799831A7FF95BBD9"
   },
-  "upstreamUrls": [],
+  "upstreamUrls": [
+    "https://github.com/Shopify/shopify-function-javascript/issues/129",
+    "https://community.shopify.dev/t/ui-extensions-toolchain-installs-brace-expansion-2-1-2-affected-by-ghsa-mh99-v99m-4gvg/36425"
+  ],
   "acceptedBy": null,
   "acceptedAt": null,
   "reviewedRepository": null,
