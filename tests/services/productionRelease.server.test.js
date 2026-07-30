@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  PRODUCTION_SCHEMA_MIGRATION_VERSION,
   buildProductionReleaseExpectation,
   createProductionProbeChallenge,
   inspectProductionReleaseEvidence,
@@ -45,6 +47,19 @@ function completeProbes() {
     ]),
   );
 }
+
+test("production release schema version tracks the latest committed migration", async () => {
+  const migrationDirectory = new URL("../../prisma/migrations/", import.meta.url);
+  const entries = await readdir(migrationDirectory, { withFileTypes: true });
+  const versions = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => /^(\d{14})_/.exec(entry.name)?.[1] || null)
+    .filter(Boolean)
+    .sort();
+
+  assert.ok(versions.length > 0);
+  assert.equal(PRODUCTION_SCHEMA_MIGRATION_VERSION, versions.at(-1));
+});
 
 test("production release evidence matches the current Render and Shopify identities", () => {
   const checkoutValidation = {
