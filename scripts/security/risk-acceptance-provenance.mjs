@@ -178,6 +178,14 @@ export function validateAcceptedRiskProvenance({
   const runCompletedAt = validTimestamp(
     reviewRun?.updated_at || reviewRun?.run_completed_at,
   );
+  const reviewRunPullRequests = reviewRun?.pull_requests;
+  const reviewRunPullRequestValid =
+    Array.isArray(reviewRunPullRequests) &&
+    (reviewRunPullRequests.some(
+      (item) => item?.number === risk?.reviewedPullRequest,
+    ) ||
+      (current?.allowEmptyReviewRunPullRequests === true &&
+        reviewRunPullRequests.length === 0));
 
   if (
     risk?.status !== "accepted" ||
@@ -204,10 +212,7 @@ export function validateAcceptedRiskProvenance({
     reviewRun?.status !== "completed" ||
     reviewRun?.conclusion !== "failure" ||
     reviewRun?.name !== "Quality checks" ||
-    !Array.isArray(reviewRun?.pull_requests) ||
-    !reviewRun.pull_requests.some(
-      (item) => item?.number === risk?.reviewedPullRequest,
-    )
+    !reviewRunPullRequestValid
   ) {
     errors.push("reviewed_ci_run_invalid");
   }
@@ -450,6 +455,8 @@ export async function verifyAcceptedRiskProvenance({
   const result = validateAcceptedRiskProvenance({
     acceptanceComment,
     current: {
+      allowEmptyReviewRunPullRequests:
+        !isPullRequest || baseRiskStatus === "accepted",
       changedPaths: git.changedPaths,
       enforceAcceptanceOnlyDiff: isPullRequest && baseRiskStatus !== "accepted",
       headSha: currentHeadSha,

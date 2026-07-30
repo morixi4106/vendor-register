@@ -269,12 +269,13 @@ test("accepts a complete immutable review provenance chain", () => {
   const mainPush = validateAcceptedRiskProvenance({
     acceptanceComment: approvalComment(risk),
     current: currentContext({
+      allowEmptyReviewRunPullRequests: true,
       changedPaths: ["app/routes/app.jsx"],
       enforceAcceptanceOnlyDiff: false,
     }),
     evidence: reviewEvidence(risk),
     isReviewedCommitAncestor: true,
-    reviewRun: reviewRun(risk),
+    reviewRun: reviewRun(risk, { pull_requests: [] }),
     risk,
   });
   assert.equal(mainPush.ok, true);
@@ -295,13 +296,14 @@ test("accepts a complete immutable review provenance chain", () => {
   const futurePullRequest = validateAcceptedRiskProvenance({
     acceptanceComment: approvalComment(risk),
     current: currentContext({
+      allowEmptyReviewRunPullRequests: true,
       changedPaths: ["app/routes/app.jsx"],
       enforceAcceptanceOnlyDiff: false,
       pullRequestNumber: 3,
     }),
     evidence: reviewEvidence(risk),
     isReviewedCommitAncestor: true,
-    reviewRun: reviewRun(risk),
+    reviewRun: reviewRun(risk, { pull_requests: [] }),
     risk,
   });
   assert.equal(futurePullRequest.ok, true);
@@ -430,6 +432,11 @@ test("rejects mutated review run, evidence, and approver fields", () => {
     },
     {
       code: "reviewed_ci_run_invalid",
+      reviewRun: reviewRun(risk, { pull_requests: [{ number: 99 }] }),
+    },
+    {
+      code: "reviewed_ci_run_invalid",
+      current: currentContext({ allowEmptyReviewRunPullRequests: true }),
       reviewRun: reviewRun(risk, { pull_requests: [{ number: 99 }] }),
     },
     {
