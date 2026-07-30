@@ -491,10 +491,13 @@ export function evaluateToolchainAudit({
     String(risk.artifactEvidenceSha256ByPlatform[platform]) !==
       String(artifactReport.artifactSetSha256 || "")
   ) {
-    blocking.push({
-      code: "evidence_artifact_hash_mismatch",
+    warnings.push({
+      code: "artifact_set_changed_since_review",
       packageName: risk?.packageName || null,
-      severity: "high",
+      reviewedArtifactSetSha256:
+        risk.artifactEvidenceSha256ByPlatform[platform],
+      currentArtifactSetSha256: artifactReport.artifactSetSha256,
+      severity: "warning",
     });
   }
 

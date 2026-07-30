@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  getProductionReadiness,
+  getProductionReadiness as getProductionReadinessImpl,
   includeCheckoutGateInProductionReadiness,
   includeCheckoutValidationInProductionReadiness,
   inspectStripeEnvironment,
 } from "../../app/services/productionReadiness.server.js";
-import { OPERATIONAL_READINESS_DEFINITIONS } from "../../app/services/operationalReadiness.server.js";
+import {
+  LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  OPERATIONAL_READINESS_DEFINITIONS,
+} from "../../app/services/operationalReadiness.server.js";
 
 const REQUIRED_SCOPE_STRING = [
   "read_products",
@@ -28,6 +31,21 @@ const REQUIRED_SCOPE_STRING = [
   "write_draft_orders",
   "read_shopify_payments_disputes",
 ].join(",");
+
+const TEST_RELEASE_ENV = {
+  RENDER_GIT_COMMIT: "a".repeat(40),
+  SHOPIFY_APP_VERSION: "app-v1",
+};
+
+function getProductionReadiness(options = {}) {
+  return getProductionReadinessImpl({
+    ...options,
+    env: {
+      ...TEST_RELEASE_ENV,
+      ...(options.env || {}),
+    },
+  });
+}
 
 function createFakePrisma({
   sellerRows = [],
@@ -77,10 +95,30 @@ function createFakePrisma({
         OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
           checkKey: definition.key,
           status: "CONFIRMED",
-          evidenceReference: `test:${definition.key}`,
-          confirmedBy: "test_operator",
+          evidenceReference:
+            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+              ? "production-transaction-probe:probe_1"
+              : `test:${definition.key}`,
+          evidenceHash:
+            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+              ? "b".repeat(64)
+              : null,
+          confirmedBy:
+            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+              ? "system:production-transaction-probe"
+              : "test_operator",
           confirmedAt: new Date("2026-07-23T00:00:00Z"),
           expiresAt: new Date("2099-01-01T00:00:00Z"),
+          metadataJson:
+            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+              ? {
+                  verificationSource: "production_transaction_probe",
+                  probeId: "probe_1",
+                  releaseId: "aaaaaaaaaaaa:app-v1",
+                  releaseFingerprint: "c".repeat(64),
+                  completedAt: "2026-07-23T00:00:00.000Z",
+                }
+              : null,
         })),
     },
     platformOperationalControl: {

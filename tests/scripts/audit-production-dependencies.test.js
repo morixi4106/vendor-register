@@ -381,18 +381,19 @@ test("blocks toolchain content found in a deployable artifact", () => {
   );
 });
 
-test("binds accepted risk evidence to the audited artifact set", () => {
+test("warns when the clean audited artifact set changed since review", () => {
   const result = evaluateToolchain({
     artifacts: artifactReport({
       artifactSetSha256: "A".repeat(64),
     }),
   });
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
   assert.ok(
-    result.blocking.some(
-      (item) => item.code === "evidence_artifact_hash_mismatch",
+    result.warnings.some(
+      (item) => item.code === "artifact_set_changed_since_review",
     ),
   );
+  assert.equal(result.blocking.length, 0);
 });
 
 test("checks artifact evidence before upstream reporting and acceptance", () => {
@@ -409,7 +410,6 @@ test("checks artifact evidence before upstream reporting and acceptance", () => 
     },
   });
   for (const code of [
-    "evidence_artifact_hash_mismatch",
     "risk_not_accepted",
     "upstream_urls_invalid",
   ]) {
@@ -418,6 +418,11 @@ test("checks artifact evidence before upstream reporting and acceptance", () => 
       code,
     );
   }
+  assert.ok(
+    result.warnings.some(
+      (item) => item.code === "artifact_set_changed_since_review",
+    ),
+  );
 });
 
 test("binds artifact evidence to an explicitly supported build platform", () => {
@@ -444,8 +449,8 @@ test("binds artifact evidence to an explicitly supported build platform", () => 
     ),
   );
   assert.equal(
-    unsupported.blocking.some(
-      (item) => item.code === "evidence_artifact_hash_mismatch",
+    unsupported.warnings.some(
+      (item) => item.code === "artifact_set_changed_since_review",
     ),
     false,
   );

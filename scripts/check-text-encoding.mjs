@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { containsLikelyMojibake } from "./text-encoding-policy.mjs";
+
 const ROOTS = ["app", "docs", "prisma", "scripts", "tests"];
 const EXTENSIONS = new Set([
   ".css",
@@ -36,10 +38,7 @@ async function scan(target) {
       failures.push(`${fullPath}: invalid UTF-8`);
       continue;
     }
-    if (text.includes("\uFFFD")) {
-      failures.push(`${fullPath}: contains Unicode replacement character`);
-    }
-    if (/(?:縺|繧|譁|陦|蜿|莉|荳|謖|螟|逕|髯|鬆){3,}/u.test(text)) {
+    if (containsLikelyMojibake(text)) {
       failures.push(`${fullPath}: contains a likely mojibake sequence`);
     }
   }

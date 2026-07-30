@@ -1030,7 +1030,20 @@ export default function ProductionReadinessPage() {
                       : ""}
                   </td>
                   <td>
-                    <Form method="post" className="readiness-inline-form">
+                    {row.definition.automated ? (
+                      <div className="readiness-inline-form">
+                        <p>
+                          この項目は、実注文と全額返金の自動照合が完了した場合だけ記録されます。
+                        </p>
+                        <Link
+                          className="readiness-button"
+                          to="/app/production-transaction-probe"
+                        >
+                          本番注文・返金 E2E を確認
+                        </Link>
+                      </div>
+                    ) : (
+                      <Form method="post" className="readiness-inline-form">
                       <input
                         type="hidden"
                         name="intent"
@@ -1164,7 +1177,8 @@ export default function ProductionReadinessPage() {
                       >
                         確認を記録
                       </button>
-                    </Form>
+                      </Form>
+                    )}
                   </td>
                 </tr>
               ))}
