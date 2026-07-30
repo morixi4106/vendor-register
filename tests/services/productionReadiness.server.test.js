@@ -6,6 +6,7 @@ import {
   includeCheckoutGateInProductionReadiness,
   includeCheckoutValidationInProductionReadiness,
   inspectStripeEnvironment,
+  summarizeProductionReadinessChecks,
 } from "../../app/services/productionReadiness.server.js";
 import {
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
@@ -35,6 +36,8 @@ const REQUIRED_SCOPE_STRING = [
 const TEST_RELEASE_ENV = {
   RENDER_GIT_COMMIT: "a".repeat(40),
   SHOPIFY_APP_VERSION: "app-v1",
+  PAYMENT_PROVIDER: "shopify_payments",
+  SELLER_PAYOUT_PROVIDER: "manual",
 };
 
 function getProductionReadiness(options = {}) {
@@ -439,7 +442,8 @@ test("getProductionReadiness does not block missing Stripe live keys for Shopify
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(result.operation.paymentFlow, "shopify_payments_manual_payout");
   assert.equal(result.operation.paymentProvider, "shopify_payments");
   assert.equal(result.operation.sellerPayoutProvider, "manual");
@@ -466,14 +470,15 @@ test("getProductionReadiness allows manual payout flow without seller Stripe acc
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(
     checksById.get("active_sellers_have_stripe_accounts").status,
     "pass",
   );
 });
 
-test("getProductionReadiness warns when withdrawal email env is incomplete", async () => {
+test("getProductionReadiness blocks release when withdrawal email env is incomplete", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
       sellerRows: [createActiveSeller({ stripeAccount: false })],
@@ -485,7 +490,8 @@ test("getProductionReadiness warns when withdrawal email env is incomplete", asy
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(checksById.get("withdrawal_resend_api_key").status, "warning");
   assert.equal(checksById.get("withdrawal_from_email").status, "warning");
   assert.equal(checksById.get("withdrawal_support_email").status, "warning");
@@ -660,7 +666,8 @@ test("getProductionReadiness allows Shopify Payments and Wise mode without Strip
   });
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(result.operation.paymentFlow, "shopify_payments_wise_payout");
   assert.equal(result.operation.paymentProvider, "shopify_payments");
   assert.equal(result.operation.sellerPayoutProvider, "wise");
@@ -716,7 +723,7 @@ test("getProductionReadiness blocks partially enabled multi-seller settlement fl
   assert.match(check.detail, /Missing: refund, cancelled, dispute/);
 });
 
-test("getProductionReadiness warns when all multi-seller settlement flags are enabled", async () => {
+test("getProductionReadiness requires a release decision when all multi-seller settlement flags are enabled", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
       sellerRows: [createActiveSeller({ stripeAccount: false })],
@@ -733,7 +740,8 @@ test("getProductionReadiness warns when all multi-seller settlement flags are en
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
   const check = checksById.get("multi_seller_backend_settlement_flags");
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(check.status, "warning");
   assert.match(check.action, /storefront multi-seller checkout disabled/);
 });
@@ -759,7 +767,7 @@ test("getProductionReadiness blocks storefront multi-seller checkout without pre
   assert.match(check.detail, /seller order reads/);
 });
 
-test("getProductionReadiness warns when storefront multi-seller checkout is fully enabled", async () => {
+test("getProductionReadiness blocks release while storefront multi-seller checkout needs review", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
       sellerRows: [createActiveSeller({ stripeAccount: false })],
@@ -779,12 +787,13 @@ test("getProductionReadiness warns when storefront multi-seller checkout is full
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
   const check = checksById.get("multi_seller_storefront_checkout_flag");
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(check.status, "warning");
   assert.match(check.detail, /Storefront multi-seller checkout is enabled/);
 });
 
-test("getProductionReadiness warns when SellerOrder vendor reads are enabled without shadow write", async () => {
+test("getProductionReadiness blocks release when SellerOrder reads need review", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
       sellerRows: [createActiveSeller({ stripeAccount: false })],
@@ -798,12 +807,13 @@ test("getProductionReadiness warns when SellerOrder vendor reads are enabled wit
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
   const check = checksById.get("seller_order_vendor_order_reads");
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(check.status, "warning");
   assert.match(check.detail, /SELLER_ORDER_SHADOW_WRITE_ENABLED is disabled/);
 });
 
-test("getProductionReadiness shows SellerOrder vendor reads fallback when shadow write is enabled", async () => {
+test("getProductionReadiness still requires a release decision for SellerOrder read fallback", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
       sellerRows: [createActiveSeller({ stripeAccount: false })],
@@ -818,7 +828,8 @@ test("getProductionReadiness shows SellerOrder vendor reads fallback when shadow
   const checksById = new Map(result.checks.map((check) => [check.id, check]));
   const check = checksById.get("seller_order_vendor_order_reads");
 
-  assert.equal(result.canGoLive, true);
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
   assert.equal(check.status, "warning");
   assert.match(check.detail, /fall back to the legacy ledger path/);
 });
@@ -957,4 +968,37 @@ test("includeCheckoutValidationInProductionReadiness blocks launch until fail-cl
     ).status,
     "pass",
   );
+});
+
+test("strict readiness blocks unresolved warnings and manual checks", () => {
+  const result = summarizeProductionReadinessChecks([
+    { id: "pass", status: "pass" },
+    { id: "warning", status: "warning" },
+    { id: "manual", status: "manual" },
+  ]);
+
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, false);
+  assert.equal(result.summary.blockingCount, 0);
+  assert.equal(result.summary.decisionRequiredCount, 2);
+  assert.equal(result.summary.releaseBlockingCount, 2);
+});
+
+test("strict readiness accepts only explicitly scope-excluded non-pass checks", () => {
+  const result = summarizeProductionReadinessChecks([
+    { id: "pass", status: "pass" },
+    {
+      id: "excluded",
+      status: "warning",
+      releaseBlocking: false,
+      releaseDisposition: "scope_excluded",
+      releaseDispositionReason: "feature disabled for launch scope",
+    },
+  ]);
+
+  assert.equal(result.codeCanGoLive, true);
+  assert.equal(result.canGoLive, true);
+  assert.equal(result.summary.warningCount, 1);
+  assert.equal(result.summary.optionalCount, 1);
+  assert.equal(result.summary.releaseBlockingCount, 0);
 });

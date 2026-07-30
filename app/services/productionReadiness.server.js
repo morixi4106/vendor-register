@@ -213,7 +213,17 @@ function sanitizeStripeErrorMessage(message) {
     .replace(/rk_(live|test)_[A-Za-z0-9_]+/g, "rk_$1_***");
 }
 
-function createCheck({ id, category, status, title, detail, action }) {
+function createCheck({
+  id,
+  category,
+  status,
+  title,
+  detail,
+  action,
+  releaseBlocking,
+  releaseDisposition,
+  releaseDispositionReason,
+}) {
   return {
     id,
     category,
@@ -221,6 +231,146 @@ function createCheck({ id, category, status, title, detail, action }) {
     title,
     detail: detail || "",
     action: action || "",
+    ...(typeof releaseBlocking === "boolean" ? { releaseBlocking } : {}),
+    ...(releaseDisposition ? { releaseDisposition } : {}),
+    ...(releaseDispositionReason ? { releaseDispositionReason } : {}),
+  };
+}
+
+function isThirdPartySettlementDisabled(env) {
+  return (
+    !isMarketplaceSettlementActionsEnabled(env) &&
+    !isDomesticSellerSettlementEnabled(env) &&
+    !isCrossBorderSellerSettlementEnabled(env)
+  );
+}
+
+function applyReleaseDisposition(
+  check,
+  { env, operationEnv, directReturns } = {},
+) {
+  if (check.status === "pass") {
+    return {
+      ...check,
+      releaseBlocking: false,
+      releaseDisposition: "satisfied",
+    };
+  }
+  if (check.status === "fail") {
+    return {
+      ...check,
+      releaseBlocking: true,
+      releaseDisposition: "required",
+    };
+  }
+
+  const scopeExclusions = [
+    {
+      applies:
+        check.category === "stripe" &&
+        operationEnv?.stripeConnectProductionEnabled !== true,
+      reason:
+        "国内直販はShopify Paymentsを使用し、Stripe Connectは公開範囲外です。",
+    },
+    {
+      applies:
+        [
+          "connected_accounts_match_current_stripe_key",
+          "connected_accounts_ready",
+        ].includes(check.id) &&
+        operationEnv?.stripeConnectProductionEnabled !== true,
+      reason:
+        "国内直販はShopify Paymentsを使用し、Stripe Connectの接続アカウントは公開範囲外です。",
+    },
+    {
+      applies:
+        check.category === "payout" && isThirdPartySettlementDisabled(env),
+      reason:
+        "第三者出店者への精算はすべて無効で、国内直販の公開範囲外です。",
+    },
+    {
+      applies:
+        check.id === "withdrawal_return_address_legacy" &&
+        Number(directReturns?.legacyOpenRequestCount || 0) === 0,
+      reason:
+        "未処理の旧V1申請はなく、新規申請は店舗別返送V2だけを使用します。",
+    },
+    {
+      applies:
+        check.id.startsWith("withdrawal_direct_return_") &&
+        Number(directReturns?.relevantStoreCount || 0) === 0,
+      reason:
+        "EU販売対象店舗がない国内限定公開では、店舗別返送方針は公開範囲外です。",
+    },
+    {
+      applies:
+        check.id.startsWith("marketplace_governance_") &&
+        !isMarketplaceGovernanceGateEnabled(env),
+      reason:
+        "第三者マーケットプレイス販売は無効で、国内直販の公開範囲外です。",
+    },
+  ];
+  const exclusion = scopeExclusions.find((entry) => entry.applies);
+  if (exclusion) {
+    return {
+      ...check,
+      releaseBlocking: false,
+      releaseDisposition: "scope_excluded",
+      releaseDispositionReason: exclusion.reason,
+    };
+  }
+
+  return {
+    ...check,
+    releaseBlocking: true,
+    releaseDisposition: "decision_required",
+  };
+}
+
+export function summarizeProductionReadinessChecks(checks) {
+  const normalizedChecks = (checks || []).map((check) => {
+    if (typeof check.releaseBlocking === "boolean") {
+      return check;
+    }
+    return {
+      ...check,
+      releaseBlocking: check.status !== "pass",
+      releaseDisposition:
+        check.status === "pass" ? "satisfied" : "decision_required",
+    };
+  });
+  const blockingChecks = normalizedChecks.filter(
+    (check) => check.status === "fail",
+  );
+  const warningChecks = normalizedChecks.filter(
+    (check) => check.status === "warning",
+  );
+  const manualChecks = normalizedChecks.filter(
+    (check) => check.status === "manual",
+  );
+  const decisionRequiredChecks = normalizedChecks.filter(
+    (check) => check.releaseBlocking && check.status !== "fail",
+  );
+  const optionalChecks = normalizedChecks.filter(
+    (check) => check.releaseDisposition === "scope_excluded",
+  );
+  const releaseBlockingChecks = normalizedChecks.filter(
+    (check) => check.releaseBlocking,
+  );
+
+  return {
+    checks: normalizedChecks,
+    canGoLive: releaseBlockingChecks.length === 0,
+    codeCanGoLive: blockingChecks.length === 0,
+    summary: {
+      totalChecks: normalizedChecks.length,
+      blockingCount: blockingChecks.length,
+      warningCount: warningChecks.length,
+      manualCount: manualChecks.length,
+      decisionRequiredCount: decisionRequiredChecks.length,
+      optionalCount: optionalChecks.length,
+      releaseBlockingCount: releaseBlockingChecks.length,
+    },
   };
 }
 
@@ -1436,14 +1586,23 @@ function buildEnvironmentChecks({ stripeEnv, env, operationEnv }) {
     createCheck({
       id: "production_payment_flow",
       category: "app",
-      status: "manual",
+      status:
+        paymentProviderConfigured &&
+        sellerPayoutProviderConfigured &&
+        paymentProviderSupported &&
+        sellerPayoutProviderSupported &&
+        !stripeConnectProductionEnabled
+          ? "pass"
+          : "fail",
       title: "Production payment flow",
       detail: stripeConnectProductionEnabled
         ? "Stripe Connect production checks are enabled by STRIPE_CONNECT_PRODUCTION_ENABLED or provider configuration."
         : `Production checkout uses ${paymentProviderLabel}. Seller payouts use ${sellerPayoutProviderLabel}.`,
       action: stripeConnectProductionEnabled
         ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode."
-        : "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes.",
+        : paymentProviderConfigured && sellerPayoutProviderConfigured
+          ? "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes."
+          : "Set PAYMENT_PROVIDER=shopify_payments and SELLER_PAYOUT_PROVIDER=manual explicitly in Render.",
     }),
   );
 
@@ -1849,16 +2008,6 @@ function buildShopifyChecks({ configuredScopes, grantedScopes }) {
         grantedScopes.length > 0 && grantedMissingScopes.length === 0
           ? ""
           : "Open the app in Shopify admin and approve the new permissions, or uninstall/reinstall if re-authorization does not appear.",
-    }),
-    createCheck({
-      id: "shopify_payments_bank_account",
-      category: "shopify",
-      status: "manual",
-      title: "Shopify Payments payout bank",
-      detail:
-        "The app cannot verify the payout bank account configured in Shopify Payments.",
-      action:
-        "In Shopify admin, confirm Shopify Payments is active and its payout bank account is the intended business or Wise receiving account.",
     }),
   ];
 }
@@ -2698,7 +2847,7 @@ export async function getProductionReadiness({
     : [];
   const configuredScopes = parseScopes(env.SCOPES);
   const grantedScopes = parseScopes(sessions[0]?.scope);
-  const checks = [
+  const rawChecks = [
     ...buildEnvironmentChecks({
       stripeEnv,
       env,
@@ -2725,19 +2874,21 @@ export async function getProductionReadiness({
     }),
     ...buildPayoutChecks({ env, operationEnv }),
   ];
-  const blockingChecks = checks.filter((check) => check.status === "fail");
-  const warningChecks = checks.filter((check) => check.status === "warning");
-  const manualChecks = checks.filter((check) => check.status === "manual");
+  const releaseSummary = summarizeProductionReadinessChecks(
+    rawChecks.map((check) =>
+      applyReleaseDisposition(check, {
+        env,
+        operationEnv,
+        directReturns,
+      }),
+    ),
+  );
 
   return {
     generatedAt: new Date(),
-    canGoLive: blockingChecks.length === 0,
-    summary: {
-      totalChecks: checks.length,
-      blockingCount: blockingChecks.length,
-      warningCount: warningChecks.length,
-      manualCount: manualChecks.length,
-    },
+    canGoLive: releaseSummary.canGoLive,
+    codeCanGoLive: releaseSummary.codeCanGoLive,
+    summary: releaseSummary.summary,
     operation: {
       paymentFlow: `${operationEnv.paymentProvider}_${operationEnv.sellerPayoutProvider}_payout`,
       paymentFlowLabel: `${operationEnv.paymentProviderLabel} + ${operationEnv.sellerPayoutProviderLabel}`,
@@ -2775,7 +2926,7 @@ export async function getProductionReadiness({
     operationalReadiness,
     platformOperationalControl,
     withdrawals: { ...withdrawalOperations, directReturns },
-    checks,
+    checks: releaseSummary.checks,
   };
 }
 
@@ -2817,21 +2968,15 @@ export function includeCheckoutGateInProductionReadiness(
     ),
     checkoutGateCheck,
   ];
-  const blockingChecks = checks.filter((check) => check.status === "fail");
-  const warningChecks = checks.filter((check) => check.status === "warning");
-  const manualChecks = checks.filter((check) => check.status === "manual");
+  const releaseSummary = summarizeProductionReadinessChecks(checks);
 
   return {
     ...readiness,
-    canGoLive: blockingChecks.length === 0,
-    summary: {
-      totalChecks: checks.length,
-      blockingCount: blockingChecks.length,
-      warningCount: warningChecks.length,
-      manualCount: manualChecks.length,
-    },
+    canGoLive: releaseSummary.canGoLive,
+    codeCanGoLive: releaseSummary.codeCanGoLive,
+    summary: releaseSummary.summary,
     checkoutGate,
-    checks,
+    checks: releaseSummary.checks,
   };
 }
 
@@ -2884,21 +3029,15 @@ export function includeCheckoutValidationInProductionReadiness(
     productionReleaseCheck,
     checkoutValidationCheck,
   ];
-  const blockingChecks = checks.filter((check) => check.status === "fail");
-  const warningChecks = checks.filter((check) => check.status === "warning");
-  const manualChecks = checks.filter((check) => check.status === "manual");
+  const releaseSummary = summarizeProductionReadinessChecks(checks);
 
   return {
     ...readiness,
-    canGoLive: blockingChecks.length === 0,
-    summary: {
-      totalChecks: checks.length,
-      blockingCount: blockingChecks.length,
-      warningCount: warningChecks.length,
-      manualCount: manualChecks.length,
-    },
+    canGoLive: releaseSummary.canGoLive,
+    codeCanGoLive: releaseSummary.codeCanGoLive,
+    summary: releaseSummary.summary,
     checkoutValidation,
     productionRelease,
-    checks,
+    checks: releaseSummary.checks,
   };
 }

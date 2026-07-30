@@ -157,7 +157,7 @@ export default function ProductionTransactionProbePage() {
           <p style={styles.eyebrow}>PRODUCTION E2E</p>
           <h1 style={styles.title}>本番注文・返金 E2E確認</h1>
           <p style={styles.lead}>
-            Shopifyの実注文と、アプリの注文・売上台帳・全額返金を照合します。
+            Shopify Paymentsの実取引と、アプリの注文・売上台帳・元取引への全額返金を照合します。
           </p>
         </div>
         <StatusBadge tone={page.tone} label={page.statusLabel} />
@@ -207,8 +207,8 @@ export default function ProductionTransactionProbePage() {
                 <label style={styles.label}>
                   Shopify注文番号
                   <span style={styles.hint}>
-                    確認開始後に運営直販商品を実カードで購入し、#1234またはOrder
-                    GIDを入力します。
+                    確認開始後に運営直販商品をShopify
+                    Paymentsの実カードで購入し、#1234またはOrder GIDを入力します。
                   </span>
                   <input
                     style={styles.input}
@@ -481,6 +481,10 @@ function reasonLabel(reason) {
       order_reference_invalid:
         "注文番号は#1234またはShopify Order GIDで入力してください。",
       shopify_order_not_found: "Shopifyで注文を確認できませんでした。",
+      shopify_order_transactions_incomplete:
+        "注文の決済取引をすべて取得できませんでした。Shopifyの取引件数を確認してください。",
+      shopify_refund_transactions_incomplete:
+        "返金取引をすべて取得できませんでした。Shopifyの返金履歴を確認してください。",
       shopify_order_reference_ambiguous:
         "注文番号を一意に特定できません。Order GIDを入力してください。",
       shopify_test_order_not_allowed:
@@ -503,8 +507,34 @@ function reasonLabel(reason) {
         "売上台帳の反映待ち、または件数不一致です。",
       seller_order_shadow_not_matched:
         "SellerOrderの比較がまだ一致していません。",
+      shopify_payment_transaction_missing:
+        "Shopify Paymentsの売上取引がまだ確認できません。",
+      shopify_payment_transaction_not_captured:
+        "Shopify Paymentsの売上取引が成功状態ではありません。",
+      shopify_payment_transaction_not_shopify_payments:
+        "Shopify Payments以外の決済、または手動の支払い済み注文は利用できません。",
+      shopify_payment_transaction_is_test:
+        "テスト決済の取引は本番証跡に利用できません。",
+      shopify_payment_transaction_amount_mismatch:
+        "Shopify Paymentsの決済額と注文合計が一致しません。",
+      shopify_payment_transaction_currency_mismatch:
+        "Shopify Paymentsの決済通貨と注文通貨が一致しません。",
       shopify_order_not_fully_refunded:
         "Shopifyで同じ注文を全額返金してから再確認してください。",
+      shopify_refund_transaction_missing:
+        "Shopify Paymentsの成功した返金取引がまだ確認できません。",
+      shopify_refund_transaction_not_successful:
+        "Shopifyの返金取引がすべて成功状態になるまで待ってください。",
+      shopify_refund_transaction_not_shopify_payments:
+        "Shopify Payments以外の方法で処理された返金は利用できません。",
+      shopify_refund_transaction_is_test:
+        "テスト返金の取引は本番証跡に利用できません。",
+      shopify_refund_transaction_parent_mismatch:
+        "返金取引が元のShopify Payments取引に紐づいていません。",
+      shopify_refund_transaction_amount_mismatch:
+        "Shopify Paymentsの返金額と注文合計が一致しません。",
+      shopify_refund_transaction_currency_mismatch:
+        "Shopify Paymentsの返金通貨と注文通貨が一致しません。",
       refund_ledger_count_mismatch:
         "返金Webhookと返金台帳の反映待ち、または件数不一致です。",
       active_probe_not_found:
@@ -518,6 +548,13 @@ function reasonLabel(reason) {
 function checkLabel(id) {
   return (
     {
+      shopify_payment_transaction_present:
+        "Shopify Paymentsの売上取引を確認",
+      shopify_payment_transaction_status: "売上取引が成功済み",
+      shopify_payment_transaction_gateway: "決済元がShopify Payments",
+      shopify_payment_transaction_live: "本番取引であることを確認",
+      shopify_payment_transaction_amount: "決済額が注文合計と一致",
+      shopify_payment_transaction_currency: "決済通貨が注文通貨と一致",
       commercial_fingerprint: "注文内容が途中で変わっていない",
       marketplace_order: "MarketplaceOrderが作成済み",
       marketplace_currency: "注文通貨が一致",
@@ -531,6 +568,14 @@ function checkLabel(id) {
       paid_ledger_amount: "売上台帳の金額が一致",
       paid_ledger_seller: "売上台帳の販売者が一致",
       seller_order_shadow: "既存計算とSellerOrderが一致",
+      shopify_refund_transaction_present:
+        "Shopify Paymentsの返金取引を確認",
+      shopify_refund_transaction_status: "返金取引が成功済み",
+      shopify_refund_transaction_gateway: "返金元がShopify Payments",
+      shopify_refund_transaction_live: "本番返金であることを確認",
+      shopify_refund_transaction_parent: "元の決済取引への返金",
+      shopify_refund_transaction_amount: "返金額が注文合計と一致",
+      shopify_refund_transaction_currency: "返金通貨が注文通貨と一致",
       shopify_financial_status: "Shopifyが全額返金済み",
       shopify_refund_total: "Shopify返金総額が一致",
       shopify_refund_record: "返金レコードが1件",

@@ -85,6 +85,11 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 30,
   },
   {
+    key: "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED",
+    label: "Shopify Payments入金口座・実入金の確認",
+    validityDays: 90,
+  },
+  {
     key: "ADMIN_MFA_ACCESS_REVIEWED",
     label: "管理者権限・MFAの棚卸し",
     validityDays: 90,

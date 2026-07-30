@@ -27,7 +27,12 @@ const ACTIVE_PROBE_STATUSES = [
   PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_REFUND,
 ];
 const SHOPIFY_API_VERSION = "2026-04";
-const ORDER_CREATED_TOLERANCE_MS = 5 * 60 * 1000;
+const SHOPIFY_TRANSACTION_LIMIT = 100;
+const SHOPIFY_PAYMENTS_GATEWAYS = new Set([
+  "shopify payments",
+  "shopify_payments",
+]);
+const SUCCESSFUL_PAYMENT_TRANSACTION_KINDS = new Set(["CAPTURE", "SALE"]);
 const SETTLEMENT_ENTRY_TYPES = [
   "shopify_order_paid",
   "refund",
@@ -53,6 +58,26 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
 ]);
 
 const ORDER_FIELDS = `#graphql
+  fragment ProductionProbeTransactionFields on OrderTransaction {
+    id
+    kind
+    status
+    gateway
+    formattedGateway
+    manualPaymentGateway
+    test
+    processedAt
+    amountSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    parentTransaction {
+      id
+    }
+  }
+
   fragment ProductionProbeOrderFields on Order {
     id
     name
@@ -93,9 +118,23 @@ const ORDER_FIELDS = `#graphql
         currencyCode
       }
     }
+    transactionsCount {
+      count
+    }
+    transactions(first: 100) {
+      ...ProductionProbeTransactionFields
+    }
     refunds {
       id
       createdAt
+      transactions(first: 100) {
+        nodes {
+          ...ProductionProbeTransactionFields
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
     }
     lineItems(first: 250) {
       nodes {
@@ -235,6 +274,27 @@ function lineSnapshot(line, currencyCode) {
   };
 }
 
+function transactionSnapshot(transaction, currencyCode) {
+  return {
+    id: clean(transaction?.id) || null,
+    kind: clean(transaction?.kind).toUpperCase(),
+    status: clean(transaction?.status).toUpperCase(),
+    gateway: clean(transaction?.gateway).toLowerCase() || null,
+    formattedGateway: clean(transaction?.formattedGateway) || null,
+    manualPaymentGateway: transaction?.manualPaymentGateway === true,
+    test: transaction?.test === true,
+    processedAt: parseDate(transaction?.processedAt)?.toISOString() || null,
+    amount: toMinorUnits(
+      transaction?.amountSet?.shopMoney?.amount,
+      transaction?.amountSet?.shopMoney?.currencyCode || currencyCode,
+    ),
+    currencyCode: normalizeCurrency(
+      transaction?.amountSet?.shopMoney?.currencyCode || currencyCode,
+    ),
+    parentTransactionId: clean(transaction?.parentTransaction?.id) || null,
+  };
+}
+
 export function buildShopifyProbeOrderSnapshot(order) {
   const currencyCode = normalizeCurrency(order?.currencyCode);
   const lines = Array.isArray(order?.lineItems?.nodes)
@@ -260,6 +320,27 @@ export function buildShopifyProbeOrderSnapshot(order) {
     ),
     lines,
   };
+  const transactions = Array.isArray(order?.transactions)
+    ? order.transactions.map((transaction) =>
+        transactionSnapshot(transaction, currencyCode),
+      )
+    : [];
+  const transactionCount = toNonNegativeInteger(
+    order?.transactionsCount?.count,
+  );
+  const refunds = Array.isArray(order?.refunds)
+    ? order.refunds.map((refund) => ({
+        id: clean(refund?.id) || null,
+        createdAt: parseDate(refund?.createdAt)?.toISOString() || null,
+        transactions: Array.isArray(refund?.transactions?.nodes)
+          ? refund.transactions.nodes.map((transaction) =>
+              transactionSnapshot(transaction, currencyCode),
+            )
+          : [],
+        transactionsComplete:
+          refund?.transactions?.pageInfo?.hasNextPage !== true,
+      }))
+    : [];
   return {
     shopifyOrderId: clean(order?.id) || null,
     shopifyOrderName: clean(order?.name) || null,
@@ -273,9 +354,12 @@ export function buildShopifyProbeOrderSnapshot(order) {
       order?.totalRefundedSet?.shopMoney?.amount,
       currencyCode,
     ),
-    refundIds: Array.isArray(order?.refunds)
-      ? unique(order.refunds.map((refund) => clean(refund?.id))).sort()
-      : [],
+    refundIds: unique(refunds.map((refund) => refund.id)).sort(),
+    refunds,
+    transactions,
+    transactionsComplete:
+      transactionCount <= SHOPIFY_TRANSACTION_LIMIT &&
+      transactionCount === transactions.length,
     lineItemsComplete: order?.lineItems?.pageInfo?.hasNextPage !== true,
     commercialEvidence,
     commercialFingerprint: hashEvidence(commercialEvidence),
@@ -326,6 +410,18 @@ export async function fetchShopifyOrderForProductionProbe(
       reason: snapshot.shopifyOrderId
         ? "shopify_order_line_items_incomplete"
         : "shopify_order_not_found",
+    };
+  }
+  if (!snapshot.transactionsComplete) {
+    return {
+      ok: false,
+      reason: "shopify_order_transactions_incomplete",
+    };
+  }
+  if (snapshot.refunds.some((refund) => !refund.transactionsComplete)) {
+    return {
+      ok: false,
+      reason: "shopify_refund_transactions_incomplete",
     };
   }
   const lineItemIds = snapshot.commercialEvidence.lines.map((line) => line.id);
@@ -553,7 +649,7 @@ export async function attachOrderToProductionTransactionProbe(
   }
   if (
     !createdAt ||
-    createdAt.getTime() < probe.startedAt.getTime() - ORDER_CREATED_TOLERANCE_MS
+    createdAt.getTime() < probe.startedAt.getTime()
   ) {
     return { ok: false, reason: "order_predates_probe" };
   }
@@ -698,6 +794,41 @@ function sellerOrderExpectedPaidAmount(sellerOrders) {
   );
 }
 
+function normalizeGateway(value) {
+  return clean(value)
+    .toLowerCase()
+    .replaceAll("-", " ")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ");
+}
+
+function isShopifyPaymentsTransaction(transaction) {
+  return (
+    transaction?.manualPaymentGateway !== true &&
+    (SHOPIFY_PAYMENTS_GATEWAYS.has(clean(transaction?.gateway).toLowerCase()) ||
+      SHOPIFY_PAYMENTS_GATEWAYS.has(
+        normalizeGateway(transaction?.formattedGateway),
+      ))
+  );
+}
+
+function getSuccessfulPaymentTransactions(snapshot) {
+  return snapshot.transactions.filter(
+    (transaction) =>
+      SUCCESSFUL_PAYMENT_TRANSACTION_KINDS.has(transaction.kind) &&
+      transaction.status === "SUCCESS",
+  );
+}
+
+function getRefundTransactions(snapshot) {
+  return snapshot.refunds.flatMap((refund) =>
+    refund.transactions.map((transaction) => ({
+      ...transaction,
+      refundId: refund.id,
+    })),
+  );
+}
+
 function buildPaidInspection({ probe, snapshot, local }) {
   const marketplaceOrder = local.marketplaceOrder;
   const sellerOrders = marketplaceOrder?.sellerOrders || [];
@@ -735,7 +866,62 @@ function buildPaidInspection({ probe, snapshot, local }) {
     0,
   );
   const currencyCode = snapshot.commercialEvidence.currencyCode.toLowerCase();
+  const paymentTransactions = getSuccessfulPaymentTransactions(snapshot);
+  const paymentTransactionAmount = paymentTransactions.reduce(
+    (sum, transaction) => sum + transaction.amount,
+    0,
+  );
+  const paymentTransactionIds = paymentTransactions
+    .map((transaction) => transaction.id)
+    .filter(Boolean)
+    .sort();
   const checks = [
+    check(
+      "shopify_payment_transaction_present",
+      paymentTransactions.length > 0,
+      "shopify_payment_transaction_missing",
+      { actualCount: paymentTransactions.length },
+    ),
+    check(
+      "shopify_payment_transaction_status",
+      paymentTransactions.every(
+        (transaction) =>
+          transaction.status === "SUCCESS" &&
+          SUCCESSFUL_PAYMENT_TRANSACTION_KINDS.has(transaction.kind),
+      ),
+      "shopify_payment_transaction_not_captured",
+    ),
+    check(
+      "shopify_payment_transaction_gateway",
+      paymentTransactions.length > 0 &&
+        paymentTransactions.every(isShopifyPaymentsTransaction),
+      "shopify_payment_transaction_not_shopify_payments",
+    ),
+    check(
+      "shopify_payment_transaction_live",
+      paymentTransactions.length > 0 &&
+        paymentTransactions.every((transaction) => transaction.test !== true),
+      "shopify_payment_transaction_is_test",
+    ),
+    check(
+      "shopify_payment_transaction_amount",
+      paymentTransactionAmount === snapshot.commercialEvidence.totalAmount,
+      "shopify_payment_transaction_amount_mismatch",
+      {
+        expectedAmount: snapshot.commercialEvidence.totalAmount,
+        actualAmount: paymentTransactionAmount,
+      },
+    ),
+    check(
+      "shopify_payment_transaction_currency",
+      paymentTransactions.length > 0 &&
+        paymentTransactions.every(
+          (transaction) =>
+            transaction.currencyCode ===
+            snapshot.commercialEvidence.currencyCode,
+        ),
+      "shopify_payment_transaction_currency_mismatch",
+    ),
     check(
       "commercial_fingerprint",
       asObject(probe.orderEvidenceJson).commercialFingerprint ===
@@ -831,6 +1017,8 @@ function buildPaidInspection({ probe, snapshot, local }) {
     marketplaceOrderId: marketplaceOrder?.id || null,
     sellerOrderIds: sellerOrders.map((sellerOrder) => sellerOrder.id).sort(),
     paidLedgerEntryIds: paidEntries.map((entry) => entry.id).sort(),
+    shopifyPaymentTransactionIds: paymentTransactionIds,
+    shopifyPaymentTransactionAmount: paymentTransactionAmount,
   };
 }
 
@@ -857,6 +1045,18 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
   const nonEmptyRefundIds = refundIds.filter(Boolean);
   const ledgerRefundIds = [...new Set(nonEmptyRefundIds)].sort();
   const shopifyRefundIds = [...snapshot.refundIds].sort();
+  const refundTransactions = getRefundTransactions(snapshot);
+  const successfulRefundTransactions = refundTransactions.filter(
+    (transaction) =>
+      transaction.kind === "REFUND" && transaction.status === "SUCCESS",
+  );
+  const successfulPaymentTransactionIds = new Set(
+    paidInspection.shopifyPaymentTransactionIds,
+  );
+  const refundTransactionAmount = successfulRefundTransactions.reduce(
+    (sum, transaction) => sum + transaction.amount,
+    0,
+  );
   const fullLineRefund = sellerOrders.every((sellerOrder) =>
     sellerOrder.lines.every(
       (line) =>
@@ -865,6 +1065,65 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
     ),
   );
   const checks = [
+    check(
+      "shopify_refund_transaction_present",
+      successfulRefundTransactions.length > 0,
+      "shopify_refund_transaction_missing",
+      { actualCount: successfulRefundTransactions.length },
+    ),
+    check(
+      "shopify_refund_transaction_status",
+      refundTransactions.length > 0 &&
+        refundTransactions.every(
+          (transaction) =>
+            transaction.kind === "REFUND" && transaction.status === "SUCCESS",
+        ),
+      "shopify_refund_transaction_not_successful",
+    ),
+    check(
+      "shopify_refund_transaction_gateway",
+      successfulRefundTransactions.length > 0 &&
+        successfulRefundTransactions.every(isShopifyPaymentsTransaction),
+      "shopify_refund_transaction_not_shopify_payments",
+    ),
+    check(
+      "shopify_refund_transaction_live",
+      successfulRefundTransactions.length > 0 &&
+        successfulRefundTransactions.every(
+          (transaction) => transaction.test !== true,
+        ),
+      "shopify_refund_transaction_is_test",
+    ),
+    check(
+      "shopify_refund_transaction_parent",
+      successfulRefundTransactions.length > 0 &&
+        successfulRefundTransactions.every(
+          (transaction) =>
+            transaction.parentTransactionId &&
+            successfulPaymentTransactionIds.has(
+              transaction.parentTransactionId,
+            ),
+        ),
+      "shopify_refund_transaction_parent_mismatch",
+    ),
+    check(
+      "shopify_refund_transaction_amount",
+      refundTransactionAmount === snapshot.commercialEvidence.totalAmount,
+      "shopify_refund_transaction_amount_mismatch",
+      {
+        expectedAmount: snapshot.commercialEvidence.totalAmount,
+        actualAmount: refundTransactionAmount,
+      },
+    ),
+    check(
+      "shopify_refund_transaction_currency",
+      successfulRefundTransactions.length > 0 &&
+        successfulRefundTransactions.every(
+          (transaction) =>
+            transaction.currencyCode === paidInspection.currencyCode,
+        ),
+      "shopify_refund_transaction_currency_mismatch",
+    ),
     check(
       "shopify_financial_status",
       snapshot.financialStatus === "REFUNDED",
@@ -964,6 +1223,11 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
       .map((entry) => entry.id)
       .sort(),
     shopifyRefundIds: snapshot.refundIds,
+    shopifyRefundTransactionIds: successfulRefundTransactions
+      .map((transaction) => transaction.id)
+      .filter(Boolean)
+      .sort(),
+    shopifyRefundTransactionAmount: refundTransactionAmount,
   };
 }
 
@@ -1100,7 +1364,7 @@ export async function refreshProductionTransactionProbe(
     };
   }
   const finalEvidence = {
-    version: 1,
+    version: 2,
     probeId: probe.id,
     shopDomain: probe.shopDomain,
     releaseId: probe.releaseId,
@@ -1162,7 +1426,8 @@ export async function refreshProductionTransactionProbe(
         evidenceReference: `production-transaction-probe:${probe.id}`,
         evidenceHash,
         confirmedBy: "system:production-transaction-probe",
-        notes: "Shopify実注文、SellerOrder、売上台帳、全額返金を自動照合",
+        notes:
+          "Shopify Payments実取引、SellerOrder、売上台帳、元取引への全額返金を自動照合",
         metadataJson: {
           verificationSource: "production_transaction_probe",
           probeId: probe.id,
