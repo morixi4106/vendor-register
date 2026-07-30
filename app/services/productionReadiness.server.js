@@ -150,6 +150,14 @@ function normalizeText(value) {
   return normalized || null;
 }
 
+function normalizeShopDomain(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .split("/")[0];
+}
+
 function extractEmailAddress(value) {
   const normalized = normalizeText(value);
 
@@ -2754,12 +2762,19 @@ export async function getProductionReadiness({
   prismaClient = prisma,
   env = process.env,
   now = new Date(),
+  shopDomain = null,
 } = {}) {
+  const normalizedShopDomain = normalizeShopDomain(shopDomain);
   const stripeEnv = inspectStripeEnvironment(env);
   const operationEnv = inspectOperationEnvironment(env);
   const stripeConnectProductionEnabled =
     operationEnv.stripeConnectProductionEnabled;
-  const [sessions, sellerRows, platformStripeAccount] = await Promise.all([
+  const [
+    sessions,
+    targetOfflineSession,
+    sellerRows,
+    platformStripeAccount,
+  ] = await Promise.all([
     prismaClient.session.findMany({
       where: {
         isOnline: false,
@@ -2770,6 +2785,19 @@ export async function getProductionReadiness({
         scope: true,
       },
     }),
+    normalizedShopDomain
+      ? prismaClient.session.findFirst({
+          where: {
+            isOnline: false,
+            shop: normalizedShopDomain,
+          },
+          select: {
+            id: true,
+            shop: true,
+            scope: true,
+          },
+        })
+      : Promise.resolve(null),
     prismaClient.seller.findMany({
       orderBy: [{ createdAt: "desc" }],
       include: {
@@ -2856,7 +2884,7 @@ export async function getProductionReadiness({
       })
     : [];
   const configuredScopes = parseScopes(env.SCOPES);
-  const grantedScopes = parseScopes(sessions[0]?.scope);
+  const grantedScopes = parseScopes(targetOfflineSession?.scope);
   const rawChecks = [
     ...buildEnvironmentChecks({
       stripeEnv,
@@ -2918,6 +2946,8 @@ export async function getProductionReadiness({
     shopify: {
       configuredScopes,
       grantedScopes,
+      evaluatedShopDomain: normalizedShopDomain || null,
+      offlineSessionFound: Boolean(targetOfflineSession),
       productSync: shopifyProductSync,
       offlineSessionShops: sessions
         .map((session) => session.shop)

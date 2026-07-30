@@ -46,6 +46,7 @@ const TEST_RELEASE_ENV = {
 
 function getProductionReadiness(options = {}) {
   return getProductionReadinessImpl({
+    shopDomain: "example.myshopify.com",
     ...options,
     env: {
       ...TEST_RELEASE_ENV,
@@ -64,6 +65,13 @@ function createFakePrisma({
   productShippingProfiles = undefined,
   internationalShippingAvailability = undefined,
 } = {}) {
+  const sessionRows = sessions || [
+    {
+      id: "offline_session",
+      shop: "example.myshopify.com",
+      scope: REQUIRED_SCOPE_STRING,
+    },
+  ];
   const withdrawalCountQueue = [
     withdrawalCounts.openCount || 0,
     withdrawalCounts.deadlineExpiredCount || 0,
@@ -79,14 +87,12 @@ function createFakePrisma({
 
   const fakePrisma = {
     session: {
-      findMany: async () =>
-        sessions || [
-          {
-            id: "offline_session",
-            shop: "example.myshopify.com",
-            scope: REQUIRED_SCOPE_STRING,
-          },
-        ],
+      findMany: async () => sessionRows,
+      findFirst: async ({ where } = {}) =>
+        sessionRows.find(
+          (session) =>
+            session.shop === where?.shop && where?.isOnline === false,
+        ) || null,
     },
     seller: {
       findMany: async () => sellerRows,
@@ -257,6 +263,100 @@ function buildPayoutEvidenceMetadata() {
     approvalMode: "INDEPENDENT",
   };
 }
+
+test("getProductionReadiness evaluates scopes for the authenticated production shop", async () => {
+  const missingPayoutScope = REQUIRED_SCOPE_STRING.split(",")
+    .filter((scope) => scope !== "read_shopify_payments_payouts")
+    .join(",");
+  const result = await getProductionReadiness({
+    shopDomain: "production-shop.myshopify.com",
+    prismaClient: createFakePrisma({
+      sessions: [
+        {
+          id: "development_session",
+          shop: "development-shop.myshopify.com",
+          scope: REQUIRED_SCOPE_STRING,
+        },
+        {
+          id: "production_session",
+          shop: "production-shop.myshopify.com",
+          scope: missingPayoutScope,
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "shopify_granted_scopes",
+  );
+
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /read_shopify_payments_payouts/);
+  assert.equal(
+    result.shopify.evaluatedShopDomain,
+    "production-shop.myshopify.com",
+  );
+  assert.equal(result.shopify.offlineSessionFound, true);
+});
+
+test("getProductionReadiness ignores a development session listed before the production session", async () => {
+  const result = await getProductionReadiness({
+    shopDomain: "production-shop.myshopify.com",
+    prismaClient: createFakePrisma({
+      sessions: [
+        {
+          id: "development_session",
+          shop: "development-shop.myshopify.com",
+          scope: "read_products",
+        },
+        {
+          id: "production_session",
+          shop: "production-shop.myshopify.com",
+          scope: REQUIRED_SCOPE_STRING,
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "shopify_granted_scopes",
+  );
+
+  assert.equal(check.status, "pass");
+  assert.equal(result.shopify.offlineSessionFound, true);
+});
+
+test("getProductionReadiness fails closed when the production shop has no offline session", async () => {
+  const result = await getProductionReadiness({
+    shopDomain: "production-shop.myshopify.com",
+    prismaClient: createFakePrisma({
+      sessions: [
+        {
+          id: "development_session",
+          shop: "development-shop.myshopify.com",
+          scope: REQUIRED_SCOPE_STRING,
+        },
+      ],
+    }),
+    env: {
+      NODE_ENV: "production",
+      SCOPES: REQUIRED_SCOPE_STRING,
+    },
+  });
+  const check = result.checks.find(
+    (row) => row.id === "shopify_granted_scopes",
+  );
+
+  assert.equal(check.status, "fail");
+  assert.equal(result.shopify.grantedScopes.length, 0);
+  assert.equal(result.shopify.offlineSessionFound, false);
+});
 
 test("getProductionReadiness blocks an EU product without a valid international shipping profile", async () => {
   const result = await getProductionReadiness({

@@ -31,7 +31,9 @@ export const loader = async ({ request }) => {
   const { getMarketplaceCheckoutGateStatus } =
     await import("../services/marketplaceCheckoutGate.server.js");
 
-  const readiness = await getProductionReadiness();
+  const readiness = await getProductionReadiness({
+    shopDomain: session.shop,
+  });
   let checkoutGate;
 
   try {
