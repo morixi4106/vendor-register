@@ -182,7 +182,10 @@ export default function ShopifyPayoutEvidencePage() {
             <span>銀行明細の参照番号（末尾4文字のみ）</span>
             <input
               name="bankReferenceMasked"
-              maxLength={160}
+              minLength={4}
+              maxLength={4}
+              pattern="[A-Za-z0-9]{4}"
+              autoComplete="off"
               placeholder="例: 1234"
               required
             />
@@ -395,7 +398,9 @@ function reasonLabel(reason) {
         "Shopify APIで照合済みの証拠ではありません",
       payout_evidence_already_used:
         "このPayoutは別のReleaseですでに使用されています",
-      bank_reference_required: "マスキング済み参照番号が必要です",
+      bank_reference_required: "銀行参照番号の末尾4文字が必要です",
+      bank_reference_suffix_invalid:
+        "銀行参照番号は末尾の英数字4文字だけを入力してください",
       evidence_reference_required: "証拠ファイルの保存先が必要です",
       evidence_hash_required: "証拠ファイルのSHA-256が必要です",
       approved_evidence_is_immutable: "承認済み証拠は変更できません",
