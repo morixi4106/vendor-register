@@ -296,13 +296,14 @@ test("accepts a complete immutable review provenance chain", () => {
   const futurePullRequest = validateAcceptedRiskProvenance({
     acceptanceComment: approvalComment(risk),
     current: currentContext({
+      allowEmptyReviewRunPullRequests: true,
       changedPaths: ["app/routes/app.jsx"],
       enforceAcceptanceOnlyDiff: false,
       pullRequestNumber: 3,
     }),
     evidence: reviewEvidence(risk),
     isReviewedCommitAncestor: true,
-    reviewRun: reviewRun(risk),
+    reviewRun: reviewRun(risk, { pull_requests: [] }),
     risk,
   });
   assert.equal(futurePullRequest.ok, true);

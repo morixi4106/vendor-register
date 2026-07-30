@@ -455,7 +455,8 @@ export async function verifyAcceptedRiskProvenance({
   const result = validateAcceptedRiskProvenance({
     acceptanceComment,
     current: {
-      allowEmptyReviewRunPullRequests: !isPullRequest,
+      allowEmptyReviewRunPullRequests:
+        !isPullRequest || baseRiskStatus === "accepted",
       changedPaths: git.changedPaths,
       enforceAcceptanceOnlyDiff: isPullRequest && baseRiskStatus !== "accepted",
       headSha: currentHeadSha,
