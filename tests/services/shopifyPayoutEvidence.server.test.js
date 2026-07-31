@@ -139,7 +139,7 @@ test("the submitter cannot approve the same payout without an explicit owner wai
   assert.equal(database.attestation, null);
 });
 
-test("a single-operator waiver is recorded but cannot make readiness green", async () => {
+test("an owner waiver can satisfy readiness only for domestic platform direct sales", async () => {
   const database = buildDatabase();
   const submitted = await submit(validSubmission(), { database });
   const waiverReason =
@@ -154,13 +154,53 @@ test("a single-operator waiver is recorded but cannot make readiness green", asy
       singleOperatorConfirmation: getSingleOperatorPayoutConfirmationText(),
       singleOperatorWaiverReason: waiverReason,
     },
-    { prismaClient: database, env: ENV, now: NOW },
+    {
+      prismaClient: database,
+      env: {
+        ...ENV,
+        SINGLE_OPERATOR_PAYOUT_ATTESTATION_ENABLED: "true",
+      },
+      now: NOW,
+    },
   );
 
   assert.equal(approved.ok, true);
   assert.equal(approved.approvalMode, "SINGLE_OPERATOR_WAIVER");
-  assert.equal(approved.readinessEligible, false);
+  assert.equal(approved.readinessEligible, true);
   assert.equal(approved.evidence.status, "APPROVED_WITH_WAIVER");
+  assert.equal(
+    database.attestation.metadataJson.singleOperatorScope,
+    "DOMESTIC_PLATFORM_DIRECT_ONLY",
+  );
+});
+
+test("an owner waiver fails closed when third-party commerce is enabled", async () => {
+  const database = buildDatabase();
+  const submitted = await submit(validSubmission(), { database });
+
+  const rejected = await approveShopifyPayoutEvidence(
+    {
+      evidenceId: submitted.evidence.id,
+      reviewedBy: "shopify_user:submitter",
+      reviewerAccountOwner: true,
+      allowSingleOperatorWaiver: true,
+      singleOperatorConfirmation: getSingleOperatorPayoutConfirmationText(),
+      singleOperatorWaiverReason:
+        "一人運用のため残存リスクを記録しますが、第三者販売中は利用できないことを確認します。",
+    },
+    {
+      prismaClient: database,
+      env: {
+        ...ENV,
+        SINGLE_OPERATOR_PAYOUT_ATTESTATION_ENABLED: "true",
+        MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+      },
+      now: NOW,
+    },
+  );
+
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, "single_operator_payout_scope_not_allowed");
   assert.equal(database.attestation, null);
 });
 

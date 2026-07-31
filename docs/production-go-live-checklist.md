@@ -75,11 +75,15 @@ release.
 
 The submitter and reviewer must be different Shopify users for release
 readiness. A store owner may record a single-operator waiver for audit
-continuity, but that record is explicitly ineligible for a green release.
-Only independent approval creates the
-`SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` attestation. Production readiness fails
-closed if the Shopify verification, approved record, hash, bank-evidence date,
-or release binding no longer matches.
+continuity. For a sole-operator domestic platform-direct launch, set
+`SINGLE_OPERATOR_PAYOUT_ATTESTATION_ENABLED=true`; the owner waiver can then
+create the `SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED` attestation only while public
+Draft Order checkout, multi-seller checkout, all multi-seller Shopify
+settlement handlers, and all marketplace seller settlement actions remain
+disabled. Enabling any of those paths automatically invalidates the waiver for
+release readiness. Production readiness also fails closed if the Shopify
+verification, approved record, hash, bank-evidence date, or release binding no
+longer matches.
 
 ## 2. Production mode environment
 

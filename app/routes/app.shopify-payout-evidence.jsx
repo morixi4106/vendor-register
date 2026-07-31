@@ -283,7 +283,7 @@ export default function ShopifyPayoutEvidencePage() {
                       />
                       <input type="hidden" name="evidenceId" value={item.id} />
                       <p>
-                        第二確認者を用意できない場合の監査記録です。この操作では本番公開条件は合格になりません。
+                        国内運営直販だけを扱い、第三者販売・精算がすべて停止している場合に限るストア所有者向けの単独運用例外です。対象範囲を広げると、この証拠は自動的に公開条件から外れます。
                       </p>
                       <label>
                         <span>確認文</span>
@@ -408,6 +408,8 @@ function reasonLabel(reason) {
         "このPayoutの確認待ち証拠は、最初に登録した担当者だけが更新できます",
       independent_payout_approval_required:
         "登録者とは別の確認者による承認が必要です",
+      single_operator_payout_scope_not_allowed:
+        "単独運用例外は、専用設定が有効で第三者販売・精算がすべて停止している場合だけ利用できます",
       payout_evidence_approval_conflict:
         "別の操作で状態が変わりました。再読み込みしてください",
       payout_evidence_not_pending: "この証拠は確認待ちではありません",

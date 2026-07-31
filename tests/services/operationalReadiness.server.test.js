@@ -279,6 +279,102 @@ test("Shopify payout readiness fails closed when the approved record changes", a
   assert.equal(row.reason, "payout_evidence_invalid");
 });
 
+test("single-operator payout readiness is valid only while direct-only safeguards remain active", async () => {
+  const evidence = {
+    id: "payout_evidence_single",
+    releaseId: "aaaaaaaaaaaa:app-v1",
+    releaseFingerprint: "c".repeat(64),
+    payoutId: "gid://shopify/ShopifyPaymentsPayout/123",
+    shopifyPayoutGid: "gid://shopify/ShopifyPaymentsPayout/123",
+    payoutStatus: "DEPOSITED",
+    status: "APPROVED_WITH_WAIVER",
+    amount: 250,
+    currencyCode: "JPY",
+    shopifyPayoutDate: new Date("2026-07-28T00:00:00Z"),
+    bankDepositedAt: new Date("2026-07-30T00:00:00Z"),
+    bankReferenceMasked: "1234",
+    shopifyVerifiedAt: new Date("2026-07-30T00:30:00Z"),
+    shopifyExternalTraceIdHash: "f".repeat(64),
+    shopifyVerificationJson: {
+      source: "shopify_admin_graphql",
+      status: "PAID",
+      transactionType: "DEPOSIT",
+    },
+    evidenceReference: "secure-evidence:payout-single",
+    evidenceHash: "b".repeat(64),
+    submittedBy: "shopify_user:owner",
+    reviewedBy: "shopify_user:owner",
+    singleOperatorWaiver: true,
+    singleOperatorWaiverReason:
+      "一人運用のため、Shopify API照合と銀行着金証拠を所有者本人が再確認しました。",
+  };
+  const attestation = {
+    checkKey: SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    status: "CONFIRMED",
+    evidenceReference: evidence.evidenceReference,
+    evidenceHash: evidence.evidenceHash,
+    confirmedBy: evidence.reviewedBy,
+    confirmedAt: new Date("2026-07-30T01:00:00Z"),
+    expiresAt: new Date("2026-10-28T01:00:00Z"),
+    metadataJson: {
+      verificationSource: "shopify_payout_evidence",
+      payoutEvidenceId: evidence.id,
+      releaseId: evidence.releaseId,
+      releaseFingerprint: evidence.releaseFingerprint,
+      payoutId: evidence.payoutId,
+      payoutStatus: evidence.payoutStatus,
+      amount: evidence.amount,
+      currencyCode: evidence.currencyCode,
+      approvalMode: "SINGLE_OPERATOR_WAIVER",
+      singleOperatorWaiver: true,
+      singleOperatorScope: "DOMESTIC_PLATFORM_DIRECT_ONLY",
+    },
+  };
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [attestation];
+      },
+    },
+    shopifyPayoutEvidence: {
+      async findUnique() {
+        return evidence;
+      },
+    },
+  };
+  const directOnlyEnv = {
+    RENDER_GIT_COMMIT: "a".repeat(40),
+    SHOPIFY_APP_VERSION: "app-v1",
+    SINGLE_OPERATOR_PAYOUT_ATTESTATION_ENABLED: "true",
+  };
+
+  const accepted = await inspectOperationalReadiness({
+    prismaClient,
+    now: new Date("2026-07-30T02:00:00Z"),
+    env: directOnlyEnv,
+  });
+  assert.equal(
+    accepted.rows.find(
+      (row) => row.definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    ).ready,
+    true,
+  );
+
+  const invalidated = await inspectOperationalReadiness({
+    prismaClient,
+    now: new Date("2026-07-30T02:00:00Z"),
+    env: {
+      ...directOnlyEnv,
+      MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "true",
+    },
+  });
+  const row = invalidated.rows.find(
+    (entry) => entry.definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+  );
+  assert.equal(row.ready, false);
+  assert.equal(row.reason, "payout_evidence_invalid");
+});
+
 function buildProbe(scenarioId, expectedResult) {
   return {
     scenarioId,
