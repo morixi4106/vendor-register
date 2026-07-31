@@ -410,10 +410,14 @@ export function buildMarketplaceGovernanceChecks({ governance, env }) {
 
   const productionSellers = governance.sellers.filter(
     ({ seller }) =>
-      !seller.vendor?.vendorStore?.isTestStore && seller.status === "active",
+      !seller.vendor?.vendorStore?.isTestStore &&
+      !seller.vendor?.vendorStore?.isPlatformStore &&
+      seller.status === "active",
   );
   const productionProducts = governance.products.filter(
-    ({ product }) => !product.vendorStore?.isTestStore,
+    ({ product }) =>
+      !product.vendorStore?.isTestStore &&
+      !product.vendorStore?.isPlatformStore,
   );
   const blockedSellers = productionSellers.filter(
     ({ readiness }) => !readiness.ready,

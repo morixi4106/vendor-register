@@ -289,6 +289,77 @@ test("marketplace governance reports a missing privacy hash secret without crash
   assert.equal(privacyCheck.status, "warning");
 });
 
+test("marketplace governance does not require third-party approval for the platform seller", () => {
+  const checks = buildMarketplaceGovernanceChecks({
+    governance: {
+      available: true,
+      sellers: [
+        {
+          seller: {
+            status: "active",
+            vendor: {
+              vendorStore: {
+                isTestStore: false,
+                isPlatformStore: true,
+              },
+            },
+          },
+          readiness: { ready: false },
+        },
+      ],
+      products: [],
+      cases: [],
+      inspection: {},
+      configuration: {
+        ready: false,
+        reasons: [],
+      },
+    },
+    env: {},
+  });
+  const approvalCheck = checks.find(
+    (check) => check.id === "shopify_marketplace_payments_written_approval",
+  );
+
+  assert.equal(approvalCheck.status, "pass");
+  assert.match(approvalCheck.detail, /第三者の本番店舗はありません/);
+});
+
+test("marketplace governance still requires approval for an active third-party seller", () => {
+  const checks = buildMarketplaceGovernanceChecks({
+    governance: {
+      available: true,
+      sellers: [
+        {
+          seller: {
+            status: "active",
+            vendor: {
+              vendorStore: {
+                isTestStore: false,
+                isPlatformStore: false,
+              },
+            },
+          },
+          readiness: { ready: false },
+        },
+      ],
+      products: [],
+      cases: [],
+      inspection: {},
+      configuration: {
+        ready: false,
+        reasons: [],
+      },
+    },
+    env: {},
+  });
+  const approvalCheck = checks.find(
+    (check) => check.id === "shopify_marketplace_payments_written_approval",
+  );
+
+  assert.equal(approvalCheck.status, "fail");
+});
+
 test("getProductionReadiness evaluates scopes for the authenticated production shop", async () => {
   const missingPayoutScope = REQUIRED_SCOPE_STRING.split(",")
     .filter((scope) => scope !== "read_shopify_payments_payouts")

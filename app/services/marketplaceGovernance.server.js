@@ -1153,7 +1153,9 @@ export async function getMarketplaceGovernanceDashboard({
           orderBy: { decidedAt: "desc" },
           take: 20,
         },
-        vendorStore: { select: { isTestStore: true } },
+        vendorStore: {
+          select: { isTestStore: true, isPlatformStore: true },
+        },
       },
     }),
     prismaClient.marketplaceOperationalCase.findMany({
@@ -1186,7 +1188,11 @@ export async function getMarketplaceGovernanceDashboard({
     readiness: evaluateProductGovernanceReadiness(product),
   }));
   const productionProductReadiness = productReadinessCandidates
-    .filter((product) => !product.vendorStore?.isTestStore)
+    .filter(
+      (product) =>
+        !product.vendorStore?.isTestStore &&
+        !product.vendorStore?.isPlatformStore,
+    )
     .map((product) => evaluateProductGovernanceReadiness(product));
   const blockedProductionProductCount = productionProductReadiness.filter(
     (readiness) => !readiness.ready,
