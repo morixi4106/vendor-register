@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
+import {
+  isSingleOperatorPayoutReadinessAllowed,
+  SINGLE_OPERATOR_PAYOUT_SCOPE,
+} from "../utils/singleOperatorReadiness.js";
 
 export const PLATFORM_OPERATIONAL_CONTROL_KEY = "GLOBAL";
 export const OPERATIONAL_CONTROL_TYPE = Object.freeze({
@@ -1546,7 +1550,7 @@ export async function recordOperationalReadinessAttestation(
     metadataJson = null,
     verifiedPayoutEvidence = null,
   },
-  { prismaClient = prisma, now = new Date() } = {},
+  { prismaClient = prisma, now = new Date(), env = process.env } = {},
 ) {
   const normalizedKey = normalizeUpper(checkKey);
   const definition = ATTESTATION_DEFINITIONS.get(normalizedKey);
@@ -1597,6 +1601,7 @@ export async function recordOperationalReadinessAttestation(
       confirmedBy: normalizedActor,
       payoutEvidence: verifiedPayoutEvidence,
       now,
+      env,
     })
   ) {
     return { ok: false, reason: "verified_payout_evidence_required" };
@@ -1705,6 +1710,7 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
   confirmedBy,
   payoutEvidence,
   now = new Date(),
+  env = process.env,
 } = {}) {
   const normalizedMetadata = asMetadataObject(metadata);
   const evidence = payoutEvidence || {};
@@ -1712,6 +1718,21 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
   const independentlyApproved =
     approvalMode === "INDEPENDENT" &&
     normalizeText(evidence.submittedBy) !== normalizeText(evidence.reviewedBy);
+  const singleOperatorApproved = Boolean(
+    approvalMode === "SINGLE_OPERATOR_WAIVER" &&
+      normalizeText(normalizedMetadata.singleOperatorScope) ===
+        SINGLE_OPERATOR_PAYOUT_SCOPE &&
+      normalizedMetadata.singleOperatorWaiver === true &&
+      evidence.singleOperatorWaiver === true &&
+      normalizeText(evidence.singleOperatorWaiverReason).length >= 30 &&
+      normalizeText(evidence.submittedBy) ===
+        normalizeText(evidence.reviewedBy) &&
+      isSingleOperatorPayoutReadinessAllowed(env),
+  );
+  const approvalValid = independentlyApproved || singleOperatorApproved;
+  const expectedStatus = singleOperatorApproved
+    ? "APPROVED_WITH_WAIVER"
+    : "APPROVED";
   const bankDepositedAt = new Date(evidence.bankDepositedAt);
   const shopifyVerifiedAt = new Date(evidence.shopifyVerifiedAt);
   const verification = asMetadataObject(evidence.shopifyVerificationJson);
@@ -1743,7 +1764,7 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
       normalizeText(evidence.payoutId) &&
     normalizeUpper(normalizedMetadata.payoutStatus) === "DEPOSITED" &&
     normalizeUpper(evidence.payoutStatus) === "DEPOSITED" &&
-    normalizeUpper(evidence.status) === "APPROVED" &&
+    normalizeUpper(evidence.status) === expectedStatus &&
     Number(normalizedMetadata.amount) === Number(evidence.amount) &&
     Number(evidence.amount) > 0 &&
     normalizeUpper(normalizedMetadata.currencyCode) ===
@@ -1755,7 +1776,7 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
     Number.isFinite(new Date(evidence.shopifyPayoutDate).getTime()) &&
     payoutIsRecent &&
     shopifyVerified &&
-    independentlyApproved,
+    approvalValid,
   );
 }
 
@@ -1843,6 +1864,7 @@ export async function inspectOperationalReadiness({
         confirmedBy: attestation?.confirmedBy,
         payoutEvidence,
         now,
+        env,
       });
     const expired = Boolean(
       attestation?.expiresAt &&

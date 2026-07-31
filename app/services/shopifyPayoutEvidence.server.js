@@ -10,6 +10,10 @@ import {
   recordOperationalReadinessAttestation,
   SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "./operationalReadiness.server.js";
+import {
+  isSingleOperatorPayoutReadinessAllowed,
+  SINGLE_OPERATOR_PAYOUT_SCOPE,
+} from "../utils/singleOperatorReadiness.js";
 
 export const SHOPIFY_PAYOUT_EVIDENCE_STATUS = Object.freeze({
   SUBMITTED: "SUBMITTED",
@@ -247,13 +251,26 @@ export async function approveShopifyPayoutEvidence(
 
     const sameOperator = existing.submittedBy === actor;
     const waiverReason = clean(singleOperatorWaiverReason);
+    const waiverScopeAllowed =
+      isSingleOperatorPayoutReadinessAllowed(env);
     const waiverAllowed = Boolean(
       sameOperator &&
         allowSingleOperatorWaiver &&
         reviewerAccountOwner &&
+        waiverScopeAllowed &&
         clean(singleOperatorConfirmation) === SINGLE_OPERATOR_CONFIRMATION &&
         waiverReason.length >= 30,
     );
+    if (
+      sameOperator &&
+      allowSingleOperatorWaiver &&
+      !waiverScopeAllowed
+    ) {
+      return {
+        ok: false,
+        reason: "single_operator_payout_scope_not_allowed",
+      };
+    }
     if (sameOperator && !waiverAllowed) {
       return { ok: false, reason: "independent_payout_approval_required" };
     }
@@ -280,7 +297,10 @@ export async function approveShopifyPayoutEvidence(
           ...asObject(existing.metadataJson),
           approvalMode,
           reviewedAt: now.toISOString(),
-          readinessEligible: !waiverAllowed,
+          readinessEligible: true,
+          singleOperatorScope: waiverAllowed
+            ? SINGLE_OPERATOR_PAYOUT_SCOPE
+            : null,
         },
       },
     });
@@ -291,28 +311,23 @@ export async function approveShopifyPayoutEvidence(
     const approved = await tx.shopifyPayoutEvidence.findUnique({
       where: { id: existing.id },
     });
-    if (waiverAllowed) {
-      return {
-        ok: true,
-        evidence: approved,
-        attestation: null,
-        approvalMode,
-        readinessEligible: false,
-      };
-    }
-
     const attestation = await recordOperationalReadinessAttestation(
       {
         checkKey: SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
         evidenceReference: approved.evidenceReference,
         evidenceHash: approved.evidenceHash,
         confirmedBy: actor,
-        notes:
-          "登録者と異なる確認者が、Shopify Payoutと銀行着金証拠を照合しました。",
-        metadataJson: buildAttestationMetadata(approved, approvalMode),
+        notes: waiverAllowed
+          ? "ストア所有者が、国内運営直販限定の単独運用例外を明示し、Shopify API照合済みPayoutと銀行着金証拠を確認しました。"
+          : "登録者と異なる確認者が、Shopify Payoutと銀行着金証拠を照合しました。",
+        metadataJson: buildAttestationMetadata(approved, approvalMode, {
+          singleOperatorScope: waiverAllowed
+            ? SINGLE_OPERATOR_PAYOUT_SCOPE
+            : null,
+        }),
         verifiedPayoutEvidence: approved,
       },
-      { prismaClient: tx, now },
+      { prismaClient: tx, now, env },
     );
     if (!attestation.ok) {
       throw new Error(`payout_attestation_failed:${attestation.reason}`);
@@ -456,7 +471,11 @@ function normalizeSubmission(input, { now }) {
   };
 }
 
-function buildAttestationMetadata(evidence, approvalMode) {
+function buildAttestationMetadata(
+  evidence,
+  approvalMode,
+  { singleOperatorScope = null } = {},
+) {
   return {
     verificationSource: "shopify_payout_evidence",
     payoutEvidenceId: evidence.id,
@@ -473,6 +492,9 @@ function buildAttestationMetadata(evidence, approvalMode) {
     reviewedBy: evidence.reviewedBy,
     approvalMode,
     singleOperatorWaiver: evidence.singleOperatorWaiver,
+    singleOperatorWaiverReason:
+      evidence.singleOperatorWaiverReason || null,
+    singleOperatorScope,
     shopifyPayoutGid: evidence.shopifyPayoutGid,
     shopifyLegacyResourceId: evidence.shopifyLegacyResourceId,
     shopifyVerifiedAt: evidence.shopifyVerifiedAt?.toISOString() || null,
