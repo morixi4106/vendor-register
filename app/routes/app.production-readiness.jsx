@@ -555,6 +555,12 @@ export default function ProductionReadinessPage() {
     (a, b) =>
       statusSortOrder(a.displayStatus) - statusSortOrder(b.displayStatus),
   );
+  const checkoutValidationPrepared =
+    data.checkoutValidation?.prepared === true;
+  const checkoutValidationActive = data.checkoutValidation?.active === true;
+  const checkoutValidationUnavailable =
+    data.checkoutValidation?.ok === false &&
+    data.checkoutValidation?.reason !== "validation_not_created";
 
   return (
     <div className="readiness-page">
@@ -609,6 +615,55 @@ export default function ProductionReadinessPage() {
           color:#b91c1c;
           background:#fef2f2;
           border-color:#fecaca;
+        }
+        .readiness-next-step{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:18px;
+          border:2px solid #111827;
+          background:#fff;
+        }
+        .readiness-next-step__body{
+          display:grid;
+          gap:6px;
+          max-width:760px;
+        }
+        .readiness-next-step__eyebrow{
+          margin:0;
+          color:#4b5563;
+          font-size:13px;
+          font-weight:800;
+        }
+        .readiness-next-step__title{
+          margin:0;
+          font-size:21px;
+          line-height:1.35;
+        }
+        .readiness-next-step__text{
+          margin:0;
+          color:#374151;
+          line-height:1.65;
+        }
+        .readiness-next-step__actions{
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+          gap:10px;
+          flex-wrap:wrap;
+        }
+        .readiness-secondary-link{
+          display:inline-flex;
+          min-height:44px;
+          align-items:center;
+          padding:0 14px;
+          border:1px solid #d1d5db;
+          border-radius:999px;
+          background:#fff;
+          color:#111827;
+          font-weight:800;
+          text-decoration:none;
+          white-space:nowrap;
         }
         .readiness-grid{
           display:grid;
@@ -826,6 +881,13 @@ export default function ProductionReadinessPage() {
           .readiness-page{
             padding:16px;
           }
+          .readiness-next-step{
+            align-items:stretch;
+            flex-direction:column;
+          }
+          .readiness-next-step__actions{
+            justify-content:flex-start;
+          }
           .readiness-table{
             min-width:760px;
           }
@@ -851,6 +913,68 @@ export default function ProductionReadinessPage() {
           >
             {data.canGoLive ? "公開条件を満たしています" : "公開前の対応が必要"}
           </span>
+        </div>
+      </section>
+
+      <section
+        className="readiness-card readiness-next-step"
+        aria-labelledby="readiness-next-step-title"
+      >
+        <div className="readiness-next-step__body">
+          <p className="readiness-next-step__eyebrow">次にやること</p>
+          <h2
+            className="readiness-next-step__title"
+            id="readiness-next-step-title"
+          >
+            {checkoutValidationActive
+              ? "購入制御は有効です"
+              : checkoutValidationPrepared
+                ? "購入制御は無効状態で準備済みです"
+                : checkoutValidationUnavailable
+                  ? "購入制御の状態を確認してください"
+                  : "購入制御を無効状態で準備します"}
+          </h2>
+          <p className="readiness-next-step__text">
+            {checkoutValidationActive
+              ? "次は実ストアで4シナリオを確認し、現在のリリースに証跡を記録します。"
+              : checkoutValidationPrepared
+                ? "この時点では購入を止めません。実ストアで正常・遮断動作を確認してから有効化します。"
+                : checkoutValidationUnavailable
+                  ? "Shopifyとの接続状態または購入制御の重複を、下の詳細欄で確認してください。"
+                  : "購入を止めない無効状態の設定だけをShopifyへ作成します。作成後もストアの購入動作は変わりません。"}
+          </p>
+        </div>
+        <div className="readiness-next-step__actions">
+          {!checkoutValidationPrepared &&
+          !checkoutValidationActive &&
+          !checkoutValidationUnavailable ? (
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="stage_checkout_validation"
+              />
+              <button
+                className="readiness-button"
+                type="submit"
+                disabled={isCheckoutValidationSubmitting}
+              >
+                {isCheckoutValidationSubmitting
+                  ? "準備しています"
+                  : "購入制御を無効状態で準備"}
+              </button>
+            </Form>
+          ) : null}
+          <a
+            className="readiness-secondary-link"
+            href="#checkout-validation-control"
+          >
+            {checkoutValidationActive
+              ? "状態を確認"
+              : checkoutValidationPrepared
+                ? "確認と有効化へ"
+                : "詳しい説明を見る"}
+          </a>
         </div>
       </section>
 
@@ -1275,7 +1399,10 @@ export default function ProductionReadinessPage() {
         ) : null}
       </section>
 
-      <section className="readiness-card">
+      <section
+        className="readiness-card"
+        id="checkout-validation-control"
+      >
         <div className="readiness-tool">
           <div className="readiness-tool__body">
             <h2 className="readiness-tool__title">
