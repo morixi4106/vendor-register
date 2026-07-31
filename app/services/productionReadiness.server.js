@@ -968,7 +968,9 @@ export async function inspectWithdrawalOperations({
   }
 }
 
-async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
+export async function inspectDirectReturnReadiness({
+  prismaClient = prisma,
+} = {}) {
   if (
     !prismaClient?.withdrawalWorkflowPolicy?.findFirst ||
     !prismaClient?.vendorStore?.findMany
@@ -989,6 +991,7 @@ async function inspectDirectReturnReadiness({ prismaClient = prisma } = {}) {
       }),
       prismaClient.vendorStore.findMany({
         where: {
+          isTestStore: false,
           seller: { euSellerStatus: { in: [...EU_SELLER_ALLOWED_STATUSES] } },
           products: {
             some: {
@@ -2501,7 +2504,7 @@ function buildShopifyProductSyncChecks(syncState) {
   ];
 }
 
-async function inspectProductShippingProfiles({
+export async function inspectProductShippingProfiles({
   prismaClient = prisma,
   now = new Date(),
 } = {}) {
@@ -2525,7 +2528,10 @@ async function inspectProductShippingProfiles({
 
   try {
     const products = await prismaClient.product.findMany({
-      where: { approvalStatus: "approved" },
+      where: {
+        approvalStatus: "approved",
+        vendorStore: { is: { isTestStore: false } },
+      },
       select: {
         id: true,
         name: true,

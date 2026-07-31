@@ -6,6 +6,8 @@ import {
   getProductionReadiness as getProductionReadinessImpl,
   includeCheckoutGateInProductionReadiness,
   includeCheckoutValidationInProductionReadiness,
+  inspectDirectReturnReadiness,
+  inspectProductShippingProfiles,
   inspectStripeEnvironment,
   summarizeProductionReadinessChecks,
 } from "../../app/services/productionReadiness.server.js";
@@ -447,6 +449,50 @@ test("getProductionReadiness accepts a valid Air Packet profile", async () => {
   );
 
   assert.equal(check.status, "pass");
+});
+
+test("product shipping readiness excludes test-store products at the query boundary", async () => {
+  let receivedWhere = null;
+  const result = await inspectProductShippingProfiles({
+    prismaClient: {
+      product: {
+        findMany: async ({ where }) => {
+          receivedWhere = where;
+          return [];
+        },
+      },
+      internationalShippingCountryAvailability: {
+        findMany: async () => [],
+      },
+    },
+  });
+
+  assert.equal(result.available, true);
+  assert.deepEqual(receivedWhere, {
+    approvalStatus: "approved",
+    vendorStore: { is: { isTestStore: false } },
+  });
+});
+
+test("direct-return readiness excludes test stores at the query boundary", async () => {
+  let receivedWhere = null;
+  const result = await inspectDirectReturnReadiness({
+    prismaClient: {
+      withdrawalWorkflowPolicy: {
+        findFirst: async () => null,
+      },
+      vendorStore: {
+        findMany: async ({ where }) => {
+          receivedWhere = where;
+          return [];
+        },
+      },
+    },
+  });
+
+  assert.equal(result.available, true);
+  assert.equal(result.relevantStoreCount, 0);
+  assert.equal(receivedWhere.isTestStore, false);
 });
 
 function createActiveSeller({
