@@ -11,6 +11,7 @@ export const TOOLCHAIN_TARGETS = [
 ];
 
 export const REQUIRED_SECURITY_ARTIFACTS = [
+  "server.mjs",
   "build/server/index.js",
   "extensions/marketplace-purchase-control/dist/function.js",
   "extensions/marketplace-purchase-control/dist/function.wasm",

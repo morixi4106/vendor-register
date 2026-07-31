@@ -387,7 +387,7 @@ export function summarizeProductionReadinessChecks(checks) {
   };
 }
 
-function buildMarketplaceGovernanceChecks({ governance, env }) {
+export function buildMarketplaceGovernanceChecks({ governance, env }) {
   const gateEnabled = isMarketplaceGovernanceGateEnabled(env);
   const settlementActionsEnabled = isMarketplaceSettlementActionsEnabled(env);
   const domesticSettlementEnabled = isDomesticSellerSettlementEnabled(env);
@@ -453,7 +453,7 @@ function buildMarketplaceGovernanceChecks({ governance, env }) {
     env.MARKETPLACE_TAX_INVOICE_POLICY_APPROVAL_REFERENCE,
   );
   const privacyHashSecretConfigured =
-    normalizeText(env.PRIVACY_HASH_SECRET).length >= 32;
+    (normalizeText(env.PRIVACY_HASH_SECRET) || "").length >= 32;
   const productionProbeSigningSecretConfigured = Boolean(
     getProductionProbeSigningSecret(env),
   );

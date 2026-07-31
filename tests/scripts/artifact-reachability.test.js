@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { verifyBuildArtifacts } from "../../scripts/security/artifact-reachability.mjs";
+import {
+  REQUIRED_SECURITY_ARTIFACTS,
+  verifyBuildArtifacts,
+} from "../../scripts/security/artifact-reachability.mjs";
 
 function wasmImportFixture(moduleName = "minimatch", importName = "f") {
   const moduleBytes = Buffer.from(moduleName, "utf8");
@@ -127,6 +130,10 @@ function createFixture() {
 function removeFixture(fixture) {
   fs.rmSync(fixture.rootDirectory, { force: true, recursive: true });
 }
+
+test("audits the custom production server entry", () => {
+  assert.ok(REQUIRED_SECURITY_ARTIFACTS.includes("server.mjs"));
+});
 
 test("accepts complete artifacts without toolchain package references", () => {
   const fixture = createFixture();

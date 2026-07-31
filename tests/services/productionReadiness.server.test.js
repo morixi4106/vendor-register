@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildMarketplaceGovernanceChecks,
   getProductionReadiness as getProductionReadinessImpl,
   includeCheckoutGateInProductionReadiness,
   includeCheckoutValidationInProductionReadiness,
@@ -263,6 +264,28 @@ function buildPayoutEvidenceMetadata() {
     approvalMode: "INDEPENDENT",
   };
 }
+
+test("marketplace governance reports a missing privacy hash secret without crashing", () => {
+  const checks = buildMarketplaceGovernanceChecks({
+    governance: {
+      available: true,
+      sellers: [],
+      products: [],
+      cases: [],
+      inspection: {},
+      configuration: {
+        ready: false,
+        reasons: [],
+      },
+    },
+    env: {},
+  });
+  const privacyCheck = checks.find(
+    (check) => check.id === "privacy_identifier_hash_secret",
+  );
+
+  assert.equal(privacyCheck.status, "warning");
+});
 
 test("getProductionReadiness evaluates scopes for the authenticated production shop", async () => {
   const missingPayoutScope = REQUIRED_SCOPE_STRING.split(",")
