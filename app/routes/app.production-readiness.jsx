@@ -359,53 +359,21 @@ export const action = async ({ request }) => {
         );
       }
 
-      const { inspectOperationalReadiness } =
-        await import("../services/operationalReadiness.server.js");
-      const { CHECKOUT_VALIDATION_LIVE_PROBE_KEY } =
-        await import("../services/operationalReadiness.server.js");
       const {
-        buildProductionReleaseExpectation,
-        inspectProductionReleaseEvidence,
-      } = await import("../services/productionRelease.server.js");
+        inspectCheckoutValidationActivationEvidence,
+        inspectOperationalReadiness,
+      } = await import("../services/operationalReadiness.server.js");
       const operationalReadiness = await inspectOperationalReadiness();
-      const replayEvidence = operationalReadiness.rows?.find(
-        (row) => row.definition?.key === "CHECKOUT_VALIDATION_REPLAY_COMPLETED",
-      );
-      if (!replayEvidence?.ready) {
+      const activationEvidence =
+        inspectCheckoutValidationActivationEvidence(operationalReadiness);
+      if (!activationEvidence.ok) {
         return json(
           {
             checkoutValidation: {
               ok: false,
               active: false,
               staged: true,
-              reason: "checkout_validation_live_test_evidence_required",
-              backfill,
-              shopControl,
-            },
-          },
-          { status: 400 },
-        );
-      }
-      const liveProbeEvidence = operationalReadiness.rows?.find(
-        (row) => row.definition?.key === CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
-      );
-      const expectedRelease = buildProductionReleaseExpectation({
-        checkoutValidation: inspection,
-      });
-      const liveProbeMatchesCurrentRelease =
-        liveProbeEvidence?.ready === true &&
-        inspectProductionReleaseEvidence({
-          operationalReadiness,
-          expected: expectedRelease,
-        }).ready;
-      if (!liveProbeMatchesCurrentRelease) {
-        return json(
-          {
-            checkoutValidation: {
-              ok: false,
-              active: false,
-              staged: true,
-              reason: "checkout_validation_release_manifest_mismatch",
+              reason: activationEvidence.reason,
               backfill,
               shopControl,
             },
@@ -561,6 +529,13 @@ export default function ProductionReadinessPage() {
   const checkoutValidationUnavailable =
     data.checkoutValidation?.ok === false &&
     data.checkoutValidation?.reason !== "validation_not_created";
+  const checkoutReplayReady = Boolean(
+    data.operationalReadiness?.rows?.some(
+      (row) =>
+        row.definition?.key === "CHECKOUT_VALIDATION_REPLAY_COMPLETED" &&
+        row.ready === true,
+    ),
+  );
 
   return (
     <div className="readiness-page">
@@ -713,6 +688,9 @@ export default function ProductionReadinessPage() {
           color:#6b7280;
           font-size:13px;
           white-space:nowrap;
+        }
+        #checkout-validation-replay-evidence{
+          scroll-margin-top:24px;
         }
         .readiness-status{
           display:inline-flex;
@@ -929,7 +907,9 @@ export default function ProductionReadinessPage() {
             {checkoutValidationActive
               ? "購入制御は有効です"
               : checkoutValidationPrepared
-                ? "購入制御は無効状態で準備済みです"
+                ? checkoutReplayReady
+                  ? "購入制御を有効化できます"
+                  : "次はFunction再生確認を記録します"
                 : checkoutValidationUnavailable
                   ? "購入制御の状態を確認してください"
                   : "購入制御を無効状態で準備します"}
@@ -938,7 +918,9 @@ export default function ProductionReadinessPage() {
             {checkoutValidationActive
               ? "次は実ストアで4シナリオを確認し、現在のリリースに証跡を記録します。"
               : checkoutValidationPrepared
-                ? "この時点では購入を止めません。実ストアで正常・遮断動作を確認してから有効化します。"
+                ? checkoutReplayReady
+                  ? "再生確認は記録済みです。下の購入制御欄で内容を確認してから有効化します。"
+                  : "まだ購入は止まりません。開発ストアでFunctionの許可・遮断を再生確認し、その証跡を記録します。"
                 : checkoutValidationUnavailable
                   ? "Shopifyとの接続状態または購入制御の重複を、下の詳細欄で確認してください。"
                   : "購入を止めない無効状態の設定だけをShopifyへ作成します。作成後もストアの購入動作は変わりません。"}
@@ -967,12 +949,20 @@ export default function ProductionReadinessPage() {
           ) : null}
           <a
             className="readiness-secondary-link"
-            href="#checkout-validation-control"
+            href={
+              checkoutValidationPrepared &&
+              !checkoutValidationActive &&
+              !checkoutReplayReady
+                ? "#checkout-validation-replay-evidence"
+                : "#checkout-validation-control"
+            }
           >
             {checkoutValidationActive
               ? "状態を確認"
               : checkoutValidationPrepared
-                ? "確認と有効化へ"
+                ? checkoutReplayReady
+                  ? "確認と有効化へ"
+                  : "再生証跡を記録"
                 : "詳しい説明を見る"}
           </a>
         </div>
@@ -1132,10 +1122,25 @@ export default function ProductionReadinessPage() {
             </thead>
             <tbody>
               {(data.operationalReadiness?.rows || []).map((row) => (
-                <tr key={row.definition.key}>
+                <tr
+                  key={row.definition.key}
+                  id={
+                    row.definition.key ===
+                    "CHECKOUT_VALIDATION_REPLAY_COMPLETED"
+                      ? "checkout-validation-replay-evidence"
+                      : undefined
+                  }
+                >
                   <td>
                     <strong>{row.definition.label}</strong>
                     <div>有効期間 {row.definition.validityDays}日</div>
+                    {row.definition.key ===
+                    "CHECKOUT_VALIDATION_REPLAY_COMPLETED" ? (
+                      <div>
+                        開発ストアで許可ケースと遮断ケースを実行し、Shopify
+                        CLIのFunctionログまたは再生結果を証跡として登録します。
+                      </div>
+                    ) : null}
                   </td>
                   <td>
                     {row.ready ? "確認済み" : "要確認"}
@@ -1440,15 +1445,29 @@ export default function ProductionReadinessPage() {
               <button
                 className="readiness-button"
                 type="submit"
-                disabled={isCheckoutValidationSubmitting}
+                disabled={
+                  isCheckoutValidationSubmitting || !checkoutReplayReady
+                }
+                title={
+                  checkoutReplayReady
+                    ? "購入制御を有効化します"
+                    : "先にFunction再生確認の証跡を記録してください"
+                }
               >
                 {isCheckoutValidationSubmitting
                   ? "購入制御を確認中"
-                  : "証跡確認後に有効化"}
+                  : checkoutReplayReady
+                    ? "再生証跡を確認して有効化"
+                    : "再生証跡の記録後に有効化"}
               </button>
             </Form>
           </div>
         </div>
+        {!data.checkoutValidation?.active && !checkoutReplayReady ? (
+          <p className="readiness-tool__text">
+            有効化前に「購入制御Functionの開発ストア再生・遮断確認」を記録してください。本番4シナリオは有効化後に実施します。
+          </p>
+        ) : null}
         {actionData?.checkoutValidation ? (
           <div
             className={`readiness-result ${
@@ -1463,7 +1482,7 @@ export default function ProductionReadinessPage() {
               ? "Shopifyサーバー側の購入制御を有効化しました。"
               : actionData.checkoutValidation.ok &&
                   actionData.checkoutValidation.staged
-                ? "購入制御を無効状態で準備しました。実ストアのFunction再生と正常・遮断確認を記録してから有効化してください。"
+                ? "購入制御を無効状態で準備しました。開発ストアのFunction再生と正常・遮断確認を記録してから有効化してください。"
                 : `購入制御を有効化できませんでした: ${
                     actionData.checkoutValidation.reason || "unknown"
                   }`}

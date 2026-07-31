@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyPlatformCheckoutEmergencyHold,
   buildOperationalReadinessChecks,
+  inspectCheckoutValidationActivationEvidence,
   inspectOperationalReadiness,
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   recordOperationalReadinessAttestation,
@@ -12,6 +13,35 @@ import {
   setPlatformCheckoutHold,
   SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
+
+test("checkout validation activation requires only current replay evidence", () => {
+  const missing = inspectCheckoutValidationActivationEvidence({ rows: [] });
+  assert.deepEqual(missing, {
+    ok: false,
+    reason: "checkout_validation_replay_evidence_required",
+  });
+
+  const attestation = { id: "att_replay" };
+  const ready = inspectCheckoutValidationActivationEvidence({
+    rows: [
+      {
+        definition: { key: "CHECKOUT_VALIDATION_REPLAY_COMPLETED" },
+        ready: true,
+        attestation,
+      },
+      {
+        definition: { key: "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED" },
+        ready: false,
+      },
+    ],
+  });
+
+  assert.deepEqual(ready, {
+    ok: true,
+    reason: null,
+    evidence: attestation,
+  });
+});
 
 test("operational attestation requires evidence and receives a finite validity window", async () => {
   let stored = null;

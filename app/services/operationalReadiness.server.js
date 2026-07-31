@@ -37,6 +37,8 @@ export const OPERATIONAL_ATTESTATION_STATUS = Object.freeze({
   FAILED: "FAILED",
   PENDING: "PENDING",
 });
+export const CHECKOUT_VALIDATION_REPLAY_KEY =
+  "CHECKOUT_VALIDATION_REPLAY_COMPLETED";
 export const CHECKOUT_VALIDATION_LIVE_PROBE_KEY =
   "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED";
 export const LIVE_ORDER_REFUND_E2E_CHECK_KEY =
@@ -56,8 +58,8 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 90,
   },
   {
-    key: "CHECKOUT_VALIDATION_REPLAY_COMPLETED",
-    label: "購入制御Functionの実ストア再生・遮断確認",
+    key: CHECKOUT_VALIDATION_REPLAY_KEY,
+    label: "購入制御Functionの開発ストア再生・遮断確認",
     validityDays: 30,
   },
   {
@@ -117,6 +119,27 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     automated: true,
   },
 ]);
+
+export function inspectCheckoutValidationActivationEvidence(
+  operationalReadiness,
+) {
+  const replayEvidence = operationalReadiness?.rows?.find(
+    (row) => row.definition?.key === CHECKOUT_VALIDATION_REPLAY_KEY,
+  );
+
+  if (replayEvidence?.ready !== true) {
+    return {
+      ok: false,
+      reason: "checkout_validation_replay_evidence_required",
+    };
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    evidence: replayEvidence.attestation || null,
+  };
+}
 
 const ATTESTATION_DEFINITIONS = new Map(
   OPERATIONAL_READINESS_DEFINITIONS.map((definition) => [
