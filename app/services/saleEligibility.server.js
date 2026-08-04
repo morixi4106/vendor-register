@@ -10,7 +10,7 @@ import {
   getShopifyMarketplacePaymentsApproval,
   isMarketplaceGovernanceGateEnabled,
 } from "./marketplaceGovernance.server.js";
-import { getPlatformOperationalControl } from "./operationalReadiness.server.js";
+import { getPlatformOperationalControl } from "./operationalControls.server.js";
 import { OPERATIONAL_TIMING_DEFAULTS } from "./operationalTimingPolicy.js";
 
 export const SALE_ELIGIBILITY_POLICY_VERSION = "sale-eligibility-2026-07-v1";
@@ -211,8 +211,7 @@ function buildInputHash({
           ? {
               allowedCountries: countryPolicy.allowedCountries,
               blockedCountries: countryPolicy.blockedCountries,
-              requiresWarningCountries:
-                countryPolicy.requiresWarningCountries,
+              requiresWarningCountries: countryPolicy.requiresWarningCountries,
               euSaleStatus: countryPolicy.euSaleStatus,
               warningVersion: countryPolicy.warningVersion,
             }
@@ -841,8 +840,7 @@ export async function inspectPaidOrderSaleEligibility(
             shopDomain: normalizedShopDomain,
             productId: { in: productIds },
             destinationCountry: "",
-            salesChannel:
-              SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+            salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
             evaluatedAt: { lte: occurredAt },
             expiresAt: { gt: occurredAt },
           },
@@ -856,18 +854,14 @@ export async function inspectPaidOrderSaleEligibility(
             evaluatedAt: true,
             expiresAt: true,
           },
-          orderBy: [
-            { evaluatedAt: "desc" },
-            { projectionRevision: "desc" },
-          ],
+          orderBy: [{ evaluatedAt: "desc" }, { projectionRevision: "desc" }],
         })
       : prismaClient.saleEligibilityProjection.findMany({
           where: {
             shopDomain: normalizedShopDomain,
             productId: { in: productIds },
             destinationCountry: "",
-            salesChannel:
-              SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+            salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
           },
           select: {
             id: true,
@@ -967,7 +961,9 @@ export async function inspectPaidOrderSaleEligibility(
     evidence.push({
       productId,
       projectionRecordId: projection?.id || null,
-      projectionSource: revisionHistoryAvailable ? "revision" : "legacy_current",
+      projectionSource: revisionHistoryAvailable
+        ? "revision"
+        : "legacy_current",
       status: projectionStatus,
       policyVersion: projection?.policyVersion || null,
       inputHash: projection?.inputHash || null,

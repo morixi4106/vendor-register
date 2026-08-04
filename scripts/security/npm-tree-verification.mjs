@@ -14,7 +14,7 @@ export const DEFAULT_NPM_TREE_LIMITS = Object.freeze({
 });
 
 const TARGETS = Object.freeze({
-  "brace-expansion": "2.1.2",
+  "brace-expansion": "2.1.4",
   minimatch: "9.0.9",
 });
 
@@ -212,11 +212,19 @@ export function verifyNpmTreeEvidence({
   if (sbomTargets.length > 0) {
     errors.push("toolchain_target_present_in_production_sbom");
   }
+  const lockfileRootName = String(
+    lockfile?.name || lockfile?.packages?.[""]?.name || "",
+  );
+  const lockfileRootVersion = String(
+    lockfile?.version || lockfile?.packages?.[""]?.version || "",
+  );
+  const expectedRootBomRef = `${lockfileRootName}@${lockfileRootVersion}`;
   if (
-    String(sbom?.metadata?.component?.name || "") !==
-      String(lockfile?.name || lockfile?.packages?.[""]?.name || "") ||
-    String(sbom?.metadata?.component?.version || "") !==
-      String(lockfile?.version || lockfile?.packages?.[""]?.version || "")
+    !lockfileRootName ||
+    !lockfileRootVersion ||
+    String(sbom?.metadata?.component?.["bom-ref"] || "") !==
+      expectedRootBomRef ||
+    String(sbom?.metadata?.component?.version || "") !== lockfileRootVersion
   ) {
     errors.push("production_sbom_root_mismatch");
   }

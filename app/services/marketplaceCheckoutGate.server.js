@@ -4,7 +4,7 @@ import {
   shopifyGraphQLWithOfflineSession,
 } from "../utils/shopifyAdmin.server.js";
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
-import { isPlatformCheckoutHoldActive } from "./operationalReadiness.server.js";
+import { isPlatformCheckoutHoldActive } from "./operationalControls.server.js";
 import {
   SALE_ELIGIBILITY_CHANNEL,
   SALE_ELIGIBILITY_POLICY_VERSION,
@@ -19,18 +19,14 @@ export const MARKETPLACE_CHECKOUT_POLICY = Object.freeze({
   PLATFORM_DIRECT: "PLATFORM_DIRECT",
 });
 
-export const MARKETPLACE_CHECKOUT_POLICY_KEY =
-  "marketplace_checkout_policy";
-export const SALE_ELIGIBILITY_PROJECTION_KEY =
-  "sale_eligibility_projection";
-export const OPERATIONAL_PURCHASE_CONTROL_KEY =
-  "operational_purchase_control";
+export const MARKETPLACE_CHECKOUT_POLICY_KEY = "marketplace_checkout_policy";
+export const SALE_ELIGIBILITY_PROJECTION_KEY = "sale_eligibility_projection";
+export const OPERATIONAL_PURCHASE_CONTROL_KEY = "operational_purchase_control";
 export const OPERATIONAL_PURCHASE_CONTROL = Object.freeze({
   ALLOWED: "ALLOWED",
   BLOCKED: "BLOCKED",
 });
-export const WATCHDOG_PURCHASE_STOP_NAMESPACE =
-  "vendor_register_watchdog";
+export const WATCHDOG_PURCHASE_STOP_NAMESPACE = "vendor_register_watchdog";
 export const WATCHDOG_PURCHASE_STOP_KEY = "purchase_stop";
 export const WATCHDOG_PURCHASE_STOP = Object.freeze({
   BLOCKED: "BLOCKED",
@@ -351,9 +347,7 @@ export async function getShopifyPublicationDiagnostics(
 
   return (data?.publications?.nodes || []).map((publication) => ({
     id: normalizeText(publication?.id),
-    supportsFuturePublishing: Boolean(
-      publication?.supportsFuturePublishing,
-    ),
+    supportsFuturePublishing: Boolean(publication?.supportsFuturePublishing),
     channels: (publication?.channels?.nodes || []).map((channel) => ({
       id: normalizeText(channel?.id),
       name: normalizeText(channel?.name),
@@ -427,9 +421,7 @@ function getPublicationIds(state) {
     state?.resourcePublicationsV2,
   ].filter(Boolean);
 
-  if (
-    connections.some((connection) => connection?.pageInfo?.hasNextPage)
-  ) {
+  if (connections.some((connection) => connection?.pageInfo?.hasNextPage)) {
     throw new Error(
       "Publication boundary is incomplete because more than 100 publications are attached",
     );
@@ -575,8 +567,8 @@ export function resolveMarketplaceCheckoutPolicy(product) {
     .toUpperCase();
   const isPlatformDirect = Boolean(
     product?.vendorStore?.isTestStore !== true &&
-      (product?.vendorStore?.isPlatformStore ||
-        (!product?.vendorStore && legalSellerType === "PLATFORM")),
+    (product?.vendorStore?.isPlatformStore ||
+      (!product?.vendorStore && legalSellerType === "PLATFORM")),
   );
 
   return isPlatformDirect
@@ -585,10 +577,7 @@ export function resolveMarketplaceCheckoutPolicy(product) {
 }
 
 export async function syncShopOperationalPurchaseControl(
-  {
-    shopDomain: rawShopDomain,
-    state = OPERATIONAL_PURCHASE_CONTROL.ALLOWED,
-  },
+  { shopDomain: rawShopDomain, state = OPERATIONAL_PURCHASE_CONTROL.ALLOWED },
   { graphQL = shopifyGraphQLWithOfflineSession } = {},
 ) {
   const shopDomain = normalizeShopDomain(rawShopDomain);
@@ -693,8 +682,7 @@ export async function clearSharedWatchdogPurchaseVeto(
             key: WATCHDOG_PURCHASE_STOP_KEY,
             type: "single_line_text_field",
             value: WATCHDOG_PURCHASE_STOP.CLEARED,
-            compareDigest:
-              shop.watchdogPurchaseStop?.compareDigest ?? null,
+            compareDigest: shop.watchdogPurchaseStop?.compareDigest ?? null,
           },
         ],
       },
@@ -961,9 +949,7 @@ function projectionMatchesPersistedState(projection, persisted) {
 
 export async function enforceUnresolvedShopifyProductPublicationBoundary(
   { shopDomain: rawShopDomain, shopifyProductId: rawProductId },
-  {
-    graphQL = shopifyGraphQLWithOfflineSession,
-  } = {},
+  { graphQL = shopifyGraphQLWithOfflineSession } = {},
 ) {
   const shopDomain = normalizeShopDomain(rawShopDomain);
   const shopifyProductId = normalizeProductId(rawProductId);
@@ -971,12 +957,15 @@ export async function enforceUnresolvedShopifyProductPublicationBoundary(
     return { ok: false, reason: "shopify_product_not_linked" };
   }
 
-  return enforceShopifyResourcePublicationBoundary({
-    shopDomain,
-    resourceId: shopifyProductId,
-  }, {
-    graphQL,
-  });
+  return enforceShopifyResourcePublicationBoundary(
+    {
+      shopDomain,
+      resourceId: shopifyProductId,
+    },
+    {
+      graphQL,
+    },
+  );
 }
 
 export async function syncMarketplaceCheckoutPolicyForProduct(
@@ -1071,7 +1060,7 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
     projection: saleEligibility,
     shopTimeZone: state.shopTimeZone,
     compareDigest: projectionFieldAvailable
-      ? state.saleEligibilityProjection?.compareDigest ?? null
+      ? (state.saleEligibilityProjection?.compareDigest ?? null)
       : undefined,
   });
   const currentProjection = normalizeText(
@@ -1123,7 +1112,7 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
           product,
           policy: expectedPolicy,
           compareDigest: policyFieldAvailable
-            ? state.metafield?.compareDigest ?? null
+            ? (state.metafield?.compareDigest ?? null)
             : undefined,
         }),
       );
@@ -1149,11 +1138,10 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
       ),
     );
     if (compareAndSetConflict) {
-      const conflictBoundary =
-        await enforceShopifyResourcePublicationBoundary(
-          { shopDomain, resourceId: shopifyProductId },
-          { graphQL },
-        );
+      const conflictBoundary = await enforceShopifyResourcePublicationBoundary(
+        { shopDomain, resourceId: shopifyProductId },
+        { graphQL },
+      );
       return {
         ok: false,
         changed: Boolean(conflictBoundary.changed),
@@ -1241,10 +1229,7 @@ export async function syncMarketplaceCheckoutPolicyForProduct(
 
 export async function backfillMarketplaceCheckoutPolicies(
   shopDomain,
-  {
-    prismaClient = prisma,
-    graphQL = shopifyGraphQLWithOfflineSession,
-  } = {},
+  { prismaClient = prisma, graphQL = shopifyGraphQLWithOfflineSession } = {},
 ) {
   const normalizedShopDomain = normalizeShopDomain(shopDomain);
   const [products, unresolvedIssues] = await Promise.all([
@@ -1312,9 +1297,11 @@ export async function backfillMarketplaceCheckoutPolicies(
     mode: MARKETPLACE_CHECKOUT_BOUNDARY_MODE,
     shopDomain: normalizedShopDomain,
     productCount: products.length,
-    changedCount: results.filter((result) => result.ok && result.changed).length,
+    changedCount: results.filter((result) => result.ok && result.changed)
+      .length,
     unresolvedIssueCount: unresolvedIssues.length,
-    unresolvedSecuredCount: unresolvedResults.filter((result) => result.ok).length,
+    unresolvedSecuredCount: unresolvedResults.filter((result) => result.ok)
+      .length,
     failedCount: failed.length,
     failed,
   };
@@ -1364,12 +1351,14 @@ export async function getMarketplaceCheckoutGateStatus(
     )
     .map((product) => normalizeProductId(product.shopifyProductId));
   const targetIds = Array.from(
-    new Set([
-      ...governedIds,
-      ...unresolvedIssues.map((issue) =>
-        normalizeProductId(issue.shopifyProductId),
-      ),
-    ].filter(Boolean)),
+    new Set(
+      [
+        ...governedIds,
+        ...unresolvedIssues.map((issue) =>
+          normalizeProductId(issue.shopifyProductId),
+        ),
+      ].filter(Boolean),
+    ),
   );
   const exposedProductIds = [];
   const failedProductIds = [];

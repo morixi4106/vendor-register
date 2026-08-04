@@ -27,7 +27,7 @@ function fixture() {
       "node_modules/brace-expansion": {
         dependencies: {},
         name: "brace-expansion",
-        version: "2.1.2",
+        version: "2.1.4",
       },
       "node_modules/minimatch": {
         dependencies: {
@@ -46,7 +46,7 @@ function fixture() {
       location: "node_modules/brace-expansion",
       name: "brace-expansion",
       to: [],
-      version: "2.1.2",
+      version: "2.1.4",
     },
   ];
   const queryMinimatch = [
@@ -69,7 +69,7 @@ function fixture() {
             minimatch: {
               dependencies: {
                 "brace-expansion": {
-                  version: "2.1.2",
+                  version: "2.1.4",
                 },
               },
               version: "9.0.9",
@@ -84,7 +84,8 @@ function fixture() {
       components: [{ name: "app", version: "1.0.0" }],
       metadata: {
         component: {
-          name: "fixture",
+          "bom-ref": "fixture@0.0.0",
+          name: "checkout-directory-name",
           version: "0.0.0",
         },
       },
@@ -109,6 +110,7 @@ test("reports all independent evidence mismatches together", () => {
     version: "9.0.9",
   });
   input.sbom.metadata.component.version = "wrong";
+  input.sbom.metadata.component["bom-ref"] = "wrong@0.0.0";
 
   const result = verifyNpmTreeEvidence(input);
   assert.equal(result.ok, false);
@@ -150,7 +152,7 @@ test("reports lockfile, query, relationship, runtime, and scoped SBOM mismatches
     },
     {
       name: "brace-expansion",
-      version: "2.1.2",
+      version: "2.1.4",
     },
   ];
 

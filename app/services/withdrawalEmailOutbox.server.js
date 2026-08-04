@@ -4,7 +4,7 @@ import prisma from "../db.server.js";
 import {
   EMAIL_MESSAGE_CLASS,
   getEmailClassHoldStatus,
-} from "./operationalReadiness.server.js";
+} from "./operationalControls.server.js";
 import { hashWithdrawalValue } from "./withdrawalCompliance.server.js";
 
 const LOCK_MINUTES = 5;
@@ -66,14 +66,14 @@ async function revalidateHeldEmail({
     return { valid: false, retain: true, reason: "email_hold_still_active" };
   }
 
-  const recipient = String(item.recipient || "").trim().toLowerCase();
+  const recipient = String(item.recipient || "")
+    .trim()
+    .toLowerCase();
   const requestStatus = String(
     item.withdrawalRequest?.status || "",
   ).toUpperCase();
   const messageType = String(item.messageType || "").toLowerCase();
-  const currentRecipient = String(
-    item.withdrawalRequest?.customerEmail || "",
-  )
+  const currentRecipient = String(item.withdrawalRequest?.customerEmail || "")
     .trim()
     .toLowerCase();
   if (
@@ -273,7 +273,8 @@ export async function claimNextOutboxItem(
           status: "HELD",
           messageClass,
           heldByControlId: hold.control?.id || null,
-          holdReason: hold.reason || `${messageClass.toLowerCase()}_hold_active`,
+          holdReason:
+            hold.reason || `${messageClass.toLowerCase()}_hold_active`,
           heldAt: now,
           lockedUntil: null,
         },
@@ -328,7 +329,11 @@ export async function releaseHeldWithdrawalEmails({
   const normalizedClasses = Array.from(
     new Set(
       messageClasses
-        .map((value) => String(value || "").trim().toUpperCase())
+        .map((value) =>
+          String(value || "")
+            .trim()
+            .toUpperCase(),
+        )
         .filter(Boolean),
     ),
   );
@@ -368,7 +373,9 @@ export async function releaseHeldWithdrawalEmails({
     const priority =
       getHeldEmailReleasePriority(left) - getHeldEmailReleasePriority(right);
     if (priority !== 0) return priority;
-    return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    return (
+      new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+    );
   });
   const selectedCandidates = candidates.slice(0, boundedLimit);
   const results = [];
@@ -433,8 +440,7 @@ export async function releaseHeldWithdrawalEmails({
                 request?.marketplaceOrder?.fulfillmentStatus || null,
             },
             templateVersion: item.templateVersion || null,
-            operationalControlId:
-              controlId || item.heldByControlId || null,
+            operationalControlId: controlId || item.heldByControlId || null,
             approvedBy: normalizedApprover,
           },
           releaseApprovedById: normalizedApprover,
@@ -496,13 +502,7 @@ export async function holdWithdrawalEmailSnapshot({
   holdStatus = null,
   now = new Date(),
 } = {}) {
-  if (
-    !withdrawalRequest?.id ||
-    !recipient ||
-    !subject ||
-    !text ||
-    !html
-  ) {
+  if (!withdrawalRequest?.id || !recipient || !subject || !text || !html) {
     return { ok: false, reason: "held_email_snapshot_incomplete" };
   }
   const messageClass = EMAIL_MESSAGE_CLASS.LEGAL_TRANSACTIONAL;
@@ -594,7 +594,9 @@ async function deliverOutboxItem({ prismaClient, item }) {
       { idempotencyKey: item.idempotencyKey },
     );
     if (response?.error) {
-      throw new Error(response.error.message || response.error.name || "resend_error");
+      throw new Error(
+        response.error.message || response.error.name || "resend_error",
+      );
     }
 
     const providerMessageId = response?.data?.id || response?.id || null;
@@ -631,7 +633,10 @@ async function deliverOutboxItem({ prismaClient, item }) {
         await tx.withdrawalRequest.update({
           where: { id: item.withdrawalRequestId },
           data: {
-            status: current?.status === "REQUESTED" ? "ACKNOWLEDGED" : current?.status,
+            status:
+              current?.status === "REQUESTED"
+                ? "ACKNOWLEDGED"
+                : current?.status,
             confirmationSentAt: now,
             confirmationEmailMessageId: providerMessageId,
             durableMediumEmailJson: {
@@ -661,21 +666,32 @@ async function deliverOutboxItem({ prismaClient, item }) {
         withdrawalRequestId: item.withdrawalRequestId,
         type: "EMAIL_SENT",
         actorType: "SYSTEM",
-        payloadJson: { outboxId: item.id, messageType: item.messageType, providerMessageId },
+        payloadJson: {
+          outboxId: item.id,
+          messageType: item.messageType,
+          providerMessageId,
+        },
         idempotencyKey: `email-sent:${item.id}`,
       });
     });
     return { ok: true, id: item.id, providerMessageId };
   } catch (error) {
-    const message = String(error?.message || error || "email_delivery_failed").slice(0, 500);
+    const message = String(
+      error?.message || error || "email_delivery_failed",
+    ).slice(0, 500);
     const deadLetter = Number(item.attemptCount || 0) >= MAX_ATTEMPTS;
-    const retryDelayMinutes = Math.min(24 * 60, 2 ** Math.max(1, item.attemptCount || 1));
+    const retryDelayMinutes = Math.min(
+      24 * 60,
+      2 ** Math.max(1, item.attemptCount || 1),
+    );
     await prismaClient.$transaction(async (tx) => {
       await tx.withdrawalEmailOutbox.update({
         where: { id: item.id },
         data: {
           status: deadLetter ? "DEAD_LETTER" : "FAILED",
-          nextAttemptAt: new Date(now.getTime() + retryDelayMinutes * 60 * 1000),
+          nextAttemptAt: new Date(
+            now.getTime() + retryDelayMinutes * 60 * 1000,
+          ),
           lockedUntil: null,
           lastErrorCode: message,
           deadLetteredAt: deadLetter ? now : null,

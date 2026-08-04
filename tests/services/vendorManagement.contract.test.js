@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+const EXPECTED_EXPORTS = [
+  "PRODUCT_STATUS_FILTER_OPTIONS",
+  "READ_DRAFT_ORDERS_SCOPE",
+  "READ_MERCHANT_FULFILLMENT_ORDERS_SCOPE",
+  "READ_ORDERS_SCOPE",
+  "VENDOR_DRAFT_ORDERS_PAGE_SIZE",
+  "WRITE_MERCHANT_FULFILLMENT_ORDERS_SCOPE",
+  "appendVendorIdToPath",
+  "buildInventoryDisplay",
+  "buildVendorDraftOrdersSearchQuery",
+  "createVendorAdminSessionCookieHeaders",
+  "createVendorOrderFulfillment",
+  "deleteVendorProductForStore",
+  "formatDateTime",
+  "formatMoney",
+  "getBadgeTone",
+  "getConfiguredAdminEmails",
+  "getRequestVendorId",
+  "getVendorMonthlyReport",
+  "getVendorOrdersAccessState",
+  "getVendorOrdersPageData",
+  "getVendorPublicContext",
+  "getVendorReturnTo",
+  "getVendorVerifyRedirectPath",
+  "getVendorWithdrawalRequestDetail",
+  "getVendorWithdrawalSummary",
+  "isConfiguredAdminEmail",
+  "listGrantedAppAccessScopes",
+  "listVendorDraftOrderOrders",
+  "listVendorProducts",
+  "listVendorShopifyOrderLedgerReferences",
+  "listVendorShopifyOrderSellerOrderReferences",
+  "listVendorShopifyOrdersFromLedger",
+  "listVendorShopifyOrdersFromSellerOrders",
+  "listVendorStoreShopDomains",
+  "listVendorWithdrawalRequests",
+  "mapApprovalLabel",
+  "mapProductStatus",
+  "mapVendorStatusLabel",
+  "parseInventoryQuantityInput",
+  "parseShipmentRegistrationInput",
+  "requireVendorContext",
+  "requireVendorSession",
+  "sanitizeVendorReturnTo",
+  "serializeVendorProduct",
+  "syncShopifyInventoryQuantity",
+  "updateVendorProductInventory",
+  "updateVendorSettings",
+  "updateVendorWithdrawalReturnInfo",
+  "vendorAdminSessionCookie",
+  "vendorAdminSessionsCookie",
+  "vendorRegistrationTargetCookie",
+].sort();
+
+test("vendor management compatibility facade keeps its public API", async () => {
+  const module = await import("../../app/services/vendorManagement.server.js");
+
+  assert.deepEqual(Object.keys(module).sort(), EXPECTED_EXPORTS);
+});

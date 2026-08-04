@@ -18,9 +18,13 @@ import {
 
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(TEST_DIRECTORY, "..", "..");
-const LOCKFILE = JSON.parse(
+const CURRENT_LOCKFILE = JSON.parse(
   fs.readFileSync(path.join(REPOSITORY_ROOT, "package-lock.json"), "utf8"),
 );
+// The risk-policy tests intentionally exercise the previously accepted
+// brace-expansion advisory independently from the repository's patched lockfile.
+const LOCKFILE = structuredClone(CURRENT_LOCKFILE);
+LOCKFILE.packages["node_modules/brace-expansion"].version = "2.1.2";
 const RISK = JSON.parse(
   fs.readFileSync(
     path.join(

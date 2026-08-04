@@ -76,6 +76,9 @@ jobs:
       - name: Check text encoding
         run: npm run check:text
 
+      - name: Check architecture boundaries
+        run: npm run check:architecture
+
       - name: Check security documents
         run: node scripts/security/scan-security-documents.mjs
 
