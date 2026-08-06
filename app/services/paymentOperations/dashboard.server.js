@@ -259,18 +259,39 @@ async function runPaidLedgerBackfillPreflight(
   } = {},
 ) {
   const boundedLimit = Math.max(1, Math.min(500, toInteger(limit) || 200));
-  const entries = await prismaClient.ledgerEntry.findMany({
-    where: { entryType: "shopify_order_paid" },
-    orderBy: { occurredAt: "desc" },
-    take: boundedLimit,
-    select: {
-      id: true,
-      amount: true,
-      currencyCode: true,
-      occurredAt: true,
-      metadataJson: true,
+  const nonTestLedgerWhere = {
+    entryType: "shopify_order_paid",
+    seller: {
+      is: {
+        vendorStore: { is: { isTestStore: false } },
+      },
     },
-  });
+  };
+  const testLedgerWhere = {
+    entryType: "shopify_order_paid",
+    seller: {
+      is: {
+        vendorStore: { is: { isTestStore: true } },
+      },
+    },
+  };
+  const [entries, excludedTestLedgerRows] = await Promise.all([
+    prismaClient.ledgerEntry.findMany({
+      where: nonTestLedgerWhere,
+      orderBy: { occurredAt: "desc" },
+      take: boundedLimit,
+      select: {
+        id: true,
+        amount: true,
+        currencyCode: true,
+        occurredAt: true,
+        metadataJson: true,
+      },
+    }),
+    typeof prismaClient.ledgerEntry.count === "function"
+      ? prismaClient.ledgerEntry.count({ where: testLedgerWhere })
+      : Promise.resolve(0),
+  ]);
   const grouped = paidLedgerBackfillOrders(entries);
   const blockerReasons = {};
   let projectedCreates = 0;
@@ -331,6 +352,7 @@ async function runPaidLedgerBackfillPreflight(
       reviewRequiredOrders === 0 &&
       grouped.skippedLedgerRows === 0,
     processedLedgerRows: entries.length,
+    excludedTestLedgerRows,
     uniqueOrders: grouped.orders.length,
     skippedLedgerRows: grouped.skippedLedgerRows,
     duplicateLedgerRows: grouped.duplicateLedgerRows,
