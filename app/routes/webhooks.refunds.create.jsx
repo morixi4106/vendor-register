@@ -2,6 +2,10 @@ import { json } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
 import { processShopifyRefundSettlement } from "../services/sellerPayments.server.js";
+import {
+  markPaymentRefundLedgerApplied,
+  observeShopifyRefundOperation,
+} from "../services/paymentOperations.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { reconcileWithdrawalRefundWebhook } from "../services/withdrawalDirectReturns.server.js";
 
@@ -14,7 +18,28 @@ export const action = async ({ request }) => {
     topic,
     shop,
     handler: async () => {
+      const paymentRefund = await observeShopifyRefundOperation({
+        payload,
+        shop,
+      });
+      if (!paymentRefund.ok) return paymentRefund;
+      if (!paymentRefund.allowLedger) {
+        return {
+          ok: true,
+          terminal: true,
+          expectedSkip: true,
+          reason: paymentRefund.reason,
+          paymentRefundOperationId: paymentRefund.operation?.id || null,
+          paymentRefundHeld: true,
+        };
+      }
       const result = await processShopifyRefundSettlement({ payload, shop });
+      if (paymentRefund.operation?.id) {
+        await markPaymentRefundLedgerApplied(
+          paymentRefund.operation.id,
+          result,
+        );
+      }
       withdrawalReconciliation = await reconcileWithdrawalRefundWebhook({
         payload,
         shop,
@@ -60,6 +85,8 @@ export const action = async ({ request }) => {
       sellerId: result.sellerId || null,
       amount: result.amount || null,
       currencyCode: result.currencyCode || null,
+      paymentRefundHeld: Boolean(result.paymentRefundHeld),
+      paymentRefundOperationId: result.paymentRefundOperationId || null,
     },
     withdrawalReconciliation: {
       ok: Boolean(withdrawalReconciliation?.ok),

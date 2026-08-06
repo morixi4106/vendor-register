@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 
 import { authenticate } from "../shopify.server";
 import { processShopifyOrderPaidSettlement } from "../services/sellerPayments.server.js";
+import { syncShopifyOrderPaymentAttempts } from "../services/paymentOperations.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 
@@ -12,14 +13,29 @@ export const action = async ({ request }) => {
     payload,
     topic,
     shop,
-    handler: () =>
-      processShopifyOrderPaidSettlement(
+    handler: async () => {
+      let paymentTracking = null;
+      try {
+        paymentTracking = await syncShopifyOrderPaymentAttempts({
+          payload,
+          shop,
+          sourceTopic: topic || "ORDERS_PAID",
+        });
+      } catch (error) {
+        console.error("orders/paid payment tracking failed:", {
+          shop,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const settlement = await processShopifyOrderPaidSettlement(
         { payload, shop },
         {
           shopifyGraphQLWithOfflineSessionImpl:
             shopifyGraphQLWithOfflineSession,
         },
-      ),
+      );
+      return { ...settlement, paymentTracking };
+    },
   });
   const result = delivery.result || {
     ok: true,
@@ -47,6 +63,13 @@ export const action = async ({ request }) => {
       sellerId: result.sellerId || null,
       amount: result.amount || null,
       currencyCode: result.currencyCode || null,
+      paymentTracking: result.paymentTracking
+        ? {
+            tracked: Boolean(result.paymentTracking.tracked),
+            attemptCount: Number(result.paymentTracking.attemptCount || 0),
+            multipleAttempts: Boolean(result.paymentTracking.multipleAttempts),
+          }
+        : null,
     },
   });
 };

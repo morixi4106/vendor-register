@@ -78,21 +78,34 @@ function inspectWithdrawalEmailEnvironment(env) {
 function normalizeProvider(value, fallback) {
   return String(value || fallback).trim().toLowerCase();
 }
+function parsePaymentProviders(value, fallback) {
+  const providers = String(value || fallback)
+    .split(",")
+    .map(provider => normalizeProvider(provider, ""))
+    .filter(Boolean);
+  return Array.from(new Set(providers.length > 0 ? providers : [fallback]));
+}
 export function inspectOperationEnvironment(env = process.env) {
+  const configuredPaymentProviders = normalizeText(env.PAYMENT_PROVIDERS);
   const configuredPaymentProvider = normalizeText(env.PAYMENT_PROVIDER);
   const configuredSellerPayoutProvider = normalizeText(env.SELLER_PAYOUT_PROVIDER);
-  const paymentProvider = normalizeProvider(configuredPaymentProvider, DEFAULT_PAYMENT_PROVIDER);
+  const paymentProviders = parsePaymentProviders(configuredPaymentProviders || configuredPaymentProvider, DEFAULT_PAYMENT_PROVIDER);
+  const paymentProvider = paymentProviders[0];
   const sellerPayoutProvider = normalizeProvider(configuredSellerPayoutProvider, DEFAULT_SELLER_PAYOUT_PROVIDER);
-  const stripeConnectProductionEnabled = isStripeConnectProductionEnabled(env) || paymentProvider === "stripe_connect" || sellerPayoutProvider === "stripe_connect";
+  const stripeConnectProductionEnabled = isStripeConnectProductionEnabled(env) || paymentProviders.includes("stripe_connect") || sellerPayoutProvider === "stripe_connect";
   return {
     paymentProvider,
+    paymentProviders,
     sellerPayoutProvider,
-    paymentProviderLabel: PAYMENT_PROVIDER_LABELS[paymentProvider] || paymentProvider,
+    paymentProviderLabel: paymentProviders.map(provider => PAYMENT_PROVIDER_LABELS[provider] || provider).join(" + "),
     sellerPayoutProviderLabel: SELLER_PAYOUT_PROVIDER_LABELS[sellerPayoutProvider] || sellerPayoutProvider,
-    paymentProviderConfigured: Boolean(configuredPaymentProvider),
+    paymentProviderConfigured: Boolean(configuredPaymentProviders || configuredPaymentProvider),
+    paymentProvidersConfigured: Boolean(configuredPaymentProviders),
+    paymentProviderConfigurationSource: configuredPaymentProviders ? "PAYMENT_PROVIDERS" : configuredPaymentProvider ? "PAYMENT_PROVIDER" : "default",
     sellerPayoutProviderConfigured: Boolean(configuredSellerPayoutProvider),
-    paymentProviderSupported: SUPPORTED_PAYMENT_PROVIDERS.has(paymentProvider),
+    paymentProviderSupported: paymentProviders.every(provider => SUPPORTED_PAYMENT_PROVIDERS.has(provider)),
     sellerPayoutProviderSupported: SUPPORTED_SELLER_PAYOUT_PROVIDERS.has(sellerPayoutProvider),
+    komojuEnabled: paymentProviders.includes("komoju"),
     stripeConnectProductionEnabled
   };
 }
@@ -139,7 +152,7 @@ export function buildEnvironmentChecks({
   const sellerOrderShadowWriteEnabled = isEnabledEnvFlag(env, SELLER_ORDER_SHADOW_WRITE_FLAG);
   const sellerOrderVendorOrderReadsEnabled = isEnabledEnvFlag(env, VENDOR_ORDER_SELLER_ORDER_READ_FLAG);
   const {
-    paymentProvider,
+    paymentProviders,
     sellerPayoutProvider,
     paymentProviderLabel,
     sellerPayoutProviderLabel,
@@ -147,6 +160,7 @@ export function buildEnvironmentChecks({
     sellerPayoutProviderConfigured,
     paymentProviderSupported,
     sellerPayoutProviderSupported,
+    komojuEnabled,
     stripeConnectProductionEnabled
   } = operationEnv;
   const stripeSecretKeyLive = stripeEnv.secretKeyMode === "live";
@@ -166,9 +180,27 @@ export function buildEnvironmentChecks({
     category: "app",
     status: paymentProviderSupported ? paymentProviderConfigured ? "pass" : "warning" : "fail",
     title: "Payment provider",
-    detail: paymentProviderSupported ? paymentProviderConfigured ? `PAYMENT_PROVIDER is ${paymentProvider}.` : `PAYMENT_PROVIDER is not set. Defaulting to ${DEFAULT_PAYMENT_PROVIDER}.` : `PAYMENT_PROVIDER is ${paymentProvider}. The current production flow supports ${DEFAULT_PAYMENT_PROVIDER}.`,
-    action: paymentProviderSupported ? paymentProviderConfigured ? "" : "Set PAYMENT_PROVIDER=shopify_payments in Render so the production mode is explicit." : "Keep Shopify Checkout / Shopify Payments as the production payment provider, or add a separate readiness profile for another provider."
+    detail: paymentProviderSupported ? paymentProviderConfigured ? `Configured payment providers: ${paymentProviders.join(", ")}.` : `PAYMENT_PROVIDERS is not set. Defaulting to ${DEFAULT_PAYMENT_PROVIDER}.` : `Unsupported payment provider configuration: ${paymentProviders.join(", ")}.`,
+    action: paymentProviderSupported ? paymentProviderConfigured ? "" : "Set PAYMENT_PROVIDERS=shopify_payments explicitly in Render." : "Use only the supported Shopify Checkout providers: shopify_payments and komujo."
   }));
+  if (komojuEnabled) {
+    checks.push(createCheck({
+      id: "komoju_payment_operations_enabled",
+      category: "app",
+      status: isEnabledEnvFlag(env, "KOMOJU_PAYMENT_OPERATIONS_ENABLED") ? "pass" : "fail",
+      title: "KOMOJU決済運用",
+      detail: isEnabledEnvFlag(env, "KOMOJU_PAYMENT_OPERATIONS_ENABLED") ? "KOMOJUの決済試行・返金・入金照合を記録します。" : "KOMOJUは決済手段に含まれていますが、決済運用の記録が無効です。",
+      action: isEnabledEnvFlag(env, "KOMOJU_PAYMENT_OPERATIONS_ENABLED") ? "" : "migration適用後にKOMOJU_PAYMENT_OPERATIONS_ENABLED=trueを設定してください。"
+    }));
+    checks.push(createCheck({
+      id: "payment_refund_confirmation_enforced",
+      category: "payout",
+      status: isEnabledEnvFlag(env, "PAYMENT_REFUND_CONFIRMATION_ENFORCED") ? "pass" : "fail",
+      title: "決済会社返金の確認ゲート",
+      detail: isEnabledEnvFlag(env, "PAYMENT_REFUND_CONFIRMATION_ENFORCED") ? "決済会社側の返金確認前は台帳へ反映しません。" : "KOMOJU返金の確認前に台帳へ反映される可能性があります。",
+      action: isEnabledEnvFlag(env, "PAYMENT_REFUND_CONFIRMATION_ENFORCED") ? "" : "PAYMENT_REFUND_CONFIRMATION_ENFORCED=trueを設定してください。"
+    }));
+  }
   checks.push(createCheck({
     id: "seller_payout_provider",
     category: "payout",
@@ -183,7 +215,7 @@ export function buildEnvironmentChecks({
     status: paymentProviderConfigured && sellerPayoutProviderConfigured && paymentProviderSupported && sellerPayoutProviderSupported && !stripeConnectProductionEnabled ? "pass" : "fail",
     title: "Production payment flow",
     detail: stripeConnectProductionEnabled ? "Stripe Connect production checks are enabled by STRIPE_CONNECT_PRODUCTION_ENABLED or provider configuration." : `Production checkout uses ${paymentProviderLabel}. Seller payouts use ${sellerPayoutProviderLabel}.`,
-    action: stripeConnectProductionEnabled ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode." : paymentProviderConfigured && sellerPayoutProviderConfigured ? "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes." : "Set PAYMENT_PROVIDER=shopify_payments and SELLER_PAYOUT_PROVIDER=manual explicitly in Render."
+    action: stripeConnectProductionEnabled ? "Complete live Stripe Connect keys, webhooks, connected accounts, and payout readiness before using this mode." : paymentProviderConfigured && sellerPayoutProviderConfigured ? "Keep Stripe Connect direct charges and Connect payouts disabled unless the policy changes." : "Set PAYMENT_PROVIDERS=shopify_payments and SELLER_PAYOUT_PROVIDER=manual explicitly in Render."
   }));
   checks.push(createCheck({
     id: "withdrawal_resend_api_key",
