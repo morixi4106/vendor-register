@@ -320,6 +320,41 @@ test("paid ledger backfill groups seller ledger rows by order before canonical s
   assert.equal(calls.filter((call) => !call.options.dryRun).length, 1);
 });
 
+test("paid ledger backfill excludes test-store ledger rows", async () => {
+  let findManyWhere = null;
+  let countWhere = null;
+  let syncCalled = false;
+  const preview = await previewPaymentAttemptsFromPaidLedger(
+    { limit: 200 },
+    {
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async (args) => {
+            findManyWhere = args.where;
+            return [];
+          },
+          count: async (args) => {
+            countWhere = args.where;
+            return 9;
+          },
+        },
+      },
+      syncShopifyOrderPaymentAttemptsImpl: async () => {
+        syncCalled = true;
+        return { ok: true, tracked: true };
+      },
+    },
+  );
+
+  assert.equal(findManyWhere.seller.is.vendorStore.is.isTestStore, false);
+  assert.equal(countWhere.seller.is.vendorStore.is.isTestStore, true);
+  assert.equal(preview.processedLedgerRows, 0);
+  assert.equal(preview.excludedTestLedgerRows, 9);
+  assert.equal(preview.uniqueOrders, 0);
+  assert.equal(preview.canApply, false);
+  assert.equal(syncCalled, false);
+});
+
 test("paid ledger backfill stops before writes when canonical preflight needs review", async () => {
   let writeAttempted = false;
   const result = await backfillPaymentAttemptsFromPaidLedger(
