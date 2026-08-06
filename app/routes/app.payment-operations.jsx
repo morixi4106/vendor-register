@@ -5,6 +5,7 @@ import {
   backfillPaymentAttemptsFromPaidLedger,
   confirmManualPaymentRefundOperation,
   getPaymentOperationsDashboard,
+  previewPaymentAttemptsFromPaidLedger,
   recordPaymentSettlementBatch,
   reviewPaymentAttempt,
 } from "../services/paymentOperations.server.js";
@@ -34,6 +35,7 @@ const ACTION_ROLES = Object.freeze({
     MARKETPLACE_OPERATOR_ROLES.FINANCE_PREPARER,
     MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
   ],
+  preview_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
   backfill_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
 });
 
@@ -81,6 +83,10 @@ export const action = async ({ request }) => {
     result = await recordPaymentSettlementBatch({
       ...Object.fromEntries(formData),
       actor,
+    });
+  } else if (intent === "preview_paid_ledger") {
+    result = await previewPaymentAttemptsFromPaidLedger({
+      limit: formData.get("limit"),
     });
   } else if (intent === "backfill_paid_ledger") {
     result = formData.get("confirm") === "backfill_payment_attempts"
@@ -275,13 +281,39 @@ export default function PaymentOperationsPage() {
 
       <section className="payment-section">
         <h2>既存注文の補完</h2>
-        <p>既存の支払い済み台帳から決済会社を補完します。金額や台帳は変更しません。</p>
+        <p>Shopifyの実トランザクションを注文単位で確認してから決済試行を補完します。台帳のgateway名や金額は転記しません。</p>
+        <Form method="post" className="payment-form payment-form--backfill-preview">
+          <input type="hidden" name="intent" value="preview_paid_ledger" />
+          <label>対象台帳件数<input name="limit" type="number" min="1" max="500" defaultValue="200" /></label>
+          <button type="submit" disabled={busy}>安全性を確認</button>
+        </Form>
+        {actionData?.result?.dryRun ? (
+          <div className={`payment-backfill-summary ${actionData.result.canApply ? "is-safe" : "is-blocked"}`}>
+            <strong>{actionData.result.canApply ? "補完可能" : "補完を停止しました"}</strong>
+            <span>台帳 {actionData.result.processedLedgerRows}件 / 注文 {actionData.result.uniqueOrders}件</span>
+            <span>作成予定 {actionData.result.projectedCreates}件 / 更新予定 {actionData.result.projectedUpdates}件</span>
+            <span>既存試行あり {actionData.result.existingAttemptOrders}注文</span>
+            <span>重複台帳 {actionData.result.duplicateLedgerRows}件</span>
+            <span>gateway未記録 {actionData.result.metadataGatewayMissingRows}件</span>
+            <span>gateway複数表記 {actionData.result.metadataGatewayAnomalyRows}件</span>
+            <span>UNKNOWN {actionData.result.unknownAttemptCount}件</span>
+            <span>複数決済 {actionData.result.multipleAttemptOrders}注文</span>
+            <span>要確認注文 {actionData.result.reviewRequiredOrders}件</span>
+            {Object.keys(actionData.result.blockerReasons || {}).length > 0 ? (
+              <span>
+                停止理由: {Object.entries(actionData.result.blockerReasons)
+                  .map(([reason, count]) => `${reason} (${count})`)
+                  .join(" / ")}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <Form method="post" className="payment-form payment-form--backfill">
           <input type="hidden" name="intent" value="backfill_paid_ledger" />
           <label>対象件数<input name="limit" type="number" min="1" max="500" defaultValue="200" /></label>
           <label className="payment-confirm">
             <input type="checkbox" name="confirm" value="backfill_payment_attempts" required />
-            決済試行データだけを補完します
+            事前確認を再実行し、安全な注文だけを補完します
           </label>
           <button type="submit" disabled={busy}>補完を実行</button>
         </Form>
@@ -291,5 +323,5 @@ export default function PaymentOperationsPage() {
 }
 
 const STYLES = `
-  .payment-page{padding:24px;max-width:1500px;margin:0 auto;color:#101828;letter-spacing:0}.payment-header,.payment-section{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:24px;margin-bottom:20px}.payment-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.payment-header h1,.payment-section h2{margin:0 0 8px}.payment-header p,.payment-section p,.payment-item p{margin:0;color:#475467}.payment-notice{padding:14px 16px;border-radius:6px;margin-bottom:20px}.payment-notice.is-success{background:#ecfdf3;color:#027a48}.payment-notice.is-error{background:#fef3f2;color:#b42318}.payment-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:20px}.payment-metric{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:18px}.payment-metric span{display:block;color:#667085;font-size:14px}.payment-metric strong{font-size:28px}.payment-list{display:grid;gap:12px;margin-top:18px}.payment-item{border-top:1px solid #eaecf0;padding-top:16px}.payment-item__summary{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.payment-item__amount{display:flex;align-items:center;gap:12px;font-weight:700}.payment-status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:12px;font-weight:700}.payment-status--success{background:#ecfdf3;color:#027a48}.payment-status--warning{background:#fffaeb;color:#b54708}.payment-status--critical{background:#fef3f2;color:#b42318}.payment-form{display:grid;gap:12px;margin-top:16px}.payment-form--refund{grid-template-columns:repeat(4,minmax(140px,1fr));align-items:end}.payment-form--refund .payment-confirm{grid-column:1/-2}.payment-form input,.payment-inline-form input{border:1px solid #d0d5dd;border-radius:6px;padding:10px 12px;min-width:0}.payment-form button,.payment-inline-form button{border:0;border-radius:6px;padding:10px 14px;background:#101828;color:#fff;font-weight:700;cursor:pointer}.payment-form button:disabled,.payment-inline-form button:disabled{opacity:.5}.payment-confirm{display:flex;gap:8px;align-items:center}.payment-confirm input{width:16px;height:16px}.payment-table-wrap{overflow:auto;margin-top:18px}.payment-table{width:100%;border-collapse:collapse;min-width:980px}.payment-table th,.payment-table td{border-top:1px solid #eaecf0;padding:12px;text-align:left;vertical-align:top}.payment-table small{display:block;color:#667085;margin-top:4px}.payment-inline-form{display:flex;gap:8px}.payment-section--split{display:grid;grid-template-columns:1fr 1fr;gap:32px}.payment-form__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.payment-form label{display:grid;gap:6px}.payment-batch{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;border-top:1px solid #eaecf0;padding:12px 0}.payment-empty{padding:18px 0}.payment-form--backfill{grid-template-columns:220px 1fr auto;align-items:end}.payment-form--backfill .payment-confirm{padding-bottom:10px}@media(max-width:900px){.payment-page{padding:16px}.payment-header,.payment-section{padding:18px}.payment-metrics{grid-template-columns:repeat(2,1fr)}.payment-section--split{grid-template-columns:1fr}.payment-form--refund,.payment-form--backfill{grid-template-columns:1fr}.payment-form--refund .payment-confirm{grid-column:auto}}
+  .payment-page{padding:24px;max-width:1500px;margin:0 auto;color:#101828;letter-spacing:0}.payment-header,.payment-section{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:24px;margin-bottom:20px}.payment-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.payment-header h1,.payment-section h2{margin:0 0 8px}.payment-header p,.payment-section p,.payment-item p{margin:0;color:#475467}.payment-notice{padding:14px 16px;border-radius:6px;margin-bottom:20px}.payment-notice.is-success{background:#ecfdf3;color:#027a48}.payment-notice.is-error{background:#fef3f2;color:#b42318}.payment-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:20px}.payment-metric{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:18px}.payment-metric span{display:block;color:#667085;font-size:14px}.payment-metric strong{font-size:28px}.payment-list{display:grid;gap:12px;margin-top:18px}.payment-item{border-top:1px solid #eaecf0;padding-top:16px}.payment-item__summary{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.payment-item__amount{display:flex;align-items:center;gap:12px;font-weight:700}.payment-status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:12px;font-weight:700}.payment-status--success{background:#ecfdf3;color:#027a48}.payment-status--warning{background:#fffaeb;color:#b54708}.payment-status--critical{background:#fef3f2;color:#b42318}.payment-form{display:grid;gap:12px;margin-top:16px}.payment-form--refund{grid-template-columns:repeat(4,minmax(140px,1fr));align-items:end}.payment-form--refund .payment-confirm{grid-column:1/-2}.payment-form input,.payment-inline-form input{border:1px solid #d0d5dd;border-radius:6px;padding:10px 12px;min-width:0}.payment-form button,.payment-inline-form button{border:0;border-radius:6px;padding:10px 14px;background:#101828;color:#fff;font-weight:700;cursor:pointer}.payment-form button:disabled,.payment-inline-form button:disabled{opacity:.5}.payment-confirm{display:flex;gap:8px;align-items:center}.payment-confirm input{width:16px;height:16px}.payment-table-wrap{overflow:auto;margin-top:18px}.payment-table{width:100%;border-collapse:collapse;min-width:980px}.payment-table th,.payment-table td{border-top:1px solid #eaecf0;padding:12px;text-align:left;vertical-align:top}.payment-table small{display:block;color:#667085;margin-top:4px}.payment-inline-form{display:flex;gap:8px}.payment-section--split{display:grid;grid-template-columns:1fr 1fr;gap:32px}.payment-form__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.payment-form label{display:grid;gap:6px}.payment-batch{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;border-top:1px solid #eaecf0;padding:12px 0}.payment-empty{padding:18px 0}.payment-form--backfill-preview{grid-template-columns:220px auto;align-items:end}.payment-backfill-summary{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:14px;padding:14px 16px;border-radius:6px}.payment-backfill-summary.is-safe{background:#ecfdf3;color:#027a48}.payment-backfill-summary.is-blocked{background:#fef3f2;color:#b42318}.payment-form--backfill{grid-template-columns:220px 1fr auto;align-items:end}.payment-form--backfill .payment-confirm{padding-bottom:10px}@media(max-width:900px){.payment-page{padding:16px}.payment-header,.payment-section{padding:18px}.payment-metrics{grid-template-columns:repeat(2,1fr)}.payment-section--split{grid-template-columns:1fr}.payment-form--refund,.payment-form--backfill,.payment-form--backfill-preview{grid-template-columns:1fr}.payment-form--refund .payment-confirm{grid-column:auto}}
 `;

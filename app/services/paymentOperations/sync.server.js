@@ -208,9 +208,14 @@ export async function syncShopifyOrderPaymentAttempts(
     prismaClient = prisma,
     loadCanonicalPaymentOrderImpl = loadCanonicalPaymentOrder,
     now = new Date(),
+    canonicalOnly = false,
+    dryRun = false,
   } = {},
 ) {
-  if (!prismaClient?.marketplacePaymentAttempt?.upsert) {
+  const paymentAttemptModelAvailable = dryRun
+    ? prismaClient?.marketplacePaymentAttempt?.findMany
+    : prismaClient?.marketplacePaymentAttempt?.upsert;
+  if (!paymentAttemptModelAvailable) {
     return { ok: true, tracked: false, reason: "payment_models_unavailable" };
   }
 
@@ -226,6 +231,18 @@ export async function syncShopifyOrderPaymentAttempts(
     order = await loadCanonicalPaymentOrderImpl({ shopDomain, shopifyOrderId });
   } catch (error) {
     canonicalError = error instanceof Error ? error.message : String(error);
+  }
+
+  if (canonicalOnly && !order) {
+    return {
+      ok: true,
+      tracked: false,
+      reviewRequired: true,
+      reason: canonicalError
+        ? "canonical_payment_lookup_failed"
+        : "canonical_payment_order_not_found",
+      canonicalError,
+    };
   }
   order ||= fallbackOrderFromPayload(payload);
 
@@ -248,17 +265,38 @@ export async function syncShopifyOrderPaymentAttempts(
   const sourceTransactions =
     transactions.length > 0
       ? transactions
-      : fallbackOrderFromPayload(payload).transactions;
+      : canonicalOnly
+        ? []
+        : fallbackOrderFromPayload(payload).transactions;
 
   if (sourceTransactions.length === 0) {
     return {
       ok: true,
       tracked: false,
-      reason: "payment_gateway_not_available",
+      reviewRequired: canonicalOnly,
+      reason: canonicalOnly
+        ? "canonical_payment_transactions_unavailable"
+        : "payment_gateway_not_available",
       canonicalError,
     };
   }
 
+  const existingAttempts = dryRun
+    ? await prismaClient.marketplacePaymentAttempt.findMany({
+        where: { shopDomain, shopifyOrderId },
+        select: {
+          id: true,
+          attemptKey: true,
+          shopifyTransactionId: true,
+          parentTransactionId: true,
+          status: true,
+          requiresReview: true,
+        },
+      })
+    : [];
+  const existingByKey = new Map(
+    existingAttempts.map((attempt) => [attempt.attemptKey, attempt]),
+  );
   const attempts = [];
   for (const transaction of sourceTransactions) {
     const gateway = normalizeText(transaction?.gateway || transaction?.formattedGateway);
@@ -282,78 +320,67 @@ export async function syncShopifyOrderPaymentAttempts(
     const requiresReview = classification.provider === PAYMENT_PROVIDER.UNKNOWN;
     const reviewReason = requiresReview ? "unknown_payment_gateway" : null;
     const processedAt = toDate(transaction?.processedAt || payload?.processed_at);
-
-    const attempt = await prismaClient.marketplacePaymentAttempt.upsert({
-      where: {
-        shopDomain_attemptKey: { shopDomain, attemptKey: key },
+    const commonData = {
+      shopifyOrderName: normalizeText(order?.name || payload?.name) || null,
+      marketplaceOrderId: marketplaceOrder?.id || null,
+      shopifyTransactionId: normalizeText(transaction?.id) || null,
+      parentTransactionId:
+        normalizeText(transaction?.parentTransaction?.id) || null,
+      provider: classification.provider,
+      paymentMethod: classification.paymentMethod,
+      gatewayName: classification.gatewayName,
+      formattedGateway: classification.formattedGateway,
+      transactionKind: normalizeText(transaction?.kind) || null,
+      transactionStatus: normalizeText(transaction?.status) || null,
+      financialStatus:
+        normalizeText(order?.displayFinancialStatus || payload?.financial_status) ||
+        null,
+      status,
+      amount,
+      currencyCode,
+      test: Boolean(transaction?.test ?? order?.test ?? payload?.test),
+      requiresReview,
+      reviewReason,
+      expiresAt,
+      processedAt,
+      ...terminalTimestampData(status, processedAt || now),
+      metadataJson: {
+        sourceTopic,
+        canonicalQueryFailed: Boolean(canonicalError),
+        manualPaymentGateway: Boolean(transaction?.manualPaymentGateway),
       },
-      create: {
-        shopDomain,
-        shopifyOrderId,
-        shopifyOrderName: normalizeText(order?.name || payload?.name) || null,
-        marketplaceOrderId: marketplaceOrder?.id || null,
-        attemptKey: key,
-        shopifyTransactionId: normalizeText(transaction?.id) || null,
-        parentTransactionId:
-          normalizeText(transaction?.parentTransaction?.id) || null,
-        provider: classification.provider,
-        paymentMethod: classification.paymentMethod,
-        gatewayName: classification.gatewayName,
-        formattedGateway: classification.formattedGateway,
-        transactionKind: normalizeText(transaction?.kind) || null,
-        transactionStatus: normalizeText(transaction?.status) || null,
-        financialStatus:
-          normalizeText(order?.displayFinancialStatus || payload?.financial_status) ||
-          null,
-        status,
-        amount,
-        currencyCode,
-        test: Boolean(transaction?.test ?? order?.test ?? payload?.test),
-        requiresReview,
-        reviewReason,
-        expiresAt,
-        processedAt,
-        ...terminalTimestampData(status, processedAt || now),
-        metadataJson: {
-          sourceTopic,
-          canonicalQueryFailed: Boolean(canonicalError),
-          manualPaymentGateway: Boolean(transaction?.manualPaymentGateway),
-        },
-      },
-      update: {
-        shopifyOrderName: normalizeText(order?.name || payload?.name) || null,
-        marketplaceOrderId: marketplaceOrder?.id || undefined,
-        shopifyTransactionId: normalizeText(transaction?.id) || undefined,
-        parentTransactionId:
-          normalizeText(transaction?.parentTransaction?.id) || undefined,
-        provider: classification.provider,
-        paymentMethod: classification.paymentMethod,
-        gatewayName: classification.gatewayName,
-        formattedGateway: classification.formattedGateway,
-        transactionKind: normalizeText(transaction?.kind) || null,
-        transactionStatus: normalizeText(transaction?.status) || null,
-        financialStatus:
-          normalizeText(order?.displayFinancialStatus || payload?.financial_status) ||
-          null,
-        status,
-        amount,
-        currencyCode,
-        test: Boolean(transaction?.test ?? order?.test ?? payload?.test),
-        requiresReview,
-        reviewReason,
-        expiresAt,
-        processedAt,
-        ...terminalTimestampData(status, processedAt || now),
-        metadataJson: {
-          sourceTopic,
-          canonicalQueryFailed: Boolean(canonicalError),
-          manualPaymentGateway: Boolean(transaction?.manualPaymentGateway),
-        },
-      },
-    });
+    };
+    const existing = existingByKey.get(key);
+    const attempt = dryRun
+      ? {
+          id: existing?.id || null,
+          shopDomain,
+          shopifyOrderId,
+          attemptKey: key,
+          ...commonData,
+          wouldCreate: !existing,
+        }
+      : await prismaClient.marketplacePaymentAttempt.upsert({
+          where: {
+            shopDomain_attemptKey: { shopDomain, attemptKey: key },
+          },
+          create: {
+            shopDomain,
+            shopifyOrderId,
+            attemptKey: key,
+            ...commonData,
+          },
+          update: {
+            ...commonData,
+            marketplaceOrderId: marketplaceOrder?.id || undefined,
+            shopifyTransactionId: normalizeText(transaction?.id) || undefined,
+            parentTransactionId:
+              normalizeText(transaction?.parentTransaction?.id) || undefined,
+          },
+        });
     attempts.push(attempt);
 
-    if (requiresReview) {
+    if (!dryRun && requiresReview) {
       await openPaymentReviewCase(
         {
           shopDomain,
@@ -365,6 +392,45 @@ export async function syncShopifyOrderPaymentAttempts(
         prismaClient,
       );
     }
+  }
+
+  if (dryRun) {
+    const activeStatuses = new Set([
+      PAYMENT_ATTEMPT_STATUS.PENDING,
+      PAYMENT_ATTEMPT_STATUS.AUTHORIZED,
+      PAYMENT_ATTEMPT_STATUS.CAPTURED,
+    ]);
+    const projectedKeys = new Set(attempts.map((attempt) => attempt.attemptKey));
+    const activeAttempts = [
+      ...existingAttempts.filter(
+        (attempt) =>
+          activeStatuses.has(attempt.status) &&
+          !projectedKeys.has(attempt.attemptKey),
+      ),
+      ...attempts.filter((attempt) => activeStatuses.has(attempt.status)),
+    ];
+    const economicRoots = new Set(
+      activeAttempts.map(
+        (attempt) =>
+          attempt.parentTransactionId ||
+          attempt.shopifyTransactionId ||
+          attempt.attemptKey,
+      ),
+    );
+    const multipleAttempts = economicRoots.size > 1;
+    return {
+      ok: true,
+      tracked: true,
+      dryRun: true,
+      attemptCount: attempts.length,
+      creates: attempts.filter((attempt) => attempt.wouldCreate).length,
+      updates: attempts.filter((attempt) => !attempt.wouldCreate).length,
+      reviewRequired:
+        multipleAttempts || attempts.some((attempt) => attempt.requiresReview),
+      multipleAttempts,
+      canonicalError,
+      attempts,
+    };
   }
 
   const activeAttempts = await prismaClient.marketplacePaymentAttempt.findMany({
