@@ -1,5 +1,5 @@
 import prisma from "../../db.server.js";
-import { classifyPaymentGateway } from "./classification.js";
+import { syncShopifyOrderPaymentAttempts } from "./sync.server.js";
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -193,11 +193,71 @@ export async function recordPaymentSettlementBatch(
   return { ok: true, batch, expectedNetAmount };
 }
 
-export async function backfillPaymentAttemptsFromPaidLedger(
-  { actor, limit = 200 },
-  { prismaClient = prisma, now = new Date() } = {},
+function paidLedgerBackfillOrders(entries) {
+  const orders = new Map();
+  let skippedLedgerRows = 0;
+  let metadataGatewayMissingRows = 0;
+  let metadataGatewayAnomalyRows = 0;
+
+  for (const entry of entries) {
+    const metadata = metadataObject(entry.metadataJson);
+    const shopDomain = normalizeLower(metadata.shopDomain);
+    const shopifyOrderId = normalizeText(metadata.shopifyOrderId);
+    const gatewayNames = Array.isArray(metadata.shopifyPaymentGatewayNames)
+      ? metadata.shopifyPaymentGatewayNames.map(normalizeText).filter(Boolean)
+      : [];
+    if (gatewayNames.length === 0) metadataGatewayMissingRows += 1;
+    if (gatewayNames.length > 1) metadataGatewayAnomalyRows += 1;
+    if (!shopDomain || !shopifyOrderId) {
+      skippedLedgerRows += 1;
+      continue;
+    }
+
+    const orderKey = `${shopDomain}\u0000${shopifyOrderId}`;
+    const existing = orders.get(orderKey);
+    if (existing) {
+      existing.ledgerRowCount += 1;
+      continue;
+    }
+    orders.set(orderKey, {
+      shopDomain,
+      shopifyOrderId,
+      ledgerRowCount: 1,
+      payload: {
+        admin_graphql_api_id: shopifyOrderId,
+        name: normalizeText(metadata.shopifyOrderName) || null,
+        processed_at: entry.occurredAt,
+        financial_status: "PAID",
+        currency: entry.currencyCode,
+      },
+    });
+  }
+
+  return {
+    orders: [...orders.values()],
+    skippedLedgerRows,
+    metadataGatewayMissingRows,
+    metadataGatewayAnomalyRows,
+    duplicateLedgerRows: [...orders.values()].reduce(
+      (total, order) => total + Math.max(0, order.ledgerRowCount - 1),
+      0,
+    ),
+  };
+}
+
+function incrementReason(reasons, reason) {
+  const key = normalizeText(reason) || "unknown";
+  reasons[key] = (reasons[key] || 0) + 1;
+}
+
+async function runPaidLedgerBackfillPreflight(
+  { limit = 200 },
+  {
+    prismaClient = prisma,
+    now = new Date(),
+    syncShopifyOrderPaymentAttemptsImpl = syncShopifyOrderPaymentAttempts,
+  } = {},
 ) {
-  if (!actor) return { ok: false, reason: "actor_missing" };
   const boundedLimit = Math.max(1, Math.min(500, toInteger(limit) || 200));
   const entries = await prismaClient.ledgerEntry.findMany({
     where: { entryType: "shopify_order_paid" },
@@ -211,63 +271,151 @@ export async function backfillPaymentAttemptsFromPaidLedger(
       metadataJson: true,
     },
   });
-  let createdOrUpdated = 0;
-  let skipped = 0;
-  for (const entry of entries) {
-    const metadata = metadataObject(entry.metadataJson);
-    const shopDomain = normalizeLower(metadata.shopDomain);
-    const shopifyOrderId = normalizeText(metadata.shopifyOrderId);
-    const gatewayNames = Array.isArray(metadata.shopifyPaymentGatewayNames)
-      ? metadata.shopifyPaymentGatewayNames.map(normalizeText).filter(Boolean)
-      : [];
-    if (!shopDomain || !shopifyOrderId || gatewayNames.length === 0) {
-      skipped += 1;
-      continue;
+  const grouped = paidLedgerBackfillOrders(entries);
+  const blockerReasons = {};
+  let projectedCreates = 0;
+  let projectedUpdates = 0;
+  let projectedAttempts = 0;
+  let existingAttemptOrders = 0;
+  let reviewRequiredOrders = 0;
+  let multipleAttemptOrders = 0;
+  let unknownAttemptCount = 0;
+
+  const orderPreflights = [];
+  for (const order of grouped.orders) {
+    const result = await syncShopifyOrderPaymentAttemptsImpl(
+      {
+        shop: order.shopDomain,
+        payload: order.payload,
+        sourceTopic: "PAID_LEDGER_BACKFILL",
+      },
+      {
+        prismaClient,
+        now,
+        canonicalOnly: true,
+        dryRun: true,
+      },
+    );
+    const attempts = Array.isArray(result?.attempts) ? result.attempts : [];
+    const unknownAttempts = attempts.filter(
+      (attempt) => attempt?.requiresReview,
+    ).length;
+    projectedCreates += toInteger(result?.creates);
+    projectedUpdates += toInteger(result?.updates);
+    projectedAttempts += toInteger(result?.attemptCount);
+    if (toInteger(result?.updates) > 0) existingAttemptOrders += 1;
+    unknownAttemptCount += unknownAttempts;
+    if (result?.multipleAttempts) multipleAttemptOrders += 1;
+    if (!result?.tracked || result?.reviewRequired || !result?.ok) {
+      reviewRequiredOrders += 1;
+      incrementReason(blockerReasons, result?.reason || (
+        result?.multipleAttempts
+          ? "multiple_payment_attempts"
+          : unknownAttempts > 0
+            ? "unknown_payment_gateway"
+            : "payment_backfill_preflight_failed"
+      ));
     }
-    for (const gatewayName of gatewayNames) {
-      const classification = classifyPaymentGateway(gatewayName, gatewayName);
-      const attemptKey = `backfill:ledger:${entry.id}:${normalizeLower(gatewayName)}`;
-      await prismaClient.marketplacePaymentAttempt.upsert({
-        where: {
-          shopDomain_attemptKey: { shopDomain, attemptKey },
-        },
-        create: {
-          shopDomain,
-          shopifyOrderId,
-          attemptKey,
-          provider: classification.provider,
-          paymentMethod: classification.paymentMethod,
-          gatewayName,
-          formattedGateway: gatewayName,
-          financialStatus: "PAID",
-          status: "CAPTURED",
-          amount: entry.amount,
-          currencyCode: entry.currencyCode,
-          requiresReview: classification.provider === "UNKNOWN",
-          reviewReason:
-            classification.provider === "UNKNOWN"
-              ? "unknown_payment_gateway"
-              : null,
-          capturedAt: entry.occurredAt,
-          processedAt: entry.occurredAt,
-          metadataJson: { source: "paid_ledger_backfill", actor },
-        },
-        update: {
-          provider: classification.provider,
-          paymentMethod: classification.paymentMethod,
-          gatewayName,
-          formattedGateway: gatewayName,
-          status: "CAPTURED",
-          capturedAt: entry.occurredAt,
-          metadataJson: {
-            source: "paid_ledger_backfill",
-            actor,
-            updatedAt: now.toISOString(),
-          },
-        },
-      });
-      createdOrUpdated += 1;
-    }
+    orderPreflights.push({ order, result });
   }
-  return { ok: true, processed: entries.length, createdOrUpdated, skipped };
+
+  if (grouped.skippedLedgerRows > 0) {
+    incrementReason(blockerReasons, "payment_order_identity_missing");
+  }
+
+  return {
+    ok: true,
+    dryRun: true,
+    canApply:
+      grouped.orders.length > 0 &&
+      reviewRequiredOrders === 0 &&
+      grouped.skippedLedgerRows === 0,
+    processedLedgerRows: entries.length,
+    uniqueOrders: grouped.orders.length,
+    skippedLedgerRows: grouped.skippedLedgerRows,
+    duplicateLedgerRows: grouped.duplicateLedgerRows,
+    metadataGatewayMissingRows: grouped.metadataGatewayMissingRows,
+    metadataGatewayAnomalyRows: grouped.metadataGatewayAnomalyRows,
+    projectedAttempts,
+    projectedCreates,
+    projectedUpdates,
+    existingAttemptOrders,
+    reviewRequiredOrders,
+    multipleAttemptOrders,
+    unknownAttemptCount,
+    blockerReasons,
+    orderPreflights,
+  };
+}
+
+function publicBackfillSummary(preflight) {
+  const summary = { ...preflight };
+  delete summary.orderPreflights;
+  return summary;
+}
+
+export async function previewPaymentAttemptsFromPaidLedger(
+  { limit = 200 } = {},
+  dependencies = {},
+) {
+  const preflight = await runPaidLedgerBackfillPreflight(
+    { limit },
+    dependencies,
+  );
+  return publicBackfillSummary(preflight);
+}
+
+export async function backfillPaymentAttemptsFromPaidLedger(
+  { actor, limit = 200 },
+  dependencies = {},
+) {
+  if (!actor) return { ok: false, reason: "actor_missing" };
+  const {
+    prismaClient = prisma,
+    now = new Date(),
+    syncShopifyOrderPaymentAttemptsImpl = syncShopifyOrderPaymentAttempts,
+  } = dependencies;
+  const preflight = await runPaidLedgerBackfillPreflight(
+    { limit },
+    { prismaClient, now, syncShopifyOrderPaymentAttemptsImpl },
+  );
+  const summary = publicBackfillSummary(preflight);
+  if (!preflight.canApply) {
+    return {
+      ...summary,
+      ok: false,
+      reason: preflight.uniqueOrders === 0
+        ? "payment_backfill_orders_not_found"
+        : "payment_backfill_preflight_blocked",
+    };
+  }
+
+  let createdOrUpdated = 0;
+  for (const { order } of preflight.orderPreflights) {
+    const result = await syncShopifyOrderPaymentAttemptsImpl(
+      {
+        shop: order.shopDomain,
+        payload: order.payload,
+        sourceTopic: "PAID_LEDGER_BACKFILL",
+      },
+      { prismaClient, now, canonicalOnly: true },
+    );
+    if (!result?.ok || !result?.tracked || result?.reviewRequired) {
+      return {
+        ...summary,
+        ok: false,
+        reason: "payment_backfill_changed_after_preflight",
+        createdOrUpdated,
+      };
+    }
+    createdOrUpdated += toInteger(result.attemptCount);
+  }
+
+  return {
+    ...summary,
+    ok: true,
+    dryRun: false,
+    actor,
+    createdOrUpdated,
+  };
 }

@@ -7,10 +7,12 @@ import {
   PAYMENT_PROVIDER,
   PAYMENT_REFUND_MODE,
   PAYMENT_REFUND_STATUS,
+  backfillPaymentAttemptsFromPaidLedger,
   classifyPaymentGateway,
   confirmManualPaymentRefundOperation,
   inspectPaymentOperations,
   observeShopifyRefundOperation,
+  previewPaymentAttemptsFromPaidLedger,
   recordPaymentSettlementBatch,
   resolvePaymentAttemptStatus,
   syncShopifyOrderPaymentAttempts,
@@ -138,6 +140,261 @@ test("order payment sync stores a pending KOMOJU attempt with an expiry", async 
     upserts[0].create.expiresAt.toISOString(),
     "2026-08-09T00:00:00.000Z",
   );
+});
+
+test("canonical-only payment sync never fabricates an attempt when Shopify lookup fails", async () => {
+  let databaseWrite = false;
+  const result = await syncShopifyOrderPaymentAttempts(
+    {
+      shop: "example.myshopify.com",
+      payload: {
+        id: 100,
+        payment_gateway_names: [
+          "shopify_payments",
+          "web",
+          "Shopify Payments",
+          "card",
+        ],
+      },
+      sourceTopic: "PAID_LEDGER_BACKFILL",
+    },
+    {
+      canonicalOnly: true,
+      loadCanonicalPaymentOrderImpl: async () => {
+        throw new Error("canonical unavailable");
+      },
+      prismaClient: {
+        marketplacePaymentAttempt: {
+          upsert: async () => {
+            databaseWrite = true;
+          },
+        },
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.tracked, false);
+  assert.equal(result.reviewRequired, true);
+  assert.equal(result.reason, "canonical_payment_lookup_failed");
+  assert.equal(databaseWrite, false);
+});
+
+test("canonical-only dry run uses transaction IDs instead of ledger gateway aliases", async () => {
+  const result = await syncShopifyOrderPaymentAttempts(
+    {
+      shop: "example.myshopify.com",
+      payload: {
+        id: 100,
+        payment_gateway_names: [
+          "shopify_payments",
+          "web",
+          "Shopify Payments",
+          "card",
+        ],
+      },
+      sourceTopic: "PAID_LEDGER_BACKFILL",
+    },
+    {
+      canonicalOnly: true,
+      dryRun: true,
+      loadCanonicalPaymentOrderImpl: async () => ({
+        id: "gid://shopify/Order/100",
+        name: "#100",
+        createdAt: "2026-08-06T00:00:00.000Z",
+        cancelledAt: null,
+        test: false,
+        currencyCode: "JPY",
+        displayFinancialStatus: "PAID",
+        transactions: [
+          {
+            id: "gid://shopify/OrderTransaction/1",
+            kind: "SALE",
+            status: "SUCCESS",
+            gateway: "shopify_payments",
+            formattedGateway: "Shopify Payments",
+            test: false,
+            processedAt: "2026-08-06T00:00:00.000Z",
+            amountSet: {
+              shopMoney: { amount: "1650", currencyCode: "JPY" },
+            },
+            parentTransaction: null,
+          },
+        ],
+      }),
+      prismaClient: {
+        marketplaceOrder: { findUnique: async () => ({ id: "order-1" }) },
+        marketplacePaymentAttempt: { findMany: async () => [] },
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dryRun, true);
+  assert.equal(result.attemptCount, 1);
+  assert.equal(result.creates, 1);
+  assert.equal(result.updates, 0);
+  assert.equal(result.reviewRequired, false);
+  assert.equal(
+    result.attempts[0].attemptKey,
+    "gid://shopify/OrderTransaction/1",
+  );
+  assert.equal(result.attempts[0].provider, PAYMENT_PROVIDER.SHOPIFY_PAYMENTS);
+});
+
+function paidLedgerEntry({ id, orderId, gatewayNames = [] }) {
+  return {
+    id,
+    amount: 1650,
+    currencyCode: "jpy",
+    occurredAt: new Date("2026-08-06T00:00:00.000Z"),
+    metadataJson: {
+      shopDomain: "example.myshopify.com",
+      shopifyOrderId: `gid://shopify/Order/${orderId}`,
+      shopifyOrderName: `#${orderId}`,
+      shopifyPaymentGatewayNames: gatewayNames,
+    },
+  };
+}
+
+test("paid ledger backfill groups seller ledger rows by order before canonical sync", async () => {
+  const calls = [];
+  const pollutedGateways = [
+    "shopify_payments",
+    "web",
+    "Shopify Payments",
+    "card",
+  ];
+  const prismaClient = {
+    ledgerEntry: {
+      findMany: async () => [
+        paidLedgerEntry({ id: "ledger-1", orderId: 100, gatewayNames: pollutedGateways }),
+        paidLedgerEntry({ id: "ledger-2", orderId: 100, gatewayNames: pollutedGateways }),
+      ],
+    },
+  };
+  const syncImpl = async (input, options) => {
+    calls.push({ input, options });
+    assert.equal(input.payload.payment_gateway_names, undefined);
+    assert.equal(options.canonicalOnly, true);
+    if (options.dryRun) {
+      return {
+        ok: true,
+        tracked: true,
+        dryRun: true,
+        attemptCount: 1,
+        creates: 1,
+        updates: 0,
+        reviewRequired: false,
+        multipleAttempts: false,
+        attempts: [{ attemptKey: "transaction-1", requiresReview: false }],
+      };
+    }
+    return {
+      ok: true,
+      tracked: true,
+      attemptCount: 1,
+      reviewRequired: false,
+    };
+  };
+
+  const preview = await previewPaymentAttemptsFromPaidLedger(
+    { limit: 200 },
+    { prismaClient, syncShopifyOrderPaymentAttemptsImpl: syncImpl },
+  );
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.processedLedgerRows, 2);
+  assert.equal(preview.uniqueOrders, 1);
+  assert.equal(preview.duplicateLedgerRows, 1);
+  assert.equal(preview.metadataGatewayAnomalyRows, 2);
+  assert.equal(preview.projectedCreates, 1);
+  assert.equal(preview.existingAttemptOrders, 0);
+
+  const applied = await backfillPaymentAttemptsFromPaidLedger(
+    { actor: "shopify_user:1", limit: 200 },
+    { prismaClient, syncShopifyOrderPaymentAttemptsImpl: syncImpl },
+  );
+  assert.equal(applied.ok, true);
+  assert.equal(applied.createdOrUpdated, 1);
+  assert.equal(calls.filter((call) => call.options.dryRun).length, 2);
+  assert.equal(calls.filter((call) => !call.options.dryRun).length, 1);
+});
+
+test("paid ledger backfill stops before writes when canonical preflight needs review", async () => {
+  let writeAttempted = false;
+  const result = await backfillPaymentAttemptsFromPaidLedger(
+    { actor: "shopify_user:1", limit: 10 },
+    {
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async () => [
+            paidLedgerEntry({
+              id: "ledger-1",
+              orderId: 100,
+              gatewayNames: ["shopify_payments", "web", "card"],
+            }),
+          ],
+        },
+      },
+      syncShopifyOrderPaymentAttemptsImpl: async (_input, options) => {
+        if (!options.dryRun) writeAttempted = true;
+        return {
+          ok: true,
+          tracked: true,
+          dryRun: true,
+          attemptCount: 2,
+          creates: 2,
+          updates: 0,
+          reviewRequired: true,
+          multipleAttempts: true,
+          attempts: [
+            { attemptKey: "transaction-1", requiresReview: false },
+            { attemptKey: "transaction-2", requiresReview: false },
+          ],
+        };
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "payment_backfill_preflight_blocked");
+  assert.equal(result.canApply, false);
+  assert.equal(result.multipleAttemptOrders, 1);
+  assert.equal(writeAttempted, false);
+});
+
+test("paid-ledger backfill fails closed when an entry has no order identity", async () => {
+  let writeAttempted = false;
+  const result = await backfillPaymentAttemptsFromPaidLedger(
+    { actor: "shopify_user:1", limit: 10 },
+    {
+      prismaClient: {
+        ledgerEntry: {
+          findMany: async () => [
+            {
+              id: "ledger-missing-order",
+              amount: 1650,
+              currencyCode: "jpy",
+              occurredAt: new Date("2026-08-06T00:00:00.000Z"),
+              metadataJson: { shopDomain: "example.myshopify.com" },
+            },
+          ],
+        },
+      },
+      syncShopifyOrderPaymentAttemptsImpl: async (_input, options) => {
+        if (!options.dryRun) writeAttempted = true;
+        return { ok: true, tracked: true, dryRun: true };
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "payment_backfill_orders_not_found");
+  assert.equal(result.skippedLedgerRows, 1);
+  assert.deepEqual(result.blockerReasons, {
+    payment_order_identity_missing: 1,
+  });
+  assert.equal(writeAttempted, false);
 });
 
 function refundPayload() {
