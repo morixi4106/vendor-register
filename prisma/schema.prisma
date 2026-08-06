@@ -269,11 +269,156 @@ model MarketplaceOrder {
   withdrawalLinePositions WithdrawalOrderLinePosition[]
   withdrawalContracts     WithdrawalContract[]
   governanceCases         MarketplaceOperationalCase[]
+  paymentAttempts         MarketplacePaymentAttempt[]
+  paymentRefundOperations PaymentRefundOperation[]
+  paymentSettlementLines  PaymentSettlementLine[]
 
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopifyOrderId])
   @@index([shopDomain, createdAt])
   @@map("marketplace_orders")
+}
+
+model MarketplacePaymentAttempt {
+  id                   String    @id @default(cuid())
+  shopDomain           String
+  shopifyOrderId       String
+  shopifyOrderName     String?
+  marketplaceOrderId   String?
+  attemptKey           String
+  shopifyTransactionId String?
+  parentTransactionId  String?
+  provider             String    @default("UNKNOWN")
+  paymentMethod        String    @default("OTHER")
+  gatewayName          String?
+  formattedGateway     String?
+  transactionKind      String?
+  transactionStatus    String?
+  financialStatus      String?
+  status               String    @default("PENDING")
+  amount               Int       @default(0)
+  currencyCode         String    @default("jpy")
+  test                 Boolean   @default(false)
+  requiresReview       Boolean   @default(false)
+  reviewReason         String?
+  expiresAt            DateTime?
+  processedAt          DateTime?
+  capturedAt           DateTime?
+  failedAt             DateTime?
+  cancelledAt          DateTime?
+  reviewedAt           DateTime?
+  reviewedBy           String?
+  metadataJson         Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  marketplaceOrder MarketplaceOrder?        @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  refundOperations PaymentRefundOperation[]
+  settlementLines  PaymentSettlementLine[]
+
+  @@unique([shopDomain, attemptKey])
+  @@index([shopDomain, shopifyOrderId, status])
+  @@index([provider, paymentMethod, status, updatedAt])
+  @@index([requiresReview, updatedAt])
+  @@map("marketplace_payment_attempts")
+}
+
+model PaymentRefundOperation {
+  id                        String    @id @default(cuid())
+  operationKey              String    @unique
+  shopDomain                String
+  shopifyOrderId            String
+  marketplaceOrderId        String?
+  paymentAttemptId          String?
+  shopifyRefundId           String?
+  provider                  String    @default("UNKNOWN")
+  paymentMethod             String    @default("OTHER")
+  refundMode                String    @default("REVIEW_REQUIRED")
+  status                    String    @default("OBSERVED")
+  amount                    Int       @default(0)
+  refundFeeAmount           Int       @default(0)
+  currencyCode              String    @default("jpy")
+  providerReference         String?
+  evidenceReference         String?
+  evidenceHash              String?
+  failureCode               String?
+  shopifyRefundSnapshotJson Json?
+  ledgerEntryIdsJson        Json?
+  providerConfirmedAt       DateTime?
+  shopifyRecordedAt         DateTime?
+  ledgerAppliedAt           DateTime?
+  reviewedAt                DateTime?
+  reviewedBy                String?
+  metadataJson              Json?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  marketplaceOrder MarketplaceOrder?          @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  paymentAttempt   MarketplacePaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+  settlementLines  PaymentSettlementLine[]
+
+  @@index([shopDomain, shopifyOrderId, status])
+  @@index([provider, refundMode, status, updatedAt])
+  @@index([shopifyRefundId])
+  @@map("payment_refund_operations")
+}
+
+model PaymentSettlementBatch {
+  id                String    @id @default(cuid())
+  provider          String
+  externalBatchId   String
+  status            String    @default("SUBMITTED")
+  grossAmount       Int       @default(0)
+  refundAmount      Int       @default(0)
+  feeAmount         Int       @default(0)
+  netAmount         Int       @default(0)
+  currencyCode      String    @default("jpy")
+  payoutDate        DateTime?
+  bankDepositedAt   DateTime?
+  evidenceReference String?
+  evidenceHash      String?
+  submittedBy       String
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  metadataJson      Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  lines PaymentSettlementLine[]
+
+  @@unique([provider, externalBatchId])
+  @@index([provider, status, payoutDate])
+  @@map("payment_settlement_batches")
+}
+
+model PaymentSettlementLine {
+  id                 String    @id @default(cuid())
+  batchId            String
+  externalLineId     String
+  lineType           String
+  paymentAttemptId   String?
+  refundOperationId  String?
+  marketplaceOrderId String?
+  providerReference  String?
+  amount             Int       @default(0)
+  feeAmount          Int       @default(0)
+  currencyCode       String    @default("jpy")
+  matchStatus        String    @default("UNMATCHED")
+  occurredAt         DateTime?
+  metadataJson       Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  batch            PaymentSettlementBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  paymentAttempt   MarketplacePaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+  refundOperation  PaymentRefundOperation?    @relation(fields: [refundOperationId], references: [id], onDelete: SetNull)
+  marketplaceOrder MarketplaceOrder?          @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+
+  @@unique([batchId, externalLineId])
+  @@index([matchStatus, createdAt])
+  @@index([paymentAttemptId])
+  @@index([refundOperationId])
+  @@map("payment_settlement_lines")
 }
 
 model MarketplaceCheckoutEvidence {

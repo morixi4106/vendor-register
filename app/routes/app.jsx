@@ -23,6 +23,7 @@ export default function App() {
         <Link to="/app/vendor-stores">店舗一覧</Link>
         <Link to="/app/sellers">出店者管理</Link>
         <Link to="/app/payout-runs">出金管理</Link>
+        <Link to="/app/payment-operations">決済運用</Link>
         <Link to="/app/production-readiness">本番確認</Link>
         <Link to="/app/production-transaction-probe">本番注文・返金 E2E</Link>
         <Link to="/app/shopify-payout-evidence">Shopify着金証拠</Link>

@@ -12,6 +12,7 @@ import { buildEnvironmentChecks, inspectOperationEnvironment, inspectStripeEnvir
 import { buildShopifyChecks } from "./shopify.server.js";
 import { buildPayoutChecks, buildSellerChecks, getPlatformStripeAccount, probeConnectedAccounts } from "./sellers.server.js";
 import { buildProductShippingProfileChecks, buildShopifyProductSyncChecks, inspectProductShippingProfiles, inspectShopifyProductSync } from "./products.server.js";
+import { buildPaymentOperationChecks, inspectPaymentOperationReadiness } from "./payments.server.js";
 export async function getProductionReadiness({
   prismaClient = prisma,
   env = process.env,
@@ -102,6 +103,10 @@ export async function getProductionReadiness({
     prismaClient,
     now
   });
+  const paymentOperations = await inspectPaymentOperationReadiness({
+    prismaClient,
+    now
+  });
   let marketplaceGovernance;
   const governanceModelsAvailable = Boolean(prismaClient?.sellerComplianceProfile?.findMany && prismaClient?.productComplianceProfile?.findMany && prismaClient?.marketplaceOperationalCase?.findMany);
   try {
@@ -135,6 +140,9 @@ export async function getProductionReadiness({
   const rawChecks = [...buildEnvironmentChecks({
     stripeEnv,
     env,
+    operationEnv
+  }), ...buildPaymentOperationChecks({
+    inspection: paymentOperations,
     operationEnv
   }), ...buildWithdrawalOperationChecks({
     withdrawalOperations
@@ -171,9 +179,10 @@ export async function getProductionReadiness({
     codeCanGoLive: releaseSummary.codeCanGoLive,
     summary: releaseSummary.summary,
     operation: {
-      paymentFlow: `${operationEnv.paymentProvider}_${operationEnv.sellerPayoutProvider}_payout`,
+      paymentFlow: `${operationEnv.paymentProviders.join("+")}_${operationEnv.sellerPayoutProvider}_payout`,
       paymentFlowLabel: `${operationEnv.paymentProviderLabel} + ${operationEnv.sellerPayoutProviderLabel}`,
       paymentProvider: operationEnv.paymentProvider,
+      paymentProviders: operationEnv.paymentProviders,
       paymentProviderLabel: operationEnv.paymentProviderLabel,
       sellerPayoutProvider: operationEnv.sellerPayoutProvider,
       sellerPayoutProviderLabel: operationEnv.sellerPayoutProviderLabel,
@@ -201,6 +210,7 @@ export async function getProductionReadiness({
       probeLimit: STRIPE_ACCOUNT_PROBE_LIMIT
     },
     integrity: launchIntegrity,
+    paymentOperations,
     marketplaceGovernance,
     operationalReadiness,
     releaseMonitoring,

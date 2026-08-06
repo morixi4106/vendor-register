@@ -195,7 +195,7 @@ function checkActionForDisplay(check, data, { isOptionalStripe }) {
     case "payment_provider":
       return check.status === "pass"
         ? ""
-        : "Renderの環境変数で PAYMENT_PROVIDER=shopify_payments を明示します。";
+        : "Renderの環境変数で PAYMENT_PROVIDERS=shopify_payments または shopify_payments,komoju を明示します。";
     case "seller_payout_provider":
       return check.status === "pass"
         ? ""

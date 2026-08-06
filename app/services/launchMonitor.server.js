@@ -12,6 +12,11 @@ import {
   inspectWithdrawalWorkerHeartbeat,
   loadLaunchIntegritySellerRows,
 } from "./productionReadiness.server.js";
+import { inspectOperationEnvironment } from "./productionReadiness/environment.server.js";
+import {
+  buildPaymentOperationChecks,
+  inspectPaymentOperationReadiness,
+} from "./productionReadiness/payments.server.js";
 import { getMarketplaceCheckoutGateStatus } from "./marketplaceCheckoutGate.server.js";
 import {
   buildMarketplaceCheckoutValidationReadinessCheck,
@@ -44,6 +49,12 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "withdrawal_operations_available",
   "withdrawal_email_outbox",
   "withdrawal_processing_integrity",
+  "payment_operations_available",
+  "payment_attempts_pending_expired",
+  "payment_attempts_review",
+  "payment_refunds_review",
+  "payment_refunds_failed",
+  "payment_settlements_unmatched",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
   "marketplace_checkout_publication_boundary",
@@ -256,6 +267,9 @@ export async function collectLaunchMonitorReport({
     inspectShopifyProductCatalogSyncHeartbeat;
   const inspectOperationalReadinessImpl =
     dependencies.inspectOperationalReadiness || inspectOperationalReadiness;
+  const inspectPaymentOperationReadinessImpl =
+    dependencies.inspectPaymentOperationReadiness ||
+    inspectPaymentOperationReadiness;
   const getPlatformOperationalControlImpl =
     dependencies.getPlatformOperationalControl ||
     getPlatformOperationalControl;
@@ -322,6 +336,31 @@ export async function collectLaunchMonitorReport({
         "withdrawal_email_worker_heartbeat",
         CRITICAL_SEVERITY,
         "撤回メールワーカーの稼働確認に失敗しました。",
+        safeErrorCode(error),
+      ),
+    );
+  }
+
+  try {
+    const paymentOperations = await inspectPaymentOperationReadinessImpl({
+      prismaClient,
+      now,
+    });
+    const operationEnv = inspectOperationEnvironment(env);
+    checks.push(
+      ...buildPaymentOperationChecks({
+        inspection: paymentOperations,
+        operationEnv,
+      })
+        .filter((check) => READINESS_LIGHT_CHECK_IDS.has(check.id))
+        .map(readinessCheckToMonitorCheck),
+    );
+  } catch (error) {
+    checks.push(
+      issueCheck(
+        "payment_operations",
+        CRITICAL_SEVERITY,
+        "決済試行・返金・入金照合を確認できません。",
         safeErrorCode(error),
       ),
     );

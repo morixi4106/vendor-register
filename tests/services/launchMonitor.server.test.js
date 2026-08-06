@@ -256,6 +256,28 @@ test("contact inquiry thresholds move from healthy to warning to critical", asyn
   }
 });
 
+test("KOMOJU refund failures are critical in the launch monitor", async () => {
+  const report = await collectReport({
+    env: {
+      PAYMENT_PROVIDERS: "shopify_payments,komoju",
+      KOMOJU_PAYMENT_OPERATIONS_ENABLED: "true",
+      PAYMENT_REFUND_CONFIRMATION_ENFORCED: "true",
+    },
+    paymentOperations: {
+      available: true,
+      pendingExpiredCount: 0,
+      attemptReviewCount: 0,
+      refundReviewCount: 0,
+      refundFailedCount: 1,
+      unmatchedSettlementCount: 0,
+    },
+  });
+  assert.equal(
+    find(report.checks, "payment_refunds_failed").severity,
+    "critical",
+  );
+});
+
 test("light runs reuse the latest heavy result instead of reporting recovery", async () => {
   const previousHeavyChecks = [
     {
@@ -531,6 +553,8 @@ async function collectReport({
   prismaClient = basePrisma(),
   withdrawal = withdrawalOperations(),
   integrity = launchIntegrity(),
+  paymentOperations = { available: false },
+  env = {},
   runHeavyChecks = true,
   previousHeavyChecks = [],
 } = {}) {
@@ -541,6 +565,7 @@ async function collectReport({
       WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
       MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
       SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
+      ...env,
     },
     now: NOW,
     startedAt: new Date(NOW.getTime() - 60 * 60 * 1000),
@@ -549,6 +574,7 @@ async function collectReport({
     dependencies: {
       inspectWithdrawalOperations: async () => withdrawal,
       inspectWithdrawalWorkerHeartbeat: async () => integrity.heartbeat,
+      inspectPaymentOperationReadiness: async () => paymentOperations,
       inspectShopifyProductCatalogSyncHeartbeat: async () =>
         catalogSyncHeartbeat(),
       getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),

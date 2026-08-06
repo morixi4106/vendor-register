@@ -90,11 +90,23 @@ longer matches.
 Required Render environment variables for the current production payment path:
 
 ```text
-PAYMENT_PROVIDER=shopify_payments
+PAYMENT_PROVIDERS=shopify_payments
 SELLER_PAYOUT_PROVIDER=manual
 PRODUCTION_PROBE_SIGNING_SECRET=<dedicated random secret, 32+ characters>
 SALE_ELIGIBILITY_WATCHDOG_TOKEN=<different random secret, 32+ characters>
 ```
+
+KOMOJUをShopify Checkout内の追加決済手段として利用する場合は、次へ変更します。
+
+```text
+PAYMENT_PROVIDERS=shopify_payments,komoju
+KOMOJU_PAYMENT_OPERATIONS_ENABLED=true
+PAYMENT_REFUND_CONFIRMATION_ENFORCED=true
+```
+
+旧`PAYMENT_PROVIDER`は互換性のため読み取りますが、新規設定では
+`PAYMENT_PROVIDERS`を使用します。KOMOJUのコンビニ決済、Pay-easy、銀行振込は、
+KOMOJU側で返金成功を確認して証跡を登録するまで台帳へ返金を反映しません。
 
 Use `SELLER_PAYOUT_PROVIDER=wise` only after Wise sandbox transfer, funding failure, webhook duplication, and ledger idempotency tests pass.
 
@@ -369,7 +381,7 @@ Open Shopify Admin > vendor-register > Production readiness.
 
 The page checks:
 
-- `PAYMENT_PROVIDER` is `shopify_payments`.
+- `PAYMENT_PROVIDERS` contains only `shopify_payments` and optionally `komoju`.
 - `SELLER_PAYOUT_PROVIDER` is `manual` or `wise`.
 - Stripe Connect is optional / legacy unless explicitly enabled.
 - Stripe live keys are not blockers for Shopify Payments + manual/Wise payout mode.
