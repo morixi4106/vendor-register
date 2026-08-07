@@ -13,7 +13,7 @@ import { MARKETPLACE_PURCHASE_CONTROL_FUNCTION_HANDLE } from "./shopifyCheckoutV
 export const MARKETPLACE_PURCHASE_CONTROL_FUNCTION_UID =
   "078e786b-ef41-b43e-c173-b38649de9b2fc2d4c1d1";
 export const MARKETPLACE_PURCHASE_CONTROL_API_VERSION = "2026-04";
-export const PRODUCTION_SCHEMA_MIGRATION_VERSION = "20260806120000";
+export const PRODUCTION_SCHEMA_MIGRATION_VERSION = "20260807060000";
 
 export function getProductionProbeSigningSecret(env = process.env) {
   const secret = clean(env.PRODUCTION_PROBE_SIGNING_SECRET);

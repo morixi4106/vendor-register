@@ -314,7 +314,7 @@ model MarketplacePaymentAttempt {
 
   marketplaceOrder MarketplaceOrder?        @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
   refundOperations PaymentRefundOperation[]
-  settlementLines  PaymentSettlementLine[]
+  settlementLine   PaymentSettlementLine?
 
   @@unique([shopDomain, attemptKey])
   @@index([shopDomain, shopifyOrderId, status])
@@ -355,7 +355,7 @@ model PaymentRefundOperation {
 
   marketplaceOrder MarketplaceOrder?          @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
   paymentAttempt   MarketplacePaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
-  settlementLines  PaymentSettlementLine[]
+  settlementLine   PaymentSettlementLine?
 
   @@index([shopDomain, shopifyOrderId, status])
   @@index([provider, refundMode, status, updatedAt])
@@ -376,7 +376,7 @@ model PaymentSettlementBatch {
   payoutDate        DateTime?
   bankDepositedAt   DateTime?
   evidenceReference String?
-  evidenceHash      String?
+  evidenceHash      String?   @unique
   submittedBy       String
   reviewedBy        String?
   reviewedAt        DateTime?
@@ -396,8 +396,8 @@ model PaymentSettlementLine {
   batchId            String
   externalLineId     String
   lineType           String
-  paymentAttemptId   String?
-  refundOperationId  String?
+  paymentAttemptId   String?   @unique
+  refundOperationId  String?   @unique
   marketplaceOrderId String?
   providerReference  String?
   amount             Int       @default(0)
@@ -416,8 +416,6 @@ model PaymentSettlementLine {
 
   @@unique([batchId, externalLineId])
   @@index([matchStatus, createdAt])
-  @@index([paymentAttemptId])
-  @@index([refundOperationId])
   @@map("payment_settlement_lines")
 }
 
