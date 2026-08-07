@@ -51,11 +51,19 @@ the refund in KOMOJU first.
 
 The finance operator records the KOMOJU payout ID, gross sales, refunds, fees,
 net deposit, payout date, bank deposit date, and private evidence reference.
-The batch is reconciled only when:
+Every payout must also select the captured `MarketplacePaymentAttempt` rows and
+any applied refund rows that are included in the provider statement. The batch
+is reconciled only when the selected rows prove both equations:
 
 ```text
 gross - refunds - fees = net deposit
+sum(selected captured attempts) = gross
+sum(selected applied refunds) = refunds
 ```
+
+The resulting `PaymentSettlementLine` rows retain the direct links to the
+payment attempts and refund operations. A provider-level total without these
+links is not accepted as payout evidence for the release probe.
 
 Evidence references must point to access-controlled storage. Do not paste
 bank account numbers, customer details, API keys, or full payment credentials
@@ -80,19 +88,48 @@ convenience-store, Pay-easy, bank-transfer, Paidy, smartphone-payment, and
 Korean-card methods disabled in Shopify until each method receives its own
 operational verification.
 
-For the initial scope, one live charge is sufficient:
+Before the initial live charge, choose exactly one payout-evidence strategy.
+
+### Strategy A: use an existing reconciled payout
+
+Use this when a previous KOMOJU payout has already reached the bank and the
+application has reconciled it to at least one captured payment attempt. This is
+the preferred one-charge path. The new charge can be fully refunded after its
+paid-order checks pass because the payout requirement is already satisfied.
+
+### Strategy B: use the new charge for payout evidence
+
+Use this only when no existing payout is available. Before starting, record
+private evidence that KOMOJU is live, only one KOMOJU card integration is
+enabled, capture is automatic, unverified asynchronous methods are disabled,
+and the release can remain frozen until bank deposit and refund complete.
+Also confirm that other unsettled KOMOJU funds at least equal to the planned
+maximum charge will remain available after the payout. The probe will not
+permit refund until the payout batch is reconciled directly to this payment
+attempt.
+
+For either strategy, one live charge is sufficient only when every preflight
+confirmation is complete:
 
 1. Start `/app/production-transaction-probe` only after every automatic
-   preflight check passes.
+   preflight check passes. Record the strategy, maximum order total, private
+   settings evidence, and (for Strategy B) confirmed refund reserve.
 2. Buy one approved platform-direct product through Shopify Checkout and
    choose KOMOJU credit card.
 3. Attach that new Shopify order to the probe and wait for the paid webhook,
-   SellerOrder, shadow check, and paid ledger checks to pass.
-4. Fully refund the same order to the original card from Shopify Admin.
-5. Wait for the linked successful refund transaction and refund ledger checks
+   SellerOrder, shadow check, paid ledger, structured card evidence, and the
+   exact captured `MarketplacePaymentAttempt` match to pass.
+4. For Strategy A, continue immediately. For Strategy B, wait for the bank
+   deposit and register the KOMOJU payout in `/app/payment-operations`,
+   selecting this exact payment attempt. Do not refund before the probe says
+   the payout evidence passed.
+5. Fully refund the same order to the original card from Shopify Admin.
+6. Wait for the linked successful refund transaction and refund ledger checks
    to pass. The release-bound probe must finish as `PASSED`.
-6. When KOMOJU later deposits that charge, record the payout and bank evidence
-   from the same charge. Do not create a second payment only for payout proof.
+
+Do not change the Render commit, Shopify app version, Function, Validation,
+policy version, or migration while this verification is in progress. A release
+change invalidates the probe and can make another live charge necessary.
 
 This verification proves only KOMOJU card for a platform-direct, single-seller
 order. Enabling another provider or payment method requires separate evidence;

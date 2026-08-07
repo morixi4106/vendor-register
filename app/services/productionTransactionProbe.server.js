@@ -24,6 +24,7 @@ import { getPlatformOperationalControl } from "./operationalControls.server.js";
 export const PRODUCTION_TRANSACTION_PROBE_STATUS = Object.freeze({
   AWAITING_ORDER: "AWAITING_ORDER",
   AWAITING_SETTLEMENT: "AWAITING_SETTLEMENT",
+  AWAITING_PAYOUT_EVIDENCE: "AWAITING_PAYOUT_EVIDENCE",
   AWAITING_REFUND: "AWAITING_REFUND",
   PASSED: "PASSED",
   INVALIDATED: "INVALIDATED",
@@ -33,6 +34,7 @@ export const PRODUCTION_TRANSACTION_PROBE_STATUS = Object.freeze({
 const ACTIVE_PROBE_STATUSES = [
   PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_ORDER,
   PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
+  PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_PAYOUT_EVIDENCE,
   PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_REFUND,
 ];
 const SHOPIFY_API_VERSION = "2026-04";
@@ -62,7 +64,8 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
   "XPF",
 ]);
 
-const PRODUCTION_TRANSACTION_TARGET_VERSION = 1;
+const LEGACY_PRODUCTION_TRANSACTION_TARGET_VERSION = 1;
+const PRODUCTION_TRANSACTION_TARGET_VERSION = 2;
 const DEFAULT_PRODUCTION_TRANSACTION_TARGET = Object.freeze({
   version: PRODUCTION_TRANSACTION_TARGET_VERSION,
   provider: PAYMENT_PROVIDER.SHOPIFY_PAYMENTS,
@@ -76,6 +79,11 @@ const KOMOJU_CARD_TRANSACTION_TARGET = Object.freeze({
   refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
 });
 
+export const KOMOJU_PAYOUT_EVIDENCE_STRATEGY = Object.freeze({
+  EXISTING_RECONCILED_PAYOUT: "EXISTING_RECONCILED_PAYOUT",
+  CURRENT_PAYMENT_WITH_REFUND_RESERVE: "CURRENT_PAYMENT_WITH_REFUND_RESERVE",
+});
+
 const ORDER_FIELDS = `#graphql
   fragment ProductionProbeTransactionFields on OrderTransaction {
     id
@@ -86,6 +94,15 @@ const ORDER_FIELDS = `#graphql
     manualPaymentGateway
     test
     processedAt
+    paymentDetails {
+      __typename
+      ... on BasePaymentDetails {
+        paymentMethodName
+      }
+      ... on CardPaymentDetails {
+        wallet
+      }
+    }
     amountSet {
       shopMoney {
         amount
@@ -247,6 +264,7 @@ function asObject(value) {
 }
 
 function normalizeProductionTransactionTarget({
+  version,
   provider,
   paymentMethod,
 } = {}) {
@@ -260,8 +278,12 @@ function normalizeProductionTransactionTarget({
   ) {
     return null;
   }
+  const normalizedVersion = Number(version);
   return {
-    version: PRODUCTION_TRANSACTION_TARGET_VERSION,
+    version:
+      normalizedVersion === LEGACY_PRODUCTION_TRANSACTION_TARGET_VERSION
+        ? LEGACY_PRODUCTION_TRANSACTION_TARGET_VERSION
+        : PRODUCTION_TRANSACTION_TARGET_VERSION,
     provider: normalizedProvider,
     paymentMethod: normalizedMethod,
     refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
@@ -278,6 +300,7 @@ export function getProductionTransactionProbeTarget(probe) {
 
 function sameTransactionTarget(left, right) {
   return (
+    left?.version === right?.version &&
     left?.provider === right?.provider &&
     left?.paymentMethod === right?.paymentMethod &&
     left?.refundMode === right?.refundMode
@@ -351,6 +374,7 @@ function lineSnapshot(line, currencyCode) {
 }
 
 function transactionSnapshot(transaction, currencyCode) {
+  const paymentDetails = asObject(transaction?.paymentDetails);
   return {
     id: clean(transaction?.id) || null,
     kind: clean(transaction?.kind).toUpperCase(),
@@ -368,7 +392,17 @@ function transactionSnapshot(transaction, currencyCode) {
       transaction?.amountSet?.shopMoney?.currencyCode || currencyCode,
     ),
     parentTransactionId: clean(transaction?.parentTransaction?.id) || null,
+    paymentDetailsType: clean(paymentDetails.__typename) || null,
+    paymentMethodName: clean(paymentDetails.paymentMethodName) || null,
+    paymentWallet: clean(paymentDetails.wallet) || null,
   };
+}
+
+function normalizePayoutEvidenceStrategy(value) {
+  const strategy = clean(value).toUpperCase();
+  return Object.values(KOMOJU_PAYOUT_EVIDENCE_STRATEGY).includes(strategy)
+    ? strategy
+    : null;
 }
 
 export function buildShopifyProbeOrderSnapshot(order) {
@@ -591,6 +625,7 @@ export async function inspectProductionTransactionProbePreflight(
     operationalControl,
     publicationBoundary,
     productCount,
+    existingReconciledPayout,
   ] = await Promise.all([
     resolveSafely(() => inspectPaymentOperationsImpl({ prismaClient }), {
       available: false,
@@ -635,6 +670,31 @@ export async function inspectProductionTransactionProbePreflight(
           0,
         )
       : Promise.resolve(0),
+    prismaClient?.paymentSettlementBatch?.findFirst
+      ? resolveSafely(
+          () =>
+            prismaClient.paymentSettlementBatch.findFirst({
+              where: {
+                provider: "KOMOJU",
+                status: "RECONCILED",
+                bankDepositedAt: { not: null },
+                lines: {
+                  some: {
+                    paymentAttemptId: { not: null },
+                    matchStatus: "MATCHED",
+                  },
+                },
+              },
+              orderBy: [{ bankDepositedAt: "desc" }, { createdAt: "desc" }],
+              select: {
+                id: true,
+                externalBatchId: true,
+                bankDepositedAt: true,
+              },
+            }),
+          null,
+        )
+      : Promise.resolve(null),
   ]);
 
   const configuredProviders = parseProviderConfig(
@@ -650,7 +710,8 @@ export async function inspectProductionTransactionProbePreflight(
     paymentOperations.attemptReviewCount === 0 &&
     paymentOperations.refundReviewCount === 0 &&
     paymentOperations.refundFailedCount === 0 &&
-    paymentOperations.unmatchedSettlementCount === 0,
+    paymentOperations.unmatchedSettlementCount === 0 &&
+    toNonNegativeInteger(paymentOperations.settlementBatchReviewCount) === 0,
   );
   const purchaseControlReady = Boolean(
     release.expected?.functionId && release.expected?.validationId,
@@ -749,6 +810,14 @@ export async function inspectProductionTransactionProbePreflight(
         publicationBoundary.failedProductCount,
       ),
     },
+    payoutEvidence: {
+      existingReconciledPayoutAvailable: Boolean(existingReconciledPayout),
+      existingReconciledPayoutId: existingReconciledPayout?.id || null,
+      existingReconciledPayoutReference:
+        existingReconciledPayout?.externalBatchId || null,
+      existingReconciledPayoutDepositedAt:
+        existingReconciledPayout?.bankDepositedAt || null,
+    },
   };
 }
 
@@ -761,6 +830,15 @@ export async function createProductionTransactionProbe(
     targetPaymentMethod = PAYMENT_METHOD.CARD,
     komojuCardOnlyConfirmed = false,
     untestedAsyncMethodsDisabledConfirmed = false,
+    komojuLiveConfirmed = false,
+    singleCardIntegrationConfirmed = false,
+    automaticCaptureConfirmed = false,
+    releaseFreezeConfirmed = false,
+    externalSettingsEvidenceReference,
+    externalSettingsEvidenceHash,
+    payoutEvidenceStrategy,
+    maximumPlannedChargeAmount,
+    confirmedRefundReserveAmount,
   },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
@@ -780,10 +858,75 @@ export async function createProductionTransactionProbe(
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
     (komojuCardOnlyConfirmed !== true ||
-      untestedAsyncMethodsDisabledConfirmed !== true)
+      untestedAsyncMethodsDisabledConfirmed !== true ||
+      komojuLiveConfirmed !== true ||
+      singleCardIntegrationConfirmed !== true ||
+      automaticCaptureConfirmed !== true ||
+      releaseFreezeConfirmed !== true)
   ) {
     return { ok: false, reason: "komoju_scope_confirmation_required" };
   }
+  const evidenceReference = clean(externalSettingsEvidenceReference);
+  const evidenceHash = clean(externalSettingsEvidenceHash);
+  const strategy = normalizePayoutEvidenceStrategy(payoutEvidenceStrategy);
+  const maximumCharge = toNonNegativeInteger(maximumPlannedChargeAmount);
+  const refundReserve = toNonNegativeInteger(confirmedRefundReserveAmount);
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    (!strategy || !evidenceReference || maximumCharge <= 0)
+  ) {
+    return { ok: false, reason: "komoju_external_readiness_missing" };
+  }
+  let existingPayout = null;
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT
+  ) {
+    existingPayout = await prismaClient.paymentSettlementBatch.findFirst({
+      where: {
+        provider: "KOMOJU",
+        status: "RECONCILED",
+        bankDepositedAt: { not: null },
+        lines: {
+          some: {
+            paymentAttemptId: { not: null },
+            matchStatus: "MATCHED",
+          },
+        },
+      },
+      orderBy: [{ bankDepositedAt: "desc" }, { createdAt: "desc" }],
+      select: { id: true, externalBatchId: true, bankDepositedAt: true },
+    });
+    if (!existingPayout) {
+      return { ok: false, reason: "existing_reconciled_payout_required" };
+    }
+  }
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE &&
+    (refundReserve <= 0 || refundReserve < maximumCharge)
+  ) {
+    return { ok: false, reason: "komoju_refund_reserve_insufficient" };
+  }
+  const externalReadiness = {
+    version: 1,
+    strategy,
+    maximumPlannedChargeAmount: maximumCharge,
+    confirmedRefundReserveAmount: refundReserve,
+    komojuLiveConfirmed: komojuLiveConfirmed === true,
+    singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
+    automaticCaptureConfirmed: automaticCaptureConfirmed === true,
+    untestedAsyncMethodsDisabledConfirmed:
+      untestedAsyncMethodsDisabledConfirmed === true,
+    releaseFreezeConfirmed: releaseFreezeConfirmed === true,
+    evidenceReference,
+    evidenceHash: evidenceHash || null,
+    existingPayoutBatchId: existingPayout?.id || null,
+    existingPayoutReference: existingPayout?.externalBatchId || null,
+    confirmedAt: now.toISOString(),
+    confirmedBy: actor,
+  };
   const key = activeKey(shop);
   const existing = await prismaClient.productionTransactionProbe.findUnique({
     where: { activeKey: key },
@@ -831,7 +974,7 @@ export async function createProductionTransactionProbe(
         startedBy: actor,
         startedAt: now,
         lastCheckedAt: now,
-        orderEvidenceJson: { probeConfig: target },
+        orderEvidenceJson: { probeConfig: target, externalReadiness },
       },
     });
     return { ok: true, existing: false, probe };
@@ -987,6 +1130,20 @@ export async function attachOrderToProductionTransactionProbe(
   ) {
     return { ok: false, reason: "order_has_no_payable_lines" };
   }
+  const externalReadiness = asObject(
+    asObject(probe.orderEvidenceJson).externalReadiness,
+  );
+  const maximumPlannedChargeAmount = toNonNegativeInteger(
+    externalReadiness.maximumPlannedChargeAmount,
+  );
+  if (
+    getProductionTransactionProbeTarget(probe).provider ===
+      PAYMENT_PROVIDER.KOMOJU &&
+    (maximumPlannedChargeAmount <= 0 ||
+      snapshot.commercialEvidence.totalAmount > maximumPlannedChargeAmount)
+  ) {
+    return { ok: false, reason: "order_exceeds_confirmed_charge_plan" };
+  }
   const platformProducts = await resolvePlatformProducts(
     { shopDomain: probe.shopDomain, snapshot },
     { prismaClient },
@@ -994,6 +1151,7 @@ export async function attachOrderToProductionTransactionProbe(
   if (!platformProducts.ok) return platformProducts;
   const orderEvidenceJson = {
     probeConfig: getProductionTransactionProbeTarget(probe),
+    externalReadiness,
     shopifyOrderId: snapshot.shopifyOrderId,
     shopifyOrderName: snapshot.shopifyOrderName,
     createdAt: snapshot.createdAt,
@@ -1076,6 +1234,49 @@ async function loadLocalOrderEvidence(probe, prismaClient) {
         orderBy: { checkedAt: "desc" },
       })
     : null;
+  const paymentAttempts = prismaClient?.marketplacePaymentAttempt?.findMany
+    ? await prismaClient.marketplacePaymentAttempt.findMany({
+        where: {
+          shopDomain: probe.shopDomain,
+          shopifyOrderId: probe.shopifyOrderId,
+        },
+        orderBy: [{ processedAt: "asc" }, { createdAt: "asc" }],
+        include: {
+          settlementLines: {
+            include: {
+              batch: {
+                select: {
+                  id: true,
+                  provider: true,
+                  externalBatchId: true,
+                  status: true,
+                  bankDepositedAt: true,
+                },
+              },
+            },
+          },
+        },
+      })
+    : [];
+  const existingPayoutBatchId = clean(
+    asObject(asObject(probe.orderEvidenceJson).externalReadiness)
+      .existingPayoutBatchId,
+  );
+  const existingPayoutBatch =
+    existingPayoutBatchId && prismaClient?.paymentSettlementBatch?.findUnique
+      ? await prismaClient.paymentSettlementBatch.findUnique({
+          where: { id: existingPayoutBatchId },
+          include: {
+            lines: {
+              where: {
+                paymentAttemptId: { not: null },
+                matchStatus: "MATCHED",
+              },
+              select: { id: true },
+            },
+          },
+        })
+      : null;
   const storeIds = unique(
     (marketplaceOrder?.sellerOrders || []).map(
       (sellerOrder) => sellerOrder.vendorStoreId,
@@ -1092,7 +1293,14 @@ async function loadLocalOrderEvidence(probe, prismaClient) {
           },
         })
       : [];
-  return { marketplaceOrder, ledgerEntries, shadowCheck, stores };
+  return {
+    marketplaceOrder,
+    ledgerEntries,
+    shadowCheck,
+    paymentAttempts,
+    existingPayoutBatch,
+    stores,
+  };
 }
 
 function check(id, passed, code, details = {}) {
@@ -1116,6 +1324,18 @@ function classifyProbeTransaction(transaction) {
   return classifyPaymentGateway(
     transaction?.gateway,
     transaction?.formattedGateway,
+    {
+      __typename: transaction?.paymentDetailsType,
+      paymentMethodName: transaction?.paymentMethodName,
+      wallet: transaction?.paymentWallet,
+    },
+  );
+}
+
+function requiresStructuredCardEvidence(target) {
+  return (
+    Number(target?.version) >= PRODUCTION_TRANSACTION_TARGET_VERSION &&
+    target?.paymentMethod === PAYMENT_METHOD.CARD
   );
 }
 
@@ -1127,6 +1347,13 @@ function transactionMatchesProvider(transaction, target) {
 }
 
 function transactionMatchesMethod(transaction, target) {
+  if (requiresStructuredCardEvidence(target)) {
+    return (
+      transaction?.manualPaymentGateway !== true &&
+      transaction?.paymentDetailsType === "CardPaymentDetails" &&
+      !clean(transaction?.paymentWallet)
+    );
+  }
   return (
     transaction?.manualPaymentGateway !== true &&
     classifyProbeTransaction(transaction).paymentMethod === target.paymentMethod
@@ -1211,11 +1438,39 @@ function buildPaidInspection({ probe, snapshot, local }) {
     .map((transaction) => transaction.id)
     .filter(Boolean)
     .sort();
+  const paymentTransactionIdSet = new Set(paymentTransactionIds);
+  const matchingPaymentAttempts = (local.paymentAttempts || []).filter(
+    (attempt) => {
+      const metadata = asObject(attempt.metadataJson);
+      const structuredCardMatches = requiresStructuredCardEvidence(target)
+        ? metadata.paymentDetailsType === "CardPaymentDetails" &&
+          !clean(metadata.paymentWallet)
+        : true;
+      return (
+        attempt.status === "CAPTURED" &&
+        attempt.test !== true &&
+        attempt.requiresReview !== true &&
+        attempt.provider === target.provider &&
+        attempt.paymentMethod === target.paymentMethod &&
+        paymentTransactionIdSet.has(attempt.shopifyTransactionId) &&
+        attempt.amount === snapshot.commercialEvidence.totalAmount &&
+        normalizeCurrency(attempt.currencyCode) ===
+          snapshot.commercialEvidence.currencyCode &&
+        structuredCardMatches
+      );
+    },
+  );
   const checks = [
     check(
       "payment_transaction_present",
       paymentTransactions.length > 0,
       "payment_transaction_missing",
+      { actualCount: paymentTransactions.length },
+    ),
+    check(
+      "payment_transaction_single",
+      paymentTransactions.length === 1,
+      "payment_transaction_count_mismatch",
       { actualCount: paymentTransactions.length },
     ),
     check(
@@ -1269,6 +1524,12 @@ function buildPaidInspection({ probe, snapshot, local }) {
             snapshot.commercialEvidence.currencyCode,
         ),
       "payment_transaction_currency_mismatch",
+    ),
+    check(
+      "payment_attempt_direct_match",
+      matchingPaymentAttempts.length === 1,
+      "payment_attempt_direct_match_missing",
+      { actualCount: matchingPaymentAttempts.length },
     ),
     check(
       "commercial_fingerprint",
@@ -1367,7 +1628,87 @@ function buildPaidInspection({ probe, snapshot, local }) {
     paidLedgerEntryIds: paidEntries.map((entry) => entry.id).sort(),
     shopifyPaymentTransactionIds: paymentTransactionIds,
     shopifyPaymentTransactionAmount: paymentTransactionAmount,
+    paymentAttemptIds: matchingPaymentAttempts
+      .map((attempt) => attempt.id)
+      .sort(),
     paymentTarget: target,
+  };
+}
+
+function buildPayoutEvidenceInspection({ probe, local, paidInspection }) {
+  if (paidInspection.paymentTarget?.provider !== PAYMENT_PROVIDER.KOMOJU) {
+    return {
+      passed: true,
+      strategy: "NOT_REQUIRED",
+      code: null,
+      currentPaymentDirectlyLinked: false,
+    };
+  }
+  const readiness = asObject(
+    asObject(probe.orderEvidenceJson).externalReadiness,
+  );
+  const strategy = normalizePayoutEvidenceStrategy(readiness.strategy);
+  if (strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT) {
+    const batch = local.existingPayoutBatch;
+    const passed = Boolean(
+      batch &&
+      batch.provider === "KOMOJU" &&
+      batch.status === "RECONCILED" &&
+      batch.bankDepositedAt &&
+      batch.lines?.length > 0,
+    );
+    return {
+      passed,
+      strategy,
+      code: passed ? null : "existing_reconciled_payout_missing",
+      batchId: batch?.id || null,
+      externalBatchId: batch?.externalBatchId || null,
+      bankDepositedAt: batch?.bankDepositedAt || null,
+      currentPaymentDirectlyLinked: false,
+    };
+  }
+  if (
+    strategy ===
+    KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE
+  ) {
+    const expectedAttemptIds = new Set(paidInspection.paymentAttemptIds || []);
+    const matchingLines = (local.paymentAttempts || []).flatMap((attempt) =>
+      expectedAttemptIds.has(attempt.id)
+        ? (attempt.settlementLines || []).filter(
+            (line) =>
+              line.matchStatus === "MATCHED" &&
+              line.amount === attempt.amount &&
+              line.batch?.provider === "KOMOJU" &&
+              line.batch?.status === "RECONCILED" &&
+              Boolean(line.batch?.bankDepositedAt),
+          )
+        : [],
+    );
+    const batchIds = unique(matchingLines.map((line) => line.batch?.id));
+    const passed =
+      expectedAttemptIds.size === 1 &&
+      matchingLines.length === 1 &&
+      batchIds.length === 1;
+    return {
+      passed,
+      strategy,
+      code: passed ? null : "current_payment_payout_evidence_missing",
+      batchId: passed ? batchIds[0] : null,
+      externalBatchId: passed
+        ? matchingLines[0].batch?.externalBatchId || null
+        : null,
+      bankDepositedAt: passed
+        ? matchingLines[0].batch?.bankDepositedAt || null
+        : null,
+      settlementLineIds: matchingLines.map((line) => line.id).sort(),
+      currentPaymentDirectlyLinked: passed,
+    };
+  }
+  return {
+    passed: false,
+    strategy: null,
+    code: "payout_evidence_strategy_missing",
+    currentPaymentDirectlyLinked: false,
   };
 }
 
@@ -1695,6 +2036,40 @@ export async function refreshProductionTransactionProbe(
       paidInspection,
     };
   }
+  const payoutEvidenceInspection = buildPayoutEvidenceInspection({
+    probe,
+    local,
+    paidInspection,
+  });
+  if (!payoutEvidenceInspection.passed) {
+    const transitioned = await transitionActiveProbe(
+      {
+        probe,
+        expectedStatuses: ACTIVE_PROBE_STATUSES,
+        data: {
+          status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_PAYOUT_EVIDENCE,
+          paidVerifiedAt: probe.paidVerifiedAt || now,
+          lastCheckedAt: now,
+          lastErrorCode: payoutEvidenceInspection.code,
+          paidEvidenceJson: {
+            ...paidInspection,
+            payoutEvidenceInspection,
+          },
+          marketplaceOrderId: paidInspection.marketplaceOrderId,
+        },
+      },
+      { prismaClient },
+    );
+    if (!transitioned.ok) return transitioned;
+    return {
+      ok: true,
+      pending: true,
+      stage: "payout_evidence",
+      probe: transitioned.probe,
+      paidInspection,
+      payoutEvidenceInspection,
+    };
+  }
   const refundInspection = buildRefundInspection({
     snapshot: fetched.snapshot,
     local,
@@ -1710,7 +2085,10 @@ export async function refreshProductionTransactionProbe(
           paidVerifiedAt: probe.paidVerifiedAt || now,
           lastCheckedAt: now,
           lastErrorCode: pendingReason(refundInspection),
-          paidEvidenceJson: paidInspection,
+          paidEvidenceJson: {
+            ...paidInspection,
+            payoutEvidenceInspection,
+          },
           refundEvidenceJson: refundInspection,
           marketplaceOrderId: paidInspection.marketplaceOrderId,
         },
@@ -1724,11 +2102,12 @@ export async function refreshProductionTransactionProbe(
       stage: "refund",
       probe: transitioned.probe,
       paidInspection,
+      payoutEvidenceInspection,
       refundInspection,
     };
   }
   const finalEvidence = {
-    version: 3,
+    version: 4,
     probeId: probe.id,
     shopDomain: probe.shopDomain,
     releaseId: probe.releaseId,
@@ -1738,6 +2117,7 @@ export async function refreshProductionTransactionProbe(
     commercialFingerprint: fetched.snapshot.commercialFingerprint,
     paymentTarget: paidInspection.paymentTarget,
     paidInspection,
+    payoutEvidenceInspection,
     refundInspection,
     completedAt: now.toISOString(),
     verifiedBy: clean(actorKey) || probe.startedBy,
@@ -1760,7 +2140,10 @@ export async function refreshProductionTransactionProbe(
         lastCheckedAt: now,
         lastErrorCode: null,
         evidenceHash,
-        paidEvidenceJson: paidInspection,
+        paidEvidenceJson: {
+          ...paidInspection,
+          payoutEvidenceInspection,
+        },
         refundEvidenceJson: refundInspection,
         finalEvidenceJson: finalEvidence,
         marketplaceOrderId: paidInspection.marketplaceOrderId,
@@ -1978,6 +2361,12 @@ export function buildProductionTransactionProbePage({
       instruction:
         "注文Webhook、SellerOrder、Shadow Check、売上台帳の反映を待っています。まだ返金しないでください。",
     },
+    AWAITING_PAYOUT_EVIDENCE: {
+      tone: "warning",
+      statusLabel: "入金証拠待ち",
+      instruction:
+        "売上反映は一致しました。決済運用画面で今回のKOMOJU決済を銀行着金明細へ直接紐付けるまで、まだ返金しないでください。",
+    },
     AWAITING_REFUND: {
       tone: "warning",
       statusLabel: "全額返金待ち",
@@ -2008,6 +2397,7 @@ export function buildProductionTransactionProbePage({
     RELEASE_UNCONFIGURED: 0,
     AWAITING_ORDER: 1,
     AWAITING_SETTLEMENT: 2,
+    AWAITING_PAYOUT_EVIDENCE: 3,
     AWAITING_REFUND: 3,
     PASSED: 4,
     INVALIDATED: 0,

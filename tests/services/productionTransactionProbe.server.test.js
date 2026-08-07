@@ -9,6 +9,7 @@ import {
   fetchShopifyOrderForProductionProbe,
   getProductionTransactionProbeTarget,
   inspectProductionTransactionProbePreflight,
+  KOMOJU_PAYOUT_EVIDENCE_STRATEGY,
   refreshProductionTransactionProbe,
 } from "../../app/services/productionTransactionProbe.server.js";
 import {
@@ -25,8 +26,14 @@ const VARIANT_ID = "gid://shopify/ProductVariant/30";
 const PAYMENT_TRANSACTION_ID = "gid://shopify/OrderTransaction/40";
 const REFUND_TRANSACTION_ID = "gid://shopify/OrderTransaction/50";
 const KOMOJU_CARD_TARGET = Object.freeze({
-  version: 1,
+  version: 2,
   provider: "KOMOJU",
+  paymentMethod: "CARD",
+  refundMode: "SHOPIFY_LINKED",
+});
+const SHOPIFY_CARD_TARGET = Object.freeze({
+  version: 2,
+  provider: "SHOPIFY_PAYMENTS",
   paymentMethod: "CARD",
   refundMode: "SHOPIFY_LINKED",
 });
@@ -50,6 +57,11 @@ function shopifyOrder({
   createdAt = "2026-07-29T01:01:00.000Z",
   paymentGateway = "shopify_payments",
   paymentFormattedGateway = "Shopify Payments",
+  paymentDetails = {
+    __typename: "CardPaymentDetails",
+    paymentMethodName: "Visa",
+    wallet: null,
+  },
   refundGateway = paymentGateway,
   refundFormattedGateway = paymentFormattedGateway,
 } = {}) {
@@ -62,6 +74,7 @@ function shopifyOrder({
       formattedGateway: paymentFormattedGateway,
       manualPaymentGateway: false,
       test: testOrder,
+      paymentDetails,
       processedAt: "2026-07-29T01:01:30.000Z",
       amountSet: {
         shopMoney: { amount: "1114", currencyCode: "JPY" },
@@ -157,8 +170,24 @@ function probeRecord({
   status = "AWAITING_SETTLEMENT",
   release = releaseExpectation(),
   target = null,
+  externalReadiness: externalReadinessOverride,
 } = {}) {
   const snapshot = buildShopifyProbeOrderSnapshot(shopifyOrder());
+  const effectiveTarget = target || SHOPIFY_CARD_TARGET;
+  const externalReadiness =
+    externalReadinessOverride !== undefined
+      ? externalReadinessOverride
+      : effectiveTarget.provider === "KOMOJU"
+        ? {
+            version: 1,
+            strategy:
+              KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT,
+            maximumPlannedChargeAmount: 2000,
+            confirmedRefundReserveAmount: 0,
+            existingPayoutBatchId: "settlement_batch_existing",
+            evidenceReference: "private-evidence:komoju-settings",
+          }
+        : null;
   return {
     id: "probe_1",
     activeKey: `production-transaction-probe:${SHOP}`,
@@ -179,7 +208,8 @@ function probeRecord({
     lastErrorCode: null,
     evidenceHash: null,
     orderEvidenceJson: {
-      ...(target ? { probeConfig: target } : {}),
+      probeConfig: effectiveTarget,
+      ...(externalReadiness ? { externalReadiness } : {}),
       commercialFingerprint: snapshot.commercialFingerprint,
       commercialEvidence: snapshot.commercialEvidence,
     },
@@ -188,6 +218,31 @@ function probeRecord({
     finalEvidenceJson: null,
     createdAt: new Date("2026-07-29T01:00:00.000Z"),
     updatedAt: new Date("2026-07-29T01:03:00.000Z"),
+  };
+}
+
+function paymentAttempt({ target = SHOPIFY_CARD_TARGET, test = false } = {}) {
+  return {
+    id: "payment_attempt_1",
+    marketplaceOrderId: "marketplace_order_1",
+    shopDomain: SHOP,
+    shopifyOrderId: ORDER_ID,
+    shopifyTransactionId: PAYMENT_TRANSACTION_ID,
+    provider: target.provider,
+    paymentMethod: "CARD",
+    status: "CAPTURED",
+    amount: 1114,
+    currencyCode: "jpy",
+    test,
+    requiresReview: false,
+    processedAt: new Date("2026-07-29T01:01:30.000Z"),
+    capturedAt: new Date("2026-07-29T01:01:30.000Z"),
+    metadataJson: {
+      paymentDetailsType: "CardPaymentDetails",
+      paymentMethodName: "Visa",
+      paymentWallet: null,
+    },
+    settlementLines: [],
   };
 }
 
@@ -268,7 +323,19 @@ function refreshPrisma({
   probe = probeRecord(),
   order = marketplaceOrder(),
   ledgerEntries = [paidLedger()],
+  paymentAttempts,
+  existingPayoutBatch,
 } = {}) {
+  const target = getProductionTransactionProbeTarget(probe);
+  const attempts = paymentAttempts || [paymentAttempt({ target })];
+  const payoutBatch = existingPayoutBatch || {
+    id: "settlement_batch_existing",
+    provider: "KOMOJU",
+    externalBatchId: "komoju-payout-existing",
+    status: "RECONCILED",
+    bankDepositedAt: new Date("2026-07-28T00:00:00.000Z"),
+    lines: [{ id: "settlement_line_existing" }],
+  };
   const state = {
     probe,
     order,
@@ -310,6 +377,16 @@ function refreshPrisma({
     sellerOrderShadowCheck: {
       async findFirst() {
         return { status: "matched" };
+      },
+    },
+    marketplacePaymentAttempt: {
+      async findMany() {
+        return attempts;
+      },
+    },
+    paymentSettlementBatch: {
+      async findUnique() {
+        return payoutBatch;
       },
     },
     vendorStore: {
@@ -455,6 +532,15 @@ test("starting a KOMOJU card probe requires scope confirmations and stores its t
       ...input,
       komojuCardOnlyConfirmed: true,
       untestedAsyncMethodsDisabledConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      releaseFreezeConfirmed: true,
+      externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+      payoutEvidenceStrategy:
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE,
+      maximumPlannedChargeAmount: 2000,
+      confirmedRefundReserveAmount: 2000,
     },
     { prismaClient },
   );
@@ -938,6 +1024,82 @@ test("KOMOJU card payment advances to refund while other providers remain reject
   );
 });
 
+test("current KOMOJU payment waits for its directly linked bank deposit before refund", async () => {
+  const externalReadiness = {
+    version: 1,
+    strategy:
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE,
+    maximumPlannedChargeAmount: 2000,
+    confirmedRefundReserveAmount: 2000,
+    evidenceReference: "private-evidence:komoju-settings",
+  };
+  const probe = probeRecord({
+    target: KOMOJU_CARD_TARGET,
+    externalReadiness,
+  });
+  const transaction = shopifyOrder({
+    paymentGateway: "komoju_credit_card",
+    paymentFormattedGateway: "KOMOJU - Credit Card",
+  });
+  const withoutDeposit = refreshPrisma({ probe });
+  const pending = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient: withoutDeposit.prismaClient,
+      graphQL: graphQLFor(transaction),
+    },
+  );
+  assert.equal(pending.pending, true);
+  assert.equal(pending.stage, "payout_evidence");
+  assert.equal(withoutDeposit.state.probe.status, "AWAITING_PAYOUT_EVIDENCE");
+  assert.equal(
+    withoutDeposit.state.probe.lastErrorCode,
+    "current_payment_payout_evidence_missing",
+  );
+
+  const directlyLinkedAttempt = paymentAttempt({ target: KOMOJU_CARD_TARGET });
+  directlyLinkedAttempt.settlementLines = [
+    {
+      id: "settlement_line_current",
+      amount: 1114,
+      matchStatus: "MATCHED",
+      batch: {
+        id: "settlement_batch_current",
+        provider: "KOMOJU",
+        externalBatchId: "komoju-payout-current",
+        status: "RECONCILED",
+        bankDepositedAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
+    },
+  ];
+  const withDeposit = refreshPrisma({
+    probe: probeRecord({
+      status: "AWAITING_PAYOUT_EVIDENCE",
+      target: KOMOJU_CARD_TARGET,
+      externalReadiness,
+    }),
+    paymentAttempts: [directlyLinkedAttempt],
+  });
+  const readyToRefund = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient: withDeposit.prismaClient,
+      graphQL: graphQLFor(transaction),
+    },
+  );
+  assert.equal(readyToRefund.pending, true);
+  assert.equal(readyToRefund.stage, "refund");
+  assert.equal(withDeposit.state.probe.status, "AWAITING_REFUND");
+});
+
 test("KOMOJU convenience-store payment cannot satisfy the card-only probe", async () => {
   const probe = probeRecord({ target: KOMOJU_CARD_TARGET });
   const { prismaClient, state } = refreshPrisma({ probe });
@@ -953,6 +1115,10 @@ test("KOMOJU convenience-store payment cannot satisfy the card-only probe", asyn
         shopifyOrder({
           paymentGateway: "komoju_convenience_store",
           paymentFormattedGateway: "KOMOJU - Convenience Store",
+          paymentDetails: {
+            __typename: "LocalPaymentMethodsPaymentDetails",
+            paymentMethodName: "Konbini",
+          },
         }),
       ),
     },
