@@ -107,6 +107,24 @@ export async function action({ request }) {
           formData.get("komojuCardOnlyConfirmed") === "yes",
         untestedAsyncMethodsDisabledConfirmed:
           formData.get("untestedAsyncMethodsDisabledConfirmed") === "yes",
+        komojuLiveConfirmed: formData.get("komojuLiveConfirmed") === "yes",
+        singleCardIntegrationConfirmed:
+          formData.get("singleCardIntegrationConfirmed") === "yes",
+        automaticCaptureConfirmed:
+          formData.get("automaticCaptureConfirmed") === "yes",
+        releaseFreezeConfirmed:
+          formData.get("releaseFreezeConfirmed") === "yes",
+        externalSettingsEvidenceReference: formData.get(
+          "externalSettingsEvidenceReference",
+        ),
+        externalSettingsEvidenceHash: formData.get(
+          "externalSettingsEvidenceHash",
+        ),
+        payoutEvidenceStrategy: formData.get("payoutEvidenceStrategy"),
+        maximumPlannedChargeAmount: formData.get("maximumPlannedChargeAmount"),
+        confirmedRefundReserveAmount: formData.get(
+          "confirmedRefundReserveAmount",
+        ),
       });
     } else if (intent === "attach_order") {
       result = await attachOrderToProductionTransactionProbe({
@@ -166,7 +184,11 @@ export default function ProductionTransactionProbePage() {
   useEffect(() => {
     if (
       !probe?.id ||
-      !["AWAITING_SETTLEMENT", "AWAITING_REFUND"].includes(probe.status)
+      ![
+        "AWAITING_SETTLEMENT",
+        "AWAITING_PAYOUT_EVIDENCE",
+        "AWAITING_REFUND",
+      ].includes(probe.status)
     ) {
       return undefined;
     }
@@ -265,6 +287,116 @@ export default function ProductionTransactionProbePage() {
                   />
                   未検証のコンビニ・Pay-easy等はShopifyで無効にしました
                 </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="komojuLiveConfirmed"
+                    value="yes"
+                    required
+                  />
+                  KOMOJUが本番モードであることを確認しました
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="singleCardIntegrationConfirmed"
+                    value="yes"
+                    required
+                  />
+                  KOMOJUカード連携は1種類だけ有効です
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="automaticCaptureConfirmed"
+                    value="yes"
+                    required
+                  />
+                  支払い確定は自動で、注文直後に売上確定されます
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="releaseFreezeConfirmed"
+                    value="yes"
+                    required
+                  />
+                  完了までRender・Shopify App・Functionのリリースを変更しません
+                </label>
+                <label style={styles.label}>
+                  入金証拠の使い方
+                  <select
+                    style={styles.input}
+                    name="payoutEvidenceStrategy"
+                    defaultValue={
+                      data.preflight.payoutEvidence
+                        ?.existingReconciledPayoutAvailable
+                        ? "EXISTING_RECONCILED_PAYOUT"
+                        : "CURRENT_PAYMENT_WITH_REFUND_RESERVE"
+                    }
+                    required
+                  >
+                    <option
+                      value="EXISTING_RECONCILED_PAYOUT"
+                      disabled={
+                        !data.preflight.payoutEvidence
+                          ?.existingReconciledPayoutAvailable
+                      }
+                    >
+                      既存の直接照合済みPayoutを使う（推奨）
+                    </option>
+                    <option value="CURRENT_PAYMENT_WITH_REFUND_RESERVE">
+                      今回の決済を銀行着金まで待つ
+                    </option>
+                  </select>
+                  <span style={styles.hint}>
+                    今回分を待つ場合、着金後も全額返金できる別のKOMOJU未精算残高が必要です。
+                  </span>
+                </label>
+                <label style={styles.label}>
+                  今回の支払上限（送料・税を含む円額）
+                  <input
+                    style={styles.input}
+                    name="maximumPlannedChargeAmount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="例: 3000"
+                    required
+                  />
+                </label>
+                <label style={styles.label}>
+                  確認済みの別未精算残高（円）
+                  <input
+                    style={styles.input}
+                    name="confirmedRefundReserveAmount"
+                    type="number"
+                    min="0"
+                    step="1"
+                    defaultValue="0"
+                  />
+                  <span style={styles.hint}>
+                    既存Payoutを使う場合は0、今回分の着金を待つ場合は支払上限以上を入力します。
+                  </span>
+                </label>
+                <label style={styles.label}>
+                  外部設定の確認証跡
+                  <input
+                    style={styles.input}
+                    name="externalSettingsEvidenceReference"
+                    placeholder="KOMOJU/Shopify画面の保存先またはチケット番号"
+                    required
+                  />
+                </label>
+                <label style={styles.label}>
+                  証跡SHA-256（任意）
+                  <input
+                    style={styles.input}
+                    name="externalSettingsEvidenceHash"
+                    pattern="[A-Fa-f0-9]{64}"
+                    placeholder="64桁のSHA-256"
+                  />
+                </label>
                 <button
                   style={styles.primaryButton}
                   disabled={busy || !data.preflight.canStart}
@@ -300,9 +432,11 @@ export default function ProductionTransactionProbePage() {
             ) : null}
 
             {activeProbe &&
-            ["AWAITING_SETTLEMENT", "AWAITING_REFUND"].includes(
-              activeProbe.status,
-            ) ? (
+            [
+              "AWAITING_SETTLEMENT",
+              "AWAITING_PAYOUT_EVIDENCE",
+              "AWAITING_REFUND",
+            ].includes(activeProbe.status) ? (
               <div style={styles.actions}>
                 <refreshFetcher.Form method="post">
                   <input type="hidden" name="intent" value="refresh_probe" />
@@ -533,6 +667,7 @@ function statusLabel(status) {
     {
       AWAITING_ORDER: "注文待ち",
       AWAITING_SETTLEMENT: "売上反映待ち",
+      AWAITING_PAYOUT_EVIDENCE: "KOMOJU入金証跡待ち",
       AWAITING_REFUND: "全額返金待ち",
       PASSED: "完了",
       INVALIDATED: "リリース変更で無効",
@@ -581,6 +716,14 @@ function reasonLabel(reason) {
         "決済前の自動確認に未合格の項目があります。実決済の前に解消してください。",
       komoju_scope_confirmation_required:
         "KOMOJUカードだけを確認することと、未検証の決済方法を無効にしたことを確認してください。",
+      komoju_external_readiness_missing:
+        "KOMOJUの本番設定証跡、入金証跡の方針、決済予定上限を入力してください。",
+      existing_reconciled_payout_required:
+        "決済済み注文へ直接紐づいた既存のKOMOJU入金証跡がありません。現在の決済を待つ方式を選ぶ場合は返金原資も確認してください。",
+      komoju_refund_reserve_insufficient:
+        "確認済みのKOMOJU未精算残高が決済予定上限を下回っています。銀行着金後も全額返金できる原資を確保してください。",
+      order_exceeds_confirmed_charge_plan:
+        "注文合計が決済前に確認した上限を超えています。この注文は証跡に利用できません。",
       active_probe_payment_target_mismatch:
         "進行中の確認と決済対象が異なります。古い確認を中止してから開始してください。",
       shopify_order_already_used:
@@ -646,6 +789,10 @@ function reasonLabel(reason) {
         "選択した決済プロバイダー以外の注文です。",
       payment_transaction_method_mismatch:
         "KOMOJUクレジットカード以外の決済方法です。",
+      payment_transaction_count_mismatch:
+        "成功した売上取引が1件ではありません。追加決済や分割決済がないか確認してください。",
+      payment_attempt_direct_match_missing:
+        "Shopifyの売上取引と同じKOMOJU決済試行を1件に特定できません。返金や入金登録へ進まないでください。",
       payment_transaction_is_test:
         "テスト決済の取引は本番証跡に利用できません。",
       payment_transaction_amount_mismatch: "決済額と注文合計が一致しません。",
@@ -668,6 +815,12 @@ function reasonLabel(reason) {
         "返金通貨と注文通貨が一致しません。",
       refund_ledger_count_mismatch:
         "返金Webhookと返金台帳の反映待ち、または件数不一致です。",
+      existing_reconciled_payout_missing:
+        "選択した既存のKOMOJU入金証跡が無効または削除されています。返金前に証跡を確認してください。",
+      current_payment_payout_evidence_missing:
+        "今回のKOMOJU決済へ直接紐づく銀行着金証跡がまだありません。決済運用画面で入金明細と決済試行を照合してください。",
+      payout_evidence_strategy_missing:
+        "KOMOJU入金証跡の確認方針を特定できません。新しい確認を開始してください。",
       active_probe_not_found:
         "有効な確認がありません。画面を更新して新しく開始してください。",
       production_transaction_probe_failed:
@@ -706,12 +859,14 @@ function checkLabel(id) {
       shopify_refund_transaction_amount: "返金額が注文合計と一致",
       shopify_refund_transaction_currency: "返金通貨が注文通貨と一致",
       payment_transaction_present: "対象決済の売上取引を確認",
+      payment_transaction_single: "成功した売上取引が1件だけ",
       payment_transaction_status: "売上取引が成功済み",
       payment_transaction_provider: "決済プロバイダーが一致",
       payment_transaction_method: "KOMOJUカード決済であることを確認",
       payment_transaction_live: "本番取引であることを確認",
       payment_transaction_amount: "決済額が注文合計と一致",
       payment_transaction_currency: "決済通貨が注文通貨と一致",
+      payment_attempt_direct_match: "Shopify売上取引とKOMOJU決済試行が直接一致",
       refund_transaction_present: "対象決済の返金取引を確認",
       refund_transaction_status: "返金取引が成功済み",
       refund_transaction_provider: "返金元のプロバイダーが一致",

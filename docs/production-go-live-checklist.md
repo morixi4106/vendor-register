@@ -108,6 +108,22 @@ PAYMENT_REFUND_CONFIRMATION_ENFORCED=true
 `PAYMENT_PROVIDERS`を使用します。KOMOJUのコンビニ決済、Pay-easy、銀行振込は、
 KOMOJU側で返金成功を確認して証跡を登録するまで台帳へ返金を反映しません。
 
+KOMOJUカードの本番注文・返金E2Eは、実決済前に次を固定してください。
+
+- KOMOJUがLiveモードであること
+- ShopifyでKOMOJUカード連携が1種類だけ有効であること
+- 支払い確定が自動であること
+- 未検証の非カードKOMOJU決済を無効にしていること
+- 決済予定総額の上限
+- 現在のリリースを着金・返金完了まで変更しないこと
+- 既存の直接照合済みKOMOJU入金証跡を使うか、今回の決済を着金まで待つか
+
+既存証跡を使わず今回の決済を銀行着金まで待つ場合、着金後にも全額返金できる
+別の未精算残高を、決済予定上限以上確保した証跡が必要です。決済運用画面では、
+KOMOJU振込の集計値だけでなく、対象の`MarketplacePaymentAttempt`と返金操作を選択し、
+直接紐づいた`PaymentSettlementLine`を作成してください。直接照合できない入金記録は
+本番E2Eの入金証跡として認めません。
+
 Use `SELLER_PAYOUT_PROVIDER=wise` only after Wise sandbox transfer, funding failure, webhook duplication, and ledger idempotency tests pass.
 
 For Wise payout mode, configure:

@@ -40,15 +40,28 @@ const MANUAL_KOMOJU_REFUND_METHODS = new Set([
 ]);
 
 function normalize(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function includesAny(value, candidates) {
   return candidates.some((candidate) => value.includes(candidate));
 }
 
-export function classifyPaymentGateway(gatewayName, formattedGateway = null) {
-  const raw = [gatewayName, formattedGateway].filter(Boolean).join(" ");
+export function classifyPaymentGateway(
+  gatewayName,
+  formattedGateway = null,
+  paymentDetails = null,
+) {
+  const paymentDetailsType =
+    String(paymentDetails?.__typename || "").trim() || null;
+  const paymentMethodName =
+    String(paymentDetails?.paymentMethodName || "").trim() || null;
+  const wallet = String(paymentDetails?.wallet || "").trim() || null;
+  const raw = [gatewayName, formattedGateway, paymentMethodName, wallet]
+    .filter(Boolean)
+    .join(" ");
   const normalized = normalize(raw);
   let provider = PAYMENT_PROVIDER.UNKNOWN;
 
@@ -59,13 +72,10 @@ export function classifyPaymentGateway(gatewayName, formattedGateway = null) {
   }
 
   let paymentMethod = PAYMENT_METHOD.OTHER;
-  if (
-    includesAny(normalized, [
-      "convenience",
-      "konbini",
-      "コンビニ",
-      "便利店",
-    ])
+  if (paymentDetailsType === "CardPaymentDetails") {
+    paymentMethod = PAYMENT_METHOD.CARD;
+  } else if (
+    includesAny(normalized, ["convenience", "konbini", "コンビニ", "便利店"])
   ) {
     paymentMethod = PAYMENT_METHOD.CONVENIENCE_STORE;
   } else if (includesAny(normalized, ["pay-easy", "payeasy", "ペイジー"])) {
@@ -113,6 +123,9 @@ export function classifyPaymentGateway(gatewayName, formattedGateway = null) {
     refundMode: getPaymentRefundMode({ provider, paymentMethod }),
     gatewayName: String(gatewayName || "").trim() || null,
     formattedGateway: String(formattedGateway || "").trim() || null,
+    paymentDetailsType,
+    paymentMethodName,
+    wallet,
   };
 }
 
@@ -179,7 +192,8 @@ export function isSuccessfulRefundTransaction(transaction) {
 
 export function normalizeProviderName(value) {
   const normalized = normalize(value).replaceAll("-", "_").replaceAll(" ", "_");
-  if (normalized === "shopify_payments") return PAYMENT_PROVIDER.SHOPIFY_PAYMENTS;
+  if (normalized === "shopify_payments")
+    return PAYMENT_PROVIDER.SHOPIFY_PAYMENTS;
   if (normalized === "komoju") return PAYMENT_PROVIDER.KOMOJU;
   return PAYMENT_PROVIDER.UNKNOWN;
 }

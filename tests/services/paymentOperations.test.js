@@ -17,18 +17,14 @@ import {
   resolvePaymentAttemptStatus,
   syncShopifyOrderPaymentAttempts,
 } from "../../app/services/paymentOperations.server.js";
-import {
-  buildPaymentOperationChecks,
-} from "../../app/services/productionReadiness/payments.server.js";
+import { buildPaymentOperationChecks } from "../../app/services/productionReadiness/payments.server.js";
 import {
   buildEnvironmentChecks,
   inspectOperationEnvironment,
 } from "../../app/services/productionReadiness/environment.server.js";
 
 test("KOMOJU gateway names are classified by payment method", () => {
-  const convenience = classifyPaymentGateway(
-    "KOMOJU - Convenience Store",
-  );
+  const convenience = classifyPaymentGateway("KOMOJU - Convenience Store");
   assert.equal(convenience.provider, PAYMENT_PROVIDER.KOMOJU);
   assert.equal(convenience.paymentMethod, PAYMENT_METHOD.CONVENIENCE_STORE);
   assert.equal(convenience.refundMode, PAYMENT_REFUND_MODE.KOMOJU_MANUAL);
@@ -37,6 +33,23 @@ test("KOMOJU gateway names are classified by payment method", () => {
   assert.equal(card.provider, PAYMENT_PROVIDER.KOMOJU);
   assert.equal(card.paymentMethod, PAYMENT_METHOD.CARD);
   assert.equal(card.refundMode, PAYMENT_REFUND_MODE.SHOPIFY_LINKED);
+
+  const structuredCard = classifyPaymentGateway("KOMOJU", "KOMOJU", {
+    __typename: "CardPaymentDetails",
+    paymentMethodName: "Visa",
+    wallet: null,
+  });
+  assert.equal(structuredCard.provider, PAYMENT_PROVIDER.KOMOJU);
+  assert.equal(structuredCard.paymentMethod, PAYMENT_METHOD.CARD);
+
+  const structuredLocalMethod = classifyPaymentGateway("KOMOJU", "KOMOJU", {
+    __typename: "LocalPaymentMethodsPaymentDetails",
+    paymentMethodName: "Konbini",
+  });
+  assert.equal(
+    structuredLocalMethod.paymentMethod,
+    PAYMENT_METHOD.CONVENIENCE_STORE,
+  );
 });
 
 test("payment status follows canonical transaction state", () => {
@@ -268,8 +281,16 @@ test("paid ledger backfill groups seller ledger rows by order before canonical s
   const prismaClient = {
     ledgerEntry: {
       findMany: async () => [
-        paidLedgerEntry({ id: "ledger-1", orderId: 100, gatewayNames: pollutedGateways }),
-        paidLedgerEntry({ id: "ledger-2", orderId: 100, gatewayNames: pollutedGateways }),
+        paidLedgerEntry({
+          id: "ledger-1",
+          orderId: 100,
+          gatewayNames: pollutedGateways,
+        }),
+        paidLedgerEntry({
+          id: "ledger-2",
+          orderId: 100,
+          gatewayNames: pollutedGateways,
+        }),
       ],
     },
   };
@@ -573,7 +594,50 @@ test("duplicate refund webhook cannot downgrade an applied operation", async () 
 });
 
 test("settlement evidence detects a net amount mismatch", async () => {
-  let submitted;
+  let writeCount = 0;
+  const prismaClient = {
+    marketplacePaymentAttempt: {
+      async findMany() {
+        return [
+          {
+            id: "attempt-1",
+            provider: "KOMOJU",
+            status: "CAPTURED",
+            test: false,
+            requiresReview: false,
+            amount: 10000,
+            currencyCode: "jpy",
+          },
+        ];
+      },
+    },
+    paymentRefundOperation: {
+      async findMany() {
+        return [];
+      },
+    },
+    paymentSettlementBatch: {
+      async findUnique() {
+        return null;
+      },
+      async upsert() {
+        writeCount += 1;
+        return { id: "batch-1" };
+      },
+    },
+    paymentSettlementLine: {
+      async findFirst() {
+        return null;
+      },
+      async deleteMany() {
+        writeCount += 1;
+      },
+      async createMany() {
+        writeCount += 1;
+      },
+    },
+  };
+  prismaClient.$transaction = async (callback) => callback(prismaClient);
   const result = await recordPaymentSettlementBatch(
     {
       provider: "KOMOJU",
@@ -588,30 +652,172 @@ test("settlement evidence detects a net amount mismatch", async () => {
       evidenceReference: "private-evidence:batch-1",
       actor: "shopify_user:1",
       confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-1"],
     },
-    {
-      prismaClient: {
-        paymentSettlementBatch: {
-          upsert: async (args) => {
-            submitted = args;
-            return { id: "batch-1", ...args.create };
+    { prismaClient },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "settlement_direct_totals_mismatch");
+  assert.equal(result.expectedNetAmount, 8800);
+  assert.equal(result.linkedGrossAmount, 10000);
+  assert.equal(writeCount, 0);
+});
+
+test("settlement evidence links a reconciled payout directly to its payment attempt", async () => {
+  let createdBatch;
+  let createdLines;
+  const prismaClient = {
+    marketplacePaymentAttempt: {
+      async findMany() {
+        return [
+          {
+            id: "attempt-1",
+            marketplaceOrderId: "order-1",
+            shopifyTransactionId: "gid://shopify/OrderTransaction/1",
+            provider: "KOMOJU",
+            status: "CAPTURED",
+            test: false,
+            requiresReview: false,
+            amount: 10000,
+            currencyCode: "jpy",
+            processedAt: new Date("2026-08-06T00:00:00.000Z"),
           },
-        },
+        ];
       },
     },
+    paymentRefundOperation: {
+      async findMany() {
+        return [];
+      },
+    },
+    paymentSettlementBatch: {
+      async findUnique() {
+        return null;
+      },
+      async upsert({ create }) {
+        createdBatch = create;
+        return { id: "batch-1", ...create };
+      },
+    },
+    paymentSettlementLine: {
+      async findFirst() {
+        return null;
+      },
+      async deleteMany() {},
+      async createMany({ data }) {
+        createdLines = data;
+      },
+    },
+  };
+  prismaClient.$transaction = async (callback) => callback(prismaClient);
+  const result = await recordPaymentSettlementBatch(
+    {
+      provider: "KOMOJU",
+      externalBatchId: "batch-1",
+      grossAmount: "10000",
+      refundAmount: "0",
+      feeAmount: "200",
+      netAmount: "9800",
+      currencyCode: "jpy",
+      payoutDate: "2026-08-06",
+      bankDepositedAt: "2026-08-06",
+      evidenceReference: "private-evidence:batch-1",
+      actor: "shopify_user:1",
+      confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-1"],
+    },
+    { prismaClient },
   );
+
   assert.equal(result.ok, true);
-  assert.equal(result.expectedNetAmount, 8800);
-  assert.equal(submitted.create.status, "REVIEW_REQUIRED");
+  assert.equal(createdBatch.status, "RECONCILED");
+  assert.equal(createdBatch.metadataJson.directLineReconciliation, true);
+  assert.equal(createdLines.length, 2);
+  assert.equal(createdLines[0].paymentAttemptId, "attempt-1");
+  assert.equal(createdLines[0].matchStatus, "MATCHED");
+  assert.equal(createdLines[1].lineType, "FEE");
+});
+
+test("settlement evidence rejects a payment attempt already linked to another payout", async () => {
+  let writeCount = 0;
+  const prismaClient = {
+    marketplacePaymentAttempt: {
+      async findMany() {
+        return [
+          {
+            id: "attempt-1",
+            provider: "KOMOJU",
+            status: "CAPTURED",
+            test: false,
+            requiresReview: false,
+            amount: 10000,
+            currencyCode: "jpy",
+          },
+        ];
+      },
+    },
+    paymentRefundOperation: {
+      async findMany() {
+        return [];
+      },
+    },
+    paymentSettlementBatch: {
+      async findUnique() {
+        return null;
+      },
+      async upsert() {
+        writeCount += 1;
+        return { id: "batch-2" };
+      },
+    },
+    paymentSettlementLine: {
+      async findFirst() {
+        return { id: "line-from-batch-1" };
+      },
+      async deleteMany() {
+        writeCount += 1;
+      },
+      async createMany() {
+        writeCount += 1;
+      },
+    },
+  };
+  prismaClient.$transaction = async (callback) => callback(prismaClient);
+
+  const result = await recordPaymentSettlementBatch(
+    {
+      provider: "KOMOJU",
+      externalBatchId: "batch-2",
+      grossAmount: "10000",
+      refundAmount: "0",
+      feeAmount: "200",
+      netAmount: "9800",
+      currencyCode: "jpy",
+      payoutDate: "2026-08-07",
+      bankDepositedAt: "2026-08-07",
+      evidenceReference: "private-evidence:batch-2",
+      actor: "shopify_user:1",
+      confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-1"],
+    },
+    { prismaClient },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "settlement_line_already_registered",
+  });
+  assert.equal(writeCount, 0);
 });
 
 test("payment operation inspection aggregates operational blockers", async () => {
-  const values = [2, 1, 3, 4, 5];
+  const values = [2, 1, 3, 4, 5, 6];
   const inspection = await inspectPaymentOperations({
     prismaClient: {
       marketplacePaymentAttempt: { count: async () => values.shift() },
       paymentRefundOperation: { count: async () => values.shift() },
       paymentSettlementLine: { count: async () => values.shift() },
+      paymentSettlementBatch: { count: async () => values.shift() },
     },
   });
   assert.equal(inspection.pendingExpiredCount, 2);
@@ -619,8 +825,9 @@ test("payment operation inspection aggregates operational blockers", async () =>
   assert.equal(inspection.refundReviewCount, 3);
   assert.equal(inspection.refundFailedCount, 4);
   assert.equal(inspection.unmatchedSettlementCount, 5);
+  assert.equal(inspection.settlementBatchReviewCount, 6);
   assert.equal(inspection.criticalCount, 5);
-  assert.equal(inspection.attentionCount, 10);
+  assert.equal(inspection.attentionCount, 16);
 });
 
 test("KOMOJU readiness requires the refund confirmation gate", () => {

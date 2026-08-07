@@ -37,6 +37,15 @@ const SHOPIFY_PAYMENT_TRANSACTIONS_QUERY = `#graphql
         manualPaymentGateway
         test
         processedAt
+        paymentDetails {
+          __typename
+          ... on BasePaymentDetails {
+            paymentMethodName
+          }
+          ... on CardPaymentDetails {
+            wallet
+          }
+        }
         amountSet {
           shopMoney {
             amount
@@ -154,11 +163,7 @@ async function openPaymentReviewCase(
   prismaClient,
 ) {
   if (!prismaClient?.marketplaceOperationalCase?.upsert) return null;
-  const caseNumber = buildReviewCaseNumber(
-    shopDomain,
-    shopifyOrderId,
-    reason,
-  );
+  const caseNumber = buildReviewCaseNumber(shopDomain, shopifyOrderId, reason);
   return prismaClient.marketplaceOperationalCase.upsert({
     where: { caseNumber },
     create: {
@@ -219,10 +224,16 @@ export async function syncShopifyOrderPaymentAttempts(
     return { ok: true, tracked: false, reason: "payment_models_unavailable" };
   }
 
-  const shopDomain = normalizeLower(shop || payload?.shop_domain || payload?.shop);
+  const shopDomain = normalizeLower(
+    shop || payload?.shop_domain || payload?.shop,
+  );
   const shopifyOrderId = normalizeOrderId(payload);
   if (!shopDomain || !shopifyOrderId) {
-    return { ok: false, terminal: true, reason: "payment_order_identity_missing" };
+    return {
+      ok: false,
+      terminal: true,
+      reason: "payment_order_identity_missing",
+    };
   }
 
   let order = null;
@@ -299,18 +310,26 @@ export async function syncShopifyOrderPaymentAttempts(
   );
   const attempts = [];
   for (const transaction of sourceTransactions) {
-    const gateway = normalizeText(transaction?.gateway || transaction?.formattedGateway);
+    const gateway = normalizeText(
+      transaction?.gateway || transaction?.formattedGateway,
+    );
     const classification = classifyPaymentGateway(
       transaction?.gateway,
       transaction?.formattedGateway,
+      transaction?.paymentDetails,
     );
     const status = resolvePaymentAttemptStatus({
       transactionStatus: transaction?.status,
       transactionKind: transaction?.kind,
-      financialStatus: order?.displayFinancialStatus || payload?.financial_status,
+      financialStatus:
+        order?.displayFinancialStatus || payload?.financial_status,
       cancelledAt: order?.cancelledAt || payload?.cancelled_at,
     });
-    const { amount, currencyCode } = transactionAmount(transaction, order, payload);
+    const { amount, currencyCode } = transactionAmount(
+      transaction,
+      order,
+      payload,
+    );
     const createdAt = toDate(order?.createdAt || payload?.created_at);
     const expiresAt =
       createdAt && isAsynchronousPaymentMethod(classification.paymentMethod)
@@ -319,7 +338,9 @@ export async function syncShopifyOrderPaymentAttempts(
     const key = attemptKey(shopifyOrderId, transaction, gateway);
     const requiresReview = classification.provider === PAYMENT_PROVIDER.UNKNOWN;
     const reviewReason = requiresReview ? "unknown_payment_gateway" : null;
-    const processedAt = toDate(transaction?.processedAt || payload?.processed_at);
+    const processedAt = toDate(
+      transaction?.processedAt || payload?.processed_at,
+    );
     const commonData = {
       shopifyOrderName: normalizeText(order?.name || payload?.name) || null,
       marketplaceOrderId: marketplaceOrder?.id || null,
@@ -333,8 +354,9 @@ export async function syncShopifyOrderPaymentAttempts(
       transactionKind: normalizeText(transaction?.kind) || null,
       transactionStatus: normalizeText(transaction?.status) || null,
       financialStatus:
-        normalizeText(order?.displayFinancialStatus || payload?.financial_status) ||
-        null,
+        normalizeText(
+          order?.displayFinancialStatus || payload?.financial_status,
+        ) || null,
       status,
       amount,
       currencyCode,
@@ -348,6 +370,9 @@ export async function syncShopifyOrderPaymentAttempts(
         sourceTopic,
         canonicalQueryFailed: Boolean(canonicalError),
         manualPaymentGateway: Boolean(transaction?.manualPaymentGateway),
+        paymentDetailsType: classification.paymentDetailsType,
+        paymentMethodName: classification.paymentMethodName,
+        paymentWallet: classification.wallet,
       },
     };
     const existing = existingByKey.get(key);
@@ -400,7 +425,9 @@ export async function syncShopifyOrderPaymentAttempts(
       PAYMENT_ATTEMPT_STATUS.AUTHORIZED,
       PAYMENT_ATTEMPT_STATUS.CAPTURED,
     ]);
-    const projectedKeys = new Set(attempts.map((attempt) => attempt.attemptKey));
+    const projectedKeys = new Set(
+      attempts.map((attempt) => attempt.attemptKey),
+    );
     const activeAttempts = [
       ...existingAttempts.filter(
         (attempt) =>
