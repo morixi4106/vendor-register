@@ -7,6 +7,8 @@ import {
   buildShopifyProbeOrderSnapshot,
   createProductionTransactionProbe,
   fetchShopifyOrderForProductionProbe,
+  getProductionTransactionProbeTarget,
+  inspectProductionTransactionProbePreflight,
   refreshProductionTransactionProbe,
 } from "../../app/services/productionTransactionProbe.server.js";
 import {
@@ -22,6 +24,12 @@ const PRODUCT_ID = "gid://shopify/Product/20";
 const VARIANT_ID = "gid://shopify/ProductVariant/30";
 const PAYMENT_TRANSACTION_ID = "gid://shopify/OrderTransaction/40";
 const REFUND_TRANSACTION_ID = "gid://shopify/OrderTransaction/50";
+const KOMOJU_CARD_TARGET = Object.freeze({
+  version: 1,
+  provider: "KOMOJU",
+  paymentMethod: "CARD",
+  refundMode: "SHOPIFY_LINKED",
+});
 const RELEASE_ENV = {
   RENDER_GIT_COMMIT: "a".repeat(40),
   SHOPIFY_APP_VERSION: "app-version-1",
@@ -40,25 +48,27 @@ function shopifyOrder({
   transactionCount,
   testOrder = false,
   createdAt = "2026-07-29T01:01:00.000Z",
+  paymentGateway = "shopify_payments",
+  paymentFormattedGateway = "Shopify Payments",
+  refundGateway = paymentGateway,
+  refundFormattedGateway = paymentFormattedGateway,
 } = {}) {
-  const paymentTransactions =
-    transactions ||
-    [
-      {
-        id: PAYMENT_TRANSACTION_ID,
-        kind: "SALE",
-        status: "SUCCESS",
-        gateway: "shopify_payments",
-        formattedGateway: "Shopify Payments",
-        manualPaymentGateway: false,
-        test: testOrder,
-        processedAt: "2026-07-29T01:01:30.000Z",
-        amountSet: {
-          shopMoney: { amount: "1114", currencyCode: "JPY" },
-        },
-        parentTransaction: null,
+  const paymentTransactions = transactions || [
+    {
+      id: PAYMENT_TRANSACTION_ID,
+      kind: "SALE",
+      status: "SUCCESS",
+      gateway: paymentGateway,
+      formattedGateway: paymentFormattedGateway,
+      manualPaymentGateway: false,
+      test: testOrder,
+      processedAt: "2026-07-29T01:01:30.000Z",
+      amountSet: {
+        shopMoney: { amount: "1114", currencyCode: "JPY" },
       },
-    ];
+      parentTransaction: null,
+    },
+  ];
   const normalizedRefunds = refunds.map((refund, index) => ({
     ...refund,
     transactions: refund.transactions || {
@@ -70,8 +80,8 @@ function shopifyOrder({
               : `gid://shopify/OrderTransaction/refund-${index}`,
           kind: "REFUND",
           status: "SUCCESS",
-          gateway: "shopify_payments",
-          formattedGateway: "Shopify Payments",
+          gateway: refundGateway,
+          formattedGateway: refundFormattedGateway,
           manualPaymentGateway: false,
           test: testOrder,
           processedAt: "2026-07-29T01:10:00.000Z",
@@ -146,6 +156,7 @@ function shopifyOrder({
 function probeRecord({
   status = "AWAITING_SETTLEMENT",
   release = releaseExpectation(),
+  target = null,
 } = {}) {
   const snapshot = buildShopifyProbeOrderSnapshot(shopifyOrder());
   return {
@@ -168,6 +179,7 @@ function probeRecord({
     lastErrorCode: null,
     evidenceHash: null,
     orderEvidenceJson: {
+      ...(target ? { probeConfig: target } : {}),
       commercialFingerprint: snapshot.commercialFingerprint,
       commercialEvidence: snapshot.commercialEvidence,
     },
@@ -408,6 +420,140 @@ test("starting a probe reuses the same release and invalidates an older release"
   assert.equal(replaced.existing, false);
   assert.equal(updates[0].status, "INVALIDATED");
   assert.equal(creates.length, 1);
+});
+
+test("starting a KOMOJU card probe requires scope confirmations and stores its target", async () => {
+  let createdData = null;
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create({ data }) {
+        createdData = data;
+        return { id: "probe_komoju", ...data };
+      },
+    },
+  };
+  const input = {
+    shopDomain: SHOP,
+    startedBy: "operator",
+    releaseExpectation: releaseExpectation(),
+    targetProvider: "KOMOJU",
+    targetPaymentMethod: "CARD",
+  };
+
+  const rejected = await createProductionTransactionProbe(input, {
+    prismaClient,
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, "komoju_scope_confirmation_required");
+  assert.equal(createdData, null);
+
+  const created = await createProductionTransactionProbe(
+    {
+      ...input,
+      komojuCardOnlyConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+    },
+    { prismaClient },
+  );
+  assert.equal(created.ok, true);
+  assert.deepEqual(
+    createdData.orderEvidenceJson.probeConfig,
+    KOMOJU_CARD_TARGET,
+  );
+  assert.deepEqual(
+    getProductionTransactionProbeTarget(created.probe),
+    KOMOJU_CARD_TARGET,
+  );
+});
+
+test("preflight permits one KOMOJU card run only when every automatic check passes", async () => {
+  const release = buildProductionReleaseExpectation({
+    env: RELEASE_ENV,
+    checkoutValidation: {
+      validation: {
+        id: "gid://shopify/Validation/1",
+        shopifyFunction: { id: "gid://shopify/Function/1" },
+      },
+    },
+  });
+  const prismaClient = {
+    product: {
+      async count() {
+        return 1;
+      },
+    },
+  };
+  const options = {
+    prismaClient,
+    env: {
+      PAYMENT_PROVIDERS: "shopify_payments,komoju",
+      KOMOJU_PAYMENT_OPERATIONS_ENABLED: "true",
+      PAYMENT_REFUND_CONFIRMATION_ENFORCED: "true",
+    },
+    inspectPaymentOperationsImpl: () => ({
+      available: true,
+      pendingExpiredCount: 0,
+      attemptReviewCount: 0,
+      refundReviewCount: 0,
+      refundFailedCount: 0,
+      unmatchedSettlementCount: 0,
+    }),
+    getPlatformOperationalControlImpl: () => ({
+      available: true,
+      checkoutHold: false,
+      checkoutControlState: "IDLE",
+    }),
+    getMarketplaceCheckoutGateStatusImpl: () => ({
+      active: true,
+      publicationConfigurationReady: true,
+      exposedProductCount: 0,
+      failedProductCount: 0,
+    }),
+  };
+
+  const ready = await inspectProductionTransactionProbePreflight(
+    {
+      shopDomain: SHOP,
+      releaseExpectation: release,
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    },
+    options,
+  );
+  assert.equal(ready.canStart, true);
+  assert.equal(
+    ready.checks.every((entry) => entry.passed),
+    true,
+  );
+
+  const blocked = await inspectProductionTransactionProbePreflight(
+    {
+      shopDomain: SHOP,
+      releaseExpectation: release,
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    },
+    {
+      ...options,
+      inspectPaymentOperationsImpl: () => ({
+        available: true,
+        pendingExpiredCount: 0,
+        attemptReviewCount: 1,
+        refundReviewCount: 0,
+        refundFailedCount: 0,
+        unmatchedSettlementCount: 0,
+      }),
+    },
+  );
+  assert.equal(blocked.canStart, false);
+  assert.equal(
+    blocked.checks.find((entry) => entry.id === "payment_operations_clean")
+      .passed,
+    false,
+  );
 });
 
 test("attaching an order rejects test orders before persisting evidence", async () => {
@@ -681,7 +827,7 @@ test("paid inspection never accepts a ledger entry assigned to another seller", 
   assert.equal(state.attestation, null);
 });
 
-test("paid inspection rejects a manually marked or non-Shopify Payments transaction", async () => {
+test("paid inspection rejects a manually marked or wrong-provider transaction", async () => {
   const { prismaClient, state } = refreshPrisma();
   const manualTransaction = {
     ...shopifyOrder().transactions[0],
@@ -697,9 +843,7 @@ test("paid inspection rejects a manually marked or non-Shopify Payments transact
     },
     {
       prismaClient,
-      graphQL: graphQLFor(
-        shopifyOrder({ transactions: [manualTransaction] }),
-      ),
+      graphQL: graphQLFor(shopifyOrder({ transactions: [manualTransaction] })),
     },
   );
 
@@ -707,7 +851,7 @@ test("paid inspection rejects a manually marked or non-Shopify Payments transact
   assert.equal(result.stage, "settlement");
   assert.equal(
     state.probe.lastErrorCode,
-    "shopify_payment_transaction_not_shopify_payments",
+    "payment_transaction_provider_mismatch",
   );
   assert.equal(state.attestation, null);
 });
@@ -732,10 +876,7 @@ test("paid inspection rejects a test transaction on a non-test order", async () 
 
   assert.equal(result.pending, true);
   assert.equal(result.stage, "settlement");
-  assert.equal(
-    state.probe.lastErrorCode,
-    "shopify_payment_transaction_is_test",
-  );
+  assert.equal(state.probe.lastErrorCode, "payment_transaction_is_test");
 });
 
 test("paid order advances to refund without writing an attestation", async () => {
@@ -754,6 +895,120 @@ test("paid order advances to refund without writing an attestation", async () =>
   assert.equal(result.stage, "refund");
   assert.equal(state.probe.status, "AWAITING_REFUND");
   assert.equal(state.attestation, null);
+});
+
+test("KOMOJU card payment advances to refund while other providers remain rejected", async () => {
+  const targetProbe = probeRecord({ target: KOMOJU_CARD_TARGET });
+  const komojuOrder = shopifyOrder({
+    paymentGateway: "komoju_credit_card",
+    paymentFormattedGateway: "KOMOJU - Credit Card",
+  });
+  const { prismaClient, state } = refreshPrisma({ probe: targetProbe });
+  const accepted = await refreshProductionTransactionProbe(
+    {
+      probeId: targetProbe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    { prismaClient, graphQL: graphQLFor(komojuOrder) },
+  );
+  assert.equal(accepted.pending, true);
+  assert.equal(accepted.stage, "refund");
+  assert.equal(state.probe.status, "AWAITING_REFUND");
+  assert.equal(state.probe.paidEvidenceJson.paymentTarget.provider, "KOMOJU");
+
+  const wrongProviderProbe = probeRecord({ target: KOMOJU_CARD_TARGET });
+  const wrongProviderState = refreshPrisma({ probe: wrongProviderProbe });
+  const rejected = await refreshProductionTransactionProbe(
+    {
+      probeId: wrongProviderProbe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient: wrongProviderState.prismaClient,
+      graphQL: graphQLFor(shopifyOrder()),
+    },
+  );
+  assert.equal(rejected.pending, true);
+  assert.equal(rejected.stage, "settlement");
+  assert.equal(
+    wrongProviderState.state.probe.lastErrorCode,
+    "payment_transaction_provider_mismatch",
+  );
+});
+
+test("KOMOJU convenience-store payment cannot satisfy the card-only probe", async () => {
+  const probe = probeRecord({ target: KOMOJU_CARD_TARGET });
+  const { prismaClient, state } = refreshPrisma({ probe });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentGateway: "komoju_convenience_store",
+          paymentFormattedGateway: "KOMOJU - Convenience Store",
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(
+    state.probe.lastErrorCode,
+    "payment_transaction_method_mismatch",
+  );
+});
+
+test("one KOMOJU card order and its linked full refund complete the release evidence", async () => {
+  const probe = probeRecord({
+    status: "AWAITING_REFUND",
+    target: KOMOJU_CARD_TARGET,
+  });
+  const { prismaClient, state } = refreshPrisma({
+    probe,
+    order: marketplaceOrder({ refunded: true }),
+    ledgerEntries: [paidLedger(), refundLedger()],
+  });
+  const order = shopifyOrder({
+    financialStatus: "REFUNDED",
+    refundedAmount: "1114",
+    paymentGateway: "komoju_credit_card",
+    paymentFormattedGateway: "KOMOJU - Credit Card",
+    // Shopify can abbreviate the linked refund gateway to the provider name.
+    refundGateway: "komoju",
+    refundFormattedGateway: "KOMOJU",
+    refunds: [{ id: REFUND_ID, createdAt: "2026-07-29T01:10:00.000Z" }],
+  });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(order),
+      now: new Date("2026-07-29T01:11:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stage, "complete");
+  assert.equal(state.probe.status, "PASSED");
+  assert.equal(state.probe.finalEvidenceJson.paymentTarget.provider, "KOMOJU");
+  assert.equal(
+    state.probe.finalEvidenceJson.paymentTarget.paymentMethod,
+    "CARD",
+  );
+  assert.equal(state.attestation.metadataJson.paymentProvider, "KOMOJU");
+  assert.equal(state.attestation.metadataJson.paymentMethod, "CARD");
 });
 
 test("full refund completes once and records release-bound automatic evidence", async () => {
@@ -870,14 +1125,11 @@ test("a pending Shopify refund transaction never completes the probe", async () 
 
   assert.equal(result.pending, true);
   assert.equal(result.stage, "refund");
-  assert.equal(
-    state.probe.lastErrorCode,
-    "shopify_refund_transaction_missing",
-  );
+  assert.equal(state.probe.lastErrorCode, "refund_transaction_missing");
   assert.equal(state.attestation, null);
 });
 
-test("a refund not linked to the captured Shopify Payments transaction never passes", async () => {
+test("a refund not linked to the captured payment transaction never passes", async () => {
   const { prismaClient, state } = refreshPrisma({
     probe: probeRecord({ status: "AWAITING_REFUND" }),
     order: marketplaceOrder({ refunded: true }),
@@ -911,10 +1163,7 @@ test("a refund not linked to the captured Shopify Payments transaction never pas
 
   assert.equal(result.pending, true);
   assert.equal(result.stage, "refund");
-  assert.equal(
-    state.probe.lastErrorCode,
-    "shopify_refund_transaction_parent_mismatch",
-  );
+  assert.equal(state.probe.lastErrorCode, "refund_transaction_parent_mismatch");
   assert.equal(state.attestation, null);
 });
 

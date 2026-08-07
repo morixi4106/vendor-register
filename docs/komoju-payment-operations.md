@@ -67,6 +67,33 @@ into the application.
 2. Deploy the server code.
 3. Deploy the Shopify app configuration so `orders/create` is subscribed.
 4. Set the three environment variables above.
-5. Open `/app/payment-operations` and run the paid-ledger metadata backfill.
+5. Open `/app/payment-operations` and run the backfill safety inspection. Run
+   the backfill only when it reports safe production targets; zero targets
+   requires no write.
 6. Confirm Production readiness has no payment-operation failures.
-7. Test one KOMOJU card payment and one asynchronous method before public use.
+7. Complete the single-payment release verification below.
+
+## Single-payment release verification
+
+The initial public scope is KOMOJU credit card only. Keep unverified KOMOJU
+convenience-store, Pay-easy, bank-transfer, Paidy, smartphone-payment, and
+Korean-card methods disabled in Shopify until each method receives its own
+operational verification.
+
+For the initial scope, one live charge is sufficient:
+
+1. Start `/app/production-transaction-probe` only after every automatic
+   preflight check passes.
+2. Buy one approved platform-direct product through Shopify Checkout and
+   choose KOMOJU credit card.
+3. Attach that new Shopify order to the probe and wait for the paid webhook,
+   SellerOrder, shadow check, and paid ledger checks to pass.
+4. Fully refund the same order to the original card from Shopify Admin.
+5. Wait for the linked successful refund transaction and refund ledger checks
+   to pass. The release-bound probe must finish as `PASSED`.
+6. When KOMOJU later deposits that charge, record the payout and bank evidence
+   from the same charge. Do not create a second payment only for payout proof.
+
+This verification proves only KOMOJU card for a platform-direct, single-seller
+order. Enabling another provider or payment method requires separate evidence;
+do not reuse the card result for asynchronous methods.

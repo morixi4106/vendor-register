@@ -11,6 +11,15 @@ import {
   buildProductionReleaseFingerprint,
   buildProductionReleaseExpectation,
 } from "./productionRelease.server.js";
+import {
+  classifyPaymentGateway,
+  PAYMENT_METHOD,
+  PAYMENT_PROVIDER,
+  PAYMENT_REFUND_MODE,
+} from "./paymentOperations/classification.js";
+import { inspectPaymentOperations } from "./paymentOperations/dashboard.server.js";
+import { getMarketplaceCheckoutGateStatus } from "./marketplaceCheckoutGate.server.js";
+import { getPlatformOperationalControl } from "./operationalControls.server.js";
 
 export const PRODUCTION_TRANSACTION_PROBE_STATUS = Object.freeze({
   AWAITING_ORDER: "AWAITING_ORDER",
@@ -28,10 +37,6 @@ const ACTIVE_PROBE_STATUSES = [
 ];
 const SHOPIFY_API_VERSION = "2026-04";
 const SHOPIFY_TRANSACTION_LIMIT = 100;
-const SHOPIFY_PAYMENTS_GATEWAYS = new Set([
-  "shopify payments",
-  "shopify_payments",
-]);
 const SUCCESSFUL_PAYMENT_TRANSACTION_KINDS = new Set(["CAPTURE", "SALE"]);
 const SETTLEMENT_ENTRY_TYPES = [
   "shopify_order_paid",
@@ -56,6 +61,20 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
   "XOF",
   "XPF",
 ]);
+
+const PRODUCTION_TRANSACTION_TARGET_VERSION = 1;
+const DEFAULT_PRODUCTION_TRANSACTION_TARGET = Object.freeze({
+  version: PRODUCTION_TRANSACTION_TARGET_VERSION,
+  provider: PAYMENT_PROVIDER.SHOPIFY_PAYMENTS,
+  paymentMethod: PAYMENT_METHOD.CARD,
+  refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
+});
+const KOMOJU_CARD_TRANSACTION_TARGET = Object.freeze({
+  version: PRODUCTION_TRANSACTION_TARGET_VERSION,
+  provider: PAYMENT_PROVIDER.KOMOJU,
+  paymentMethod: PAYMENT_METHOD.CARD,
+  refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
+});
 
 const ORDER_FIELDS = `#graphql
   fragment ProductionProbeTransactionFields on OrderTransaction {
@@ -225,6 +244,63 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value
     : {};
+}
+
+function normalizeProductionTransactionTarget({
+  provider,
+  paymentMethod,
+} = {}) {
+  const normalizedProvider = clean(provider).toUpperCase();
+  const normalizedMethod = clean(paymentMethod).toUpperCase();
+  if (
+    ![PAYMENT_PROVIDER.SHOPIFY_PAYMENTS, PAYMENT_PROVIDER.KOMOJU].includes(
+      normalizedProvider,
+    ) ||
+    normalizedMethod !== PAYMENT_METHOD.CARD
+  ) {
+    return null;
+  }
+  return {
+    version: PRODUCTION_TRANSACTION_TARGET_VERSION,
+    provider: normalizedProvider,
+    paymentMethod: normalizedMethod,
+    refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
+  };
+}
+
+export function getProductionTransactionProbeTarget(probe) {
+  const configured = asObject(asObject(probe?.orderEvidenceJson).probeConfig);
+  return (
+    normalizeProductionTransactionTarget(configured) ||
+    DEFAULT_PRODUCTION_TRANSACTION_TARGET
+  );
+}
+
+function sameTransactionTarget(left, right) {
+  return (
+    left?.provider === right?.provider &&
+    left?.paymentMethod === right?.paymentMethod &&
+    left?.refundMode === right?.refundMode
+  );
+}
+
+function parseProviderConfig(value) {
+  return new Set(
+    clean(value)
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function preflightCheck(id, passed, detail) {
+  return { id, passed: passed === true, detail };
+}
+
+function resolveSafely(callback, fallback) {
+  return Promise.resolve()
+    .then(callback)
+    .catch(() => fallback);
 }
 
 function stableValue(value) {
@@ -475,8 +551,217 @@ async function transitionActiveProbe(
     : { ok: false, reason: conflictReason, probe: latest };
 }
 
+export async function inspectProductionTransactionProbePreflight(
+  {
+    shopDomain,
+    releaseExpectation,
+    targetProvider = PAYMENT_PROVIDER.KOMOJU,
+    targetPaymentMethod = PAYMENT_METHOD.CARD,
+  },
+  {
+    prismaClient = prisma,
+    env = process.env,
+    inspectPaymentOperationsImpl = inspectPaymentOperations,
+    getPlatformOperationalControlImpl = getPlatformOperationalControl,
+    getMarketplaceCheckoutGateStatusImpl = getMarketplaceCheckoutGateStatus,
+  } = {},
+) {
+  const shop = normalizeShop(shopDomain);
+  const release = buildReleaseContext(releaseExpectation);
+  const target = normalizeProductionTransactionTarget({
+    provider: targetProvider,
+    paymentMethod: targetPaymentMethod,
+  });
+  if (!shop || !target) {
+    return {
+      canStart: false,
+      target: target || KOMOJU_CARD_TRANSACTION_TARGET,
+      checks: [
+        preflightCheck(
+          "payment_target_supported",
+          false,
+          "対応していない決済対象です。",
+        ),
+      ],
+    };
+  }
+
+  const [
+    paymentOperations,
+    operationalControl,
+    publicationBoundary,
+    productCount,
+  ] = await Promise.all([
+    resolveSafely(() => inspectPaymentOperationsImpl({ prismaClient }), {
+      available: false,
+      reason: "payment_operations_inspection_failed",
+    }),
+    resolveSafely(() => getPlatformOperationalControlImpl({ prismaClient }), {
+      available: false,
+      checkoutHold: true,
+      checkoutControlState: "UNKNOWN",
+    }),
+    resolveSafely(
+      () => getMarketplaceCheckoutGateStatusImpl(shop, { prismaClient, env }),
+      {
+        exists: false,
+        active: false,
+        publicationConfigurationReady: false,
+        failedProductCount: 1,
+      },
+    ),
+    prismaClient?.product?.count
+      ? resolveSafely(
+          () =>
+            prismaClient.product.count({
+              where: {
+                shopDomain: shop,
+                approvalStatus: "approved",
+                price: { gt: 0 },
+                shopifyProductId: { not: null },
+                shopifyVariantId: { not: null },
+                OR: [
+                  { inventoryQuantity: null },
+                  { inventoryQuantity: { gt: 0 } },
+                ],
+                vendorStore: {
+                  is: {
+                    isPlatformStore: true,
+                    isTestStore: false,
+                  },
+                },
+              },
+            }),
+          0,
+        )
+      : Promise.resolve(0),
+  ]);
+
+  const configuredProviders = parseProviderConfig(
+    env.PAYMENT_PROVIDERS || env.PAYMENT_PROVIDER,
+  );
+  const providerConfigured = configuredProviders.has(
+    target.provider === PAYMENT_PROVIDER.KOMOJU ? "komoju" : "shopify_payments",
+  );
+  const komojuTarget = target.provider === PAYMENT_PROVIDER.KOMOJU;
+  const paymentOperationsClean = Boolean(
+    paymentOperations.available === true &&
+    paymentOperations.pendingExpiredCount === 0 &&
+    paymentOperations.attemptReviewCount === 0 &&
+    paymentOperations.refundReviewCount === 0 &&
+    paymentOperations.refundFailedCount === 0 &&
+    paymentOperations.unmatchedSettlementCount === 0,
+  );
+  const purchaseControlReady = Boolean(
+    release.expected?.functionId && release.expected?.validationId,
+  );
+  const checks = [
+    preflightCheck(
+      "release_configured",
+      release.configured,
+      release.configured
+        ? `Release ${release.releaseId}`
+        : "Render commitとShopify App versionが必要です。",
+    ),
+    preflightCheck(
+      "purchase_control_release_ready",
+      purchaseControlReady,
+      purchaseControlReady
+        ? "本番FunctionとValidationを確認しました。"
+        : "本番FunctionまたはValidationを確認できません。",
+    ),
+    preflightCheck(
+      "payment_provider_configured",
+      providerConfigured,
+      providerConfigured
+        ? `${target.provider}を有効な決済プロバイダーとして確認しました。`
+        : `${target.provider}がPAYMENT_PROVIDERSにありません。`,
+    ),
+    preflightCheck(
+      "komoju_operations_enabled",
+      !komojuTarget || env.KOMOJU_PAYMENT_OPERATIONS_ENABLED === "true",
+      !komojuTarget || env.KOMOJU_PAYMENT_OPERATIONS_ENABLED === "true"
+        ? "KOMOJU決済運用を記録できます。"
+        : "KOMOJU_PAYMENT_OPERATIONS_ENABLED=trueが必要です。",
+    ),
+    preflightCheck(
+      "refund_confirmation_enforced",
+      !komojuTarget || env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true",
+      !komojuTarget || env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true"
+        ? "返金確認の安全制御は有効です。"
+        : "PAYMENT_REFUND_CONFIRMATION_ENFORCED=trueが必要です。",
+    ),
+    preflightCheck(
+      "payment_operations_clean",
+      paymentOperationsClean,
+      paymentOperationsClean
+        ? "未解決の決済・返金・入金照合はありません。"
+        : "決済運用画面の未解決項目を先に解消してください。",
+    ),
+    preflightCheck(
+      "checkout_available",
+      operationalControl.available === true &&
+        operationalControl.checkoutHold !== true &&
+        operationalControl.checkoutControlState === "IDLE",
+      operationalControl.checkoutHold === true
+        ? "購入緊急停止が有効です。"
+        : "購入緊急停止は無効です。",
+    ),
+    preflightCheck(
+      "publication_boundary_ready",
+      publicationBoundary.active === true &&
+        publicationBoundary.publicationConfigurationReady === true &&
+        publicationBoundary.exposedProductCount === 0 &&
+        publicationBoundary.failedProductCount === 0,
+      publicationBoundary.active === true
+        ? "第三者商品の公開境界は正常です。"
+        : "第三者商品の公開境界を確認できません。",
+    ),
+    preflightCheck(
+      "eligible_platform_product_available",
+      productCount > 0,
+      productCount > 0
+        ? `購入可能な運営直販商品 ${productCount}件`
+        : "購入可能な運営直販商品がありません。",
+    ),
+  ];
+
+  return {
+    canStart: checks.every((entry) => entry.passed),
+    target,
+    release,
+    checks,
+    eligibleProductCount: productCount,
+    paymentOperations,
+    operationalControl: {
+      available: operationalControl.available === true,
+      checkoutHold: operationalControl.checkoutHold === true,
+      checkoutControlState: operationalControl.checkoutControlState,
+    },
+    publicationBoundary: {
+      active: publicationBoundary.active === true,
+      publicationConfigurationReady:
+        publicationBoundary.publicationConfigurationReady === true,
+      exposedProductCount: toNonNegativeInteger(
+        publicationBoundary.exposedProductCount,
+      ),
+      failedProductCount: toNonNegativeInteger(
+        publicationBoundary.failedProductCount,
+      ),
+    },
+  };
+}
+
 export async function createProductionTransactionProbe(
-  { shopDomain, startedBy, releaseExpectation },
+  {
+    shopDomain,
+    startedBy,
+    releaseExpectation,
+    targetProvider = PAYMENT_PROVIDER.SHOPIFY_PAYMENTS,
+    targetPaymentMethod = PAYMENT_METHOD.CARD,
+    komojuCardOnlyConfirmed = false,
+    untestedAsyncMethodsDisabledConfirmed = false,
+  },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
   if (!prismaClient?.productionTransactionProbe?.findUnique) {
@@ -485,8 +770,19 @@ export async function createProductionTransactionProbe(
   const shop = normalizeShop(shopDomain);
   const actor = clean(startedBy);
   const release = buildReleaseContext(releaseExpectation);
-  if (!shop || !actor || !release.configured) {
+  const target = normalizeProductionTransactionTarget({
+    provider: targetProvider,
+    paymentMethod: targetPaymentMethod,
+  });
+  if (!shop || !actor || !release.configured || !target) {
     return { ok: false, reason: "production_transaction_probe_input_invalid" };
+  }
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    (komojuCardOnlyConfirmed !== true ||
+      untestedAsyncMethodsDisabledConfirmed !== true)
+  ) {
+    return { ok: false, reason: "komoju_scope_confirmation_required" };
   }
   const key = activeKey(shop);
   const existing = await prismaClient.productionTransactionProbe.findUnique({
@@ -494,6 +790,18 @@ export async function createProductionTransactionProbe(
   });
   if (existing) {
     if (existing.releaseFingerprint === release.releaseFingerprint) {
+      if (
+        !sameTransactionTarget(
+          getProductionTransactionProbeTarget(existing),
+          target,
+        )
+      ) {
+        return {
+          ok: false,
+          reason: "active_probe_payment_target_mismatch",
+          probe: existing,
+        };
+      }
       return { ok: true, existing: true, probe: existing };
     }
     const invalidated = await transitionActiveProbe(
@@ -523,6 +831,7 @@ export async function createProductionTransactionProbe(
         startedBy: actor,
         startedAt: now,
         lastCheckedAt: now,
+        orderEvidenceJson: { probeConfig: target },
       },
     });
     return { ok: true, existing: false, probe };
@@ -533,9 +842,22 @@ export async function createProductionTransactionProbe(
         where: { activeKey: key },
       },
     );
-    return concurrent
-      ? { ok: true, existing: true, probe: concurrent }
-      : { ok: false, reason: "production_transaction_probe_conflict" };
+    if (!concurrent) {
+      return { ok: false, reason: "production_transaction_probe_conflict" };
+    }
+    if (
+      !sameTransactionTarget(
+        getProductionTransactionProbeTarget(concurrent),
+        target,
+      )
+    ) {
+      return {
+        ok: false,
+        reason: "active_probe_payment_target_mismatch",
+        probe: concurrent,
+      };
+    }
+    return { ok: true, existing: true, probe: concurrent };
   }
 }
 
@@ -647,10 +969,7 @@ export async function attachOrderToProductionTransactionProbe(
   if (snapshot.test) {
     return { ok: false, reason: "shopify_test_order_not_allowed" };
   }
-  if (
-    !createdAt ||
-    createdAt.getTime() < probe.startedAt.getTime()
-  ) {
+  if (!createdAt || createdAt.getTime() < probe.startedAt.getTime()) {
     return { ok: false, reason: "order_predates_probe" };
   }
   if (snapshot.cancelledAt) {
@@ -674,6 +993,7 @@ export async function attachOrderToProductionTransactionProbe(
   );
   if (!platformProducts.ok) return platformProducts;
   const orderEvidenceJson = {
+    probeConfig: getProductionTransactionProbeTarget(probe),
     shopifyOrderId: snapshot.shopifyOrderId,
     shopifyOrderName: snapshot.shopifyOrderName,
     createdAt: snapshot.createdAt,
@@ -688,9 +1008,7 @@ export async function attachOrderToProductionTransactionProbe(
     const transitioned = await transitionActiveProbe(
       {
         probe,
-        expectedStatuses: [
-          PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_ORDER,
-        ],
+        expectedStatuses: [PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_ORDER],
         data: {
           shopifyOrderId: snapshot.shopifyOrderId,
           status: PRODUCTION_TRANSACTION_PROBE_STATUS.AWAITING_SETTLEMENT,
@@ -794,21 +1112,38 @@ function sellerOrderExpectedPaidAmount(sellerOrders) {
   );
 }
 
-function normalizeGateway(value) {
-  return clean(value)
-    .toLowerCase()
-    .replaceAll("-", " ")
-    .replaceAll("_", " ")
-    .replace(/\s+/g, " ");
+function classifyProbeTransaction(transaction) {
+  return classifyPaymentGateway(
+    transaction?.gateway,
+    transaction?.formattedGateway,
+  );
 }
 
-function isShopifyPaymentsTransaction(transaction) {
+function transactionMatchesProvider(transaction, target) {
   return (
     transaction?.manualPaymentGateway !== true &&
-    (SHOPIFY_PAYMENTS_GATEWAYS.has(clean(transaction?.gateway).toLowerCase()) ||
-      SHOPIFY_PAYMENTS_GATEWAYS.has(
-        normalizeGateway(transaction?.formattedGateway),
-      ))
+    classifyProbeTransaction(transaction).provider === target.provider
+  );
+}
+
+function transactionMatchesMethod(transaction, target) {
+  return (
+    transaction?.manualPaymentGateway !== true &&
+    classifyProbeTransaction(transaction).paymentMethod === target.paymentMethod
+  );
+}
+
+function refundTransactionMatchesMethod(transaction, target) {
+  const classification = classifyProbeTransaction(transaction);
+  if (transaction?.manualPaymentGateway === true) return false;
+  if (classification.paymentMethod === target.paymentMethod) return true;
+
+  // Shopify may return only the provider name on a refund transaction. The
+  // captured parent transaction remains the authoritative payment-method link.
+  return (
+    target.refundMode === PAYMENT_REFUND_MODE.SHOPIFY_LINKED &&
+    classification.provider === target.provider &&
+    classification.paymentMethod === PAYMENT_METHOD.OTHER
   );
 }
 
@@ -830,6 +1165,7 @@ function getRefundTransactions(snapshot) {
 }
 
 function buildPaidInspection({ probe, snapshot, local }) {
+  const target = getProductionTransactionProbeTarget(probe);
   const marketplaceOrder = local.marketplaceOrder;
   const sellerOrders = marketplaceOrder?.sellerOrders || [];
   const sellerOrderLines = sellerOrders.flatMap(
@@ -877,50 +1213,62 @@ function buildPaidInspection({ probe, snapshot, local }) {
     .sort();
   const checks = [
     check(
-      "shopify_payment_transaction_present",
+      "payment_transaction_present",
       paymentTransactions.length > 0,
-      "shopify_payment_transaction_missing",
+      "payment_transaction_missing",
       { actualCount: paymentTransactions.length },
     ),
     check(
-      "shopify_payment_transaction_status",
+      "payment_transaction_status",
       paymentTransactions.every(
         (transaction) =>
           transaction.status === "SUCCESS" &&
           SUCCESSFUL_PAYMENT_TRANSACTION_KINDS.has(transaction.kind),
       ),
-      "shopify_payment_transaction_not_captured",
+      "payment_transaction_not_captured",
     ),
     check(
-      "shopify_payment_transaction_gateway",
+      "payment_transaction_provider",
       paymentTransactions.length > 0 &&
-        paymentTransactions.every(isShopifyPaymentsTransaction),
-      "shopify_payment_transaction_not_shopify_payments",
+        paymentTransactions.every((transaction) =>
+          transactionMatchesProvider(transaction, target),
+        ),
+      "payment_transaction_provider_mismatch",
+      { expectedProvider: target.provider },
     ),
     check(
-      "shopify_payment_transaction_live",
+      "payment_transaction_method",
+      paymentTransactions.length > 0 &&
+        paymentTransactions.every((transaction) =>
+          transactionMatchesMethod(transaction, target),
+        ),
+      "payment_transaction_method_mismatch",
+      { expectedPaymentMethod: target.paymentMethod },
+    ),
+    check(
+      "payment_transaction_live",
       paymentTransactions.length > 0 &&
         paymentTransactions.every((transaction) => transaction.test !== true),
-      "shopify_payment_transaction_is_test",
+      "payment_transaction_is_test",
     ),
     check(
-      "shopify_payment_transaction_amount",
+      "payment_transaction_amount",
       paymentTransactionAmount === snapshot.commercialEvidence.totalAmount,
-      "shopify_payment_transaction_amount_mismatch",
+      "payment_transaction_amount_mismatch",
       {
         expectedAmount: snapshot.commercialEvidence.totalAmount,
         actualAmount: paymentTransactionAmount,
       },
     ),
     check(
-      "shopify_payment_transaction_currency",
+      "payment_transaction_currency",
       paymentTransactions.length > 0 &&
         paymentTransactions.every(
           (transaction) =>
             transaction.currencyCode ===
             snapshot.commercialEvidence.currencyCode,
         ),
-      "shopify_payment_transaction_currency_mismatch",
+      "payment_transaction_currency_mismatch",
     ),
     check(
       "commercial_fingerprint",
@@ -1019,10 +1367,13 @@ function buildPaidInspection({ probe, snapshot, local }) {
     paidLedgerEntryIds: paidEntries.map((entry) => entry.id).sort(),
     shopifyPaymentTransactionIds: paymentTransactionIds,
     shopifyPaymentTransactionAmount: paymentTransactionAmount,
+    paymentTarget: target,
   };
 }
 
 function buildRefundInspection({ snapshot, local, paidInspection }) {
+  const target =
+    paidInspection.paymentTarget || DEFAULT_PRODUCTION_TRANSACTION_TARGET;
   const sellerOrders = local.marketplaceOrder?.sellerOrders || [];
   const expectedSellerIds = new Set(
     sellerOrders.map((sellerOrder) => sellerOrder.sellerId).filter(Boolean),
@@ -1066,36 +1417,48 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
   );
   const checks = [
     check(
-      "shopify_refund_transaction_present",
+      "refund_transaction_present",
       successfulRefundTransactions.length > 0,
-      "shopify_refund_transaction_missing",
+      "refund_transaction_missing",
       { actualCount: successfulRefundTransactions.length },
     ),
     check(
-      "shopify_refund_transaction_status",
+      "refund_transaction_status",
       refundTransactions.length > 0 &&
         refundTransactions.every(
           (transaction) =>
             transaction.kind === "REFUND" && transaction.status === "SUCCESS",
         ),
-      "shopify_refund_transaction_not_successful",
+      "refund_transaction_not_successful",
     ),
     check(
-      "shopify_refund_transaction_gateway",
+      "refund_transaction_provider",
       successfulRefundTransactions.length > 0 &&
-        successfulRefundTransactions.every(isShopifyPaymentsTransaction),
-      "shopify_refund_transaction_not_shopify_payments",
+        successfulRefundTransactions.every((transaction) =>
+          transactionMatchesProvider(transaction, target),
+        ),
+      "refund_transaction_provider_mismatch",
+      { expectedProvider: target.provider },
     ),
     check(
-      "shopify_refund_transaction_live",
+      "refund_transaction_method",
+      successfulRefundTransactions.length > 0 &&
+        successfulRefundTransactions.every((transaction) =>
+          refundTransactionMatchesMethod(transaction, target),
+        ),
+      "refund_transaction_method_mismatch",
+      { expectedPaymentMethod: target.paymentMethod },
+    ),
+    check(
+      "refund_transaction_live",
       successfulRefundTransactions.length > 0 &&
         successfulRefundTransactions.every(
           (transaction) => transaction.test !== true,
         ),
-      "shopify_refund_transaction_is_test",
+      "refund_transaction_is_test",
     ),
     check(
-      "shopify_refund_transaction_parent",
+      "refund_transaction_parent",
       successfulRefundTransactions.length > 0 &&
         successfulRefundTransactions.every(
           (transaction) =>
@@ -1104,25 +1467,25 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
               transaction.parentTransactionId,
             ),
         ),
-      "shopify_refund_transaction_parent_mismatch",
+      "refund_transaction_parent_mismatch",
     ),
     check(
-      "shopify_refund_transaction_amount",
+      "refund_transaction_amount",
       refundTransactionAmount === snapshot.commercialEvidence.totalAmount,
-      "shopify_refund_transaction_amount_mismatch",
+      "refund_transaction_amount_mismatch",
       {
         expectedAmount: snapshot.commercialEvidence.totalAmount,
         actualAmount: refundTransactionAmount,
       },
     ),
     check(
-      "shopify_refund_transaction_currency",
+      "refund_transaction_currency",
       successfulRefundTransactions.length > 0 &&
         successfulRefundTransactions.every(
           (transaction) =>
             transaction.currencyCode === paidInspection.currencyCode,
         ),
-      "shopify_refund_transaction_currency_mismatch",
+      "refund_transaction_currency_mismatch",
     ),
     check(
       "shopify_financial_status",
@@ -1228,6 +1591,7 @@ function buildRefundInspection({ snapshot, local, paidInspection }) {
       .filter(Boolean)
       .sort(),
     shopifyRefundTransactionAmount: refundTransactionAmount,
+    paymentTarget: target,
   };
 }
 
@@ -1364,7 +1728,7 @@ export async function refreshProductionTransactionProbe(
     };
   }
   const finalEvidence = {
-    version: 2,
+    version: 3,
     probeId: probe.id,
     shopDomain: probe.shopDomain,
     releaseId: probe.releaseId,
@@ -1372,6 +1736,7 @@ export async function refreshProductionTransactionProbe(
     shopifyOrderId: probe.shopifyOrderId,
     marketplaceOrderId: paidInspection.marketplaceOrderId,
     commercialFingerprint: fetched.snapshot.commercialFingerprint,
+    paymentTarget: paidInspection.paymentTarget,
     paidInspection,
     refundInspection,
     completedAt: now.toISOString(),
@@ -1426,13 +1791,15 @@ export async function refreshProductionTransactionProbe(
         evidenceReference: `production-transaction-probe:${probe.id}`,
         evidenceHash,
         confirmedBy: "system:production-transaction-probe",
-        notes:
-          "Shopify Payments実取引、SellerOrder、売上台帳、元取引への全額返金を自動照合",
+        notes: `${paidInspection.paymentTarget.provider} ${paidInspection.paymentTarget.paymentMethod}の実取引、SellerOrder、売上台帳、元取引への全額返金を自動照合`,
         metadataJson: {
           verificationSource: "production_transaction_probe",
           probeId: probe.id,
           releaseId: probe.releaseId,
           releaseFingerprint: probe.releaseFingerprint,
+          paymentProvider: paidInspection.paymentTarget.provider,
+          paymentMethod: paidInspection.paymentTarget.paymentMethod,
+          refundMode: paidInspection.paymentTarget.refundMode,
           completedAt: now.toISOString(),
         },
       },
@@ -1547,6 +1914,7 @@ export async function getProductionTransactionProbePageData(
 
 export function serializeProductionTransactionProbe(probe) {
   if (!probe) return null;
+  const paymentTarget = getProductionTransactionProbeTarget(probe);
   return {
     id: probe.id,
     status: probe.status,
@@ -1564,6 +1932,7 @@ export function serializeProductionTransactionProbe(probe) {
     lastCheckedAt: probe.lastCheckedAt,
     lastErrorCode: probe.lastErrorCode,
     evidenceHash: probe.evidenceHash,
+    paymentTarget,
     orderEvidence: asObject(probe.orderEvidenceJson),
     paidEvidence: asObject(probe.paidEvidenceJson),
     refundEvidence: asObject(probe.refundEvidenceJson),
@@ -1573,7 +1942,16 @@ export function serializeProductionTransactionProbe(probe) {
 export function buildProductionTransactionProbePage({
   activeProbe,
   release,
+  target = KOMOJU_CARD_TRANSACTION_TARGET,
 } = {}) {
+  const paymentTarget = activeProbe
+    ? getProductionTransactionProbeTarget(activeProbe)
+    : normalizeProductionTransactionTarget(target) ||
+      KOMOJU_CARD_TRANSACTION_TARGET;
+  const paymentLabel =
+    paymentTarget.provider === PAYMENT_PROVIDER.KOMOJU
+      ? "KOMOJUクレジットカード"
+      : "Shopify Payments";
   const status =
     activeProbe?.status ||
     (release?.configured ? "NOT_STARTED" : "RELEASE_UNCONFIGURED");
@@ -1587,14 +1965,12 @@ export function buildProductionTransactionProbePage({
     NOT_STARTED: {
       tone: "neutral",
       statusLabel: "未開始",
-      instruction:
-        "確認を開始してから、Shopify標準商品ページで少額の運営直販商品を実カードで購入してください。",
+      instruction: `確認を開始してから、Shopify標準商品ページで少額の運営直販商品を${paymentLabel}で購入してください。`,
     },
     AWAITING_ORDER: {
       tone: "warning",
       statusLabel: "注文待ち",
-      instruction:
-        "Shopify Paymentsが本番モードであることを確認し、確認開始後に作成した実注文の番号を入力してください。",
+      instruction: `${paymentLabel}の本番決済を行い、確認開始後に作成した実注文の番号を入力してください。`,
     },
     AWAITING_SETTLEMENT: {
       tone: "warning",
