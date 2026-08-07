@@ -15,6 +15,7 @@ import {
   cancelProductionTransactionProbe,
   createProductionTransactionProbe,
   getProductionTransactionProbePageData,
+  inspectProductionTransactionProbePreflight,
   refreshProductionTransactionProbe,
   serializeProductionTransactionProbe,
 } from "../services/productionTransactionProbe.server.js";
@@ -37,6 +38,12 @@ export async function loader({ request }) {
     shopDomain: session.shop,
     releaseExpectation,
   });
+  const preflight = await inspectProductionTransactionProbePreflight({
+    shopDomain: session.shop,
+    releaseExpectation,
+    targetProvider: "KOMOJU",
+    targetPaymentMethod: "CARD",
+  });
   const displayProbe =
     data.activeProbe ||
     data.recentProbes.find(
@@ -55,7 +62,9 @@ export async function loader({ request }) {
       page: buildProductionTransactionProbePage({
         activeProbe: displayProbe,
         release: data.release,
+        target: preflight.target,
       }),
+      preflight,
     },
     { headers: privateHeaders() },
   );
@@ -72,10 +81,32 @@ export async function action({ request }) {
 
   try {
     if (intent === "start_probe") {
+      const preflight = await inspectProductionTransactionProbePreflight({
+        shopDomain: session.shop,
+        releaseExpectation,
+        targetProvider: "KOMOJU",
+        targetPaymentMethod: "CARD",
+      });
+      if (!preflight.canStart) {
+        return json(
+          {
+            ok: false,
+            reason: "production_transaction_preflight_failed",
+            preflight,
+          },
+          { status: 409, headers: privateHeaders() },
+        );
+      }
       result = await createProductionTransactionProbe({
         shopDomain: session.shop,
         startedBy: operator.actorKey,
         releaseExpectation,
+        targetProvider: "KOMOJU",
+        targetPaymentMethod: "CARD",
+        komojuCardOnlyConfirmed:
+          formData.get("komojuCardOnlyConfirmed") === "yes",
+        untestedAsyncMethodsDisabledConfirmed:
+          formData.get("untestedAsyncMethodsDisabledConfirmed") === "yes",
       });
     } else if (intent === "attach_order") {
       result = await attachOrderToProductionTransactionProbe({
@@ -157,7 +188,7 @@ export default function ProductionTransactionProbePage() {
           <p style={styles.eyebrow}>PRODUCTION E2E</p>
           <h1 style={styles.title}>本番注文・返金 E2E確認</h1>
           <p style={styles.lead}>
-            Shopify Paymentsの実取引と、アプリの注文・売上台帳・元取引への全額返金を照合します。
+            KOMOJUクレジットカード1件で、注文・売上台帳・元取引への全額返金をまとめて照合します。
           </p>
         </div>
         <StatusBadge tone={page.tone} label={page.statusLabel} />
@@ -191,10 +222,53 @@ export default function ProductionTransactionProbePage() {
               </span>
             </div>
 
+            <div style={styles.preflight}>
+              <h3 style={styles.inspectionTitle}>決済前の自動確認</h3>
+              <ul style={styles.checks}>
+                {data.preflight.checks.map((item) => (
+                  <li key={item.id} style={styles.check}>
+                    <span
+                      style={
+                        item.passed ? styles.checkPassed : styles.checkPending
+                      }
+                      aria-hidden="true"
+                    >
+                      {item.passed ? "✓" : "•"}
+                    </span>
+                    <span>
+                      <strong>{preflightLabel(item.id)}</strong>
+                      <span style={styles.checkReason}>{item.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             {!activeProbe && probe?.status !== "PASSED" ? (
-              <Form method="post">
+              <Form method="post" style={styles.form}>
                 <input type="hidden" name="intent" value="start_probe" />
-                <button style={styles.primaryButton} disabled={busy}>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="komojuCardOnlyConfirmed"
+                    value="yes"
+                    required
+                  />
+                  今回はKOMOJUクレジットカードだけを本番確認します
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="untestedAsyncMethodsDisabledConfirmed"
+                    value="yes"
+                    required
+                  />
+                  未検証のコンビニ・Pay-easy等はShopifyで無効にしました
+                </label>
+                <button
+                  style={styles.primaryButton}
+                  disabled={busy || !data.preflight.canStart}
+                >
                   確認を開始
                 </button>
               </Form>
@@ -208,7 +282,8 @@ export default function ProductionTransactionProbePage() {
                   Shopify注文番号
                   <span style={styles.hint}>
                     確認開始後に運営直販商品をShopify
-                    Paymentsの実カードで購入し、#1234またはOrder GIDを入力します。
+                    CheckoutからKOMOJUクレジットカードで購入し、#1234またはOrder
+                    GIDを入力します。
                   </span>
                   <input
                     style={styles.input}
@@ -292,13 +367,14 @@ export default function ProductionTransactionProbePage() {
               <dl style={styles.summary}>
                 <Summary label="状態" value={statusLabel(probe.status)} />
                 <Summary
+                  label="決済対象"
+                  value={paymentTargetLabel(probe.paymentTarget)}
+                />
+                <Summary
                   label="Shopify注文"
                   value={probe.orderEvidence.shopifyOrderName || "未登録"}
                 />
-                <Summary
-                  label="開始日時"
-                  value={formatDate(probe.startedAt)}
-                />
+                <Summary label="開始日時" value={formatDate(probe.startedAt)} />
                 <Summary
                   label="完了日時"
                   value={formatDate(probe.completedAt)}
@@ -376,9 +452,7 @@ function Inspection({ title, inspection }) {
             <span>
               <strong>{checkLabel(item.id)}</strong>
               {!item.passed ? (
-                <span style={styles.checkReason}>
-                  {reasonLabel(item.code)}
-                </span>
+                <span style={styles.checkReason}>{reasonLabel(item.code)}</span>
               ) : null}
             </span>
           </li>
@@ -467,6 +541,33 @@ function statusLabel(status) {
   );
 }
 
+function paymentTargetLabel(target) {
+  if (target?.provider === "KOMOJU" && target?.paymentMethod === "CARD") {
+    return "KOMOJUクレジットカード";
+  }
+  if (target?.provider === "SHOPIFY_PAYMENTS") {
+    return "Shopify Payments";
+  }
+  return "未設定";
+}
+
+function preflightLabel(id) {
+  return (
+    {
+      release_configured: "現在のリリースを特定",
+      purchase_control_release_ready: "購入制御Functionを確認",
+      payment_provider_configured: "KOMOJUのサーバー設定",
+      komoju_operations_enabled: "KOMOJU決済運用の記録",
+      refund_confirmation_enforced: "返金確認の安全制御",
+      payment_operations_clean: "未解決の決済運用",
+      checkout_available: "購入緊急停止の状態",
+      publication_boundary_ready: "第三者商品の公開境界",
+      eligible_platform_product_available: "運営直販の購入対象",
+      payment_target_supported: "決済対象",
+    }[id] || id
+  );
+}
+
 function reasonLabel(reason) {
   return (
     {
@@ -476,6 +577,12 @@ function reasonLabel(reason) {
         "migrationが未適用のため、この機能を利用できません。",
       production_transaction_probe_conflict:
         "別の更新と競合しました。画面を更新して状態を確認してください。",
+      production_transaction_preflight_failed:
+        "決済前の自動確認に未合格の項目があります。実決済の前に解消してください。",
+      komoju_scope_confirmation_required:
+        "KOMOJUカードだけを確認することと、未検証の決済方法を無効にしたことを確認してください。",
+      active_probe_payment_target_mismatch:
+        "進行中の確認と決済対象が異なります。古い確認を中止してから開始してください。",
       shopify_order_already_used:
         "この注文は別の確認ですでに使用されています。新しい実注文を指定してください。",
       order_reference_invalid:
@@ -489,10 +596,8 @@ function reasonLabel(reason) {
         "注文番号を一意に特定できません。Order GIDを入力してください。",
       shopify_test_order_not_allowed:
         "テスト注文は証跡に利用できません。本番モードの実注文を指定してください。",
-      order_predates_probe:
-        "確認開始前に作成された注文は利用できません。",
-      order_not_paid:
-        "支払い済みで未返金の注文を指定してください。",
+      order_predates_probe: "確認開始前に作成された注文は利用できません。",
+      order_not_paid: "支払い済みで未返金の注文を指定してください。",
       order_already_refunded:
         "すでに返金が始まっている注文は利用できません。新しい実注文で確認してください。",
       order_contains_non_platform_product:
@@ -503,8 +608,7 @@ function reasonLabel(reason) {
         "確認中にリリースが変わりました。現在のリリースで新しく確認してください。",
       marketplace_order_missing:
         "注文Webhookの反映待ちです。少し待って再確認してください。",
-      paid_ledger_count_mismatch:
-        "売上台帳の反映待ち、または件数不一致です。",
+      paid_ledger_count_mismatch: "売上台帳の反映待ち、または件数不一致です。",
       seller_order_shadow_not_matched:
         "SellerOrderの比較がまだ一致していません。",
       shopify_payment_transaction_missing:
@@ -535,6 +639,33 @@ function reasonLabel(reason) {
         "Shopify Paymentsの返金額と注文合計が一致しません。",
       shopify_refund_transaction_currency_mismatch:
         "Shopify Paymentsの返金通貨と注文通貨が一致しません。",
+      payment_transaction_missing: "対象決済の売上取引がまだ確認できません。",
+      payment_transaction_not_captured:
+        "対象決済の売上取引が成功状態ではありません。",
+      payment_transaction_provider_mismatch:
+        "選択した決済プロバイダー以外の注文です。",
+      payment_transaction_method_mismatch:
+        "KOMOJUクレジットカード以外の決済方法です。",
+      payment_transaction_is_test:
+        "テスト決済の取引は本番証跡に利用できません。",
+      payment_transaction_amount_mismatch: "決済額と注文合計が一致しません。",
+      payment_transaction_currency_mismatch:
+        "決済通貨と注文通貨が一致しません。",
+      refund_transaction_missing:
+        "対象決済の成功した返金取引がまだ確認できません。",
+      refund_transaction_not_successful:
+        "返金取引がすべて成功状態になるまで待ってください。",
+      refund_transaction_provider_mismatch:
+        "元の決済プロバイダー以外で処理された返金です。",
+      refund_transaction_method_mismatch:
+        "元のKOMOJUカード決済に対応する返金ではありません。",
+      refund_transaction_is_test:
+        "テスト返金の取引は本番証跡に利用できません。",
+      refund_transaction_parent_mismatch:
+        "返金取引が元の決済取引に紐づいていません。",
+      refund_transaction_amount_mismatch: "返金額と注文合計が一致しません。",
+      refund_transaction_currency_mismatch:
+        "返金通貨と注文通貨が一致しません。",
       refund_ledger_count_mismatch:
         "返金Webhookと返金台帳の反映待ち、または件数不一致です。",
       active_probe_not_found:
@@ -548,8 +679,7 @@ function reasonLabel(reason) {
 function checkLabel(id) {
   return (
     {
-      shopify_payment_transaction_present:
-        "Shopify Paymentsの売上取引を確認",
+      shopify_payment_transaction_present: "Shopify Paymentsの売上取引を確認",
       shopify_payment_transaction_status: "売上取引が成功済み",
       shopify_payment_transaction_gateway: "決済元がShopify Payments",
       shopify_payment_transaction_live: "本番取引であることを確認",
@@ -568,14 +698,28 @@ function checkLabel(id) {
       paid_ledger_amount: "売上台帳の金額が一致",
       paid_ledger_seller: "売上台帳の販売者が一致",
       seller_order_shadow: "既存計算とSellerOrderが一致",
-      shopify_refund_transaction_present:
-        "Shopify Paymentsの返金取引を確認",
+      shopify_refund_transaction_present: "Shopify Paymentsの返金取引を確認",
       shopify_refund_transaction_status: "返金取引が成功済み",
       shopify_refund_transaction_gateway: "返金元がShopify Payments",
       shopify_refund_transaction_live: "本番返金であることを確認",
       shopify_refund_transaction_parent: "元の決済取引への返金",
       shopify_refund_transaction_amount: "返金額が注文合計と一致",
       shopify_refund_transaction_currency: "返金通貨が注文通貨と一致",
+      payment_transaction_present: "対象決済の売上取引を確認",
+      payment_transaction_status: "売上取引が成功済み",
+      payment_transaction_provider: "決済プロバイダーが一致",
+      payment_transaction_method: "KOMOJUカード決済であることを確認",
+      payment_transaction_live: "本番取引であることを確認",
+      payment_transaction_amount: "決済額が注文合計と一致",
+      payment_transaction_currency: "決済通貨が注文通貨と一致",
+      refund_transaction_present: "対象決済の返金取引を確認",
+      refund_transaction_status: "返金取引が成功済み",
+      refund_transaction_provider: "返金元のプロバイダーが一致",
+      refund_transaction_method: "KOMOJUカード返金であることを確認",
+      refund_transaction_live: "本番返金であることを確認",
+      refund_transaction_parent: "元の決済取引への返金",
+      refund_transaction_amount: "返金額が注文合計と一致",
+      refund_transaction_currency: "返金通貨が注文通貨と一致",
       shopify_financial_status: "Shopifyが全額返金済み",
       shopify_refund_total: "Shopify返金総額が一致",
       shopify_refund_record: "返金レコードが1件",
@@ -653,8 +797,23 @@ const styles = {
   sectionTitle: { margin: 0, fontSize: 21, letterSpacing: 0 },
   text: { margin: "6px 0 0", color: "#475467", lineHeight: 1.7 },
   release: { color: "#667085", fontSize: 13, overflowWrap: "anywhere" },
+  preflight: {
+    display: "grid",
+    gap: 12,
+    padding: 16,
+    border: "1px solid #d0d5dd",
+    borderRadius: 6,
+    background: "#f9fafb",
+  },
   form: { display: "grid", gap: 14, maxWidth: 620 },
   label: { display: "grid", gap: 7, fontWeight: 700 },
+  confirmationLabel: {
+    display: "grid",
+    gridTemplateColumns: "20px 1fr",
+    alignItems: "start",
+    gap: 9,
+    lineHeight: 1.6,
+  },
   hint: { color: "#667085", fontSize: 13, fontWeight: 400, lineHeight: 1.6 },
   input: {
     width: "100%",
