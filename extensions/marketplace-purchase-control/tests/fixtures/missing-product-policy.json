@@ -10,7 +10,8 @@
         },
         "operationalPurchaseControl": {
           "value": "ALLOWED"
-        }
+        },
+        "komojuLimitedLaunchControl": null
       },
       "cart": {
         "lines": [
@@ -18,11 +19,18 @@
             "merchandise": {
               "product": {
                 "marketplaceCheckoutPolicy": null,
-                "saleEligibilityProjection": null
+                "saleEligibilityProjection": null,
+                "id": "gid://shopify/Product/1"
               }
             }
           }
-        ]
+        ],
+        "cost": {
+          "totalAmount": {
+            "amount": "100.0",
+            "currencyCode": "JPY"
+          }
+        }
       }
     },
     "output": {

@@ -53,6 +53,9 @@ function buildDirectInput({
   expiresOnExclusive = "2026-07-25",
   lineCount = 1,
   projectionValue = null,
+  limitedLaunchControl = null,
+  cartAmount = "100.0",
+  productId = "gid://shopify/Product/1",
 } = {}) {
   const defaultProjection = JSON.stringify({
     v: 2,
@@ -68,6 +71,7 @@ function buildDirectInput({
   const line = {
     merchandise: {
       product: {
+        id: productId,
         marketplaceCheckoutPolicy: { value: "PLATFORM_DIRECT" },
         saleEligibilityProjection: {
           value: projectionValue ?? defaultProjection,
@@ -79,11 +83,17 @@ function buildDirectInput({
     shop: {
       localTime: { date: currentDate },
       operationalPurchaseControl: { value: operationalState },
+      komojuLimitedLaunchControl: limitedLaunchControl
+        ? { value: JSON.stringify(limitedLaunchControl) }
+        : null,
       watchdogPurchaseStop: watchdogPurchaseStop
         ? { value: watchdogPurchaseStop }
         : null,
     },
     cart: {
+      cost: {
+        totalAmount: { amount: cartAmount, currencyCode: "JPY" },
+      },
       lines: Array.from({ length: lineCount }, () => line),
     },
   };
@@ -179,6 +189,68 @@ describe("fail-closed operational and calendar boundaries", () => {
   test("rejects carts above the supported 200-line boundary", () => {
     const result = cartValidationsGenerateRun(
       buildDirectInput({ lineCount: 201 }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks an expired limited launch without relying on the monitor", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-14",
+        limitedLaunchControl: {
+          v: 1,
+          s: "ACTIVE",
+          e: "2026-08-14",
+          p: ["gid://shopify/Product/1"],
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 2000,
+          c: "JPY",
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks products outside the limited launch allowlist", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-10",
+        productId: "gid://shopify/Product/2",
+        limitedLaunchControl: {
+          v: 1,
+          s: "ACTIVE",
+          e: "2026-08-14",
+          p: ["gid://shopify/Product/1"],
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 2000,
+          c: "JPY",
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks orders above the limited launch amount or liability cap", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-10",
+        cartAmount: "1650.0",
+        limitedLaunchControl: {
+          v: 1,
+          s: "ACTIVE",
+          e: "2026-08-14",
+          p: ["gid://shopify/Product/1"],
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 1000,
+          c: "JPY",
+        },
+      }),
     );
     expect(result.operations[0].validationAdd.errors).toHaveLength(1);
   });

@@ -33,6 +33,7 @@ import {
   getPlatformOperationalControl,
   inspectOperationalReadiness,
 } from "./operationalReadiness.server.js";
+import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -273,6 +274,9 @@ export async function collectLaunchMonitorReport({
   const getPlatformOperationalControlImpl =
     dependencies.getPlatformOperationalControl ||
     getPlatformOperationalControl;
+  const refreshKomojuLimitedLaunchControlImpl =
+    dependencies.refreshKomojuLimitedLaunchControl ||
+    refreshKomojuLimitedLaunchControl;
   const checks = [
     ...evaluateRenderSnapshot(renderSnapshot),
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
@@ -283,6 +287,49 @@ export async function collectLaunchMonitorReport({
     new Date(now.getTime() - 12 * 60 * 1000);
   let heavyCheckCompleted = runHeavyChecks ? false : null;
   let heavyChecks = [];
+
+  try {
+    const shopDomain = String(
+      env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
+    ).trim();
+    if (shopDomain) {
+      const limitedLaunch = await refreshKomojuLimitedLaunchControlImpl(
+        { shopDomain, applyEmergencyHold: true },
+        { prismaClient, now },
+      );
+      checks.push(
+        limitedLaunch?.ok === false
+          ? issueCheck(
+              "komoju_limited_launch_control",
+              CRITICAL_SEVERITY,
+              "KOMOJU限定公開の購入制御を更新できません。",
+              limitedLaunch.reason || "limited_launch_refresh_failed",
+            )
+          : limitedLaunch?.blockReason
+            ? issueCheck(
+                "komoju_limited_launch_control",
+                CRITICAL_SEVERITY,
+                "KOMOJU限定公開の期限または上限により購入を停止しました。",
+                limitedLaunch.blockReason,
+              )
+            : okCheck(
+                "komoju_limited_launch_control",
+                limitedLaunch?.skipped
+                  ? "KOMOJU限定公開は使用されていません。"
+                  : "KOMOJU限定公開の期限と露出上限は正常です。",
+              ),
+      );
+    }
+  } catch (error) {
+    checks.push(
+      issueCheck(
+        "komoju_limited_launch_control",
+        CRITICAL_SEVERITY,
+        "KOMOJU限定公開の購入制御を確認できません。",
+        safeErrorCode(error),
+      ),
+    );
+  }
 
   try {
     await prismaClient.$queryRaw`SELECT 1`;

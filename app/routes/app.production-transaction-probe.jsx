@@ -9,7 +9,10 @@ import {
 } from "@remix-run/react";
 import { useEffect } from "react";
 
-import { recordKomojuZeroBalanceLimitedLaunch } from "../services/komojuLimitedLaunch.server.js";
+import {
+  previewKomojuZeroBalanceLimitedLaunch,
+  recordKomojuZeroBalanceLimitedLaunch,
+} from "../services/komojuLimitedLaunch.server.js";
 import {
   inspectOperationalReadiness,
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
@@ -148,6 +151,23 @@ export async function action({ request }) {
           formData.get("directRefundFallbackConfirmed") === "yes",
         domesticPlatformDirectOnlyConfirmed:
           formData.get("domesticPlatformDirectOnlyConfirmed") === "yes",
+        limitedLaunchMaxOrderCount: formData.get(
+          "limitedLaunchMaxOrderCount",
+        ),
+        limitedLaunchMaxGrossAmount: formData.get(
+          "limitedLaunchMaxGrossAmount",
+        ),
+        limitedLaunchMaxOutstandingLiability: formData.get(
+          "limitedLaunchMaxOutstandingLiability",
+        ),
+        komojuPayoutCycle: formData.get("komojuPayoutCycle"),
+        expectedBankDepositAt: formData.get("expectedBankDepositAt"),
+        komojuMinimumPayoutAmount: formData.get("komojuMinimumPayoutAmount"),
+        estimatedProcessingFeeAmount: formData.get(
+          "estimatedProcessingFeeAmount",
+        ),
+        payoutNotOnHoldConfirmed:
+          formData.get("payoutNotOnHoldConfirmed") === "yes",
       });
     } else if (intent === "attach_order") {
       result = await attachOrderToProductionTransactionProbe({
@@ -181,6 +201,13 @@ export async function action({ request }) {
           releaseExpectation,
         });
       }
+    } else if (intent === "preview_limited_launch") {
+      result = await previewKomojuZeroBalanceLimitedLaunch({
+        probeId: formData.get("probeId"),
+        releaseExpectation,
+        evidenceReference: formData.get("evidenceReference"),
+        evidenceHash: formData.get("evidenceHash"),
+      });
     } else if (intent === "record_limited_launch") {
       result = await recordKomojuZeroBalanceLimitedLaunch({
         probeId: formData.get("probeId"),
@@ -188,6 +215,7 @@ export async function action({ request }) {
         releaseExpectation,
         evidenceReference: formData.get("evidenceReference"),
         evidenceHash: formData.get("evidenceHash"),
+        previewToken: formData.get("previewToken"),
         confirm: formData.get("confirm"),
       });
     } else if (intent === "cancel_probe") {
@@ -230,6 +258,7 @@ export default function ProductionTransactionProbePage() {
   const activeProbe = data.activeProbe;
   const probe = data.displayProbe;
   const page = data.page;
+  const limitedLaunchPreview = actionData?.preview || null;
   const busy = navigation.state !== "idle" || refreshFetcher.state !== "idle";
 
   useEffect(() => {
@@ -491,6 +520,82 @@ export default function ProductionTransactionProbePage() {
                     />
                     7日間は国内の運営直販だけを扱い、第三者販売とEU販売を開始しません
                   </label>
+                  <label style={styles.label}>
+                    限定公開中の最大注文件数（テスト注文を含む）
+                    <input
+                      style={styles.input}
+                      name="limitedLaunchMaxOrderCount"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="例: 3"
+                    />
+                  </label>
+                  <label style={styles.label}>
+                    限定公開中の累計売上上限（円）
+                    <input
+                      style={styles.input}
+                      name="limitedLaunchMaxGrossAmount"
+                      type="number"
+                      min="1"
+                      step="1"
+                    />
+                  </label>
+                  <label style={styles.label}>
+                    未返金債務の上限（円）
+                    <input
+                      style={styles.input}
+                      name="limitedLaunchMaxOutstandingLiability"
+                      type="number"
+                      min="1"
+                      step="1"
+                    />
+                  </label>
+                  <label style={styles.label}>
+                    KOMOJUの振込サイクル
+                    <select style={styles.input} name="komojuPayoutCycle">
+                      <option value="">選択してください</option>
+                      <option value="WEEKLY">週次</option>
+                      <option value="MONTHLY">月次</option>
+                    </select>
+                  </label>
+                  <label style={styles.label}>
+                    次回の銀行着金見込み
+                    <input
+                      style={styles.input}
+                      name="expectedBankDepositAt"
+                      type="datetime-local"
+                    />
+                  </label>
+                  <label style={styles.label}>
+                    KOMOJUの最低振込額（円）
+                    <input
+                      style={styles.input}
+                      name="komojuMinimumPayoutAmount"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="例: 1000"
+                    />
+                  </label>
+                  <label style={styles.label}>
+                    今回の決済手数料見込（円）
+                    <input
+                      style={styles.input}
+                      name="estimatedProcessingFeeAmount"
+                      type="number"
+                      min="0"
+                      step="1"
+                    />
+                  </label>
+                  <label style={styles.confirmationLabel}>
+                    <input
+                      type="checkbox"
+                      name="payoutNotOnHoldConfirmed"
+                      value="yes"
+                    />
+                    KOMOJUの振込が保留されていないことを確認しました
+                  </label>
                 </fieldset>
                 <label style={styles.label}>
                   外部設定の確認証跡
@@ -605,13 +710,7 @@ export default function ProductionTransactionProbePage() {
             activeProbe.orderEvidence?.externalReadiness?.strategy ===
               "ZERO_BALANCE_LIMITED_LAUNCH" &&
             !data.limitedLaunch?.ready ? (
-              <Form method="post" style={styles.form}>
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="record_limited_launch"
-                />
-                <input type="hidden" name="probeId" value={activeProbe.id} />
+              <div style={styles.form}>
                 <h3 style={styles.inspectionTitle}>
                   7日間の国内直販限定公開を記録
                 </h3>
@@ -619,38 +718,113 @@ export default function ProductionTransactionProbePage() {
                   売上・SellerOrder・台帳・Shadow・KOMOJUカード取引の一致確認後だけ利用できます。
                   厳格な全額返金E2Eは免除されず、7日以内の完了が必要です。
                 </p>
-                <label style={styles.label}>
-                  証跡一式の保存先
-                  <input
-                    style={styles.input}
-                    name="evidenceReference"
-                    placeholder="KOMOJU残高・会社返金原資・代替返金手順の保存先"
-                    required
-                  />
-                </label>
-                <label style={styles.label}>
-                  証跡一式のSHA-256
-                  <input
-                    style={styles.input}
-                    name="evidenceHash"
-                    pattern="[A-Fa-f0-9]{64}"
-                    placeholder="64桁のSHA-256"
-                    required
-                  />
-                </label>
-                <label style={styles.confirmationLabel}>
-                  <input
-                    type="checkbox"
-                    name="confirm"
-                    value="activate_zero_balance_limited_launch"
-                    required
-                  />
-                  国内運営直販だけを期限付きで開始し、7日以内に同じ注文の厳格E2Eを完了します
-                </label>
-                <button style={styles.primaryButton} disabled={busy}>
-                  期限付き公開証跡を記録
-                </button>
-              </Form>
+                {!limitedLaunchPreview ? (
+                  <Form method="post" style={styles.form}>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="preview_limited_launch"
+                    />
+                    <input
+                      type="hidden"
+                      name="probeId"
+                      value={activeProbe.id}
+                    />
+                    <label style={styles.label}>
+                      証跡一式の保存先
+                      <input
+                        style={styles.input}
+                        name="evidenceReference"
+                        placeholder="KOMOJU残高・会社返金原資・代替返金手順の保存先"
+                        required
+                      />
+                    </label>
+                    <label style={styles.label}>
+                      証跡一式のSHA-256
+                      <input
+                        style={styles.input}
+                        name="evidenceHash"
+                        pattern="[A-Fa-f0-9]{64}"
+                        placeholder="64桁のSHA-256"
+                        required
+                      />
+                    </label>
+                    <button style={styles.primaryButton} disabled={busy}>
+                      確定内容をプレビュー
+                    </button>
+                  </Form>
+                ) : (
+                  <Form method="post" style={styles.form}>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="record_limited_launch"
+                    />
+                    <input
+                      type="hidden"
+                      name="probeId"
+                      value={activeProbe.id}
+                    />
+                    <input
+                      type="hidden"
+                      name="previewToken"
+                      value={limitedLaunchPreview.previewToken}
+                    />
+                    <input
+                      type="hidden"
+                      name="evidenceReference"
+                      value={limitedLaunchPreview.evidenceReference}
+                    />
+                    <input
+                      type="hidden"
+                      name="evidenceHash"
+                      value={limitedLaunchPreview.evidenceHash}
+                    />
+                    <div style={styles.previewPanel}>
+                      <strong>一度だけ使える最終確認</strong>
+                      <span>
+                        Release: {limitedLaunchPreview.releaseId}
+                      </span>
+                      <span>
+                        注文: {limitedLaunchPreview.shopifyOrderId} / 売上: {limitedLaunchPreview.actualPaidAmount.toLocaleString()} {limitedLaunchPreview.currencyCode}
+                      </span>
+                      <span>
+                        期限: {formatDate(limitedLaunchPreview.completionDeadline)}
+                      </span>
+                      <span>
+                        上限: {limitedLaunchPreview.maxOrderCount}件 / 累計 {limitedLaunchPreview.maxGrossAmount.toLocaleString()}円 / 未返金債務 {limitedLaunchPreview.maxOutstandingLiability.toLocaleString()}円
+                      </span>
+                      <span>
+                        会社返金予備資金: {limitedLaunchPreview.companyRefundReserveAmount.toLocaleString()}円
+                      </span>
+                      <span>
+                        対象商品: {limitedLaunchPreview.allowedProducts.map((product) => product.name).join("、")}
+                      </span>
+                      <span>
+                        証跡: {limitedLaunchPreview.evidenceReference}
+                      </span>
+                      <code style={styles.previewHash}>
+                        SHA-256: {limitedLaunchPreview.evidenceHash}
+                      </code>
+                      <span>
+                        このプレビューは{formatDate(limitedLaunchPreview.expiresAt)}まで有効です。
+                      </span>
+                    </div>
+                    <label style={styles.confirmationLabel}>
+                      <input
+                        type="checkbox"
+                        name="confirm"
+                        value="activate_zero_balance_limited_launch"
+                        required
+                      />
+                      内容を確認しました。確定後は延長・別注文への付け替え・証跡変更ができないことを了承します
+                    </label>
+                    <button style={styles.primaryButton} disabled={busy}>
+                      一度限りの期限付き公開証跡を確定
+                    </button>
+                  </Form>
+                )}
+              </div>
             ) : null}
 
             {activeProbe &&
@@ -960,6 +1134,10 @@ function reasonLabel(reason) {
         "第三者販売またはEU販売が有効なため、国内運営直販限定の例外を利用できません。",
       limited_launch_exception_already_used:
         "この期限付き公開枠はすでに使用済みです。延長や別注文への付け替えはできません。",
+      limited_launch_preview_unavailable:
+        "安全な最終プレビューを作成できません。Shopify API Secretの本番設定を確認してください。",
+      limited_launch_preview_changed:
+        "プレビュー後にリリース、注文、商品、上限または証跡が変わったか、15分を経過しました。もう一度プレビューしてください。",
       komoju_refund_reserve_reconfirmation_required:
         "入金証拠の確認後に、現在のKOMOJU未精算残高を証跡付きで再確認してください。",
       komoju_refund_reserve_reconfirmation_invalid:
@@ -1205,6 +1383,21 @@ const styles = {
     background: "#f9fafb",
   },
   form: { display: "grid", gap: 14, maxWidth: 620 },
+  previewPanel: {
+    display: "grid",
+    gap: 8,
+    padding: 16,
+    border: "1px solid #f79009",
+    borderRadius: 6,
+    background: "#fffaeb",
+    lineHeight: 1.6,
+  },
+  previewHash: {
+    padding: 10,
+    overflowWrap: "anywhere",
+    background: "#fff",
+    border: "1px solid #fedf89",
+  },
   label: { display: "grid", gap: 7, fontWeight: 700 },
   confirmationLabel: {
     display: "grid",

@@ -3221,6 +3221,7 @@ test("processShopifyRefundSettlement records a seller refund debit ledger entry"
         assert.deepEqual(where.entryType.in, [
           "shopify_order_paid",
           "refund",
+          "direct_customer_refund",
           "shopify_order_cancelled",
         ]);
         assert.deepEqual(where.OR, [
@@ -4039,6 +4040,7 @@ test("processShopifyOrderCancelledSettlement reverses the unpaid seller payout b
         assert.deepEqual(where.entryType.in, [
           "shopify_order_paid",
           "refund",
+          "direct_customer_refund",
           "shopify_order_cancelled",
         ]);
         assert.deepEqual(where.OR, [
@@ -4290,6 +4292,7 @@ test("processShopifyDisputeSettlement holds seller payout balance and marks sell
         assert.deepEqual(where.entryType.in, [
           "shopify_order_paid",
           "refund",
+          "direct_customer_refund",
           "shopify_order_cancelled",
           "dispute_created",
           "dispute_funds_reinstated",

@@ -15,12 +15,25 @@ query CartValidationsGenerateRunInput {
     ) {
       value
     }
+    komojuLimitedLaunchControl: metafield(
+      namespace: "$app"
+      key: "komoju_limited_launch_control"
+    ) {
+      value
+    }
   }
   cart {
+    cost {
+      totalAmount {
+        amount
+        currencyCode
+      }
+    }
     lines {
       merchandise {
         ... on ProductVariant {
           product {
+            id
             marketplaceCheckoutPolicy: metafield(
               namespace: "$app"
               key: "marketplace_checkout_policy"

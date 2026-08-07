@@ -18,6 +18,48 @@ export const PAYMENT_REFUND_STATUS = Object.freeze({
   FAILED: "FAILED",
 });
 
+async function reserveProviderRefundGuard(
+  { marketplaceOrder, shopDomain, shopifyOrderId, shopifyRefundId },
+  { prismaClient, now },
+) {
+  if (!marketplaceOrder?.id || !prismaClient?.orderRefundGuard?.findUnique) {
+    return { ok: true, skipped: true, guard: null };
+  }
+  let guard = await prismaClient.orderRefundGuard.findUnique({
+    where: { marketplaceOrderId: marketplaceOrder.id },
+  });
+  if (!guard) {
+    try {
+      guard = await prismaClient.orderRefundGuard.create({
+        data: {
+          marketplaceOrderId: marketplaceOrder.id,
+          shopDomain,
+          shopifyOrderId,
+          channel: "PROVIDER",
+          status: "RESERVED",
+          operationReference: shopifyRefundId,
+          reservedAt: now,
+          metadataJson: { source: "shopify_refund_webhook" },
+        },
+      });
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+      guard = await prismaClient.orderRefundGuard.findUnique({
+        where: { marketplaceOrderId: marketplaceOrder.id },
+      });
+    }
+  }
+  if (guard?.channel === "DIRECT") {
+    return {
+      ok: false,
+      conflict: true,
+      reason: "direct_customer_refund_already_completed",
+      guard,
+    };
+  }
+  return { ok: true, guard };
+}
+
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -186,6 +228,11 @@ export async function observeShopifyRefundOperation(
         select: { id: true },
       })
     : null;
+  const refundGuard = await reserveProviderRefundGuard(
+    { marketplaceOrder, shopDomain, shopifyOrderId, shopifyRefundId },
+    { prismaClient, now },
+  );
+  const refundChannelConflict = refundGuard.conflict === true;
   const classification = resolveRefundClassification(payload, paymentAttempt);
   const successfulProviderTransaction = getRefundTransactions(payload).some(
     isSuccessfulRefundTransaction,
@@ -194,11 +241,12 @@ export async function observeShopifyRefundOperation(
   const manual = classification.refundMode === PAYMENT_REFUND_MODE.KOMOJU_MANUAL;
   const unknown = classification.refundMode === PAYMENT_REFUND_MODE.REVIEW_REQUIRED;
   const allowLedger =
+    !refundChannelConflict &&
     !manual &&
     (!strict ||
       successfulProviderTransaction ||
       classification.provider === PAYMENT_PROVIDER.SHOPIFY_PAYMENTS);
-  const status = manual || (strict && unknown)
+  const status = refundChannelConflict || manual || (strict && unknown)
     ? PAYMENT_REFUND_STATUS.REVIEW_REQUIRED
     : strict && !successfulProviderTransaction
       ? PAYMENT_REFUND_STATUS.AWAITING_PROVIDER
@@ -246,6 +294,8 @@ export async function observeShopifyRefundOperation(
         strictConfirmation: strict,
         successfulProviderTransaction,
         gateway: classification.transaction?.gateway || null,
+        refundChannelConflict,
+        refundGuardId: refundGuard.guard?.id || null,
       },
     },
     update: {
@@ -265,6 +315,8 @@ export async function observeShopifyRefundOperation(
         strictConfirmation: strict,
         successfulProviderTransaction,
         gateway: classification.transaction?.gateway || null,
+        refundChannelConflict,
+        refundGuardId: refundGuard.guard?.id || null,
       },
     },
   });
@@ -273,7 +325,11 @@ export async function observeShopifyRefundOperation(
     ok: true,
     tracked: true,
     allowLedger,
-    reason: allowLedger ? null : "payment_refund_confirmation_required",
+    reason: allowLedger
+      ? null
+      : refundChannelConflict
+        ? "direct_customer_refund_already_completed"
+        : "payment_refund_confirmation_required",
     operation,
   };
 }
@@ -293,7 +349,7 @@ export async function markPaymentRefundLedgerApplied(
   { prismaClient = prisma, now = new Date() } = {},
 ) {
   if (!operationId || !prismaClient?.paymentRefundOperation?.update) return null;
-  return prismaClient.paymentRefundOperation.update({
+  const operation = await prismaClient.paymentRefundOperation.update({
     where: { id: operationId },
     data: settlementResult?.ok
       ? {
@@ -307,6 +363,26 @@ export async function markPaymentRefundLedgerApplied(
           failureCode: normalizeText(settlementResult?.reason) || "ledger_apply_failed",
         },
   });
+  if (
+    settlementResult?.ok &&
+    operation.marketplaceOrderId &&
+    prismaClient?.orderRefundGuard?.updateMany
+  ) {
+    await prismaClient.orderRefundGuard.updateMany({
+      where: {
+        marketplaceOrderId: operation.marketplaceOrderId,
+        channel: "PROVIDER",
+      },
+      data: {
+        status: "COMPLETED",
+        completedAt: now,
+        amount: operation.amount,
+        currencyCode: operation.currencyCode,
+        operationReference: operation.shopifyRefundId || operation.operationKey,
+      },
+    });
+  }
+  return operation;
 }
 
 export async function confirmManualPaymentRefundOperation(

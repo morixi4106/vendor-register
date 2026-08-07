@@ -854,6 +854,14 @@ export async function createProductionTransactionProbe(
     companyRefundReserveConfirmed = false,
     directRefundFallbackConfirmed = false,
     domesticPlatformDirectOnlyConfirmed = false,
+    limitedLaunchMaxOrderCount,
+    limitedLaunchMaxGrossAmount,
+    limitedLaunchMaxOutstandingLiability,
+    komojuPayoutCycle,
+    expectedBankDepositAt,
+    komojuMinimumPayoutAmount,
+    estimatedProcessingFeeAmount,
+    payoutNotOnHoldConfirmed = false,
   },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
@@ -891,6 +899,21 @@ export async function createProductionTransactionProbe(
   );
   const confirmedUnsettledBalanceProvided =
     clean(confirmedKomojuUnsettledBalanceAmount) !== "";
+  const limitedMaxOrderCount = toNonNegativeInteger(
+    limitedLaunchMaxOrderCount,
+  );
+  const limitedMaxGrossAmount = toNonNegativeInteger(
+    limitedLaunchMaxGrossAmount,
+  );
+  const limitedMaxOutstandingLiability = toNonNegativeInteger(
+    limitedLaunchMaxOutstandingLiability,
+  );
+  const payoutCycle = clean(komojuPayoutCycle).toUpperCase();
+  const expectedDepositAt = parseDate(expectedBankDepositAt);
+  const minimumPayoutAmount = toNonNegativeInteger(komojuMinimumPayoutAmount);
+  const estimatedFeeAmount = toNonNegativeInteger(
+    estimatedProcessingFeeAmount,
+  );
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
     (!strategy || !evidenceReference || !evidenceHash || maximumCharge <= 0)
@@ -940,6 +963,33 @@ export async function createProductionTransactionProbe(
   ) {
     return { ok: false, reason: "komoju_limited_launch_confirmation_required" };
   }
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+  ) {
+    const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const estimatedNetPayout = Math.max(0, maximumCharge - estimatedFeeAmount);
+    if (
+      limitedMaxOrderCount < 1 ||
+      limitedMaxGrossAmount < maximumCharge ||
+      limitedMaxOutstandingLiability < maximumCharge ||
+      limitedMaxGrossAmount > refundReserve ||
+      limitedMaxOutstandingLiability > refundReserve ||
+      !["WEEKLY", "MONTHLY"].includes(payoutCycle) ||
+      !expectedDepositAt ||
+      expectedDepositAt.getTime() < now.getTime() ||
+      expectedDepositAt.getTime() > deadline.getTime() ||
+      minimumPayoutAmount <= 0 ||
+      estimatedFeeAmount >= maximumCharge ||
+      estimatedNetPayout < minimumPayoutAmount ||
+      payoutNotOnHoldConfirmed !== true
+    ) {
+      return {
+        ok: false,
+        reason: "komoju_limited_launch_payout_or_exposure_invalid",
+      };
+    }
+  }
   const externalReadiness = {
     version: 2,
     strategy,
@@ -961,6 +1011,43 @@ export async function createProductionTransactionProbe(
     directRefundFallbackConfirmed: directRefundFallbackConfirmed === true,
     domesticPlatformDirectOnlyConfirmed:
       domesticPlatformDirectOnlyConfirmed === true,
+    limitedLaunchMaxOrderCount:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? limitedMaxOrderCount
+        : null,
+    limitedLaunchMaxGrossAmount:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? limitedMaxGrossAmount
+        : null,
+    limitedLaunchMaxOutstandingLiability:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? limitedMaxOutstandingLiability
+        : null,
+    komojuPayoutCycle:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? payoutCycle
+        : null,
+    expectedBankDepositAt:
+      strategy ===
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH &&
+      expectedDepositAt
+        ? expectedDepositAt.toISOString()
+        : null,
+    komojuMinimumPayoutAmount:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? minimumPayoutAmount
+        : null,
+    estimatedProcessingFeeAmount:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? estimatedFeeAmount
+        : null,
+    payoutNotOnHoldConfirmed: payoutNotOnHoldConfirmed === true,
     komojuLiveConfirmed: komojuLiveConfirmed === true,
     singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
     automaticCaptureConfirmed: automaticCaptureConfirmed === true,
