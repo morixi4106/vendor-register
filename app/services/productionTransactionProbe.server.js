@@ -85,6 +85,7 @@ const KOMOJU_CARD_TRANSACTION_TARGET = Object.freeze({
 export const KOMOJU_PAYOUT_EVIDENCE_STRATEGY = Object.freeze({
   EXISTING_RECONCILED_PAYOUT: "EXISTING_RECONCILED_PAYOUT",
   CURRENT_PAYMENT_WITH_REFUND_RESERVE: "CURRENT_PAYMENT_WITH_REFUND_RESERVE",
+  ZERO_BALANCE_LIMITED_LAUNCH: "ZERO_BALANCE_LIMITED_LAUNCH",
 });
 
 const ORDER_FIELDS = `#graphql
@@ -848,6 +849,11 @@ export async function createProductionTransactionProbe(
     payoutEvidenceStrategy,
     maximumPlannedChargeAmount,
     confirmedRefundReserveAmount,
+    confirmedKomojuUnsettledBalanceAmount,
+    zeroUnsettledBalanceConfirmed = false,
+    companyRefundReserveConfirmed = false,
+    directRefundFallbackConfirmed = false,
+    domesticPlatformDirectOnlyConfirmed = false,
   },
   { prismaClient = prisma, now = new Date() } = {},
 ) {
@@ -880,6 +886,11 @@ export async function createProductionTransactionProbe(
   const strategy = normalizePayoutEvidenceStrategy(payoutEvidenceStrategy);
   const maximumCharge = toNonNegativeInteger(maximumPlannedChargeAmount);
   const refundReserve = toNonNegativeInteger(confirmedRefundReserveAmount);
+  const confirmedUnsettledBalance = toNonNegativeInteger(
+    confirmedKomojuUnsettledBalanceAmount,
+  );
+  const confirmedUnsettledBalanceProvided =
+    clean(confirmedKomojuUnsettledBalanceAmount) !== "";
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
     (!strategy || !evidenceReference || !evidenceHash || maximumCharge <= 0)
@@ -917,11 +928,39 @@ export async function createProductionTransactionProbe(
   ) {
     return { ok: false, reason: "komoju_refund_reserve_insufficient" };
   }
+  if (
+    target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH &&
+    (!confirmedUnsettledBalanceProvided ||
+      confirmedUnsettledBalance !== 0 ||
+      zeroUnsettledBalanceConfirmed !== true ||
+      companyRefundReserveConfirmed !== true ||
+      directRefundFallbackConfirmed !== true ||
+      domesticPlatformDirectOnlyConfirmed !== true)
+  ) {
+    return { ok: false, reason: "komoju_limited_launch_confirmation_required" };
+  }
   const externalReadiness = {
     version: 2,
     strategy,
     maximumPlannedChargeAmount: maximumCharge,
     confirmedRefundReserveAmount: refundReserve,
+    confirmedKomojuUnsettledBalanceAmount:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? confirmedUnsettledBalance
+        : null,
+    refundReserveType:
+      strategy ===
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+        ? "COMPANY_CASH"
+        : "KOMOJU_UNSETTLED_BALANCE",
+    zeroUnsettledBalanceConfirmed:
+      zeroUnsettledBalanceConfirmed === true,
+    companyRefundReserveConfirmed: companyRefundReserveConfirmed === true,
+    directRefundFallbackConfirmed: directRefundFallbackConfirmed === true,
+    domesticPlatformDirectOnlyConfirmed:
+      domesticPlatformDirectOnlyConfirmed === true,
     komojuLiveConfirmed: komojuLiveConfirmed === true,
     singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
     automaticCaptureConfirmed: automaticCaptureConfirmed === true,
@@ -1679,7 +1718,8 @@ function buildPayoutEvidenceInspection({ probe, local, paidInspection }) {
   }
   if (
     strategy ===
-    KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE ||
+    strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
   ) {
     const expectedAttemptIds = new Set(paidInspection.paymentAttemptIds || []);
     const matchingLines = (local.paymentAttempts || []).flatMap((attempt) => {
@@ -1702,7 +1742,12 @@ function buildPayoutEvidenceInspection({ probe, local, paidInspection }) {
     return {
       passed,
       strategy,
-      code: passed ? null : "current_payment_payout_evidence_missing",
+      code: passed
+        ? null
+        : strategy ===
+            KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+          ? "limited_launch_exception_required"
+          : "current_payment_payout_evidence_missing",
       batchId: passed ? batchIds[0] : null,
       externalBatchId: passed
         ? matchingLines[0].batch?.externalBatchId || null

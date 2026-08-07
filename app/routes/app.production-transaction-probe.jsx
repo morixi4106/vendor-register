@@ -9,6 +9,11 @@ import {
 } from "@remix-run/react";
 import { useEffect } from "react";
 
+import { recordKomojuZeroBalanceLimitedLaunch } from "../services/komojuLimitedLaunch.server.js";
+import {
+  inspectOperationalReadiness,
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+} from "../services/operationalReadiness.server.js";
 import {
   attachOrderToProductionTransactionProbe,
   buildProductionTransactionProbePage,
@@ -45,6 +50,11 @@ export async function loader({ request }) {
     targetProvider: "KOMOJU",
     targetPaymentMethod: "CARD",
   });
+  const operationalReadiness = await inspectOperationalReadiness();
+  const limitedLaunch = operationalReadiness.rows.find(
+    (row) =>
+      row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+  );
   const displayProbe =
     data.activeProbe ||
     data.recentProbes.find(
@@ -66,6 +76,7 @@ export async function loader({ request }) {
         target: preflight.target,
       }),
       preflight,
+      limitedLaunch: limitedLaunch || null,
     },
     { headers: privateHeaders() },
   );
@@ -126,6 +137,17 @@ export async function action({ request }) {
         confirmedRefundReserveAmount: formData.get(
           "confirmedRefundReserveAmount",
         ),
+        confirmedKomojuUnsettledBalanceAmount: formData.get(
+          "confirmedKomojuUnsettledBalanceAmount",
+        ),
+        zeroUnsettledBalanceConfirmed:
+          formData.get("zeroUnsettledBalanceConfirmed") === "yes",
+        companyRefundReserveConfirmed:
+          formData.get("companyRefundReserveConfirmed") === "yes",
+        directRefundFallbackConfirmed:
+          formData.get("directRefundFallbackConfirmed") === "yes",
+        domesticPlatformDirectOnlyConfirmed:
+          formData.get("domesticPlatformDirectOnlyConfirmed") === "yes",
       });
     } else if (intent === "attach_order") {
       result = await attachOrderToProductionTransactionProbe({
@@ -159,6 +181,15 @@ export async function action({ request }) {
           releaseExpectation,
         });
       }
+    } else if (intent === "record_limited_launch") {
+      result = await recordKomojuZeroBalanceLimitedLaunch({
+        probeId: formData.get("probeId"),
+        actorKey: operator.actorKey,
+        releaseExpectation,
+        evidenceReference: formData.get("evidenceReference"),
+        evidenceHash: formData.get("evidenceHash"),
+        confirm: formData.get("confirm"),
+      });
     } else if (intent === "cancel_probe") {
       result = await cancelProductionTransactionProbe({
         probeId: formData.get("probeId"),
@@ -243,6 +274,16 @@ export default function ProductionTransactionProbePage() {
           現在のリリースに紐づく検証証跡だけを記録します。
         </span>
       </section>
+
+      {data.limitedLaunch?.ready ? (
+        <section style={styles.success} role="status">
+          <strong>国内運営直販の期限付き公開証跡が有効です。</strong>
+          <span>
+            有効期限: {formatDate(data.limitedLaunch.attestation?.expiresAt)}。
+            期限までに同じ注文の全額返金E2Eを完了してください。
+          </span>
+        </section>
+      ) : null}
 
       {!data.available ? (
         <section style={styles.section}>
@@ -368,9 +409,12 @@ export default function ProductionTransactionProbePage() {
                     <option value="CURRENT_PAYMENT_WITH_REFUND_RESERVE">
                       今回の決済を銀行着金まで待つ
                     </option>
+                    <option value="ZERO_BALANCE_LIMITED_LAUNCH">
+                      新規KOMOJU（未精算残高0円）の7日間限定公開
+                    </option>
                   </select>
                   <span style={styles.hint}>
-                    どちらの方式でも、全額返金分を別のKOMOJU未精算残高として確保します。
+                    期限付き公開では、KOMOJU残高ではなく会社資金として全額返金分を確保します。
                   </span>
                 </label>
                 <label style={styles.label}>
@@ -386,7 +430,7 @@ export default function ProductionTransactionProbePage() {
                   />
                 </label>
                 <label style={styles.label}>
-                  確認済みの別未精算残高（円）
+                  確認済みの返金原資（円）
                   <input
                     style={styles.input}
                     name="confirmedRefundReserveAmount"
@@ -396,9 +440,58 @@ export default function ProductionTransactionProbePage() {
                     required
                   />
                   <span style={styles.hint}>
-                    入金証拠の確認後にも同じ金額を再確認します。支払上限以上を入力してください。
+                    通常方式はKOMOJU未精算残高、期限付き公開は会社資金を入力します。支払上限以上が必要です。
                   </span>
                 </label>
+                <fieldset style={styles.preflight}>
+                  <legend style={styles.inspectionTitle}>
+                    未精算残高0円の期限付き公開を選ぶ場合のみ
+                  </legend>
+                  <label style={styles.label}>
+                    確認したKOMOJU未精算残高（円）
+                    <input
+                      style={styles.input}
+                      name="confirmedKomojuUnsettledBalanceAmount"
+                      type="number"
+                      min="0"
+                      max="0"
+                      step="1"
+                      placeholder="0"
+                    />
+                  </label>
+                  <label style={styles.confirmationLabel}>
+                    <input
+                      type="checkbox"
+                      name="zeroUnsettledBalanceConfirmed"
+                      value="yes"
+                    />
+                    KOMOJU本番画面で未精算残高0円を確認しました
+                  </label>
+                  <label style={styles.confirmationLabel}>
+                    <input
+                      type="checkbox"
+                      name="companyRefundReserveConfirmed"
+                      value="yes"
+                    />
+                    注文全額以上の返金原資を会社資金として確保しました
+                  </label>
+                  <label style={styles.confirmationLabel}>
+                    <input
+                      type="checkbox"
+                      name="directRefundFallbackConfirmed"
+                      value="yes"
+                    />
+                    KOMOJU返金不能時は、購入者の同意を得た代替返金手順で対応できます
+                  </label>
+                  <label style={styles.confirmationLabel}>
+                    <input
+                      type="checkbox"
+                      name="domesticPlatformDirectOnlyConfirmed"
+                      value="yes"
+                    />
+                    7日間は国内の運営直販だけを扱い、第三者販売とEU販売を開始しません
+                  </label>
+                </fieldset>
                 <label style={styles.label}>
                   外部設定の確認証跡
                   <input
@@ -504,6 +597,58 @@ export default function ProductionTransactionProbePage() {
                 </label>
                 <button style={styles.primaryButton} disabled={busy}>
                   返金原資を再確認して次へ
+                </button>
+              </Form>
+            ) : null}
+
+            {activeProbe?.status === "AWAITING_PAYOUT_EVIDENCE" &&
+            activeProbe.orderEvidence?.externalReadiness?.strategy ===
+              "ZERO_BALANCE_LIMITED_LAUNCH" &&
+            !data.limitedLaunch?.ready ? (
+              <Form method="post" style={styles.form}>
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="record_limited_launch"
+                />
+                <input type="hidden" name="probeId" value={activeProbe.id} />
+                <h3 style={styles.inspectionTitle}>
+                  7日間の国内直販限定公開を記録
+                </h3>
+                <p style={styles.text}>
+                  売上・SellerOrder・台帳・Shadow・KOMOJUカード取引の一致確認後だけ利用できます。
+                  厳格な全額返金E2Eは免除されず、7日以内の完了が必要です。
+                </p>
+                <label style={styles.label}>
+                  証跡一式の保存先
+                  <input
+                    style={styles.input}
+                    name="evidenceReference"
+                    placeholder="KOMOJU残高・会社返金原資・代替返金手順の保存先"
+                    required
+                  />
+                </label>
+                <label style={styles.label}>
+                  証跡一式のSHA-256
+                  <input
+                    style={styles.input}
+                    name="evidenceHash"
+                    pattern="[A-Fa-f0-9]{64}"
+                    placeholder="64桁のSHA-256"
+                    required
+                  />
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="confirm"
+                    value="activate_zero_balance_limited_launch"
+                    required
+                  />
+                  国内運営直販だけを期限付きで開始し、7日以内に同じ注文の厳格E2Eを完了します
+                </label>
+                <button style={styles.primaryButton} disabled={busy}>
+                  期限付き公開証跡を記録
                 </button>
               </Form>
             ) : null}
@@ -801,6 +946,20 @@ function reasonLabel(reason) {
         "決済済み注文へ直接紐づいた既存のKOMOJU入金証跡がありません。現在の決済を待つ方式を選ぶ場合は返金原資も確認してください。",
       komoju_refund_reserve_insufficient:
         "確認済みのKOMOJU未精算残高が決済予定上限を下回っています。銀行着金後も全額返金できる原資を確保してください。",
+      komoju_limited_launch_confirmation_required:
+        "期限付き公開には、KOMOJU残高0円・会社返金原資・代替返金手順・国内直販限定の確認が必要です。",
+      limited_launch_exception_required:
+        "売上照合は完了しました。入金を待つか、期限付き国内直販の証跡を記録してください。",
+      limited_launch_confirmation_invalid:
+        "期限付き公開の確認内容と64桁の証跡SHA-256を確認してください。",
+      limited_launch_probe_not_eligible:
+        "現在の注文またはリリースは期限付き公開の対象状態ではありません。",
+      limited_launch_paid_evidence_incomplete:
+        "売上・台帳・KOMOJUカード取引の照合、または会社返金原資の確認が完了していません。",
+      limited_launch_scope_not_restricted:
+        "第三者販売またはEU販売が有効なため、国内運営直販限定の例外を利用できません。",
+      limited_launch_exception_already_used:
+        "この期限付き公開枠はすでに使用済みです。延長や別注文への付け替えはできません。",
       komoju_refund_reserve_reconfirmation_required:
         "入金証拠の確認後に、現在のKOMOJU未精算残高を証跡付きで再確認してください。",
       komoju_refund_reserve_reconfirmation_invalid:

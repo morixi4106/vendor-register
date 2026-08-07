@@ -658,6 +658,112 @@ test("an existing KOMOJU payout never permits a zero refund reserve", async () =
   });
 });
 
+test("zero-balance limited launch requires every explicit safeguard", async () => {
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        assert.fail("an incomplete limited launch must not create a probe");
+      },
+    },
+  };
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+      komojuCardOnlyConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      releaseFreezeConfirmed: true,
+      externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+      externalSettingsEvidenceHash: SETTINGS_EVIDENCE_HASH,
+      payoutEvidenceStrategy:
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH,
+      maximumPlannedChargeAmount: 2000,
+      confirmedRefundReserveAmount: 2000,
+      confirmedKomojuUnsettledBalanceAmount: 0,
+      zeroUnsettledBalanceConfirmed: true,
+      companyRefundReserveConfirmed: true,
+      directRefundFallbackConfirmed: true,
+    },
+    { prismaClient },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "komoju_limited_launch_confirmation_required",
+  });
+});
+
+test("zero-balance limited launch stores company reserve and domestic-only evidence", async () => {
+  let createdData = null;
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create({ data }) {
+        createdData = data;
+        return { id: "probe_limited", ...data };
+      },
+    },
+  };
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+      komojuCardOnlyConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      releaseFreezeConfirmed: true,
+      externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+      externalSettingsEvidenceHash: SETTINGS_EVIDENCE_HASH,
+      payoutEvidenceStrategy:
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH,
+      maximumPlannedChargeAmount: 2000,
+      confirmedRefundReserveAmount: 2000,
+      confirmedKomojuUnsettledBalanceAmount: 0,
+      zeroUnsettledBalanceConfirmed: true,
+      companyRefundReserveConfirmed: true,
+      directRefundFallbackConfirmed: true,
+      domesticPlatformDirectOnlyConfirmed: true,
+    },
+    { prismaClient },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.strategy,
+    KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH,
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.refundReserveType,
+    "COMPANY_CASH",
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness
+      .confirmedKomojuUnsettledBalanceAmount,
+    0,
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness
+      .domesticPlatformDirectOnlyConfirmed,
+    true,
+  );
+});
+
 test("preflight permits one KOMOJU card run only when every automatic check passes", async () => {
   const release = buildProductionReleaseExpectation({
     env: RELEASE_ENV,
@@ -1283,6 +1389,69 @@ test("current KOMOJU payment waits for its directly linked bank deposit before r
   );
   assert.equal(afterConfirmation.stage, "refund");
   assert.equal(withDeposit.state.probe.status, "AWAITING_REFUND");
+});
+
+test("limited launch can continue the same order after its payout is directly linked", async () => {
+  const externalReadiness = {
+    version: 2,
+    strategy: KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH,
+    maximumPlannedChargeAmount: 2000,
+    confirmedRefundReserveAmount: 2000,
+    confirmedKomojuUnsettledBalanceAmount: 0,
+    zeroUnsettledBalanceConfirmed: true,
+    companyRefundReserveConfirmed: true,
+    directRefundFallbackConfirmed: true,
+    domesticPlatformDirectOnlyConfirmed: true,
+    evidenceReference: "private-evidence:komoju-zero-balance",
+    evidenceHash: SETTINGS_EVIDENCE_HASH,
+  };
+  const transaction = shopifyOrder({
+    paymentGateway: "komoju_credit_card",
+    paymentFormattedGateway: "KOMOJU - Credit Card",
+  });
+  const directlyLinkedAttempt = paymentAttempt({ target: KOMOJU_CARD_TARGET });
+  directlyLinkedAttempt.settlementLine = {
+    id: "settlement_line_limited",
+    amount: 1114,
+    matchStatus: "MATCHED",
+    batch: {
+      id: "settlement_batch_limited",
+      provider: "KOMOJU",
+      externalBatchId: "komoju-payout-limited",
+      status: "RECONCILED",
+      bankDepositedAt: new Date("2026-08-08T00:00:00.000Z"),
+      evidenceHash: "e".repeat(64),
+    },
+  };
+  const state = refreshPrisma({
+    probe: probeRecord({
+      status: "AWAITING_PAYOUT_EVIDENCE",
+      target: KOMOJU_CARD_TARGET,
+      externalReadiness,
+    }),
+    paymentAttempts: [directlyLinkedAttempt],
+  });
+
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: state.state.probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    { prismaClient: state.prismaClient, graphQL: graphQLFor(transaction) },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "refund_reserve_confirmation");
+  assert.equal(
+    state.state.probe.status,
+    "AWAITING_REFUND_RESERVE_CONFIRMATION",
+  );
+  assert.equal(
+    state.state.probe.paidEvidenceJson.payoutEvidenceInspection
+      .currentPaymentDirectlyLinked,
+    true,
+  );
 });
 
 test("KOMOJU convenience-store payment cannot satisfy the card-only probe", async () => {
