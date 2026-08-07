@@ -75,8 +75,8 @@ export const CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS = Object.freeze([
     expectedResult: "checkout_rejected",
   },
   {
-    id: "staleRevisionRejected",
-    label: "古いcontrol revisionで購入が拒否された",
+    id: "invalidRevisionRejected",
+    label: "不正なcontrol revision（r=0）で購入が拒否された",
     expectedResult: "checkout_rejected",
   },
 ]);

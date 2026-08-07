@@ -9,33 +9,36 @@ An unreleased app version is not installed into the production shop. Never
 claim that the new Function was tested in the production shop before the app
 version was released.
 
-1. Test the new Function in a development store, including all four checkout
-   probes: direct product allowed, blocked product rejected, global stop
-   rejected and recovery allowed.
+1. Pass the automated Function tests and the development-store smoke tests.
 2. Run `npm run deploy` to create the production app version without releasing
    it.
-3. Inspect the generated app version, Function extensions, requested scopes and
-   handle. Record the version in `SHOPIFY_APP_VERSION`.
+3. Inspect the generated app version, Function extensions, requested scopes,
+   handles and deletion count. Record the exact version in
+   `SHOPIFY_APP_VERSION`.
 4. Apply the compatible Render commit and Prisma migrations. Keep the
-   production storefront password protected.
-5. Inspect all existing validations owned by this app before release. Record
+   production storefront password protected and confirm the Release ID.
+5. While the old Function is still active, synchronize the explicit INACTIVE
+   `komoju_limited_launch_control` baseline and verify the Shopify read-back.
+6. Inspect all existing validations owned by this app before release. Record
    their IDs, `enabled`, `functionHandle` and `blockOnFailure` values. A
    validation already bound to the same handle may start using the new Function
    as soon as the app version is released.
-6. Release the staged Shopify version explicitly with
+7. Release the staged Shopify version explicitly with
    `npm run deploy:shopify:release`.
-7. Approve any additional scopes in the production shop.
-8. Create or update the validation in the disabled state.
-9. Synchronize every product projection and the shop-level purchase control,
-   then read them back.
-10. Enable the validation and run the four production probes while the
-    storefront remains password protected.
-11. Save the Release Manifest and separate evidence for each production probe.
-12. Run the low-value real payment and refund test only after all probes pass.
+8. Verify the active version, Function ID, handle, API version, validation and
+   `blockOnFailure` state before changing any test control.
+9. Run and restore all 16 release-bound production scenarios in
+   `checkout-function-live-probe-runbook.md` while the storefront remains
+   password protected. The page records evidence; it does not execute tests.
+10. Save the Release Manifest and separate evidence package for every scenario.
+11. Run the low-value real payment and refund test only after all 16 scenarios
+    pass and the control has been restored to a verified INACTIVE baseline.
 
-If a probe fails, disable the new validation, establish a Shopify-side sales
-stop, and release the previous app version. Do not restore sales merely because
-the prior app version was restored.
+After each expected observation, restore a newer-revision INACTIVE control and
+verify it before continuing. If a probe or restoration fails, establish BLOCKED
+plus the independent Shopify-side sales stop, disable the new validation and
+release the previous app version. Do not restore sales merely because the prior
+app version was restored.
 
 Do not use `--allow-deletes` in an ordinary release. Keep the previous Shopify
 app version available for rollback until the post-release probes pass.
