@@ -65,13 +65,20 @@ The resulting `PaymentSettlementLine` rows retain the direct links to the
 payment attempts and refund operations. A provider-level total without these
 links is not accepted as payout evidence for the release probe.
 
+Every new payout record requires the evidence file's 64-character SHA-256.
+Once a batch is `RECONCILED`, it is append-only: an exact retry is idempotent,
+but changing its payment, refund, amount, currency, date, or evidence is
+rejected. The same evidence hash, payment attempt, or refund operation cannot
+be assigned to another batch.
+
 Evidence references must point to access-controlled storage. Do not paste
 bank account numbers, customer details, API keys, or full payment credentials
 into the application.
 
 ## Deployment order
 
-1. Apply Prisma migration `20260806120000_add_payment_operations`.
+1. Apply Prisma migrations through
+   `20260807060000_harden_payment_settlement_evidence`.
 2. Deploy the server code.
 3. Deploy the Shopify app configuration so `orders/create` is subscribed.
 4. Set the three environment variables above.
@@ -94,8 +101,9 @@ Before the initial live charge, choose exactly one payout-evidence strategy.
 
 Use this when a previous KOMOJU payout has already reached the bank and the
 application has reconciled it to at least one captured payment attempt. This is
-the preferred one-charge path. The new charge can be fully refunded after its
-paid-order checks pass because the payout requirement is already satisfied.
+the preferred one-charge path. A separate current unsettled balance at least
+equal to the maximum planned charge is still required; an old deposited payout
+does not itself provide current refund funds.
 
 ### Strategy B: use the new charge for payout evidence
 
@@ -113,18 +121,22 @@ confirmation is complete:
 
 1. Start `/app/production-transaction-probe` only after every automatic
    preflight check passes. Record the strategy, maximum order total, private
-   settings evidence, and (for Strategy B) confirmed refund reserve.
+   settings evidence with its SHA-256, and confirmed refund reserve. The
+   reserve is mandatory for both strategies.
 2. Buy one approved platform-direct product through Shopify Checkout and
    choose KOMOJU credit card.
 3. Attach that new Shopify order to the probe and wait for the paid webhook,
    SellerOrder, shadow check, paid ledger, structured card evidence, and the
    exact captured `MarketplacePaymentAttempt` match to pass.
-4. For Strategy A, continue immediately. For Strategy B, wait for the bank
+4. For Strategy A, use the already reconciled payout. For Strategy B, wait for the bank
    deposit and register the KOMOJU payout in `/app/payment-operations`,
    selecting this exact payment attempt. Do not refund before the probe says
    the payout evidence passed.
-5. Fully refund the same order to the original card from Shopify Admin.
-6. Wait for the linked successful refund transaction and refund ledger checks
+5. Immediately before refund, record fresh evidence that the current KOMOJU
+   unsettled balance still covers the full planned charge. The probe does not
+   enter the refund stage until this second confirmation passes.
+6. Fully refund the same order to the original card from Shopify Admin.
+7. Wait for the linked successful refund transaction and refund ledger checks
    to pass. The release-bound probe must finish as `PASSED`.
 
 Do not change the Render commit, Shopify app version, Function, Validation,

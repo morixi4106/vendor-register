@@ -650,6 +650,7 @@ test("settlement evidence detects a net amount mismatch", async () => {
       payoutDate: "2026-08-06",
       bankDepositedAt: "2026-08-06",
       evidenceReference: "private-evidence:batch-1",
+      evidenceHash: "1".repeat(64),
       actor: "shopify_user:1",
       confirm: "settlement_evidence_recorded",
       paymentAttemptIds: ["attempt-1"],
@@ -694,9 +695,9 @@ test("settlement evidence links a reconciled payout directly to its payment atte
       async findUnique() {
         return null;
       },
-      async upsert({ create }) {
-        createdBatch = create;
-        return { id: "batch-1", ...create };
+      async create({ data }) {
+        createdBatch = data;
+        return { id: "batch-1", ...data };
       },
     },
     paymentSettlementLine: {
@@ -722,6 +723,7 @@ test("settlement evidence links a reconciled payout directly to its payment atte
       payoutDate: "2026-08-06",
       bankDepositedAt: "2026-08-06",
       evidenceReference: "private-evidence:batch-1",
+      evidenceHash: "2".repeat(64),
       actor: "shopify_user:1",
       confirm: "settlement_evidence_recorded",
       paymentAttemptIds: ["attempt-1"],
@@ -796,6 +798,7 @@ test("settlement evidence rejects a payment attempt already linked to another pa
       payoutDate: "2026-08-07",
       bankDepositedAt: "2026-08-07",
       evidenceReference: "private-evidence:batch-2",
+      evidenceHash: "3".repeat(64),
       actor: "shopify_user:1",
       confirm: "settlement_evidence_recorded",
       paymentAttemptIds: ["attempt-1"],
@@ -808,6 +811,270 @@ test("settlement evidence rejects a payment attempt already linked to another pa
     reason: "settlement_line_already_registered",
   });
   assert.equal(writeCount, 0);
+});
+
+test("a reconciled settlement batch is idempotent but cannot be changed", async () => {
+  const evidenceHash = "4".repeat(64);
+  const attempt = {
+    id: "attempt-1",
+    marketplaceOrderId: "order-1",
+    shopifyTransactionId: "gid://shopify/OrderTransaction/1",
+    provider: "KOMOJU",
+    status: "CAPTURED",
+    test: false,
+    requiresReview: false,
+    amount: 10000,
+    currencyCode: "jpy",
+    processedAt: new Date("2026-08-06T00:00:00.000Z"),
+  };
+  const existingBatch = {
+    id: "batch-immutable",
+    provider: "KOMOJU",
+    externalBatchId: "batch-immutable",
+    status: "RECONCILED",
+    grossAmount: 10000,
+    refundAmount: 0,
+    feeAmount: 200,
+    netAmount: 9800,
+    currencyCode: "jpy",
+    payoutDate: new Date("2026-08-06T00:00:00.000Z"),
+    bankDepositedAt: new Date("2026-08-06T00:00:00.000Z"),
+    evidenceReference: "private-evidence:immutable",
+    evidenceHash,
+    lines: [
+      {
+        externalLineId: "payment:gid://shopify/OrderTransaction/1",
+        lineType: "PAYMENT",
+        paymentAttemptId: "attempt-1",
+        refundOperationId: null,
+        marketplaceOrderId: "order-1",
+        providerReference: "gid://shopify/OrderTransaction/1",
+        amount: 10000,
+        feeAmount: 0,
+        currencyCode: "jpy",
+        matchStatus: "MATCHED",
+        occurredAt: new Date("2026-08-06T00:00:00.000Z"),
+      },
+      {
+        externalLineId: "fee:aggregate",
+        lineType: "FEE",
+        paymentAttemptId: null,
+        refundOperationId: null,
+        marketplaceOrderId: null,
+        providerReference: null,
+        amount: 0,
+        feeAmount: 200,
+        currencyCode: "jpy",
+        matchStatus: "MATCHED",
+        occurredAt: new Date("2026-08-06T00:00:00.000Z"),
+      },
+    ],
+  };
+  let writes = 0;
+  const prismaClient = {
+    marketplacePaymentAttempt: { findMany: async () => [attempt] },
+    paymentRefundOperation: { findMany: async () => [] },
+    paymentSettlementBatch: {
+      async findUnique({ where }) {
+        return where.provider_externalBatchId ? existingBatch : existingBatch;
+      },
+      async create() {
+        writes += 1;
+      },
+    },
+    paymentSettlementLine: {
+      async findFirst() {
+        return null;
+      },
+      async createMany() {
+        writes += 1;
+      },
+    },
+  };
+  prismaClient.$transaction = async (callback) => callback(prismaClient);
+  const baseInput = {
+    provider: "KOMOJU",
+    externalBatchId: "batch-immutable",
+    grossAmount: "10000",
+    refundAmount: "0",
+    feeAmount: "200",
+    netAmount: "9800",
+    currencyCode: "jpy",
+    payoutDate: "2026-08-06",
+    bankDepositedAt: "2026-08-06",
+    evidenceReference: "private-evidence:immutable",
+    evidenceHash,
+    actor: "shopify_user:1",
+    confirm: "settlement_evidence_recorded",
+    paymentAttemptIds: ["attempt-1"],
+  };
+
+  const repeated = await recordPaymentSettlementBatch(baseInput, {
+    prismaClient,
+  });
+  assert.equal(repeated.ok, true);
+  assert.equal(repeated.idempotent, true);
+  assert.equal(writes, 0);
+
+  const changed = await recordPaymentSettlementBatch(
+    { ...baseInput, evidenceReference: "private-evidence:replacement" },
+    { prismaClient },
+  );
+  assert.deepEqual(changed, {
+    ok: false,
+    reason: "settlement_batch_immutable",
+  });
+  assert.equal(writes, 0);
+});
+
+test("settlement evidence hash cannot be reused by another payout", async () => {
+  const evidenceHash = "5".repeat(64);
+  let writes = 0;
+  const prismaClient = {
+    marketplacePaymentAttempt: {
+      async findMany() {
+        return [
+          {
+            id: "attempt-2",
+            provider: "KOMOJU",
+            status: "CAPTURED",
+            test: false,
+            requiresReview: false,
+            amount: 10000,
+            currencyCode: "jpy",
+            processedAt: new Date("2026-08-06T00:00:00.000Z"),
+          },
+        ];
+      },
+    },
+    paymentRefundOperation: { findMany: async () => [] },
+    paymentSettlementBatch: {
+      async findUnique({ where }) {
+        return where.evidenceHash ? { id: "batch-original" } : null;
+      },
+      async create() {
+        writes += 1;
+      },
+    },
+    paymentSettlementLine: {
+      findFirst: async () => null,
+      async createMany() {
+        writes += 1;
+      },
+    },
+  };
+  prismaClient.$transaction = async (callback) => callback(prismaClient);
+  const result = await recordPaymentSettlementBatch(
+    {
+      provider: "KOMOJU",
+      externalBatchId: "batch-new",
+      grossAmount: "10000",
+      refundAmount: "0",
+      feeAmount: "200",
+      netAmount: "9800",
+      currencyCode: "jpy",
+      payoutDate: "2026-08-06",
+      bankDepositedAt: "2026-08-06",
+      evidenceReference: "private-evidence:reused",
+      evidenceHash,
+      actor: "shopify_user:1",
+      confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-2"],
+    },
+    { prismaClient },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "settlement_evidence_hash_already_registered",
+  });
+  assert.equal(writes, 0);
+});
+
+test("settlement evidence rejects a future bank deposit date", async () => {
+  const result = await recordPaymentSettlementBatch(
+    {
+      provider: "KOMOJU",
+      externalBatchId: "batch-future",
+      grossAmount: "10000",
+      refundAmount: "0",
+      feeAmount: "200",
+      netAmount: "9800",
+      currencyCode: "jpy",
+      payoutDate: "2026-08-08",
+      bankDepositedAt: "2026-08-08",
+      evidenceReference: "private-evidence:future",
+      evidenceHash: "6".repeat(64),
+      actor: "shopify_user:1",
+      confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-future"],
+    },
+    {
+      prismaClient: {
+        $transaction: async () =>
+          assert.fail("invalid dates must not query DB"),
+      },
+      now: new Date("2026-08-07T12:00:00.000Z"),
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "settlement_date_invalid",
+  });
+});
+
+test("settlement evidence rejects a bank deposit before its payment", async () => {
+  const result = await recordPaymentSettlementBatch(
+    {
+      provider: "KOMOJU",
+      externalBatchId: "batch-before-payment",
+      grossAmount: "10000",
+      refundAmount: "0",
+      feeAmount: "200",
+      netAmount: "9800",
+      currencyCode: "jpy",
+      payoutDate: "2026-08-05",
+      bankDepositedAt: "2026-08-05",
+      evidenceReference: "private-evidence:before-payment",
+      evidenceHash: "7".repeat(64),
+      actor: "shopify_user:1",
+      confirm: "settlement_evidence_recorded",
+      paymentAttemptIds: ["attempt-after-deposit"],
+    },
+    {
+      prismaClient: {
+        marketplacePaymentAttempt: {
+          async findMany() {
+            return [
+              {
+                id: "attempt-after-deposit",
+                provider: "KOMOJU",
+                status: "CAPTURED",
+                test: false,
+                requiresReview: false,
+                amount: 10000,
+                currencyCode: "jpy",
+                processedAt: new Date("2026-08-06T00:00:00.000Z"),
+              },
+            ];
+          },
+        },
+        paymentRefundOperation: { findMany: async () => [] },
+        paymentSettlementBatch: { findUnique: async () => null },
+        paymentSettlementLine: { findFirst: async () => null },
+        async $transaction(callback) {
+          return callback(this);
+        },
+      },
+      now: new Date("2026-08-07T12:00:00.000Z"),
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "settlement_bank_deposit_precedes_payment",
+  });
 });
 
 test("payment operation inspection aggregates operational blockers", async () => {

@@ -31,6 +31,71 @@ function uniqueIds(value) {
   return [...new Set(values.map(normalizeText).filter(Boolean))];
 }
 
+function normalizeSha256(value) {
+  const normalized = normalizeLower(value);
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function sameInstant(left, right) {
+  const leftDate = toDate(left);
+  const rightDate = toDate(right);
+  return Boolean(
+    leftDate && rightDate && leftDate.getTime() === rightDate.getTime(),
+  );
+}
+
+function tokyoDateKey(value) {
+  const date = toDate(value);
+  if (!date) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function settlementLineSignature(line) {
+  const occurredAt = toDate(line.occurredAt);
+  return JSON.stringify({
+    externalLineId: normalizeText(line.externalLineId),
+    lineType: normalizeText(line.lineType),
+    paymentAttemptId: normalizeText(line.paymentAttemptId) || null,
+    refundOperationId: normalizeText(line.refundOperationId) || null,
+    marketplaceOrderId: normalizeText(line.marketplaceOrderId) || null,
+    providerReference: normalizeText(line.providerReference) || null,
+    amount: toInteger(line.amount),
+    feeAmount: toInteger(line.feeAmount),
+    currencyCode: normalizeLower(line.currencyCode),
+    matchStatus: normalizeText(line.matchStatus),
+    occurredAt: occurredAt?.toISOString() || null,
+  });
+}
+
+function settlementBatchMatches(existing, expected, expectedLines) {
+  if (!existing || existing.status !== "RECONCILED") return false;
+  const fieldsMatch =
+    existing.provider === expected.provider &&
+    existing.externalBatchId === expected.externalBatchId &&
+    existing.grossAmount === expected.grossAmount &&
+    existing.refundAmount === expected.refundAmount &&
+    existing.feeAmount === expected.feeAmount &&
+    existing.netAmount === expected.netAmount &&
+    normalizeLower(existing.currencyCode) === expected.currencyCode &&
+    sameInstant(existing.payoutDate, expected.payoutDate) &&
+    sameInstant(existing.bankDepositedAt, expected.bankDepositedAt) &&
+    normalizeText(existing.evidenceReference) === expected.evidenceReference &&
+    normalizeLower(existing.evidenceHash) === expected.evidenceHash;
+  if (!fieldsMatch) return false;
+  const actualSignatures = (existing.lines || [])
+    .map(settlementLineSignature)
+    .sort();
+  const expectedSignatures = expectedLines.map(settlementLineSignature).sort();
+  return (
+    JSON.stringify(actualSignatures) === JSON.stringify(expectedSignatures)
+  );
+}
+
 export async function inspectPaymentOperations({
   prismaClient = prisma,
   now = new Date(),
@@ -106,7 +171,7 @@ export async function getPaymentOperationsDashboard({
       orderBy: [{ requiresReview: "desc" }, { updatedAt: "desc" }],
       take: 100,
       include: {
-        settlementLines: {
+        settlementLine: {
           select: {
             id: true,
             batchId: true,
@@ -119,7 +184,7 @@ export async function getPaymentOperationsDashboard({
       orderBy: [{ updatedAt: "desc" }],
       take: 100,
       include: {
-        settlementLines: {
+        settlementLine: {
           select: {
             id: true,
             batchId: true,
@@ -171,7 +236,7 @@ export async function recordPaymentSettlementBatch(
   const externalBatchId = normalizeText(values.externalBatchId);
   const submittedBy = normalizeText(values.actor);
   const evidenceReference = normalizeText(values.evidenceReference);
-  const evidenceHash = normalizeText(values.evidenceHash);
+  const evidenceHash = normalizeSha256(values.evidenceHash);
   const paymentAttemptIds = uniqueIds(values.paymentAttemptIds);
   const refundOperationIds = uniqueIds(values.refundOperationIds);
   const grossAmount = Math.max(0, toInteger(values.grossAmount));
@@ -179,174 +244,138 @@ export async function recordPaymentSettlementBatch(
   const feeAmount = Math.max(0, toInteger(values.feeAmount));
   const netAmount = toInteger(values.netAmount);
   const expectedNetAmount = grossAmount - refundAmount - feeAmount;
+  const payoutDate = toDate(values.payoutDate);
+  const bankDepositedAt = toDate(values.bankDepositedAt);
   if (
     !["KOMOJU", "SHOPIFY_PAYMENTS"].includes(provider) ||
     !externalBatchId ||
     !submittedBy ||
     !evidenceReference ||
+    !evidenceHash ||
     paymentAttemptIds.length === 0 ||
-    !toDate(values.payoutDate) ||
-    !toDate(values.bankDepositedAt)
+    !payoutDate ||
+    !bankDepositedAt
   ) {
     return { ok: false, reason: "settlement_batch_input_invalid" };
   }
   if (values.confirm !== "settlement_evidence_recorded") {
     return { ok: false, reason: "confirmation_required" };
   }
+  if (
+    payoutDate.getTime() > bankDepositedAt.getTime() ||
+    tokyoDateKey(bankDepositedAt) > tokyoDateKey(now)
+  ) {
+    return { ok: false, reason: "settlement_date_invalid" };
+  }
   const currencyCode = normalizeLower(values.currencyCode || "jpy");
-  return prismaClient.$transaction(async (tx) => {
-    const [attempts, refunds, existingBatch] = await Promise.all([
-      tx.marketplacePaymentAttempt.findMany({
-        where: { id: { in: paymentAttemptIds } },
-      }),
-      refundOperationIds.length > 0
-        ? tx.paymentRefundOperation.findMany({
-            where: { id: { in: refundOperationIds } },
-          })
-        : Promise.resolve([]),
-      tx.paymentSettlementBatch.findUnique({
-        where: {
-          provider_externalBatchId: { provider, externalBatchId },
-        },
-        select: { id: true },
-      }),
-    ]);
-    if (attempts.length !== paymentAttemptIds.length) {
-      return { ok: false, reason: "settlement_payment_attempt_missing" };
-    }
-    if (refunds.length !== refundOperationIds.length) {
-      return { ok: false, reason: "settlement_refund_operation_missing" };
-    }
-    const attemptsValid = attempts.every(
-      (attempt) =>
-        attempt.provider === provider &&
-        attempt.status === "CAPTURED" &&
-        attempt.test !== true &&
-        attempt.requiresReview !== true &&
-        attempt.amount > 0 &&
-        normalizeLower(attempt.currencyCode) === currencyCode,
-    );
-    if (!attemptsValid) {
-      return { ok: false, reason: "settlement_payment_attempt_invalid" };
-    }
-    const refundsValid = refunds.every(
-      (refund) =>
-        refund.provider === provider &&
-        refund.status === "LEDGER_APPLIED" &&
-        refund.amount > 0 &&
-        normalizeLower(refund.currencyCode) === currencyCode,
-    );
-    if (!refundsValid) {
-      return { ok: false, reason: "settlement_refund_operation_invalid" };
-    }
-    const duplicateLine = await tx.paymentSettlementLine.findFirst({
-      where: {
-        OR: [
-          { paymentAttemptId: { in: paymentAttemptIds } },
-          ...(refundOperationIds.length > 0
-            ? [{ refundOperationId: { in: refundOperationIds } }]
-            : []),
-        ],
-        ...(existingBatch ? { batchId: { not: existingBatch.id } } : {}),
-      },
-      select: { id: true },
-    });
-    if (duplicateLine) {
-      return { ok: false, reason: "settlement_line_already_registered" };
-    }
-    const linkedGrossAmount = attempts.reduce(
-      (sum, attempt) => sum + attempt.amount,
-      0,
-    );
-    const linkedRefundAmount = refunds.reduce(
-      (sum, refund) => sum + refund.amount,
-      0,
-    );
-    const directlyReconciled =
-      grossAmount === linkedGrossAmount &&
-      refundAmount === linkedRefundAmount &&
-      netAmount === expectedNetAmount;
-    if (!directlyReconciled) {
-      return {
-        ok: false,
-        reason: "settlement_direct_totals_mismatch",
-        expectedNetAmount,
-        linkedGrossAmount,
-        linkedRefundAmount,
-      };
-    }
-    const status = "RECONCILED";
-    const batch = await tx.paymentSettlementBatch.upsert({
-      where: {
-        provider_externalBatchId: { provider, externalBatchId },
-      },
-      create: {
-        provider,
-        externalBatchId,
-        status,
-        grossAmount,
-        refundAmount,
-        feeAmount,
-        netAmount,
-        currencyCode,
-        payoutDate: toDate(values.payoutDate),
-        bankDepositedAt: toDate(values.bankDepositedAt),
-        evidenceReference,
-        evidenceHash: evidenceHash || null,
-        submittedBy,
-        reviewedBy: submittedBy,
-        reviewedAt: now,
-        metadataJson: {
+  try {
+    return await prismaClient.$transaction(async (tx) => {
+      const [attempts, refunds, existingBatch, evidenceOwner] =
+        await Promise.all([
+          tx.marketplacePaymentAttempt.findMany({
+            where: { id: { in: paymentAttemptIds } },
+          }),
+          refundOperationIds.length > 0
+            ? tx.paymentRefundOperation.findMany({
+                where: { id: { in: refundOperationIds } },
+              })
+            : Promise.resolve([]),
+          tx.paymentSettlementBatch.findUnique({
+            where: {
+              provider_externalBatchId: { provider, externalBatchId },
+            },
+            include: { lines: true },
+          }),
+          tx.paymentSettlementBatch.findUnique({ where: { evidenceHash } }),
+        ]);
+      if (attempts.length !== paymentAttemptIds.length) {
+        return { ok: false, reason: "settlement_payment_attempt_missing" };
+      }
+      if (refunds.length !== refundOperationIds.length) {
+        return { ok: false, reason: "settlement_refund_operation_missing" };
+      }
+      const attemptsValid = attempts.every(
+        (attempt) =>
+          attempt.provider === provider &&
+          attempt.status === "CAPTURED" &&
+          attempt.test !== true &&
+          attempt.requiresReview !== true &&
+          attempt.amount > 0 &&
+          normalizeLower(attempt.currencyCode) === currencyCode,
+      );
+      if (!attemptsValid) {
+        return { ok: false, reason: "settlement_payment_attempt_invalid" };
+      }
+      const refundsValid = refunds.every(
+        (refund) =>
+          refund.provider === provider &&
+          refund.status === "LEDGER_APPLIED" &&
+          refund.amount > 0 &&
+          normalizeLower(refund.currencyCode) === currencyCode,
+      );
+      if (!refundsValid) {
+        return { ok: false, reason: "settlement_refund_operation_invalid" };
+      }
+      const latestPaymentDate = attempts
+        .map(
+          (attempt) =>
+            attempt.processedAt || attempt.capturedAt || attempt.createdAt,
+        )
+        .filter(Boolean)
+        .sort((left, right) => right.getTime() - left.getTime())[0];
+      if (
+        latestPaymentDate &&
+        tokyoDateKey(bankDepositedAt) < tokyoDateKey(latestPaymentDate)
+      ) {
+        return {
+          ok: false,
+          reason: "settlement_bank_deposit_precedes_payment",
+        };
+      }
+      const linkedGrossAmount = attempts.reduce(
+        (sum, attempt) => sum + attempt.amount,
+        0,
+      );
+      const linkedRefundAmount = refunds.reduce(
+        (sum, refund) => sum + refund.amount,
+        0,
+      );
+      const directlyReconciled =
+        grossAmount === linkedGrossAmount &&
+        refundAmount === linkedRefundAmount &&
+        netAmount === expectedNetAmount;
+      if (!directlyReconciled) {
+        return {
+          ok: false,
+          reason: "settlement_direct_totals_mismatch",
           expectedNetAmount,
           linkedGrossAmount,
           linkedRefundAmount,
-          directLineReconciliation: directlyReconciled,
-        },
-      },
-      update: {
-        status,
-        grossAmount,
-        refundAmount,
-        feeAmount,
-        netAmount,
-        currencyCode,
-        payoutDate: toDate(values.payoutDate),
-        bankDepositedAt: toDate(values.bankDepositedAt),
-        evidenceReference,
-        evidenceHash: evidenceHash || null,
-        reviewedBy: submittedBy,
-        reviewedAt: now,
-        metadataJson: {
-          expectedNetAmount,
-          linkedGrossAmount,
-          linkedRefundAmount,
-          directLineReconciliation: directlyReconciled,
-        },
-      },
-    });
-    await tx.paymentSettlementLine.deleteMany({ where: { batchId: batch.id } });
-    await tx.paymentSettlementLine.createMany({
-      data: [
+        };
+      }
+      const expectedLines = [
         ...attempts.map((attempt) => ({
-          batchId: batch.id,
           externalLineId: `payment:${attempt.shopifyTransactionId || attempt.id}`,
           lineType: "PAYMENT",
           paymentAttemptId: attempt.id,
+          refundOperationId: null,
           marketplaceOrderId: attempt.marketplaceOrderId,
           providerReference: attempt.shopifyTransactionId,
           amount: attempt.amount,
+          feeAmount: 0,
           currencyCode,
           matchStatus: "MATCHED",
           occurredAt: attempt.processedAt || attempt.capturedAt,
         })),
         ...refunds.map((refund) => ({
-          batchId: batch.id,
           externalLineId: `refund:${refund.providerReference || refund.id}`,
           lineType: "REFUND",
+          paymentAttemptId: null,
           refundOperationId: refund.id,
           marketplaceOrderId: refund.marketplaceOrderId,
           providerReference: refund.providerReference,
           amount: refund.amount,
+          feeAmount: 0,
           currencyCode,
           matchStatus: "MATCHED",
           occurredAt: refund.providerConfirmedAt || refund.ledgerAppliedAt,
@@ -354,27 +383,114 @@ export async function recordPaymentSettlementBatch(
         ...(feeAmount > 0
           ? [
               {
-                batchId: batch.id,
                 externalLineId: "fee:aggregate",
                 lineType: "FEE",
+                paymentAttemptId: null,
+                refundOperationId: null,
+                marketplaceOrderId: null,
+                providerReference: null,
+                amount: 0,
                 feeAmount,
                 currencyCode,
                 matchStatus: "MATCHED",
-                occurredAt: toDate(values.payoutDate),
+                occurredAt: payoutDate,
               },
             ]
           : []),
-      ],
+      ];
+      const expectedBatch = {
+        provider,
+        externalBatchId,
+        grossAmount,
+        refundAmount,
+        feeAmount,
+        netAmount,
+        currencyCode,
+        payoutDate,
+        bankDepositedAt,
+        evidenceReference,
+        evidenceHash,
+      };
+      if (existingBatch) {
+        if (
+          settlementBatchMatches(existingBatch, expectedBatch, expectedLines)
+        ) {
+          return {
+            ok: true,
+            reason: null,
+            idempotent: true,
+            batch: existingBatch,
+            expectedNetAmount,
+            linkedGrossAmount,
+            linkedRefundAmount,
+          };
+        }
+        return { ok: false, reason: "settlement_batch_immutable" };
+      }
+      if (evidenceOwner) {
+        return {
+          ok: false,
+          reason: "settlement_evidence_hash_already_registered",
+        };
+      }
+      const duplicateLine = await tx.paymentSettlementLine.findFirst({
+        where: {
+          OR: [
+            { paymentAttemptId: { in: paymentAttemptIds } },
+            ...(refundOperationIds.length > 0
+              ? [{ refundOperationId: { in: refundOperationIds } }]
+              : []),
+          ],
+        },
+        select: { id: true },
+      });
+      if (duplicateLine) {
+        return { ok: false, reason: "settlement_line_already_registered" };
+      }
+      const status = "RECONCILED";
+      const batch = await tx.paymentSettlementBatch.create({
+        data: {
+          provider,
+          externalBatchId,
+          status,
+          grossAmount,
+          refundAmount,
+          feeAmount,
+          netAmount,
+          currencyCode,
+          payoutDate,
+          bankDepositedAt,
+          evidenceReference,
+          evidenceHash,
+          submittedBy,
+          reviewedBy: submittedBy,
+          reviewedAt: now,
+          metadataJson: {
+            expectedNetAmount,
+            linkedGrossAmount,
+            linkedRefundAmount,
+            directLineReconciliation: directlyReconciled,
+          },
+        },
+      });
+      await tx.paymentSettlementLine.createMany({
+        data: expectedLines.map((line) => ({ ...line, batchId: batch.id })),
+      });
+      return {
+        ok: true,
+        reason: null,
+        batch,
+        expectedNetAmount,
+        linkedGrossAmount,
+        linkedRefundAmount,
+      };
     });
-    return {
-      ok: true,
-      reason: null,
-      batch,
-      expectedNetAmount,
-      linkedGrossAmount,
-      linkedRefundAmount,
-    };
-  });
+  } catch (error) {
+    if (error?.code === "P2002") {
+      return { ok: false, reason: "settlement_unique_conflict" };
+    }
+    throw error;
+  }
 }
 
 function paidLedgerBackfillOrders(entries) {

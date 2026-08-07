@@ -166,13 +166,13 @@ export default function PaymentOperationsPage() {
       attempt.status === "CAPTURED" &&
       attempt.test !== true &&
       attempt.requiresReview !== true &&
-      (attempt.settlementLines || []).length === 0,
+      !attempt.settlementLine,
   );
   const settlementRefundCandidates = refunds.filter(
     (refund) =>
       refund.provider === "KOMOJU" &&
       refund.status === "LEDGER_APPLIED" &&
-      (refund.settlementLines || []).length === 0,
+      !refund.settlementLine,
   );
 
   return (
@@ -458,7 +458,12 @@ export default function PaymentOperationsPage() {
               placeholder="証跡URLまたは保存先"
               required
             />
-            <input name="evidenceHash" placeholder="SHA-256（任意）" />
+            <input
+              name="evidenceHash"
+              pattern="[A-Fa-f0-9]{64}"
+              placeholder="証跡ファイルのSHA-256（64桁）"
+              required
+            />
             <label className="payment-confirm">
               <input
                 type="checkbox"

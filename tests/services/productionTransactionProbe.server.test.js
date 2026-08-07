@@ -5,6 +5,7 @@ import {
   attachOrderToProductionTransactionProbe,
   buildProductionTransactionProbePage,
   buildShopifyProbeOrderSnapshot,
+  confirmProductionTransactionRefundReserve,
   createProductionTransactionProbe,
   fetchShopifyOrderForProductionProbe,
   getProductionTransactionProbeTarget,
@@ -25,6 +26,8 @@ const PRODUCT_ID = "gid://shopify/Product/20";
 const VARIANT_ID = "gid://shopify/ProductVariant/30";
 const PAYMENT_TRANSACTION_ID = "gid://shopify/OrderTransaction/40";
 const REFUND_TRANSACTION_ID = "gid://shopify/OrderTransaction/50";
+const SETTINGS_EVIDENCE_HASH = "a".repeat(64);
+const RESERVE_EVIDENCE_HASH = "b".repeat(64);
 const KOMOJU_CARD_TARGET = Object.freeze({
   version: 2,
   provider: "KOMOJU",
@@ -179,13 +182,21 @@ function probeRecord({
       ? externalReadinessOverride
       : effectiveTarget.provider === "KOMOJU"
         ? {
-            version: 1,
+            version: 2,
             strategy:
               KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT,
             maximumPlannedChargeAmount: 2000,
-            confirmedRefundReserveAmount: 0,
+            confirmedRefundReserveAmount: 2000,
             existingPayoutBatchId: "settlement_batch_existing",
             evidenceReference: "private-evidence:komoju-settings",
+            evidenceHash: SETTINGS_EVIDENCE_HASH,
+            refundReserveReconfirmation: {
+              amount: 2000,
+              evidenceReference: "private-evidence:komoju-reserve",
+              evidenceHash: RESERVE_EVIDENCE_HASH,
+              confirmedAt: "2026-07-29T01:05:00.000Z",
+              confirmedBy: "shopify_user:1",
+            },
           }
         : null;
   return {
@@ -242,7 +253,7 @@ function paymentAttempt({ target = SHOPIFY_CARD_TARGET, test = false } = {}) {
       paymentMethodName: "Visa",
       paymentWallet: null,
     },
-    settlementLines: [],
+    settlementLine: null,
   };
 }
 
@@ -334,12 +345,14 @@ function refreshPrisma({
     externalBatchId: "komoju-payout-existing",
     status: "RECONCILED",
     bankDepositedAt: new Date("2026-07-28T00:00:00.000Z"),
+    evidenceHash: "c".repeat(64),
     lines: [{ id: "settlement_line_existing" }],
   };
   const state = {
     probe,
     order,
     ledgerEntries,
+    paymentAttempts: attempts,
     updates: [],
     attestation: null,
   };
@@ -381,7 +394,24 @@ function refreshPrisma({
     },
     marketplacePaymentAttempt: {
       async findMany() {
-        return attempts;
+        return state.paymentAttempts;
+      },
+      async upsert({ create, update }) {
+        const existingIndex = state.paymentAttempts.findIndex(
+          (attempt) => attempt.attemptKey === create.attemptKey,
+        );
+        const value = {
+          id:
+            existingIndex >= 0
+              ? state.paymentAttempts[existingIndex].id
+              : `payment_attempt_${state.paymentAttempts.length + 1}`,
+          ...(existingIndex >= 0 ? state.paymentAttempts[existingIndex] : {}),
+          ...(existingIndex >= 0 ? update : create),
+          settlementLine: null,
+        };
+        if (existingIndex >= 0) state.paymentAttempts[existingIndex] = value;
+        else state.paymentAttempts.push(value);
+        return value;
       },
     },
     paymentSettlementBatch: {
@@ -527,7 +557,7 @@ test("starting a KOMOJU card probe requires scope confirmations and stores its t
   assert.equal(rejected.reason, "komoju_scope_confirmation_required");
   assert.equal(createdData, null);
 
-  const created = await createProductionTransactionProbe(
+  const missingHash = await createProductionTransactionProbe(
     {
       ...input,
       komojuCardOnlyConfirmed: true,
@@ -544,6 +574,30 @@ test("starting a KOMOJU card probe requires scope confirmations and stores its t
     },
     { prismaClient },
   );
+  assert.deepEqual(missingHash, {
+    ok: false,
+    reason: "komoju_external_readiness_missing",
+  });
+  assert.equal(createdData, null);
+
+  const created = await createProductionTransactionProbe(
+    {
+      ...input,
+      komojuCardOnlyConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      releaseFreezeConfirmed: true,
+      externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+      externalSettingsEvidenceHash: SETTINGS_EVIDENCE_HASH,
+      payoutEvidenceStrategy:
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE,
+      maximumPlannedChargeAmount: 2000,
+      confirmedRefundReserveAmount: 2000,
+    },
+    { prismaClient },
+  );
   assert.equal(created.ok, true);
   assert.deepEqual(
     createdData.orderEvidenceJson.probeConfig,
@@ -553,6 +607,55 @@ test("starting a KOMOJU card probe requires scope confirmations and stores its t
     getProductionTransactionProbeTarget(created.probe),
     KOMOJU_CARD_TARGET,
   );
+});
+
+test("an existing KOMOJU payout never permits a zero refund reserve", async () => {
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        assert.fail("an insufficient reserve must not create a probe");
+      },
+    },
+    paymentSettlementBatch: {
+      async findFirst() {
+        return {
+          id: "settlement_batch_existing",
+          externalBatchId: "komoju-payout-existing",
+          bankDepositedAt: new Date("2026-07-28T00:00:00.000Z"),
+        };
+      },
+    },
+  };
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+      komojuCardOnlyConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      releaseFreezeConfirmed: true,
+      externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+      externalSettingsEvidenceHash: SETTINGS_EVIDENCE_HASH,
+      payoutEvidenceStrategy:
+        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT,
+      maximumPlannedChargeAmount: 2000,
+      confirmedRefundReserveAmount: 0,
+    },
+    { prismaClient },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "komoju_refund_reserve_insufficient",
+  });
 });
 
 test("preflight permits one KOMOJU card run only when every automatic check passes", async () => {
@@ -965,6 +1068,29 @@ test("paid inspection rejects a test transaction on a non-test order", async () 
   assert.equal(state.probe.lastErrorCode, "payment_transaction_is_test");
 });
 
+test("refresh repairs a missing payment attempt from the same Shopify order", async () => {
+  const { prismaClient, state } = refreshPrisma({ paymentAttempts: [] });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: "probe_1",
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(shopifyOrder()),
+      now: new Date("2026-07-29T01:06:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.stage, "refund");
+  assert.equal(state.paymentAttempts.length, 1);
+  assert.equal(result.paidInspection.paymentAttemptRecovery?.attempted, true);
+  assert.equal(result.paidInspection.paymentAttemptRecovery?.ok, true);
+  assert.equal(state.probe.status, "AWAITING_REFUND");
+});
+
 test("paid order advances to refund without writing an attestation", async () => {
   const { prismaClient, state } = refreshPrisma();
   const result = await refreshProductionTransactionProbe(
@@ -1026,12 +1152,13 @@ test("KOMOJU card payment advances to refund while other providers remain reject
 
 test("current KOMOJU payment waits for its directly linked bank deposit before refund", async () => {
   const externalReadiness = {
-    version: 1,
+    version: 2,
     strategy:
       KOMOJU_PAYOUT_EVIDENCE_STRATEGY.CURRENT_PAYMENT_WITH_REFUND_RESERVE,
     maximumPlannedChargeAmount: 2000,
     confirmedRefundReserveAmount: 2000,
     evidenceReference: "private-evidence:komoju-settings",
+    evidenceHash: SETTINGS_EVIDENCE_HASH,
   };
   const probe = probeRecord({
     target: KOMOJU_CARD_TARGET,
@@ -1062,20 +1189,19 @@ test("current KOMOJU payment waits for its directly linked bank deposit before r
   );
 
   const directlyLinkedAttempt = paymentAttempt({ target: KOMOJU_CARD_TARGET });
-  directlyLinkedAttempt.settlementLines = [
-    {
-      id: "settlement_line_current",
-      amount: 1114,
-      matchStatus: "MATCHED",
-      batch: {
-        id: "settlement_batch_current",
-        provider: "KOMOJU",
-        externalBatchId: "komoju-payout-current",
-        status: "RECONCILED",
-        bankDepositedAt: new Date("2026-08-01T00:00:00.000Z"),
-      },
+  directlyLinkedAttempt.settlementLine = {
+    id: "settlement_line_current",
+    amount: 1114,
+    matchStatus: "MATCHED",
+    batch: {
+      id: "settlement_batch_current",
+      provider: "KOMOJU",
+      externalBatchId: "komoju-payout-current",
+      status: "RECONCILED",
+      bankDepositedAt: new Date("2026-08-01T00:00:00.000Z"),
+      evidenceHash: "d".repeat(64),
     },
-  ];
+  };
   const withDeposit = refreshPrisma({
     probe: probeRecord({
       status: "AWAITING_PAYOUT_EVIDENCE",
@@ -1096,7 +1222,66 @@ test("current KOMOJU payment waits for its directly linked bank deposit before r
     },
   );
   assert.equal(readyToRefund.pending, true);
-  assert.equal(readyToRefund.stage, "refund");
+  assert.equal(readyToRefund.stage, "refund_reserve_confirmation");
+  assert.equal(
+    withDeposit.state.probe.status,
+    "AWAITING_REFUND_RESERVE_CONFIRMATION",
+  );
+
+  const insufficient = await confirmProductionTransactionRefundReserve(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+      confirmedRefundReserveAmount: 1999,
+      evidenceReference: "private-evidence:refund-reserve-recheck",
+      evidenceHash: RESERVE_EVIDENCE_HASH,
+      confirm: "refund_reserve_reconfirmed",
+    },
+    {
+      prismaClient: withDeposit.prismaClient,
+      now: new Date("2026-08-01T00:04:00.000Z"),
+    },
+  );
+  assert.deepEqual(insufficient, {
+    ok: false,
+    reason: "komoju_refund_reserve_reconfirmation_invalid",
+  });
+  assert.equal(
+    withDeposit.state.probe.status,
+    "AWAITING_REFUND_RESERVE_CONFIRMATION",
+  );
+
+  const confirmed = await confirmProductionTransactionRefundReserve(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+      confirmedRefundReserveAmount: 2000,
+      evidenceReference: "private-evidence:refund-reserve-recheck",
+      evidenceHash: RESERVE_EVIDENCE_HASH,
+      confirm: "refund_reserve_reconfirmed",
+    },
+    {
+      prismaClient: withDeposit.prismaClient,
+      now: new Date("2026-08-01T00:05:00.000Z"),
+    },
+  );
+  assert.equal(confirmed.ok, true);
+
+  const afterConfirmation = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient: withDeposit.prismaClient,
+      graphQL: graphQLFor(transaction),
+      now: new Date("2026-08-01T00:06:00.000Z"),
+    },
+  );
+  assert.equal(afterConfirmation.stage, "refund");
   assert.equal(withDeposit.state.probe.status, "AWAITING_REFUND");
 });
 

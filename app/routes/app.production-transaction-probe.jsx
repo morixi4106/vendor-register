@@ -13,6 +13,7 @@ import {
   attachOrderToProductionTransactionProbe,
   buildProductionTransactionProbePage,
   cancelProductionTransactionProbe,
+  confirmProductionTransactionRefundReserve,
   createProductionTransactionProbe,
   getProductionTransactionProbePageData,
   inspectProductionTransactionProbePreflight,
@@ -139,6 +140,25 @@ export async function action({ request }) {
         actorKey: operator.actorKey,
         releaseExpectation,
       });
+    } else if (intent === "confirm_refund_reserve") {
+      result = await confirmProductionTransactionRefundReserve({
+        probeId: formData.get("probeId"),
+        actorKey: operator.actorKey,
+        releaseExpectation,
+        confirmedRefundReserveAmount: formData.get(
+          "confirmedRefundReserveAmount",
+        ),
+        evidenceReference: formData.get("evidenceReference"),
+        evidenceHash: formData.get("evidenceHash"),
+        confirm: formData.get("confirm"),
+      });
+      if (result.ok) {
+        result = await refreshProductionTransactionProbe({
+          probeId: formData.get("probeId"),
+          actorKey: operator.actorKey,
+          releaseExpectation,
+        });
+      }
     } else if (intent === "cancel_probe") {
       result = await cancelProductionTransactionProbe({
         probeId: formData.get("probeId"),
@@ -350,7 +370,7 @@ export default function ProductionTransactionProbePage() {
                     </option>
                   </select>
                   <span style={styles.hint}>
-                    今回分を待つ場合、着金後も全額返金できる別のKOMOJU未精算残高が必要です。
+                    どちらの方式でも、全額返金分を別のKOMOJU未精算残高として確保します。
                   </span>
                 </label>
                 <label style={styles.label}>
@@ -371,12 +391,12 @@ export default function ProductionTransactionProbePage() {
                     style={styles.input}
                     name="confirmedRefundReserveAmount"
                     type="number"
-                    min="0"
+                    min="1"
                     step="1"
-                    defaultValue="0"
+                    required
                   />
                   <span style={styles.hint}>
-                    既存Payoutを使う場合は0、今回分の着金を待つ場合は支払上限以上を入力します。
+                    入金証拠の確認後にも同じ金額を再確認します。支払上限以上を入力してください。
                   </span>
                 </label>
                 <label style={styles.label}>
@@ -389,12 +409,13 @@ export default function ProductionTransactionProbePage() {
                   />
                 </label>
                 <label style={styles.label}>
-                  証跡SHA-256（任意）
+                  証跡SHA-256
                   <input
                     style={styles.input}
                     name="externalSettingsEvidenceHash"
                     pattern="[A-Fa-f0-9]{64}"
                     placeholder="64桁のSHA-256"
+                    required
                   />
                 </label>
                 <button
@@ -431,10 +452,67 @@ export default function ProductionTransactionProbePage() {
               </Form>
             ) : null}
 
+            {activeProbe?.status === "AWAITING_REFUND_RESERVE_CONFIRMATION" ? (
+              <Form method="post" style={styles.form}>
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="confirm_refund_reserve"
+                />
+                <input type="hidden" name="probeId" value={activeProbe.id} />
+                <label style={styles.label}>
+                  現在確認できるKOMOJU未精算残高（円）
+                  <input
+                    style={styles.input}
+                    name="confirmedRefundReserveAmount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    required
+                  />
+                  <span style={styles.hint}>
+                    今回の全額返金額以上であることを、返金直前にもう一度確認します。
+                  </span>
+                </label>
+                <label style={styles.label}>
+                  再確認した証跡の保存先
+                  <input
+                    style={styles.input}
+                    name="evidenceReference"
+                    placeholder="KOMOJU残高画面の保存先またはチケット番号"
+                    required
+                  />
+                </label>
+                <label style={styles.label}>
+                  証跡SHA-256
+                  <input
+                    style={styles.input}
+                    name="evidenceHash"
+                    pattern="[A-Fa-f0-9]{64}"
+                    placeholder="64桁のSHA-256"
+                    required
+                  />
+                </label>
+                <label style={styles.confirmationLabel}>
+                  <input
+                    type="checkbox"
+                    name="confirm"
+                    value="refund_reserve_reconfirmed"
+                    required
+                  />
+                  現在の未精算残高で今回の全額返金が可能であることを確認しました
+                </label>
+                <button style={styles.primaryButton} disabled={busy}>
+                  返金原資を再確認して次へ
+                </button>
+              </Form>
+            ) : null}
+
             {activeProbe &&
             [
               "AWAITING_SETTLEMENT",
               "AWAITING_PAYOUT_EVIDENCE",
+              "AWAITING_REFUND_RESERVE_CONFIRMATION",
               "AWAITING_REFUND",
             ].includes(activeProbe.status) ? (
               <div style={styles.actions}>
@@ -668,6 +746,7 @@ function statusLabel(status) {
       AWAITING_ORDER: "注文待ち",
       AWAITING_SETTLEMENT: "売上反映待ち",
       AWAITING_PAYOUT_EVIDENCE: "KOMOJU入金証跡待ち",
+      AWAITING_REFUND_RESERVE_CONFIRMATION: "返金原資の再確認待ち",
       AWAITING_REFUND: "全額返金待ち",
       PASSED: "完了",
       INVALIDATED: "リリース変更で無効",
@@ -722,6 +801,12 @@ function reasonLabel(reason) {
         "決済済み注文へ直接紐づいた既存のKOMOJU入金証跡がありません。現在の決済を待つ方式を選ぶ場合は返金原資も確認してください。",
       komoju_refund_reserve_insufficient:
         "確認済みのKOMOJU未精算残高が決済予定上限を下回っています。銀行着金後も全額返金できる原資を確保してください。",
+      komoju_refund_reserve_reconfirmation_required:
+        "入金証拠の確認後に、現在のKOMOJU未精算残高を証跡付きで再確認してください。",
+      komoju_refund_reserve_reconfirmation_invalid:
+        "返金原資の金額または証跡が不十分です。支払上限以上の残高と64桁のSHA-256を入力してください。",
+      refund_reserve_confirmation_not_available:
+        "返金原資を再確認できる状態ではありません。画面を更新してください。",
       order_exceeds_confirmed_charge_plan:
         "注文合計が決済前に確認した上限を超えています。この注文は証跡に利用できません。",
       active_probe_payment_target_mismatch:
