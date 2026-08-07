@@ -8,6 +8,7 @@ import {
 } from "../services/paymentOperations.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { reconcileWithdrawalRefundWebhook } from "../services/withdrawalDirectReturns.server.js";
+import { refreshKomojuLimitedLaunchControl } from "../services/komojuLimitedLaunchControl.server.js";
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
@@ -54,6 +55,19 @@ export const action = async ({ request }) => {
           reason:
             withdrawalReconciliation.reason ||
             "withdrawal_refund_reconciliation_failed",
+        };
+      }
+      const limitedLaunchControl = await refreshKomojuLimitedLaunchControl({
+        shopDomain: shop,
+        applyEmergencyHold: true,
+      });
+      if (limitedLaunchControl?.ok === false) {
+        return {
+          ok: false,
+          retryable: true,
+          reason:
+            limitedLaunchControl.reason ||
+            "komoju_limited_launch_refresh_failed",
         };
       }
       return result;

@@ -272,6 +272,8 @@ model MarketplaceOrder {
   paymentAttempts         MarketplacePaymentAttempt[]
   paymentRefundOperations PaymentRefundOperation[]
   paymentSettlementLines  PaymentSettlementLine[]
+  refundGuard             OrderRefundGuard?
+  directCustomerRefund    DirectCustomerRefund?
 
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopifyOrderId])
@@ -312,9 +314,10 @@ model MarketplacePaymentAttempt {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  marketplaceOrder MarketplaceOrder?        @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
-  refundOperations PaymentRefundOperation[]
-  settlementLine   PaymentSettlementLine?
+  marketplaceOrder     MarketplaceOrder?        @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+  refundOperations     PaymentRefundOperation[]
+  settlementLine       PaymentSettlementLine?
+  directCustomerRefund DirectCustomerRefund?
 
   @@unique([shopDomain, attemptKey])
   @@index([shopDomain, shopifyOrderId, status])
@@ -417,6 +420,90 @@ model PaymentSettlementLine {
   @@unique([batchId, externalLineId])
   @@index([matchStatus, createdAt])
   @@map("payment_settlement_lines")
+}
+
+model KomojuLimitedLaunchControl {
+  id                           String    @id @default(cuid())
+  shopDomain                   String    @unique
+  attestationId                String    @unique
+  probeId                      String    @unique
+  status                       String    @default("ACTIVE")
+  startsAt                     DateTime
+  expiresAt                    DateTime
+  maxOrderCount                Int
+  maxGrossAmount               Int
+  maxOutstandingLiability      Int
+  maxSingleOrderAmount         Int
+  companyRefundReserveAmount   Int
+  orderCount                   Int       @default(0)
+  grossAmount                  Int       @default(0)
+  outstandingLiabilityAmount   Int       @default(0)
+  allowedProductIdsJson        Json
+  allowedShopifyProductIdsJson Json
+  projectionVersion            Int       @default(1)
+  projectionSyncedAt           DateTime?
+  lastEvaluatedAt              DateTime?
+  blockedAt                    DateTime?
+  blockReason                  String?
+  metadataJson                 Json?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  @@index([status, expiresAt])
+  @@map("komoju_limited_launch_controls")
+}
+
+model OrderRefundGuard {
+  id                 String    @id @default(cuid())
+  marketplaceOrderId String    @unique
+  shopDomain         String
+  shopifyOrderId     String
+  channel            String
+  status             String    @default("RESERVED")
+  amount             Int       @default(0)
+  currencyCode       String    @default("jpy")
+  operationReference String?
+  reservedAt         DateTime  @default(now())
+  completedAt        DateTime?
+  metadataJson       Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  marketplaceOrder MarketplaceOrder @relation(fields: [marketplaceOrderId], references: [id], onDelete: Restrict)
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([channel, status, updatedAt])
+  @@map("order_refund_guards")
+}
+
+model DirectCustomerRefund {
+  id                        String   @id @default(cuid())
+  operationKey              String   @unique
+  marketplaceOrderId        String   @unique
+  paymentAttemptId          String?  @unique
+  shopDomain                String
+  shopifyOrderId            String
+  status                    String   @default("PREPARED")
+  amount                    Int
+  currencyCode              String   @default("jpy")
+  recipientConsentReference String
+  recipientConsentHash      String
+  transferEvidenceReference String
+  transferEvidenceHash      String   @unique
+  transferReferenceMasked   String?
+  completedBy               String
+  completedAt               DateTime
+  ledgerEntryIdsJson        Json?
+  metadataJson              Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  marketplaceOrder MarketplaceOrder           @relation(fields: [marketplaceOrderId], references: [id], onDelete: Restrict)
+  paymentAttempt   MarketplacePaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+
+  @@index([shopDomain, shopifyOrderId])
+  @@index([status, completedAt])
+  @@map("direct_customer_refunds")
 }
 
 model MarketplaceCheckoutEvidence {

@@ -501,6 +501,33 @@ function refundPrisma({ existing = null } = {}) {
   };
 }
 
+test("a completed direct refund blocks provider refund ledger application", async () => {
+  const prismaClient = refundPrisma();
+  prismaClient.orderRefundGuard = {
+    async findUnique() {
+      return {
+        id: "guard-direct",
+        marketplaceOrderId: "order-1",
+        channel: "DIRECT",
+        status: "COMPLETED",
+      };
+    },
+  };
+  const result = await observeShopifyRefundOperation(
+    { payload: refundPayload(), shop: "example.myshopify.com" },
+    {
+      prismaClient,
+      env: { PAYMENT_REFUND_CONFIRMATION_ENFORCED: "true" },
+      now: new Date("2026-08-06T00:00:00.000Z"),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.allowLedger, false);
+  assert.equal(result.reason, "direct_customer_refund_already_completed");
+  assert.equal(result.operation.status, PAYMENT_REFUND_STATUS.REVIEW_REQUIRED);
+  assert.equal(result.operation.metadataJson.refundChannelConflict, true);
+});
+
 test("manual KOMOJU refund is held before the legacy ledger", async () => {
   const result = await observeShopifyRefundOperation(
     { payload: refundPayload(), shop: "example.myshopify.com" },

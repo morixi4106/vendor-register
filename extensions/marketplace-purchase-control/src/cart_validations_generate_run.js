@@ -23,6 +23,74 @@ function parseProjection(value) {
   }
 }
 
+function parseLimitedLaunchControl(value) {
+  if (!value) return { present: false, valid: true, control: null };
+  const control = parseProjection(value);
+  const valid = Boolean(
+    control &&
+      Number(control.v) === 1 &&
+      ["ACTIVE", "BLOCKED", "INACTIVE"].includes(String(control.s)) &&
+      Array.isArray(control.p) &&
+      Number.isInteger(control.o) &&
+      Number.isInteger(control.g) &&
+      Number.isInteger(control.l) &&
+      Number.isInteger(control.m) &&
+      typeof control.e === "string" &&
+      typeof control.c === "string",
+  );
+  return { present: true, valid, control: valid ? control : null };
+}
+
+function getCartAmount(input) {
+  const amount = Number(input.cart?.cost?.totalAmount?.amount);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount) : null;
+}
+
+function getLimitedLaunchError(input, currentDate) {
+  const parsed = parseLimitedLaunchControl(
+    input.shop?.komojuLimitedLaunchControl?.value,
+  );
+  if (!parsed.present) return null;
+  if (!parsed.valid) {
+    return "限定公開の購入条件を確認できません。時間をおいて再度お試しください。";
+  }
+  const control = parsed.control;
+  if (control.s === "INACTIVE") return null;
+  if (
+    control.s === "BLOCKED" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(currentDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(control.e) ||
+    currentDate >= control.e
+  ) {
+    return "限定公開期間が終了したため、現在注文を受け付けていません。";
+  }
+  const allowedProducts = new Set(control.p.map(String));
+  const productIds = (Array.isArray(input.cart?.lines) ? input.cart.lines : [])
+    .map((line) => String(line.merchandise?.product?.id || ""))
+    .filter(Boolean);
+  if (
+    productIds.length === 0 ||
+    productIds.some((productId) => !allowedProducts.has(productId))
+  ) {
+    return "限定公開の対象外商品が含まれています。";
+  }
+  const currencyCode = String(
+    input.cart?.cost?.totalAmount?.currencyCode || "",
+  ).toUpperCase();
+  const cartAmount = getCartAmount(input);
+  if (
+    currencyCode !== String(control.c).toUpperCase() ||
+    cartAmount === null ||
+    control.o < 1 ||
+    cartAmount > control.m ||
+    cartAmount > control.g ||
+    cartAmount > control.l
+  ) {
+    return "限定公開の注文上限に達したため、現在注文を受け付けていません。";
+  }
+  return null;
+}
+
 function isValidDirectProjection({ policy, projectionValue, currentDate }) {
   if (policy !== "PLATFORM_DIRECT") return false;
   const projection = parseProjection(projectionValue);
@@ -83,6 +151,7 @@ export function cartValidationsGenerateRun(input) {
   const purchaseStopActive =
     operationalState !== "ALLOWED" || watchdogStopActive;
   const currentDate = String(input.shop?.localTime?.date || "");
+  const limitedLaunchError = getLimitedLaunchError(input, currentDate);
   const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
   const unsupportedCartSize = cartLines.length > MAX_SUPPORTED_CART_LINES;
   const invalidProductPresent = cartLines.some((line) => {
@@ -106,6 +175,13 @@ export function cartValidationsGenerateRun(input) {
           target: "$.cart",
         },
       ]
+    : limitedLaunchError
+      ? [
+          {
+            message: limitedLaunchError,
+            target: "$.cart",
+          },
+        ]
     : unsupportedCartSize
       ? [
           {

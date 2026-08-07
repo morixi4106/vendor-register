@@ -15,6 +15,7 @@ import {
   reviewPaymentAttempt,
 } from "../services/paymentOperations.server.js";
 import { reconcileWithdrawalRefundWebhook } from "../services/withdrawalDirectReturns.server.js";
+import { recordDirectCustomerRefund } from "../services/directCustomerRefund.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -42,6 +43,10 @@ const ACTION_ROLES = Object.freeze({
   ],
   preview_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
   backfill_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
+  record_direct_customer_refund: [
+    MARKETPLACE_OPERATOR_ROLES.ADMIN,
+    MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
+  ],
 });
 
 function actorFromOperator(operator) {
@@ -58,7 +63,7 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   const formData = await request.clone().formData();
   const intent = String(formData.get("intent") || "");
-  const { operator } = await requireMarketplaceOperator(request, {
+  const { operator, session } = await requireMarketplaceOperator(request, {
     roles: ACTION_ROLES[intent] || [MARKETPLACE_OPERATOR_ROLES.ADMIN],
   });
   const actor = actorFromOperator(operator);
@@ -105,6 +110,20 @@ export const action = async ({ request }) => {
             limit: formData.get("limit"),
           })
         : { ok: false, reason: "confirmation_required" };
+  } else if (intent === "record_direct_customer_refund") {
+    result = await recordDirectCustomerRefund({
+      shopDomain: session.shop,
+      orderReference: formData.get("orderReference"),
+      amount: formData.get("amount"),
+      currencyCode: formData.get("currencyCode"),
+      recipientConsentReference: formData.get("recipientConsentReference"),
+      recipientConsentHash: formData.get("recipientConsentHash"),
+      transferEvidenceReference: formData.get("transferEvidenceReference"),
+      transferEvidenceHash: formData.get("transferEvidenceHash"),
+      transferReferenceMasked: formData.get("transferReferenceMasked"),
+      confirm: formData.get("confirm"),
+      actor,
+    });
   } else {
     result = { ok: false, reason: "unsupported_action" };
   }
@@ -152,7 +171,13 @@ function Metric({ label, value }) {
 }
 
 export default function PaymentOperationsPage() {
-  const { inspection, attempts, refunds, settlementBatches } = useLoaderData();
+  const {
+    inspection,
+    attempts,
+    refunds,
+    settlementBatches,
+    directCustomerRefunds,
+  } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -211,6 +236,84 @@ export default function PaymentOperationsPage() {
           label="入金要確認"
           value={inspection.settlementBatchReviewCount}
         />
+      </section>
+
+      <section className="payment-section">
+        <h2>会社からの直接返金</h2>
+        <p>
+          KOMOJUで返金できない場合だけ使用します。購入者の同意と送金完了を確認し、
+          注文全額を台帳へ一度だけ反映します。記録後は同じ注文のShopify/KOMOJU返金を止めます。
+        </p>
+        <Form method="post" className="payment-form payment-form--direct-refund">
+          <input
+            type="hidden"
+            name="intent"
+            value="record_direct_customer_refund"
+          />
+          <input name="orderReference" placeholder="注文番号（例: #1001）" required />
+          <input name="amount" type="number" min="1" placeholder="全額返金額（円）" required />
+          <input type="hidden" name="currencyCode" value="jpy" />
+          <input
+            name="recipientConsentReference"
+            placeholder="購入者同意の保存先またはチケット番号"
+            required
+          />
+          <input
+            name="recipientConsentHash"
+            pattern="[A-Fa-f0-9]{64}"
+            placeholder="購入者同意証跡のSHA-256（64桁）"
+            required
+          />
+          <input
+            name="transferEvidenceReference"
+            placeholder="送金証跡の保存先"
+            required
+          />
+          <input
+            name="transferEvidenceHash"
+            pattern="[A-Fa-f0-9]{64}"
+            placeholder="送金証跡のSHA-256（64桁）"
+            required
+          />
+          <input
+            name="transferReferenceMasked"
+            placeholder="送金参照番号（末尾4桁など）"
+            required
+          />
+          <label className="payment-confirm payment-confirm--wide">
+            <input
+              type="checkbox"
+              name="confirm"
+              value="direct_customer_refund_completed"
+              required
+            />
+            購入者の同意を取得し、元の注文全額を会社から送金済みです。この記録後は同じ注文をKOMOJUで返金しません。
+          </label>
+          <button type="submit" disabled={busy}>
+            直接返金を確定して台帳へ反映
+          </button>
+        </Form>
+        <div className="payment-list">
+          {directCustomerRefunds.length === 0 ? (
+            <p className="payment-empty">直接返金の記録はありません。</p>
+          ) : null}
+          {directCustomerRefunds.map((refund) => (
+            <article className="payment-item" key={refund.id}>
+              <div className="payment-item__summary">
+                <div>
+                  <strong>{refund.shopifyOrderId}</strong>
+                  <p>
+                    {refund.transferReferenceMasked} / {formatDate(refund.completedAt)}
+                  </p>
+                </div>
+                <div className="payment-item__amount">
+                  {formatMoney(refund.amount, refund.currencyCode)}
+                  <Status tone="success">{refund.status}</Status>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="payment-section">
@@ -602,5 +705,5 @@ export default function PaymentOperationsPage() {
 }
 
 const STYLES = `
-  .payment-page{padding:24px;max-width:1500px;margin:0 auto;color:#101828;letter-spacing:0}.payment-header,.payment-section{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:24px;margin-bottom:20px}.payment-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.payment-header h1,.payment-section h2{margin:0 0 8px}.payment-header p,.payment-section p,.payment-item p{margin:0;color:#475467}.payment-notice{padding:14px 16px;border-radius:6px;margin-bottom:20px}.payment-notice.is-success{background:#ecfdf3;color:#027a48}.payment-notice.is-error{background:#fef3f2;color:#b42318}.payment-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:20px}.payment-metric{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:18px}.payment-metric span{display:block;color:#667085;font-size:14px}.payment-metric strong{font-size:28px}.payment-list{display:grid;gap:12px;margin-top:18px}.payment-item{border-top:1px solid #eaecf0;padding-top:16px}.payment-item__summary{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.payment-item__amount{display:flex;align-items:center;gap:12px;font-weight:700}.payment-status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:12px;font-weight:700}.payment-status--success{background:#ecfdf3;color:#027a48}.payment-status--warning{background:#fffaeb;color:#b54708}.payment-status--critical{background:#fef3f2;color:#b42318}.payment-form{display:grid;gap:12px;margin-top:16px}.payment-form--refund{grid-template-columns:repeat(4,minmax(140px,1fr));align-items:end}.payment-form--refund .payment-confirm{grid-column:1/-2}.payment-form input,.payment-inline-form input{border:1px solid #d0d5dd;border-radius:6px;padding:10px 12px;min-width:0}.payment-form button,.payment-inline-form button{border:0;border-radius:6px;padding:10px 14px;background:#101828;color:#fff;font-weight:700;cursor:pointer}.payment-form button:disabled,.payment-inline-form button:disabled{opacity:.5}.payment-confirm{display:flex;gap:8px;align-items:center}.payment-confirm input{width:16px;height:16px}.payment-settlement-lines{display:grid;gap:10px;border:1px solid #d0d5dd;border-radius:6px;padding:14px}.payment-settlement-lines legend{padding:0 6px;font-weight:700}.payment-table-wrap{overflow:auto;margin-top:18px}.payment-table{width:100%;border-collapse:collapse;min-width:980px}.payment-table th,.payment-table td{border-top:1px solid #eaecf0;padding:12px;text-align:left;vertical-align:top}.payment-table small{display:block;color:#667085;margin-top:4px}.payment-inline-form{display:flex;gap:8px}.payment-section--split{display:grid;grid-template-columns:1fr 1fr;gap:32px}.payment-form__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.payment-form label{display:grid;gap:6px}.payment-batch{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;align-items:center;border-top:1px solid #eaecf0;padding:12px 0}.payment-empty{padding:18px 0}.payment-form--backfill-preview{grid-template-columns:220px auto;align-items:end}.payment-backfill-summary{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:14px;padding:14px 16px;border-radius:6px}.payment-backfill-summary.is-safe{background:#ecfdf3;color:#027a48}.payment-backfill-summary.is-empty{background:#f2f4f7;color:#344054}.payment-backfill-summary.is-blocked{background:#fef3f2;color:#b42318}.payment-form--backfill{grid-template-columns:220px 1fr auto;align-items:end}.payment-form--backfill .payment-confirm{padding-bottom:10px}@media(max-width:1100px){.payment-metrics{grid-template-columns:repeat(3,1fr)}}@media(max-width:900px){.payment-page{padding:16px}.payment-header,.payment-section{padding:18px}.payment-metrics{grid-template-columns:repeat(2,1fr)}.payment-section--split{grid-template-columns:1fr}.payment-form--refund,.payment-form--backfill,.payment-form--backfill-preview{grid-template-columns:1fr}.payment-form--refund .payment-confirm{grid-column:auto}}
+  .payment-page{padding:24px;max-width:1500px;margin:0 auto;color:#101828;letter-spacing:0}.payment-header,.payment-section{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:24px;margin-bottom:20px}.payment-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.payment-header h1,.payment-section h2{margin:0 0 8px}.payment-header p,.payment-section p,.payment-item p{margin:0;color:#475467}.payment-notice{padding:14px 16px;border-radius:6px;margin-bottom:20px}.payment-notice.is-success{background:#ecfdf3;color:#027a48}.payment-notice.is-error{background:#fef3f2;color:#b42318}.payment-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:20px}.payment-metric{background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:18px}.payment-metric span{display:block;color:#667085;font-size:14px}.payment-metric strong{font-size:28px}.payment-list{display:grid;gap:12px;margin-top:18px}.payment-item{border-top:1px solid #eaecf0;padding-top:16px}.payment-item__summary{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.payment-item__amount{display:flex;align-items:center;gap:12px;font-weight:700}.payment-status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:12px;font-weight:700}.payment-status--success{background:#ecfdf3;color:#027a48}.payment-status--warning{background:#fffaeb;color:#b54708}.payment-status--critical{background:#fef3f2;color:#b42318}.payment-form{display:grid;gap:12px;margin-top:16px}.payment-form--refund{grid-template-columns:repeat(4,minmax(140px,1fr));align-items:end}.payment-form--refund .payment-confirm{grid-column:1/-2}.payment-form--direct-refund{grid-template-columns:repeat(2,minmax(0,1fr));}.payment-form--direct-refund .payment-confirm--wide,.payment-form--direct-refund button{grid-column:1/-1}.payment-form input,.payment-inline-form input{border:1px solid #d0d5dd;border-radius:6px;padding:10px 12px;min-width:0}.payment-form button,.payment-inline-form button{border:0;border-radius:6px;padding:10px 14px;background:#101828;color:#fff;font-weight:700;cursor:pointer}.payment-form button:disabled,.payment-inline-form button:disabled{opacity:.5}.payment-confirm{display:flex;gap:8px;align-items:center}.payment-confirm input{width:16px;height:16px}.payment-settlement-lines{display:grid;gap:10px;border:1px solid #d0d5dd;border-radius:6px;padding:14px}.payment-settlement-lines legend{padding:0 6px;font-weight:700}.payment-table-wrap{overflow:auto;margin-top:18px}.payment-table{width:100%;border-collapse:collapse;min-width:980px}.payment-table th,.payment-table td{border-top:1px solid #eaecf0;padding:12px;text-align:left;vertical-align:top}.payment-table small{display:block;color:#667085;margin-top:4px}.payment-inline-form{display:flex;gap:8px}.payment-section--split{display:grid;grid-template-columns:1fr 1fr;gap:32px}.payment-form__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.payment-form label{display:grid;gap:6px}.payment-batch{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;align-items:center;border-top:1px solid #eaecf0;padding:12px 0}.payment-empty{padding:18px 0}.payment-form--backfill-preview{grid-template-columns:220px auto;align-items:end}.payment-backfill-summary{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:14px;padding:14px 16px;border-radius:6px}.payment-backfill-summary.is-safe{background:#ecfdf3;color:#027a48}.payment-backfill-summary.is-empty{background:#f2f4f7;color:#344054}.payment-backfill-summary.is-blocked{background:#fef3f2;color:#b42318}.payment-form--backfill{grid-template-columns:220px 1fr auto;align-items:end}.payment-form--backfill .payment-confirm{padding-bottom:10px}@media(max-width:1100px){.payment-metrics{grid-template-columns:repeat(3,1fr)}}@media(max-width:900px){.payment-page{padding:16px}.payment-header,.payment-section{padding:18px}.payment-metrics{grid-template-columns:repeat(2,1fr)}.payment-section--split{grid-template-columns:1fr}.payment-form--refund,.payment-form--direct-refund,.payment-form--backfill,.payment-form--backfill-preview{grid-template-columns:1fr}.payment-form--refund .payment-confirm,.payment-form--direct-refund .payment-confirm--wide,.payment-form--direct-refund button{grid-column:auto}}
 `;

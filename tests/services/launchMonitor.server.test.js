@@ -178,6 +178,19 @@ test("collectLaunchMonitorReport is healthy when shared checks are healthy", asy
   );
 });
 
+test("an expired limited launch is critical even when other checks are healthy", async () => {
+  const report = await collectReport({
+    limitedLaunch: {
+      ok: true,
+      blockReason: "komoju_limited_launch_expired",
+    },
+  });
+  assert.equal(
+    find(report.checks, "komoju_limited_launch_control").severity,
+    "critical",
+  );
+});
+
 test("DB failure is critical while independent checks still finish", async () => {
   const prismaClient = basePrisma();
   prismaClient.$queryRaw = async () => {
@@ -557,6 +570,7 @@ async function collectReport({
   env = {},
   runHeavyChecks = true,
   previousHeavyChecks = [],
+  limitedLaunch = { ok: true, skipped: true },
 } = {}) {
   return collectLaunchMonitorReport({
     renderSnapshot: healthySnapshot(),
@@ -601,6 +615,7 @@ async function collectReport({
       getPlatformOperationalControl: async () => ({
         checkoutHold: false,
       }),
+      refreshKomojuLimitedLaunchControl: async () => limitedLaunch,
     },
   });
 }

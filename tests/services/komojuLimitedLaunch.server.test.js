@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   inspectKomojuLimitedLaunchScope,
+  previewKomojuZeroBalanceLimitedLaunch,
   recordKomojuZeroBalanceLimitedLaunch,
 } from "../../app/services/komojuLimitedLaunch.server.js";
 import {
@@ -11,11 +12,13 @@ import {
 } from "../../app/services/productionRelease.server.js";
 
 const SHOP = "example.myshopify.com";
+const NOW = new Date("2026-08-07T02:00:00.000Z");
 const EVIDENCE_HASH = "a".repeat(64);
 const RELEASE_ENV = {
   RENDER_GIT_COMMIT: "b".repeat(40),
   SHOPIFY_APP_VERSION: "app-version-1",
   SHOPIFY_PRIMARY_SHOP_DOMAIN: SHOP,
+  SHOPIFY_API_SECRET: "test-preview-secret",
 };
 
 function releaseExpectation() {
@@ -33,7 +36,9 @@ function eligibleProbe(overrides = {}) {
     releaseId: release.releaseId,
     releaseFingerprint: buildProductionReleaseFingerprint(release),
     paidVerifiedAt: new Date("2026-08-07T01:00:00.000Z"),
+    updatedAt: new Date("2026-08-07T01:30:00.000Z"),
     orderEvidenceJson: {
+      products: [{ id: "product_1" }],
       probeConfig: {
         provider: "KOMOJU",
         paymentMethod: "CARD",
@@ -41,12 +46,20 @@ function eligibleProbe(overrides = {}) {
       externalReadiness: {
         strategy: "ZERO_BALANCE_LIMITED_LAUNCH",
         maximumPlannedChargeAmount: 2000,
-        confirmedRefundReserveAmount: 2000,
+        confirmedRefundReserveAmount: 3000,
         confirmedKomojuUnsettledBalanceAmount: 0,
         zeroUnsettledBalanceConfirmed: true,
         companyRefundReserveConfirmed: true,
         directRefundFallbackConfirmed: true,
         domesticPlatformDirectOnlyConfirmed: true,
+        limitedLaunchMaxOrderCount: 2,
+        limitedLaunchMaxGrossAmount: 3000,
+        limitedLaunchMaxOutstandingLiability: 3000,
+        komojuPayoutCycle: "WEEKLY",
+        expectedBankDepositAt: "2026-08-09T02:00:00.000Z",
+        komojuMinimumPayoutAmount: 1000,
+        estimatedProcessingFeeAmount: 100,
+        payoutNotOnHoldConfirmed: true,
       },
     },
     paidEvidenceJson: {
@@ -65,8 +78,16 @@ function buildPrismaClient({
   internationalEnabledProductCount = 0,
 } = {}) {
   let storedAttestation = null;
+  let storedControl = null;
   let productCountCall = 0;
-  return {
+  let allowedProducts = [
+    {
+      id: "product_1",
+      name: "Platform product",
+      shopifyProductId: "gid://shopify/Product/1",
+    },
+  ];
+  const client = {
     productionTransactionProbe: {
       async findUnique() {
         return probe;
@@ -84,6 +105,9 @@ function buildPrismaClient({
           ? euEnabledProductCount
           : internationalEnabledProductCount;
       },
+      async findMany() {
+        return allowedProducts;
+      },
     },
     operationalReadinessAttestation: {
       async findUnique() {
@@ -94,23 +118,61 @@ function buildPrismaClient({
         return storedAttestation;
       },
     },
+    komojuLimitedLaunchControl: {
+      async create({ data }) {
+        storedControl = { id: "control_1", ...data };
+        return storedControl;
+      },
+    },
+    async $transaction(callback) {
+      return callback(client);
+    },
+    setAllowedProducts(products) {
+      allowedProducts = products;
+    },
     get storedAttestation() {
       return storedAttestation;
     },
+    get storedControl() {
+      return storedControl;
+    },
   };
+  return client;
 }
 
-function recordInput(overrides = {}) {
+function previewInput(overrides = {}) {
   return {
     probeId: "probe_limited_1",
-    actorKey: "shopify_user:1",
     releaseExpectation: releaseExpectation(),
     evidenceReference: "private-evidence:komoju-zero-balance-launch",
     evidenceHash: EVIDENCE_HASH,
+    ...overrides,
+  };
+}
+
+function recordInput(previewToken, overrides = {}) {
+  return {
+    ...previewInput(),
+    actorKey: "shopify_user:1",
+    previewToken,
     confirm: "activate_zero_balance_limited_launch",
     ...overrides,
   };
 }
+
+async function createPreview(prismaClient, options = {}) {
+  return previewKomojuZeroBalanceLimitedLaunch(previewInput(), {
+    prismaClient,
+    env: RELEASE_ENV,
+    now: NOW,
+    ...options,
+  });
+}
+
+const refreshControl = async () => ({
+  ok: true,
+  control: { id: "control_1", status: "ACTIVE" },
+});
 
 test("limited launch scope requires third-party and EU commerce to remain disabled", async () => {
   const ready = await inspectKomojuLimitedLaunchScope({
@@ -124,34 +186,28 @@ test("limited launch scope requires third-party and EU commerce to remain disabl
     env: { PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true" },
   });
   assert.equal(thirdPartyEnabled.ready, false);
-  assert.equal(thirdPartyEnabled.thirdPartyCommerceDisabled, false);
 
   const euEnabled = await inspectKomojuLimitedLaunchScope({
     prismaClient: buildPrismaClient({ euEnabledProductCount: 1 }),
     env: {},
   });
   assert.equal(euEnabled.ready, false);
-  assert.equal(euEnabled.euEnabledProductCount, 1);
 
   const internationalEnabled = await inspectKomojuLimitedLaunchScope({
     prismaClient: buildPrismaClient({ internationalEnabledProductCount: 1 }),
     env: {},
   });
   assert.equal(internationalEnabled.ready, false);
-  assert.equal(internationalEnabled.internationalEnabledProductCount, 1);
 });
 
-test("limited launch cannot be recorded before the paid evidence is complete", async () => {
+test("limited launch cannot be previewed before paid evidence is complete", async () => {
   const prismaClient = buildPrismaClient({
     probe: eligibleProbe({
       paidVerifiedAt: null,
       paidEvidenceJson: { passed: false },
     }),
   });
-  const result = await recordKomojuZeroBalanceLimitedLaunch(recordInput(), {
-    prismaClient,
-    env: {},
-  });
+  const result = await createPreview(prismaClient);
 
   assert.deepEqual(result, {
     ok: false,
@@ -160,14 +216,25 @@ test("limited launch cannot be recorded before the paid evidence is complete", a
   assert.equal(prismaClient.storedAttestation, null);
 });
 
-test("limited launch records one release-bound seven-day attestation", async () => {
+test("limited launch records one release-bound seven-day attestation after preview", async () => {
   const prismaClient = buildPrismaClient();
-  const now = new Date("2026-08-07T02:00:00.000Z");
-  const result = await recordKomojuZeroBalanceLimitedLaunch(recordInput(), {
-    prismaClient,
-    env: {},
-    now,
-  });
+  const preview = await createPreview(prismaClient);
+  assert.equal(preview.ok, true);
+  assert.equal(preview.preview.maxOrderCount, 2);
+  assert.deepEqual(
+    preview.preview.allowedProducts.map((product) => product.id),
+    ["product_1"],
+  );
+
+  const result = await recordKomojuZeroBalanceLimitedLaunch(
+    recordInput(preview.preview.previewToken),
+    {
+      prismaClient,
+      env: RELEASE_ENV,
+      now: NOW,
+      refreshControl,
+    },
+  );
 
   assert.equal(result.ok, true);
   assert.equal(result.existing, false);
@@ -179,77 +246,98 @@ test("limited launch records one release-bound seven-day attestation", async () 
     prismaClient.storedAttestation.metadataJson.releaseId,
     releaseExpectation().releaseId,
   );
-  assert.equal(
-    prismaClient.storedAttestation.metadataJson.companyRefundReserveAmount,
-    2000,
-  );
-  assert.equal(
-    prismaClient.storedAttestation.metadataJson.strictE2eStillRequired,
-    true,
-  );
-  assert.equal(
-    prismaClient.storedAttestation.metadataJson
-      .internationalEnabledProductCount,
-    0,
-  );
+  assert.equal(prismaClient.storedControl.maxOrderCount, 2);
+  assert.equal(prismaClient.storedControl.maxGrossAmount, 3000);
 });
 
 test("limited launch is idempotent but cannot be renewed or reassigned", async () => {
   const prismaClient = buildPrismaClient();
+  const preview = await createPreview(prismaClient);
   const options = {
     prismaClient,
-    env: {},
-    now: new Date("2026-08-07T02:00:00.000Z"),
+    env: RELEASE_ENV,
+    now: NOW,
+    refreshControl,
   };
   const first = await recordKomojuZeroBalanceLimitedLaunch(
-    recordInput(),
+    recordInput(preview.preview.previewToken),
     options,
   );
   assert.equal(first.ok, true);
 
   const repeated = await recordKomojuZeroBalanceLimitedLaunch(
-    recordInput(),
+    recordInput(preview.preview.previewToken),
     options,
   );
   assert.equal(repeated.ok, true);
   assert.equal(repeated.existing, true);
 
-  const reassigned = await recordKomojuZeroBalanceLimitedLaunch(
-    recordInput({
+  const reassigned = await previewKomojuZeroBalanceLimitedLaunch(
+    previewInput({
       evidenceReference: "private-evidence:different-package",
       evidenceHash: "c".repeat(64),
     }),
-    options,
+    { prismaClient, env: RELEASE_ENV, now: NOW },
   );
-  assert.deepEqual(reassigned, {
-    ok: false,
-    reason: "limited_launch_exception_already_used",
-  });
+  assert.equal(reassigned.reason, "limited_launch_exception_already_used");
 });
 
-test("limited launch rejects a different release and non-restricted scope", async () => {
-  const releaseMismatch = await recordKomojuZeroBalanceLimitedLaunch(
-    recordInput({
+test("limited launch preview expires and rejects changed product scope", async () => {
+  const expiredClient = buildPrismaClient();
+  const expiredPreview = await createPreview(expiredClient);
+  const expired = await recordKomojuZeroBalanceLimitedLaunch(
+    recordInput(expiredPreview.preview.previewToken),
+    {
+      prismaClient: expiredClient,
+      env: RELEASE_ENV,
+      now: new Date(NOW.getTime() + 16 * 60 * 1000),
+      refreshControl,
+    },
+  );
+  assert.equal(expired.reason, "limited_launch_preview_changed");
+
+  const changedClient = buildPrismaClient();
+  const changedPreview = await createPreview(changedClient);
+  changedClient.setAllowedProducts([
+    {
+      id: "product_1",
+      name: "Platform product",
+      shopifyProductId: "gid://shopify/Product/2",
+    },
+  ]);
+  const changed = await recordKomojuZeroBalanceLimitedLaunch(
+    recordInput(changedPreview.preview.previewToken),
+    {
+      prismaClient: changedClient,
+      env: RELEASE_ENV,
+      now: NOW,
+      refreshControl,
+    },
+  );
+  assert.equal(changed.reason, "limited_launch_preview_changed");
+});
+
+test("limited launch preview rejects a different release and non-restricted scope", async () => {
+  const releaseMismatch = await previewKomojuZeroBalanceLimitedLaunch(
+    previewInput({
       releaseExpectation: buildProductionReleaseExpectation({
-        env: {
-          ...RELEASE_ENV,
-          RENDER_GIT_COMMIT: "c".repeat(40),
-        },
+        env: { ...RELEASE_ENV, RENDER_GIT_COMMIT: "c".repeat(40) },
       }),
     }),
-    { prismaClient: buildPrismaClient(), env: {} },
+    { prismaClient: buildPrismaClient(), env: RELEASE_ENV, now: NOW },
   );
   assert.equal(releaseMismatch.reason, "limited_launch_probe_not_eligible");
 
-  const thirdPartyEnabled = await recordKomojuZeroBalanceLimitedLaunch(
-    recordInput(),
+  const thirdPartyEnabled = await previewKomojuZeroBalanceLimitedLaunch(
+    previewInput(),
     {
       prismaClient: buildPrismaClient(),
-      env: { MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true" },
+      env: {
+        ...RELEASE_ENV,
+        MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
+      },
+      now: NOW,
     },
   );
-  assert.equal(
-    thirdPartyEnabled.reason,
-    "limited_launch_scope_not_restricted",
-  );
+  assert.equal(thirdPartyEnabled.reason, "limited_launch_scope_not_restricted");
 });

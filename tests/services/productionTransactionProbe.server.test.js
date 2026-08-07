@@ -739,6 +739,16 @@ test("zero-balance limited launch stores company reserve and domestic-only evide
       companyRefundReserveConfirmed: true,
       directRefundFallbackConfirmed: true,
       domesticPlatformDirectOnlyConfirmed: true,
+      limitedLaunchMaxOrderCount: 3,
+      limitedLaunchMaxGrossAmount: 2000,
+      limitedLaunchMaxOutstandingLiability: 2000,
+      komojuPayoutCycle: "WEEKLY",
+      expectedBankDepositAt: new Date(
+        Date.now() + 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      komojuMinimumPayoutAmount: 1000,
+      estimatedProcessingFeeAmount: 100,
+      payoutNotOnHoldConfirmed: true,
     },
     { prismaClient },
   );
@@ -762,6 +772,92 @@ test("zero-balance limited launch stores company reserve and domestic-only evide
       .domesticPlatformDirectOnlyConfirmed,
     true,
   );
+});
+
+function zeroBalanceLimitedLaunchInput(overrides = {}) {
+  return {
+    shopDomain: SHOP,
+    startedBy: "operator",
+    releaseExpectation: releaseExpectation(),
+    targetProvider: "KOMOJU",
+    targetPaymentMethod: "CARD",
+    komojuCardOnlyConfirmed: true,
+    untestedAsyncMethodsDisabledConfirmed: true,
+    komojuLiveConfirmed: true,
+    singleCardIntegrationConfirmed: true,
+    automaticCaptureConfirmed: true,
+    releaseFreezeConfirmed: true,
+    externalSettingsEvidenceReference: "private-evidence:komoju-settings",
+    externalSettingsEvidenceHash: SETTINGS_EVIDENCE_HASH,
+    payoutEvidenceStrategy:
+      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH,
+    maximumPlannedChargeAmount: 2000,
+    confirmedRefundReserveAmount: 2000,
+    confirmedKomojuUnsettledBalanceAmount: 0,
+    zeroUnsettledBalanceConfirmed: true,
+    companyRefundReserveConfirmed: true,
+    directRefundFallbackConfirmed: true,
+    domesticPlatformDirectOnlyConfirmed: true,
+    limitedLaunchMaxOrderCount: 1,
+    limitedLaunchMaxGrossAmount: 2000,
+    limitedLaunchMaxOutstandingLiability: 2000,
+    komojuPayoutCycle: "WEEKLY",
+    expectedBankDepositAt: "2026-08-11T00:00:00.000Z",
+    komojuMinimumPayoutAmount: 1000,
+    estimatedProcessingFeeAmount: 100,
+    payoutNotOnHoldConfirmed: true,
+    ...overrides,
+  };
+}
+
+function rejectingProbePrisma() {
+  return {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        assert.fail("invalid payout readiness must not create a probe");
+      },
+    },
+  };
+}
+
+test("zero-balance limited launch rejects a payout below the minimum", async () => {
+  const result = await createProductionTransactionProbe(
+    zeroBalanceLimitedLaunchInput({
+      maximumPlannedChargeAmount: 1000,
+      confirmedRefundReserveAmount: 1000,
+      limitedLaunchMaxGrossAmount: 1000,
+      limitedLaunchMaxOutstandingLiability: 1000,
+      estimatedProcessingFeeAmount: 100,
+      komojuMinimumPayoutAmount: 1000,
+    }),
+    {
+      prismaClient: rejectingProbePrisma(),
+      now: new Date("2026-08-10T00:00:00.000Z"),
+    },
+  );
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "komoju_limited_launch_payout_or_exposure_invalid",
+  });
+});
+
+test("zero-balance limited launch rejects a deposit expected after seven days", async () => {
+  const result = await createProductionTransactionProbe(
+    zeroBalanceLimitedLaunchInput({
+      expectedBankDepositAt: "2026-08-17T00:00:00.001Z",
+    }),
+    {
+      prismaClient: rejectingProbePrisma(),
+      now: new Date("2026-08-10T00:00:00.000Z"),
+    },
+  );
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "komoju_limited_launch_payout_or_exposure_invalid",
+  });
 });
 
 test("preflight permits one KOMOJU card run only when every automatic check passes", async () => {

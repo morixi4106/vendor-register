@@ -22,6 +22,8 @@ export const MARKETPLACE_CHECKOUT_POLICY = Object.freeze({
 export const MARKETPLACE_CHECKOUT_POLICY_KEY = "marketplace_checkout_policy";
 export const SALE_ELIGIBILITY_PROJECTION_KEY = "sale_eligibility_projection";
 export const OPERATIONAL_PURCHASE_CONTROL_KEY = "operational_purchase_control";
+export const KOMOJU_LIMITED_LAUNCH_CONTROL_KEY =
+  "komoju_limited_launch_control";
 export const OPERATIONAL_PURCHASE_CONTROL = Object.freeze({
   ALLOWED: "ALLOWED",
   BLOCKED: "BLOCKED",
@@ -144,6 +146,12 @@ const SHOP_OPERATIONAL_CONTROL_QUERY = `#graphql
     shop {
       id
       metafield(namespace: "$app", key: "operational_purchase_control") {
+        value
+      }
+      komojuLimitedLaunchControl: metafield(
+        namespace: "$app"
+        key: "komoju_limited_launch_control"
+      ) {
         value
       }
       watchdogPurchaseStop: metafield(
@@ -648,6 +656,73 @@ export async function syncShopOperationalPurchaseControl(
     changed: beforeState !== normalizedState,
     beforeState,
     state: verifiedState,
+  };
+}
+
+export async function syncShopKomojuLimitedLaunchControl(
+  { shopDomain: rawShopDomain, projection },
+  { graphQL = shopifyGraphQLWithOfflineSession } = {},
+) {
+  const shopDomain = normalizeShopDomain(rawShopDomain);
+  if (!shopDomain || !projection || typeof projection !== "object") {
+    return { ok: false, reason: "invalid_komoju_limited_launch_control" };
+  }
+  const serialized = JSON.stringify(projection);
+  const currentResponse = await graphQL({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: SHOP_OPERATIONAL_CONTROL_QUERY,
+  });
+  const shop = currentResponse?.data?.shop || null;
+  if (!shop?.id) return { ok: false, reason: "shop_not_found" };
+  const beforeState = normalizeText(shop.komojuLimitedLaunchControl?.value);
+
+  if (beforeState !== serialized) {
+    const { data } = await graphQL({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: PRODUCT_POLICY_MUTATION,
+      variables: {
+        metafields: [
+          {
+            ownerId: shop.id,
+            namespace: "$app",
+            key: KOMOJU_LIMITED_LAUNCH_CONTROL_KEY,
+            type: "json",
+            value: serialized,
+          },
+        ],
+      },
+    });
+    const payload = data?.metafieldsSet;
+    assertNoUserErrors(payload, "metafieldsSet KOMOJU limited launch control");
+    if (!payload?.metafields?.[0]) {
+      throw new Error(
+        "metafieldsSet did not return the KOMOJU limited launch control metafield",
+      );
+    }
+  }
+
+  const verifiedResponse = await graphQL({
+    shopDomain,
+    apiVersion: SHOPIFY_API_VERSION,
+    query: SHOP_OPERATIONAL_CONTROL_QUERY,
+  });
+  const verifiedState = normalizeText(
+    verifiedResponse?.data?.shop?.komojuLimitedLaunchControl?.value,
+  );
+  if (verifiedState !== serialized) {
+    const error = new Error("KOMOJU limited launch control verification failed");
+    error.reason = "komoju_limited_launch_control_verification_failed";
+    throw error;
+  }
+
+  return {
+    ok: true,
+    shopDomain,
+    changed: beforeState !== serialized,
+    beforeState,
+    state: projection,
   };
 }
 

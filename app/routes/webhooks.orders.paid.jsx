@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { processShopifyOrderPaidSettlement } from "../services/sellerPayments.server.js";
 import { syncShopifyOrderPaymentAttempts } from "../services/paymentOperations.server.js";
+import { refreshKomojuLimitedLaunchControl } from "../services/komojuLimitedLaunchControl.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 
@@ -34,7 +35,17 @@ export const action = async ({ request }) => {
             shopifyGraphQLWithOfflineSession,
         },
       );
-      return { ...settlement, paymentTracking };
+      const limitedLaunchControl = settlement.ok
+        ? await refreshKomojuLimitedLaunchControl(
+            { shopDomain: shop, applyEmergencyHold: true },
+          )
+        : null;
+      if (limitedLaunchControl?.ok === false) {
+        throw new Error(
+          `komoju_limited_launch_refresh_failed:${limitedLaunchControl.reason}`,
+        );
+      }
+      return { ...settlement, paymentTracking, limitedLaunchControl };
     },
   });
   const result = delivery.result || {

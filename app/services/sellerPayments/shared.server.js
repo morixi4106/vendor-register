@@ -11,7 +11,7 @@ export const require = createRequire(import.meta.url);
 export const jaLocale = require("i18n-iso-countries/langs/ja.json");
 isoCountries.registerLocale(jaLocale);
 export const SELLER_REVIEW_REASON_DISPUTE = "dispute_review_required";
-export const SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES = ["refund", "shopify_order_cancelled"];
+export const SHOPIFY_ORDER_REVERSAL_ENTRY_TYPES = ["refund", "direct_customer_refund", "shopify_order_cancelled"];
 export let stripeClientSingleton = null;
 export function getSalesCreditOffsetMetadata(offset) {
   return isPlainObject(offset?.metadataJson) ? offset.metadataJson : {};
