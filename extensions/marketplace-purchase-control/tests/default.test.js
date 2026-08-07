@@ -53,7 +53,21 @@ function buildDirectInput({
   expiresOnExclusive = "2026-07-25",
   lineCount = 1,
   projectionValue = null,
-  limitedLaunchControl = null,
+  limitedLaunchControl = {
+    v: 2,
+    s: "INACTIVE",
+    r: 1,
+    e: "9999-12-31",
+    x: "9999-12-31T00:00:00.000Z",
+    p: [],
+    q: "",
+    m: 0,
+    o: 0,
+    g: 0,
+    l: 0,
+    c: "JPY",
+    h: "a".repeat(64),
+  },
   cartAmount = "100.0",
   productId = "gid://shopify/Product/1",
 } = {}) {
@@ -69,7 +83,9 @@ function buildDirectInput({
     r: 1,
   });
   const line = {
+    quantity: 1,
     merchandise: {
+      id: "gid://shopify/ProductVariant/1",
       product: {
         id: productId,
         marketplaceCheckoutPolicy: { value: "PLATFORM_DIRECT" },
@@ -198,36 +214,135 @@ describe("fail-closed operational and calendar boundaries", () => {
       buildDirectInput({
         currentDate: "2026-08-14",
         limitedLaunchControl: {
-          v: 1,
+          v: 2,
           s: "ACTIVE",
+          r: 2,
           e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
           p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
           m: 2000,
           o: 1,
           g: 2000,
           l: 2000,
           c: "JPY",
+          h: "b".repeat(64),
         },
       }),
     );
     expect(result.operations[0].validationAdd.errors).toHaveLength(1);
   });
 
-  test("blocks products outside the limited launch allowlist", () => {
+  test("fails closed when the limited-launch baseline is missing", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({ limitedLaunchControl: null }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("fails closed for malformed, unknown and preparing controls", () => {
+    for (const limitedLaunchControl of [
+      { v: 99, s: "INACTIVE" },
+      { v: 2, s: "PREPARING", r: 1, h: "c".repeat(64) },
+      { v: 2, s: "UNKNOWN", r: 1, h: "c".repeat(64) },
+      {
+        v: 2,
+        s: "INACTIVE",
+        r: 0,
+        e: "9999-12-31",
+        x: "9999-12-31T00:00:00.000Z",
+        p: [],
+        q: "",
+        m: 0,
+        o: 0,
+        g: 0,
+        l: 0,
+        c: "JPY",
+        h: "c".repeat(64),
+      },
+    ]) {
+      const result = cartValidationsGenerateRun(
+        buildDirectInput({ limitedLaunchControl }),
+      );
+      expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+    }
+  });
+
+  test("allows the explicit inactive baseline", () => {
+    const result = cartValidationsGenerateRun(buildDirectInput());
+    expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  test("blocks the explicit limited-launch stop state", () => {
     const result = cartValidationsGenerateRun(
       buildDirectInput({
-        currentDate: "2026-08-10",
-        productId: "gid://shopify/Product/2",
         limitedLaunchControl: {
-          v: 1,
-          s: "ACTIVE",
+          v: 2,
+          s: "BLOCKED",
+          r: 3,
           e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
           p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
           m: 2000,
           o: 1,
           g: 2000,
           l: 2000,
           c: "JPY",
+          h: "b".repeat(64),
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("allows only the selected one-quantity canary variant", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-10",
+        evaluatedOn: "2026-08-10",
+        expiresOnExclusive: "2026-08-11",
+        limitedLaunchControl: {
+          v: 2,
+          s: "ACTIVE",
+          r: 2,
+          e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
+          p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 2000,
+          c: "JPY",
+          h: "b".repeat(64),
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  test("blocks products outside the limited launch allowlist", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-10",
+        evaluatedOn: "2026-08-10",
+        expiresOnExclusive: "2026-08-11",
+        productId: "gid://shopify/Product/2",
+        limitedLaunchControl: {
+          v: 2,
+          s: "ACTIVE",
+          r: 2,
+          e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
+          p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 2000,
+          c: "JPY",
+          h: "b".repeat(64),
         },
       }),
     );
@@ -238,17 +353,75 @@ describe("fail-closed operational and calendar boundaries", () => {
     const result = cartValidationsGenerateRun(
       buildDirectInput({
         currentDate: "2026-08-10",
+        evaluatedOn: "2026-08-10",
+        expiresOnExclusive: "2026-08-11",
         cartAmount: "1650.0",
         limitedLaunchControl: {
-          v: 1,
+          v: 2,
           s: "ACTIVE",
+          r: 2,
           e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
           p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
           m: 2000,
           o: 1,
           g: 2000,
           l: 1000,
           c: "JPY",
+          h: "b".repeat(64),
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each([
+    ["remaining order count", { o: 0, g: 2000, l: 2000 }],
+    ["remaining gross amount", { o: 1, g: 0, l: 2000 }],
+    ["remaining liability", { o: 1, g: 2000, l: 0 }],
+  ])("blocks checkout when %s is exhausted", (_label, remaining) => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-10",
+        evaluatedOn: "2026-08-10",
+        expiresOnExclusive: "2026-08-11",
+        limitedLaunchControl: {
+          v: 2,
+          s: "ACTIVE",
+          r: 2,
+          e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
+          p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
+          m: 2000,
+          ...remaining,
+          c: "JPY",
+          h: "b".repeat(64),
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks checkout after the limited-launch expiry date", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-08-15",
+        limitedLaunchControl: {
+          v: 2,
+          s: "ACTIVE",
+          r: 2,
+          e: "2026-08-14",
+          x: "2026-08-14T00:00:00.000Z",
+          p: ["gid://shopify/Product/1"],
+          q: "gid://shopify/ProductVariant/1",
+          m: 2000,
+          o: 1,
+          g: 2000,
+          l: 2000,
+          c: "JPY",
+          h: "b".repeat(64),
         },
       }),
     );

@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import ProductionReadinessPage from "../components/readiness/ProductionReadinessPage.jsx";
+import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../services/checkoutValidationLiveProbe.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -228,6 +229,18 @@ export const action = async ({ request }) => {
     );
   }
 
+  if (intent === "prepare_komoju_limited_launch_baseline") {
+    const { prepareKomojuLimitedLaunchBaseline } =
+      await import("../services/komojuLimitedLaunchControl.server.js");
+    const result = await prepareKomojuLimitedLaunchBaseline({
+      shopDomain: session.shop,
+    });
+    return json(
+      { komojuLimitedLaunchBaseline: result },
+      { status: result.ok ? 200 : 400 },
+    );
+  }
+
   if (intent === "activate_checkout_gate") {
     try {
       const { reconcileShopifyProductCatalog } =
@@ -438,26 +451,8 @@ export const action = async ({ request }) => {
 };
 
 function buildLiveProbeScenarios(formData) {
-  const definitions = [
-    {
-      id: "directProductAllowed",
-      expectedResult: "checkout_allowed",
-    },
-    {
-      id: "blockedProductRejected",
-      expectedResult: "checkout_rejected",
-    },
-    {
-      id: "globalStopRejected",
-      expectedResult: "checkout_rejected",
-    },
-    {
-      id: "shopPayObserved",
-      expectedResult: "checkout_allowed",
-    },
-  ];
   return Object.fromEntries(
-    definitions.map(({ id, expectedResult }) => [
+    CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(({ id, expectedResult }) => [
       id,
       {
         scenarioId: id,

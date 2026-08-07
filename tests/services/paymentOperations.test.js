@@ -519,6 +519,7 @@ test("a completed direct refund blocks provider refund ledger application", asyn
       prismaClient,
       env: { PAYMENT_REFUND_CONFIRMATION_ENFORCED: "true" },
       now: new Date("2026-08-06T00:00:00.000Z"),
+      refreshLimitedLaunchControl: async () => ({ ok: true }),
     },
   );
   assert.equal(result.ok, true);
@@ -526,6 +527,52 @@ test("a completed direct refund blocks provider refund ledger application", asyn
   assert.equal(result.reason, "direct_customer_refund_already_completed");
   assert.equal(result.operation.status, PAYMENT_REFUND_STATUS.REVIEW_REQUIRED);
   assert.equal(result.operation.metadataJson.refundChannelConflict, true);
+});
+
+test("a provider refund conflicts with a reserved direct refund and applies a hold", async () => {
+  const prismaClient = refundPrisma();
+  let guard = {
+    id: "guard-direct-reserved",
+    marketplaceOrderId: "order-1",
+    channel: "DIRECT",
+    status: "RESERVED",
+    metadataJson: { preparedBy: "operator@example.com" },
+  };
+  prismaClient.orderRefundGuard = {
+    async findUnique() {
+      return guard;
+    },
+    async update({ data }) {
+      guard = { ...guard, ...data };
+      return guard;
+    },
+  };
+  const refreshCalls = [];
+
+  const result = await observeShopifyRefundOperation(
+    { payload: refundPayload(), shop: "example.myshopify.com" },
+    {
+      prismaClient,
+      env: { PAYMENT_REFUND_CONFIRMATION_ENFORCED: "true" },
+      now: new Date("2026-08-06T00:00:00.000Z"),
+      refreshLimitedLaunchControl: async (input) => {
+        refreshCalls.push(input);
+        return { ok: true };
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.allowLedger, false);
+  assert.equal(result.reason, "direct_customer_refund_already_completed");
+  assert.equal(guard.status, "CONFLICT");
+  assert.equal(
+    guard.metadataJson.conflictReason,
+    "provider_refund_after_direct_reservation",
+  );
+  assert.deepEqual(refreshCalls, [
+    { shopDomain: "example.myshopify.com", applyEmergencyHold: true },
+  ]);
 });
 
 test("manual KOMOJU refund is held before the legacy ledger", async () => {

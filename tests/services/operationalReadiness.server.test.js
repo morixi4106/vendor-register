@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../../app/services/checkoutValidationLiveProbe.js";
+
 import {
   applyPlatformCheckoutEmergencyHold,
   buildOperationalReadinessChecks,
   inspectCheckoutValidationActivationEvidence,
   inspectOperationalReadiness,
+  isCompleteCheckoutValidationLiveProbe,
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   recordOperationalReadinessAttestation,
@@ -14,6 +17,7 @@ import {
   setPlatformCheckoutHold,
   SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
+import { buildKomojuLimitedLaunchProjection } from "../../app/services/komojuLimitedLaunchControl.server.js";
 
 test("checkout validation activation requires only current replay evidence", () => {
   const missing = inspectCheckoutValidationActivationEvidence({ rows: [] });
@@ -78,7 +82,7 @@ test("operational attestation requires evidence and receives a finite validity w
   assert.equal(stored.expiresAt.toISOString(), "2026-07-30T00:00:00.000Z");
 });
 
-test("checkout live probe attestation requires a complete release manifest and four probes", async () => {
+test("checkout live probe attestation requires the complete release manifest and every required scenario", async () => {
   const now = new Date("2026-07-24T00:00:00Z");
   let saved = null;
   const prismaClient = {
@@ -126,21 +130,11 @@ test("checkout live probe attestation requires a complete release manifest and f
         },
         challengeNonce: "nonce-with-at-least-16-characters",
         executedBy: "shopify_user:1",
-        probes: {
-          directProductAllowed: buildProbe(
-            "directProductAllowed",
-            "checkout_allowed",
+        probes: Object.fromEntries(
+          CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(
+            ({ id, expectedResult }) => [id, buildProbe(id, expectedResult)],
           ),
-          blockedProductRejected: buildProbe(
-            "blockedProductRejected",
-            "checkout_rejected",
-          ),
-          globalStopRejected: buildProbe(
-            "globalStopRejected",
-            "checkout_rejected",
-          ),
-          shopPayObserved: buildProbe("shopPayObserved", "checkout_allowed"),
-        },
+        ),
       },
     },
     { prismaClient, now },
@@ -148,6 +142,37 @@ test("checkout live probe attestation requires a complete release manifest and f
 
   assert.equal(complete.ok, true);
   assert.equal(saved.metadataJson.probes.globalStopRejected.passed, true);
+});
+
+test("legacy four-scenario evidence cannot satisfy the expanded live probe", () => {
+  const probes = Object.fromEntries(
+    CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.slice(0, 4).map(
+      ({ id, expectedResult }) => [id, buildProbe(id, expectedResult)],
+    ),
+  );
+
+  assert.equal(
+    isCompleteCheckoutValidationLiveProbe({
+      releaseManifest: {
+        releaseId: "r1",
+        renderCommit: "a".repeat(40),
+        migrationVersion: "20260723153000",
+        shopifyAppVersion: "v1",
+        shopDomain: "example.myshopify.com",
+        functionHandle: "marketplace-purchase-control",
+        functionUid: "function-uid",
+        functionId: "gid://shopify/ShopifyFunction/1",
+        functionApiVersion: "2026-04",
+        validationId: "gid://shopify/Validation/1",
+        policyVersion: "sale-eligibility-2026-07-v1",
+        projectionSchemaVersion: 2,
+      },
+      challengeNonce: "nonce-with-at-least-16-characters",
+      executedBy: "shopify_user:1",
+      probes,
+    }),
+    false,
+  );
 });
 
 test("live order refund E2E cannot be manually attested", async () => {
@@ -414,6 +439,7 @@ function buildProbe(scenarioId, expectedResult) {
     actualResult: expectedResult,
     observedAt: "2026-07-24T00:00:00.000Z",
     evidenceReference: `evidence:${scenarioId}`,
+    evidenceHash: "a".repeat(64),
     projectionRevision: "42",
   };
 }
@@ -511,12 +537,54 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
   const env = {
     RENDER_GIT_COMMIT: "a".repeat(40),
     SHOPIFY_APP_VERSION: "app-v1",
+    SHOPIFY_PRIMARY_SHOP_DOMAIN: "example.myshopify.com",
+  };
+  const control = {
+    id: "control_1",
+    shopDomain: "example.myshopify.com",
+    attestationId: "att_limited_1",
+    probeId: "probe_1",
+    status: "ACTIVE",
+    startsAt: new Date("2026-08-07T00:00:00Z"),
+    expiresAt: new Date("2026-08-14T00:00:00Z"),
+    maxOrderCount: 2,
+    maxGrossAmount: 3000,
+    maxOutstandingLiability: 3000,
+    maxSingleOrderAmount: 2000,
+    companyRefundReserveAmount: 3000,
+    orderCount: 1,
+    grossAmount: 1650,
+    outstandingLiabilityAmount: 1650,
+    allowedProductIdsJson: ["product_1"],
+    allowedShopifyProductIdsJson: ["gid://shopify/Product/1"],
+    projectionVersion: 2,
+    projectionSyncedAt: new Date("2026-08-07T00:05:00Z"),
+    metadataJson: {
+      seedMarketplaceOrderId: "order_1",
+      allowedShopifyVariantId: "gid://shopify/ProductVariant/1",
+      canaryQuantity: 1,
+      canaryInventoryQuantity: 1,
+      canaryInventoryTracked: true,
+      canaryInventoryPolicy: "DENY",
+      evidencePackageReference: "secure-evidence:limited-launch-1",
+    },
+  };
+  const projection = buildKomojuLimitedLaunchProjection(control);
+  control.metadataJson = {
+    ...control.metadataJson,
+    projectionState: "ACTIVE",
+    projectionRevision: projection.r,
+    projectionHash: projection.h,
+    projectionReadbackHash: projection.h,
+    projectionReadbackRevision: projection.r,
+    projectionCompareDigest: "compare-digest-1",
   };
   const prismaClient = {
     operationalReadinessAttestation: {
       async findMany() {
         return [
           {
+            id: "att_limited_1",
             checkKey: KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
             status: "CONFIRMED",
             evidenceReference: "komoju-limited-launch:probe_1",
@@ -527,11 +595,50 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
             metadataJson: {
               verificationSource: "komoju_zero_balance_limited_launch",
               probeId: "probe_1",
+              shopDomain: "example.myshopify.com",
+              shopifyOrderId: "gid://shopify/Order/1",
+              marketplaceOrderId: "order_1",
               releaseId: "aaaaaaaaaaaa:app-v1",
               releaseFingerprint: "c".repeat(64),
+              saleVerifiedAt: "2026-08-07T00:00:00.000Z",
+              completionDeadline: "2026-08-14T00:00:00.000Z",
+              actualPaidAmount: 1650,
+              currencyCode: "JPY",
+              maxOrderCount: 2,
+              maxGrossAmount: 3000,
+              maxOutstandingLiability: 3000,
+              maximumPlannedChargeAmount: 2000,
+              companyRefundReserveAmount: 3000,
+              allowedProductIds: ["product_1"],
+              allowedShopifyProductIds: ["gid://shopify/Product/1"],
+              allowedShopifyVariantId: "gid://shopify/ProductVariant/1",
+              canaryQuantity: 1,
+              canaryInventoryQuantity: 1,
+              canaryInventoryTracked: true,
+              canaryInventoryPolicy: "DENY",
+              allowedProductNames: ["Canary product"],
+              komojuPayoutCycle: "WEEKLY",
+              expectedBankDepositAt: "2026-08-12T00:00:00.000Z",
+              minimumPayoutAmount: 1000,
+              estimatedProcessingFeeAmount: 50,
+              payoutNotOnHoldConfirmed: true,
+              confirmedKomojuUnsettledBalanceAmount: 0,
+              zeroUnsettledBalanceConfirmed: true,
+              companyRefundReserveConfirmed: true,
+              directRefundFallbackConfirmed: true,
+              domesticPlatformDirectOnlyConfirmed: true,
+              thirdPartyCommerceDisabled: true,
+              euEnabledSellerCount: 0,
+              euEnabledProductCount: 0,
+              internationalEnabledProductCount: 0,
+              evidencePackageReference: "secure-evidence:limited-launch-1",
+              strictE2eStillRequired: true,
             },
           },
         ];
+      },
+      async findUnique() {
+        return (await this.findMany())[0];
       },
     },
     seller: {
@@ -561,6 +668,37 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
         };
       },
     },
+    komojuLimitedLaunchControl: {
+      async findUnique() {
+        return control;
+      },
+    },
+    marketplaceOrder: {
+      async findMany() {
+        return [
+          {
+            id: "order_1",
+            totalAmount: 1650,
+            financialStatus: "PAID",
+            sellerOrders: [
+              {
+                lines: [
+                  {
+                    productId: "product_1",
+                    shopifyProductId: "gid://shopify/Product/1",
+                    shopifyVariantId: "gid://shopify/ProductVariant/1",
+                    quantity: 1,
+                  },
+                ],
+              },
+            ],
+            paymentRefundOperations: [],
+            refundGuard: null,
+            directCustomerRefund: null,
+          },
+        ];
+      },
+    },
   };
   const inspection = await inspectOperationalReadiness({
     prismaClient,
@@ -576,7 +714,11 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
   );
   const checks = buildOperationalReadinessChecks({ inspection });
 
-  assert.equal(strictRow.ready, true);
+  assert.equal(
+    strictRow.ready,
+    true,
+    JSON.stringify({ strictRow, limitedRow }),
+  );
   assert.equal(
     strictRow.substitutedBy,
     KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
@@ -615,7 +757,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
       (row) =>
         row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
     ).reason,
-    "scope_changed",
+    "komoju_limited_launch_scope_changed",
   );
 
   prismaClient.productionTransactionProbe.findUnique = async () => ({
@@ -645,7 +787,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
       (row) =>
         row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
     ).reason,
-    "probe_not_continuing",
+    "komoju_limited_launch_probe_not_continuing",
   );
 });
 

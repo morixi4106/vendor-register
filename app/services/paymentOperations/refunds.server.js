@@ -50,11 +50,27 @@ async function reserveProviderRefundGuard(
     }
   }
   if (guard?.channel === "DIRECT") {
+    const conflictedGuard = prismaClient?.orderRefundGuard?.update
+      ? await prismaClient.orderRefundGuard.update({
+          where: { id: guard.id },
+          data: {
+            status: "CONFLICT",
+            metadataJson: {
+              ...(guard.metadataJson && typeof guard.metadataJson === "object"
+                ? guard.metadataJson
+                : {}),
+              conflictReason: "provider_refund_after_direct_reservation",
+              conflictingProviderReference: shopifyRefundId,
+              conflictDetectedAt: now.toISOString(),
+            },
+          },
+        })
+      : { ...guard, status: "CONFLICT" };
     return {
       ok: false,
       conflict: true,
       reason: "direct_customer_refund_already_completed",
-      guard,
+      guard: conflictedGuard,
     };
   }
   return { ok: true, guard };
@@ -188,7 +204,12 @@ function resolveRefundClassification(payload, paymentAttempt) {
 
 export async function observeShopifyRefundOperation(
   { payload, shop },
-  { prismaClient = prisma, env = process.env, now = new Date() } = {},
+  {
+    prismaClient = prisma,
+    env = process.env,
+    now = new Date(),
+    refreshLimitedLaunchControl = null,
+  } = {},
 ) {
   if (!prismaClient?.paymentRefundOperation?.upsert) {
     return {
@@ -321,6 +342,27 @@ export async function observeShopifyRefundOperation(
     },
   });
 
+  let conflictControl = null;
+  if (refundChannelConflict) {
+    try {
+      const refresh =
+        refreshLimitedLaunchControl ||
+        (await import("../komojuLimitedLaunchControl.server.js"))
+          .refreshKomojuLimitedLaunchControl;
+      conflictControl = await refresh(
+        { shopDomain, applyEmergencyHold: true },
+        { prismaClient, now },
+      );
+    } catch (error) {
+      console.error("Failed to apply refund conflict emergency hold", {
+        shopDomain,
+        shopifyOrderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      conflictControl = { ok: false, reason: "refund_conflict_hold_failed" };
+    }
+  }
+
   return {
     ok: true,
     tracked: true,
@@ -331,6 +373,7 @@ export async function observeShopifyRefundOperation(
         ? "direct_customer_refund_already_completed"
         : "payment_refund_confirmation_required",
     operation,
+    conflictControl,
   };
 }
 

@@ -19,6 +19,7 @@ import {
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_DEFINITION,
 } from "./komojuLimitedLaunchReadiness.server.js";
 import { buildOperationalReadinessChecks } from "./operationalReadinessChecks.js";
+import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "./checkoutValidationLiveProbe.js";
 
 export { KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY };
 export { buildOperationalReadinessChecks };
@@ -67,7 +68,7 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
   },
   {
     key: CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
-    label: "本番Function・Release Manifestの4シナリオ実機確認",
+    label: "本番Function・Release Manifestの必須シナリオ実機確認",
     validityDays: 7,
   },
   {
@@ -1476,6 +1477,7 @@ export async function recordOperationalReadinessAttestation(
   }
   if (
     normalizedKey === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY &&
+    normalizedStatus === OPERATIONAL_ATTESTATION_STATUS.CONFIRMED &&
     !isCompleteKomojuZeroBalanceLimitedLaunchAttestation({
       metadata: normalizedMetadata,
       evidenceReference: normalizedReference,
@@ -1528,7 +1530,7 @@ export async function recordOperationalReadinessAttestation(
         evidenceReference: normalizedReference,
         evidenceHash: normalizedHash,
         confirmedBy: normalizedActor,
-        confirmedAt: now,
+        confirmedAt: confirmed ? now : null,
         expiresAt: confirmed ? addDays(now, definition.validityDays) : null,
         notes: normalizeText(notes),
         metadataJson: normalizedMetadata,
@@ -1538,7 +1540,7 @@ export async function recordOperationalReadinessAttestation(
         evidenceReference: normalizedReference,
         evidenceHash: normalizedHash,
         confirmedBy: normalizedActor,
-        confirmedAt: now,
+        confirmedAt: confirmed ? now : null,
         expiresAt: confirmed ? addDays(now, definition.validityDays) : null,
         notes: normalizeText(notes),
         metadataJson: normalizedMetadata,
@@ -1586,12 +1588,6 @@ export function isCompleteCheckoutValidationLiveProbe(metadataJson) {
     "policyVersion",
     "shopDomain",
   ];
-  const requiredProbeIds = [
-    "directProductAllowed",
-    "blockedProductRejected",
-    "globalStopRejected",
-    "shopPayObserved",
-  ];
   return Boolean(
     Number(manifest.projectionSchemaVersion) >= 1 &&
     requiredManifestStrings.every(
@@ -1599,8 +1595,8 @@ export function isCompleteCheckoutValidationLiveProbe(metadataJson) {
     ) &&
     String(metadata.challengeNonce || "").trim().length >= 16 &&
     String(metadata.executedBy || "").trim().length > 0 &&
-    requiredProbeIds.every((probeId) =>
-      isCompleteLiveProbeScenario(probes[probeId], probeId),
+    CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.every(({ id, expectedResult }) =>
+      isCompleteLiveProbeScenario(probes[id], id, expectedResult),
     ),
   );
 }
@@ -1682,15 +1678,16 @@ export function isCompleteShopifyPayoutEvidenceAttestation({
   );
 }
 
-function isCompleteLiveProbeScenario(value, scenarioId) {
+function isCompleteLiveProbeScenario(value, scenarioId, expectedResult) {
   const probe = asMetadataObject(value);
   const observedAt = new Date(probe.observedAt);
   return Boolean(
     probe.scenarioId === scenarioId &&
     probe.passed === true &&
-    String(probe.expectedResult || "").trim() &&
-    String(probe.actualResult || "").trim() &&
+    probe.expectedResult === expectedResult &&
+    probe.actualResult === expectedResult &&
     String(probe.evidenceReference || "").trim() &&
+    normalizeSha256(probe.evidenceHash) &&
     String(probe.projectionRevision || "").trim() &&
     Number.isFinite(observedAt.getTime()),
   );

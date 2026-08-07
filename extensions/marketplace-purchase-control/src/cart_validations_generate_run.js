@@ -24,18 +24,25 @@ function parseProjection(value) {
 }
 
 function parseLimitedLaunchControl(value) {
-  if (!value) return { present: false, valid: true, control: null };
+  if (!value) return { present: false, valid: false, control: null };
   const control = parseProjection(value);
   const valid = Boolean(
     control &&
-      Number(control.v) === 1 &&
-      ["ACTIVE", "BLOCKED", "INACTIVE"].includes(String(control.s)) &&
+      Number(control.v) === 2 &&
+      ["ACTIVE", "BLOCKED", "INACTIVE", "PREPARING"].includes(
+        String(control.s),
+      ) &&
+      Number.isInteger(control.r) &&
+      control.r >= 1 &&
+      /^[a-f0-9]{64}$/.test(String(control.h || "")) &&
       Array.isArray(control.p) &&
       Number.isInteger(control.o) &&
       Number.isInteger(control.g) &&
       Number.isInteger(control.l) &&
       Number.isInteger(control.m) &&
       typeof control.e === "string" &&
+      typeof control.x === "string" &&
+      typeof control.q === "string" &&
       typeof control.c === "string",
   );
   return { present: true, valid, control: valid ? control : null };
@@ -50,7 +57,9 @@ function getLimitedLaunchError(input, currentDate) {
   const parsed = parseLimitedLaunchControl(
     input.shop?.komojuLimitedLaunchControl?.value,
   );
-  if (!parsed.present) return null;
+  if (!parsed.present) {
+    return "現在、購入条件を確認できないため注文を受け付けられません。時間をおいて再度お試しください。";
+  }
   if (!parsed.valid) {
     return "限定公開の購入条件を確認できません。時間をおいて再度お試しください。";
   }
@@ -58,6 +67,7 @@ function getLimitedLaunchError(input, currentDate) {
   if (control.s === "INACTIVE") return null;
   if (
     control.s === "BLOCKED" ||
+    control.s === "PREPARING" ||
     !/^\d{4}-\d{2}-\d{2}$/.test(currentDate) ||
     !/^\d{4}-\d{2}-\d{2}$/.test(control.e) ||
     currentDate >= control.e
@@ -65,10 +75,17 @@ function getLimitedLaunchError(input, currentDate) {
     return "限定公開期間が終了したため、現在注文を受け付けていません。";
   }
   const allowedProducts = new Set(control.p.map(String));
-  const productIds = (Array.isArray(input.cart?.lines) ? input.cart.lines : [])
+  const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
+  const productIds = cartLines
     .map((line) => String(line.merchandise?.product?.id || ""))
     .filter(Boolean);
   if (
+    control.p.length !== 1 ||
+    typeof control.q !== "string" ||
+    !control.q ||
+    cartLines.length !== 1 ||
+    Number(cartLines[0]?.quantity) !== 1 ||
+    String(cartLines[0]?.merchandise?.id || "") !== control.q ||
     productIds.length === 0 ||
     productIds.some((productId) => !allowedProducts.has(productId))
   ) {

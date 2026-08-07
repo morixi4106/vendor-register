@@ -11,7 +11,9 @@
         "operationalPurchaseControl": {
           "value": "ALLOWED"
         },
-        "komojuLimitedLaunchControl": null
+        "komojuLimitedLaunchControl": {
+          "value": "{\"v\":2,\"s\":\"INACTIVE\",\"r\":1,\"e\":\"9999-12-31\",\"x\":\"9999-12-31T00:00:00.000Z\",\"p\":[],\"q\":\"\",\"m\":0,\"o\":0,\"g\":0,\"l\":0,\"c\":\"JPY\",\"h\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+        }
       },
       "cart": {
         "lines": [
@@ -25,8 +27,10 @@
                   "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":false,\"status\":\"RECALLED\",\"reasonCodes\":[\"PRODUCT_RECALLED\"],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisionIds\":[\"decision-1\"],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":4,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
                 },
                 "id": "gid://shopify/Product/1"
-              }
-            }
+              },
+              "id": "gid://shopify/ProductVariant/1"
+            },
+            "quantity": 1
           }
         ],
         "cost": {

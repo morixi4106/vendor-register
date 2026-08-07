@@ -7,6 +7,11 @@ import {
 } from "@remix-run/react";
 
 import { productionReadinessStyles } from "./ProductionReadinessPage.styles.js";
+import { KomojuLimitedLaunchBaselineControl } from "./KomojuLimitedLaunchBaselineControl.jsx";
+import {
+  CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS,
+  CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT,
+} from "../../services/checkoutValidationLiveProbe.js";
 
 import {
   categoryLabel,
@@ -34,6 +39,9 @@ export default function ProductionReadinessPage() {
     ["stage_checkout_validation", "activate_checkout_validation"].includes(
       submittingIntent,
     );
+  const isLimitedLaunchBaselineSubmitting =
+    navigation.state === "submitting" &&
+    submittingIntent === "prepare_komoju_limited_launch_baseline";
   const displayChecks = data.checks.map((check) =>
     decorateCheckForDisplay(check, data),
   );
@@ -119,7 +127,7 @@ export default function ProductionReadinessPage() {
           </h2>
           <p className="readiness-next-step__text">
             {checkoutValidationActive
-              ? "次は実ストアで4シナリオを確認し、現在のリリースに証跡を記録します。"
+              ? `次は実ストアで${CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT}個の必須シナリオを確認し、現在のリリースに証跡を記録します。`
               : checkoutValidationPrepared
                 ? checkoutReplayReady
                   ? "再生確認は記録済みです。下の購入制御欄で内容を確認してから有効化します。"
@@ -454,21 +462,11 @@ export default function ProductionReadinessPage() {
                               value={data.liveProbeChallenge?.token || ""}
                               required
                             />
-                            {[
-                              ["directProductAllowed", "直販商品が購入できた"],
-                              [
-                                "blockedProductRejected",
-                                "BLOCKED商品が拒否された",
-                              ],
-                              [
-                                "globalStopRejected",
-                                "全体停止中に購入が拒否された",
-                              ],
-                              [
-                                "shopPayObserved",
-                                "Shop Payでも期待どおりになった",
-                              ],
-                            ].map(([name, label]) => (
+                            {CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(({
+                              id: name,
+                              label,
+                              expectedResult,
+                            }) => (
                               <div key={name} className="readiness-probe-row">
                                 <label>
                                   <input
@@ -492,8 +490,9 @@ export default function ProductionReadinessPage() {
                                 />
                                 <input
                                   name={`${name}ActualResult`}
-                                  placeholder="実際の結果"
+                                  placeholder={`実際の結果（${expectedResult}）`}
                                   aria-label={`${label}の実際の結果`}
+                                  pattern={expectedResult}
                                   required
                                 />
                                 <input
@@ -504,8 +503,12 @@ export default function ProductionReadinessPage() {
                                 />
                                 <input
                                   name={`${name}EvidenceHash`}
-                                  placeholder="証跡SHA-256（任意）"
+                                  placeholder="証跡SHA-256（64桁）"
                                   aria-label={`${label}の証跡SHA-256`}
+                                  minLength={64}
+                                  maxLength={64}
+                                  pattern="[A-Fa-f0-9]{64}"
+                                  required
                                 />
                               </div>
                             ))}
@@ -626,6 +629,10 @@ export default function ProductionReadinessPage() {
             </p>
           </div>
           <div className="readiness-inline-form">
+            <KomojuLimitedLaunchBaselineControl
+              actionResult={actionData?.komojuLimitedLaunchBaseline}
+              isSubmitting={isLimitedLaunchBaselineSubmitting}
+            />
             <Form method="post">
               <input
                 type="hidden"
@@ -669,7 +676,7 @@ export default function ProductionReadinessPage() {
         </div>
         {!data.checkoutValidation?.active && !checkoutReplayReady ? (
           <p className="readiness-tool__text">
-            有効化前に「購入制御Functionの開発ストア再生・遮断確認」を記録してください。本番4シナリオは有効化後に実施します。
+            有効化前に「購入制御Functionの開発ストア再生・遮断確認」を記録してください。本番の必須シナリオは有効化後に実施します。
           </p>
         ) : null}
         {actionData?.checkoutValidation ? (

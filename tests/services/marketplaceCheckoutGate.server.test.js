@@ -11,8 +11,83 @@ import {
   enforceUnresolvedShopifyProductPublicationBoundary,
   getMarketplaceCheckoutGateStatus,
   resolveMarketplaceCheckoutPolicy,
+  syncShopKomojuLimitedLaunchControl,
   syncMarketplaceCheckoutPolicyForProduct,
 } from "../../app/services/marketplaceCheckoutGate.server.js";
+
+function limitedLaunchShopState(value, compareDigest = "digest-1") {
+  return {
+    data: {
+      shop: {
+        id: "gid://shopify/Shop/1",
+        komojuLimitedLaunchControl: {
+          value: JSON.stringify(value),
+          compareDigest,
+        },
+      },
+    },
+  };
+}
+
+test("limited launch projection refuses a stale write over BLOCKED", async () => {
+  let calls = 0;
+  const result = await syncShopKomojuLimitedLaunchControl(
+    {
+      shopDomain: "shop-a.myshopify.com",
+      projection: { v: 2, s: "ACTIVE", r: 2 },
+    },
+    {
+      graphQL: async () => {
+        calls += 1;
+        return limitedLaunchShopState({ v: 2, s: "BLOCKED", r: 3 });
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "komoju_limited_launch_projection_stale");
+  assert.equal(result.currentState.s, "BLOCKED");
+  assert.equal(calls, 1);
+});
+
+test("compareDigest conflict re-reads state and cannot overwrite concurrent BLOCKED", async () => {
+  const calls = [];
+  const responses = [
+    limitedLaunchShopState({ v: 2, s: "INACTIVE", r: 1 }, "digest-before"),
+    {
+      data: {
+        metafieldsSet: {
+          metafields: [],
+          userErrors: [
+            { code: "COMPARE_DIGEST_MISMATCH", message: "compare digest" },
+          ],
+        },
+      },
+    },
+    limitedLaunchShopState({ v: 2, s: "BLOCKED", r: 2 }, "digest-after"),
+  ];
+  const result = await syncShopKomojuLimitedLaunchControl(
+    {
+      shopDomain: "shop-a.myshopify.com",
+      projection: { v: 2, s: "ACTIVE", r: 2 },
+    },
+    {
+      graphQL: async (input) => {
+        calls.push(input);
+        return responses.shift();
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "komoju_limited_launch_projection_stale");
+  assert.equal(result.currentState.s, "BLOCKED");
+  assert.equal(
+    calls[1].variables.metafields[0].compareDigest,
+    "digest-before",
+  );
+  assert.equal(calls.length, 3);
+});
 
 test("shared watchdog veto is cleared with compare-and-set verification", async () => {
   const calls = [];

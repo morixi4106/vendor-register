@@ -38,7 +38,16 @@ function eligibleProbe(overrides = {}) {
     paidVerifiedAt: new Date("2026-08-07T01:00:00.000Z"),
     updatedAt: new Date("2026-08-07T01:30:00.000Z"),
     orderEvidenceJson: {
-      products: [{ id: "product_1" }],
+      products: [{ productId: "product_1", quantity: 1 }],
+      commercialEvidence: {
+        lines: [
+          {
+            productId: "product_1",
+            variantId: "gid://shopify/ProductVariant/1",
+            quantity: 1,
+          },
+        ],
+      },
       probeConfig: {
         provider: "KOMOJU",
         paymentMethod: "CARD",
@@ -85,6 +94,8 @@ function buildPrismaClient({
       id: "product_1",
       name: "Platform product",
       shopifyProductId: "gid://shopify/Product/1",
+      shopifyVariantId: "gid://shopify/ProductVariant/1",
+      inventoryQuantity: 1,
     },
   ];
   const client = {
@@ -117,10 +128,21 @@ function buildPrismaClient({
         storedAttestation = { id: "att_limited_1", ...create };
         return storedAttestation;
       },
+      async update({ data }) {
+        storedAttestation = { ...storedAttestation, ...data };
+        return storedAttestation;
+      },
     },
     komojuLimitedLaunchControl: {
+      async findUnique() {
+        return storedControl;
+      },
       async create({ data }) {
         storedControl = { id: "control_1", ...data };
+        return storedControl;
+      },
+      async update({ data }) {
+        storedControl = { ...storedControl, ...data };
         return storedControl;
       },
     },
@@ -160,18 +182,32 @@ function recordInput(previewToken, overrides = {}) {
   };
 }
 
+const canaryGraphQL = async ({ variables }) => ({
+  data: {
+    productVariant: {
+      id: variables.id,
+      inventoryQuantity: 1,
+      inventoryPolicy: "DENY",
+      product: { id: "gid://shopify/Product/1" },
+      inventoryItem: { tracked: true },
+    },
+  },
+});
+
 async function createPreview(prismaClient, options = {}) {
   return previewKomojuZeroBalanceLimitedLaunch(previewInput(), {
     prismaClient,
     env: RELEASE_ENV,
     now: NOW,
+    graphQL: canaryGraphQL,
     ...options,
   });
 }
 
-const refreshControl = async () => ({
+const syncProjection = async ({ projection }) => ({
   ok: true,
-  control: { id: "control_1", status: "ACTIVE" },
+  compareDigest: `digest:${projection.r}`,
+  projection,
 });
 
 test("limited launch scope requires third-party and EU commerce to remain disabled", async () => {
@@ -225,6 +261,17 @@ test("limited launch records one release-bound seven-day attestation after previ
     preview.preview.allowedProducts.map((product) => product.id),
     ["product_1"],
   );
+  assert.equal(preview.preview.selectedProductId, "product_1");
+  assert.equal(
+    preview.preview.selectedShopifyVariantId,
+    "gid://shopify/ProductVariant/1",
+  );
+  assert.equal(preview.preview.inventoryQuantity, 1);
+  assert.equal(preview.preview.inventoryTracked, true);
+  assert.equal(preview.preview.inventoryPolicy, "DENY");
+  assert.equal(preview.preview.projectionRevision, 1);
+  assert.equal(preview.preview.generatedAt, NOW.toISOString());
+  assert.equal(preview.preview.expiresAt, "2026-08-07T02:15:00.000Z");
 
   const result = await recordKomojuZeroBalanceLimitedLaunch(
     recordInput(preview.preview.previewToken),
@@ -232,11 +279,12 @@ test("limited launch records one release-bound seven-day attestation after previ
       prismaClient,
       env: RELEASE_ENV,
       now: NOW,
-      refreshControl,
+      graphQL: canaryGraphQL,
+      syncProjection,
     },
   );
 
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.existing, false);
   assert.equal(
     prismaClient.storedAttestation.expiresAt.toISOString(),
@@ -250,6 +298,73 @@ test("limited launch records one release-bound seven-day attestation after previ
   assert.equal(prismaClient.storedControl.maxGrossAmount, 3000);
 });
 
+test("a database finalize failure rolls Shopify back to BLOCKED and the same activation can retry safely", async () => {
+  const prismaClient = buildPrismaClient();
+  const preview = await createPreview(prismaClient);
+  const originalTransaction = prismaClient.$transaction.bind(prismaClient);
+  let transactionCount = 0;
+  prismaClient.$transaction = async (callback) => {
+    transactionCount += 1;
+    if (transactionCount === 2) {
+      throw new Error("simulated finalize failure");
+    }
+    return originalTransaction(callback);
+  };
+  const projectionStates = [];
+  const recordingSync = async ({ projection }) => {
+    projectionStates.push({ state: projection.s, revision: projection.r });
+    return {
+      ok: true,
+      compareDigest: `digest:${projection.r}`,
+      projection,
+    };
+  };
+
+  const failed = await recordKomojuZeroBalanceLimitedLaunch(
+    recordInput(preview.preview.previewToken),
+    {
+      prismaClient,
+      env: RELEASE_ENV,
+      now: NOW,
+      graphQL: canaryGraphQL,
+      syncProjection: recordingSync,
+    },
+  );
+
+  assert.equal(failed.ok, false);
+  assert.equal(failed.reason, "limited_launch_database_finalize_failed");
+  assert.equal(prismaClient.storedControl.status, "BLOCKED");
+  assert.equal(prismaClient.storedAttestation.status, "FAILED");
+  assert.deepEqual(projectionStates, [
+    { state: "PREPARING", revision: 1 },
+    { state: "ACTIVE", revision: 2 },
+    { state: "BLOCKED", revision: 3 },
+  ]);
+
+  prismaClient.$transaction = originalTransaction;
+  const retryPreview = await createPreview(prismaClient);
+  assert.equal(retryPreview.ok, true, JSON.stringify(retryPreview));
+  const retried = await recordKomojuZeroBalanceLimitedLaunch(
+    recordInput(retryPreview.preview.previewToken),
+    {
+      prismaClient,
+      env: RELEASE_ENV,
+      now: NOW,
+      graphQL: canaryGraphQL,
+      syncProjection: recordingSync,
+    },
+  );
+
+  assert.equal(retried.ok, true, JSON.stringify(retried));
+  assert.equal(retried.existing, false);
+  assert.equal(prismaClient.storedControl.status, "ACTIVE");
+  assert.equal(prismaClient.storedControl.projectionVersion, 6);
+  assert.deepEqual(projectionStates.slice(-2), [
+    { state: "PREPARING", revision: 5 },
+    { state: "ACTIVE", revision: 6 },
+  ]);
+});
+
 test("limited launch is idempotent but cannot be renewed or reassigned", async () => {
   const prismaClient = buildPrismaClient();
   const preview = await createPreview(prismaClient);
@@ -257,19 +372,20 @@ test("limited launch is idempotent but cannot be renewed or reassigned", async (
     prismaClient,
     env: RELEASE_ENV,
     now: NOW,
-    refreshControl,
+    graphQL: canaryGraphQL,
+    syncProjection,
   };
   const first = await recordKomojuZeroBalanceLimitedLaunch(
     recordInput(preview.preview.previewToken),
     options,
   );
-  assert.equal(first.ok, true);
+  assert.equal(first.ok, true, JSON.stringify(first));
 
   const repeated = await recordKomojuZeroBalanceLimitedLaunch(
     recordInput(preview.preview.previewToken),
     options,
   );
-  assert.equal(repeated.ok, true);
+  assert.equal(repeated.ok, true, JSON.stringify(repeated));
   assert.equal(repeated.existing, true);
 
   const reassigned = await previewKomojuZeroBalanceLimitedLaunch(
@@ -277,7 +393,7 @@ test("limited launch is idempotent but cannot be renewed or reassigned", async (
       evidenceReference: "private-evidence:different-package",
       evidenceHash: "c".repeat(64),
     }),
-    { prismaClient, env: RELEASE_ENV, now: NOW },
+    { prismaClient, env: RELEASE_ENV, now: NOW, graphQL: canaryGraphQL },
   );
   assert.equal(reassigned.reason, "limited_launch_exception_already_used");
 });
@@ -291,10 +407,11 @@ test("limited launch preview expires and rejects changed product scope", async (
       prismaClient: expiredClient,
       env: RELEASE_ENV,
       now: new Date(NOW.getTime() + 16 * 60 * 1000),
-      refreshControl,
+      graphQL: canaryGraphQL,
+      syncProjection,
     },
   );
-  assert.equal(expired.reason, "limited_launch_preview_changed");
+  assert.equal(expired.reason, "limited_launch_preview_expired");
 
   const changedClient = buildPrismaClient();
   const changedPreview = await createPreview(changedClient);
@@ -311,10 +428,11 @@ test("limited launch preview expires and rejects changed product scope", async (
       prismaClient: changedClient,
       env: RELEASE_ENV,
       now: NOW,
-      refreshControl,
+      graphQL: canaryGraphQL,
+      syncProjection,
     },
   );
-  assert.equal(changed.reason, "limited_launch_preview_changed");
+  assert.equal(changed.reason, "limited_launch_canary_inventory_invalid");
 });
 
 test("limited launch preview rejects a different release and non-restricted scope", async () => {

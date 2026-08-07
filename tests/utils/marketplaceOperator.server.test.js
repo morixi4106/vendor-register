@@ -22,6 +22,12 @@ test("production readiness routes high-risk intents to explicit roles", () => {
     MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   );
   assert.equal(
+    resolveProductionReadinessOperatorRole(
+      "prepare_komoju_limited_launch_baseline",
+    ),
+    MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
+  );
+  assert.equal(
     resolveProductionReadinessOperatorRole("record_operational_attestation"),
     MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER,
   );

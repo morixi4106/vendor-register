@@ -15,7 +15,10 @@ import {
   reviewPaymentAttempt,
 } from "../services/paymentOperations.server.js";
 import { reconcileWithdrawalRefundWebhook } from "../services/withdrawalDirectReturns.server.js";
-import { recordDirectCustomerRefund } from "../services/directCustomerRefund.server.js";
+import {
+  completeDirectCustomerRefund,
+  prepareDirectCustomerRefund,
+} from "../services/directCustomerRefund.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -43,7 +46,11 @@ const ACTION_ROLES = Object.freeze({
   ],
   preview_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
   backfill_paid_ledger: [MARKETPLACE_OPERATOR_ROLES.ADMIN],
-  record_direct_customer_refund: [
+  prepare_direct_customer_refund: [
+    MARKETPLACE_OPERATOR_ROLES.ADMIN,
+    MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
+  ],
+  complete_direct_customer_refund: [
     MARKETPLACE_OPERATOR_ROLES.ADMIN,
     MARKETPLACE_OPERATOR_ROLES.FINANCE_APPROVER,
   ],
@@ -110,8 +117,19 @@ export const action = async ({ request }) => {
             limit: formData.get("limit"),
           })
         : { ok: false, reason: "confirmation_required" };
-  } else if (intent === "record_direct_customer_refund") {
-    result = await recordDirectCustomerRefund({
+  } else if (intent === "prepare_direct_customer_refund") {
+    result = await prepareDirectCustomerRefund({
+      shopDomain: session.shop,
+      orderReference: formData.get("orderReference"),
+      amount: formData.get("amount"),
+      currencyCode: formData.get("currencyCode"),
+      recipientConsentReference: formData.get("recipientConsentReference"),
+      recipientConsentHash: formData.get("recipientConsentHash"),
+      confirm: formData.get("confirm"),
+      actor,
+    });
+  } else if (intent === "complete_direct_customer_refund") {
+    result = await completeDirectCustomerRefund({
       shopDomain: session.shop,
       orderReference: formData.get("orderReference"),
       amount: formData.get("amount"),
@@ -177,6 +195,7 @@ export default function PaymentOperationsPage() {
     refunds,
     settlementBatches,
     directCustomerRefunds,
+    directRefundReservations,
   } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
@@ -241,14 +260,14 @@ export default function PaymentOperationsPage() {
       <section className="payment-section">
         <h2>会社からの直接返金</h2>
         <p>
-          KOMOJUで返金できない場合だけ使用します。購入者の同意と送金完了を確認し、
-          注文全額を台帳へ一度だけ反映します。記録後は同じ注文のShopify/KOMOJU返金を止めます。
+          KOMOJUで返金できない場合だけ使用します。最初に購入者の同意と注文全額を確認して
+          返金経路を予約し、実際の送金後に証拠を記録して台帳へ反映します。
         </p>
         <Form method="post" className="payment-form payment-form--direct-refund">
           <input
             type="hidden"
             name="intent"
-            value="record_direct_customer_refund"
+            value="prepare_direct_customer_refund"
           />
           <input name="orderReference" placeholder="注文番号（例: #1001）" required />
           <input name="amount" type="number" min="1" placeholder="全額返金額（円）" required />
@@ -264,34 +283,53 @@ export default function PaymentOperationsPage() {
             placeholder="購入者同意証跡のSHA-256（64桁）"
             required
           />
-          <input
-            name="transferEvidenceReference"
-            placeholder="送金証跡の保存先"
-            required
-          />
-          <input
-            name="transferEvidenceHash"
-            pattern="[A-Fa-f0-9]{64}"
-            placeholder="送金証跡のSHA-256（64桁）"
-            required
-          />
-          <input
-            name="transferReferenceMasked"
-            placeholder="送金参照番号（末尾4桁など）"
-            required
-          />
           <label className="payment-confirm payment-confirm--wide">
             <input
               type="checkbox"
               name="confirm"
-              value="direct_customer_refund_completed"
+              value="direct_customer_refund_prepare"
               required
             />
-            購入者の同意を取得し、元の注文全額を会社から送金済みです。この記録後は同じ注文をKOMOJUで返金しません。
+            購入者の同意と注文全額を確認しました。この予約後は同じ注文をShopify/KOMOJUから返金しません。
           </label>
           <button type="submit" disabled={busy}>
-            直接返金を確定して台帳へ反映
+            直接返金を予約
           </button>
+        </Form>
+        <div className="payment-list">
+          {directRefundReservations.length === 0 ? (
+            <p className="payment-empty">送金待ちの直接返金予約はありません。</p>
+          ) : null}
+          {directRefundReservations.map((guard) => (
+            <article className="payment-item" key={guard.id}>
+              <div className="payment-item__summary">
+                <div>
+                  <strong>{guard.shopifyOrderId}</strong>
+                  <p>
+                    {formatMoney(guard.amount, guard.currencyCode)} / 予約日時 {formatDate(guard.reservedAt)}
+                  </p>
+                </div>
+                <Status tone="warning">送金待ち</Status>
+              </div>
+            </article>
+          ))}
+        </div>
+        <h3>送金完了を記録</h3>
+        <Form method="post" className="payment-form payment-form--direct-refund">
+          <input type="hidden" name="intent" value="complete_direct_customer_refund" />
+          <input name="orderReference" placeholder="予約済みの注文番号（例: #1001）" required />
+          <input name="amount" type="number" min="1" placeholder="全額返金額（円）" required />
+          <input type="hidden" name="currencyCode" value="jpy" />
+          <input name="recipientConsentReference" placeholder="準備時と同じ購入者同意の保存先" required />
+          <input name="recipientConsentHash" pattern="[A-Fa-f0-9]{64}" placeholder="準備時と同じ同意証跡SHA-256" required />
+          <input name="transferEvidenceReference" placeholder="送金証跡の保存先" required />
+          <input name="transferEvidenceHash" pattern="[A-Fa-f0-9]{64}" placeholder="送金証跡のSHA-256（64桁）" required />
+          <input name="transferReferenceMasked" placeholder="送金参照番号（末尾4桁など）" required />
+          <label className="payment-confirm payment-confirm--wide">
+            <input type="checkbox" name="confirm" value="direct_customer_refund_completed" required />
+            予約済みの注文全額を購入者へ送金しました。送金証拠を確認し、台帳へ一度だけ反映します。
+          </label>
+          <button type="submit" disabled={busy}>送金完了を確定して台帳へ反映</button>
         </Form>
         <div className="payment-list">
           {directCustomerRefunds.length === 0 ? (
