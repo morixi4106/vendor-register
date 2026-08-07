@@ -153,6 +153,7 @@ const SHOP_OPERATIONAL_CONTROL_QUERY = `#graphql
         key: "komoju_limited_launch_control"
       ) {
         value
+        compareDigest
       }
       watchdogPurchaseStop: metafield(
         namespace: "vendor_register_watchdog"
@@ -668,16 +669,65 @@ export async function syncShopKomojuLimitedLaunchControl(
     return { ok: false, reason: "invalid_komoju_limited_launch_control" };
   }
   const serialized = JSON.stringify(projection);
-  const currentResponse = await graphQL({
-    shopDomain,
-    apiVersion: SHOPIFY_API_VERSION,
-    query: SHOP_OPERATIONAL_CONTROL_QUERY,
-  });
-  const shop = currentResponse?.data?.shop || null;
-  if (!shop?.id) return { ok: false, reason: "shop_not_found" };
-  const beforeState = normalizeText(shop.komojuLimitedLaunchControl?.value);
+  const desiredRevision = Number(projection.r);
+  const desiredState = String(projection.s || "").toUpperCase();
+  if (
+    Number(projection.v) !== 2 ||
+    !Number.isInteger(desiredRevision) ||
+    desiredRevision < 1 ||
+    !["INACTIVE", "PREPARING", "ACTIVE", "BLOCKED"].includes(desiredState)
+  ) {
+    return { ok: false, reason: "invalid_komoju_limited_launch_projection" };
+  }
 
-  if (beforeState !== serialized) {
+  const statePriority = { INACTIVE: 0, PREPARING: 1, ACTIVE: 2, BLOCKED: 3 };
+  let initialState = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const currentResponse = await graphQL({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: SHOP_OPERATIONAL_CONTROL_QUERY,
+    });
+    const shop = currentResponse?.data?.shop || null;
+    if (!shop?.id) return { ok: false, reason: "shop_not_found" };
+    const metafield = shop.komojuLimitedLaunchControl || null;
+    const beforeState = normalizeText(metafield?.value);
+    if (initialState === null) initialState = beforeState;
+    if (beforeState === serialized) {
+      return {
+        ok: true,
+        shopDomain,
+        changed: initialState !== serialized,
+        beforeState: initialState,
+        state: projection,
+        compareDigest: metafield?.compareDigest ?? null,
+        revision: desiredRevision,
+        attempts: attempt,
+      };
+    }
+
+    let current = null;
+    try {
+      current = beforeState ? JSON.parse(beforeState) : null;
+    } catch {
+      current = null;
+    }
+    const currentRevision = Number(current?.r);
+    const currentState = String(current?.s || "").toUpperCase();
+    if (
+      Number.isInteger(currentRevision) &&
+      (currentRevision > desiredRevision ||
+        (currentRevision === desiredRevision &&
+          (statePriority[currentState] ?? 99) >= statePriority[desiredState]))
+    ) {
+      return {
+        ok: false,
+        reason: "komoju_limited_launch_projection_stale",
+        currentState: current,
+        desiredState: projection,
+      };
+    }
+
     const { data } = await graphQL({
       shopDomain,
       apiVersion: SHOPIFY_API_VERSION,
@@ -690,39 +740,52 @@ export async function syncShopKomojuLimitedLaunchControl(
             key: KOMOJU_LIMITED_LAUNCH_CONTROL_KEY,
             type: "json",
             value: serialized,
+            compareDigest: metafield?.compareDigest ?? null,
           },
         ],
       },
     });
     const payload = data?.metafieldsSet;
-    assertNoUserErrors(payload, "metafieldsSet KOMOJU limited launch control");
+    const errors = Array.isArray(payload?.userErrors) ? payload.userErrors : [];
+    if (errors.length > 0) {
+      const retryable = errors.some((error) =>
+        String(error?.code || error?.message || "")
+          .toLowerCase()
+          .includes("compare"),
+      );
+      if (retryable && attempt < 3) continue;
+      assertNoUserErrors(payload, "metafieldsSet KOMOJU limited launch control");
+    }
     if (!payload?.metafields?.[0]) {
       throw new Error(
         "metafieldsSet did not return the KOMOJU limited launch control metafield",
       );
     }
-  }
 
-  const verifiedResponse = await graphQL({
-    shopDomain,
-    apiVersion: SHOPIFY_API_VERSION,
-    query: SHOP_OPERATIONAL_CONTROL_QUERY,
-  });
-  const verifiedState = normalizeText(
-    verifiedResponse?.data?.shop?.komojuLimitedLaunchControl?.value,
-  );
-  if (verifiedState !== serialized) {
-    const error = new Error("KOMOJU limited launch control verification failed");
-    error.reason = "komoju_limited_launch_control_verification_failed";
-    throw error;
+    const verifiedResponse = await graphQL({
+      shopDomain,
+      apiVersion: SHOPIFY_API_VERSION,
+      query: SHOP_OPERATIONAL_CONTROL_QUERY,
+    });
+    const verifiedMetafield =
+      verifiedResponse?.data?.shop?.komojuLimitedLaunchControl || null;
+    if (normalizeText(verifiedMetafield?.value) === serialized) {
+      return {
+        ok: true,
+        shopDomain,
+        changed: initialState !== serialized,
+        beforeState: initialState,
+        state: projection,
+        compareDigest: verifiedMetafield?.compareDigest ?? null,
+        revision: desiredRevision,
+        attempts: attempt,
+      };
+    }
   }
 
   return {
-    ok: true,
-    shopDomain,
-    changed: beforeState !== serialized,
-    beforeState,
-    state: projection,
+    ok: false,
+    reason: "komoju_limited_launch_control_verification_failed",
   };
 }
 

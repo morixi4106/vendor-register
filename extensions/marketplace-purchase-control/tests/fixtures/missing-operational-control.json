@@ -9,7 +9,9 @@
           "date": "2026-07-24"
         },
         "operationalPurchaseControl": null,
-        "komojuLimitedLaunchControl": null
+        "komojuLimitedLaunchControl": {
+          "value": "{\"v\":2,\"s\":\"INACTIVE\",\"r\":1,\"e\":\"9999-12-31\",\"x\":\"9999-12-31T00:00:00.000Z\",\"p\":[],\"q\":\"\",\"m\":0,\"o\":0,\"g\":0,\"l\":0,\"c\":\"JPY\",\"h\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+        }
       },
       "cart": {
         "lines": [
@@ -23,8 +25,10 @@
                   "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":true,\"status\":\"ELIGIBLE\",\"reasonCodes\":[],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":1,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
                 },
                 "id": "gid://shopify/Product/1"
-              }
-            }
+              },
+              "id": "gid://shopify/ProductVariant/1"
+            },
+            "quantity": 1
           }
         ],
         "cost": {

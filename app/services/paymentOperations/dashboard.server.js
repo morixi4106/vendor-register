@@ -165,9 +165,16 @@ export async function getPaymentOperationsDashboard({
       refunds: [],
       settlementBatches: [],
       directCustomerRefunds: [],
+      directRefundReservations: [],
     };
   }
-  const [attempts, refunds, settlementBatches, directCustomerRefunds] =
+  const [
+    attempts,
+    refunds,
+    settlementBatches,
+    directCustomerRefunds,
+    directRefundReservations,
+  ] =
     await Promise.all([
     prismaClient.marketplacePaymentAttempt.findMany({
       orderBy: [{ requiresReview: "desc" }, { updatedAt: "desc" }],
@@ -206,6 +213,13 @@ export async function getPaymentOperationsDashboard({
           take: 50,
         })
       : [],
+    prismaClient.orderRefundGuard?.findMany
+      ? prismaClient.orderRefundGuard.findMany({
+          where: { channel: "DIRECT", status: "RESERVED" },
+          orderBy: [{ reservedAt: "desc" }],
+          take: 50,
+        })
+      : [],
   ]);
   return {
     inspection,
@@ -213,6 +227,7 @@ export async function getPaymentOperationsDashboard({
     refunds,
     settlementBatches,
     directCustomerRefunds,
+    directRefundReservations,
   };
 }
 

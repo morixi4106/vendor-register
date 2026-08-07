@@ -25,6 +25,8 @@ const PRODUCTION_READINESS_ROLE_BY_INTENT = Object.freeze({
   release_legal_email_hold:
     MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
   activate_checkout_gate: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
+  prepare_komoju_limited_launch_baseline:
+    MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   stage_checkout_validation: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   activate_checkout_validation: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
 });

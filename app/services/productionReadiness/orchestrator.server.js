@@ -264,9 +264,9 @@ export function includeCheckoutValidationInProductionReadiness(readiness, checko
     id: "operational_attestation_checkout_validation_live_probe_completed",
     category: "operations",
     status: productionRelease.ready ? "pass" : "fail",
-    title: "本番Function・Release Manifestの4シナリオ実機確認",
+    title: "本番Function・Release Manifestの必須シナリオ実機確認",
     detail: productionRelease.ready ? `リリース ${productionRelease.manifest.releaseId} の実チェックアウト証跡が現在の稼働版と一致しています。` : `リリース証跡が現在の稼働版と一致しません: ${productionRelease.mismatches.join(", ")}`,
-    action: productionRelease.ready ? "" : "SHOPIFY_APP_VERSIONを設定し、本番確認画面で4シナリオを実行して現在のIDを記録してください。"
+    action: productionRelease.ready ? "" : "SHOPIFY_APP_VERSIONを設定し、本番確認画面で必須シナリオを実行して現在のIDを記録してください。"
   };
   const checks = [...(readiness?.checks || []).filter(check => check.id !== checkoutValidationCheck.id && check.id !== productionReleaseCheck.id), productionReleaseCheck, checkoutValidationCheck];
   const releaseSummary = summarizeProductionReadinessChecks(checks);

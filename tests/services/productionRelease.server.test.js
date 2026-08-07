@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import test from "node:test";
 
+import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../../app/services/checkoutValidationLiveProbe.js";
+
 import {
   PRODUCTION_SCHEMA_MIGRATION_VERSION,
   buildProductionReleaseExpectation,
@@ -25,31 +27,30 @@ function buildReadiness(metadataJson) {
 }
 
 function completeProbes() {
-  const definitions = {
-    directProductAllowed: "checkout_allowed",
-    blockedProductRejected: "checkout_rejected",
-    globalStopRejected: "checkout_rejected",
-    shopPayObserved: "checkout_allowed",
-  };
   return Object.fromEntries(
-    Object.entries(definitions).map(([scenarioId, expectedResult]) => [
-      scenarioId,
-      {
+    CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(
+      ({ id: scenarioId, expectedResult }) => [
         scenarioId,
-        passed: true,
-        expectedResult,
-        actualResult: expectedResult,
-        observedAt: "2026-07-24T10:00:00.000Z",
-        evidenceReference: `evidence:${scenarioId}`,
-        evidenceHash: "a".repeat(64),
-        projectionRevision: "42",
-      },
-    ]),
+        {
+          scenarioId,
+          passed: true,
+          expectedResult,
+          actualResult: expectedResult,
+          observedAt: "2026-07-24T10:00:00.000Z",
+          evidenceReference: `evidence:${scenarioId}`,
+          evidenceHash: "a".repeat(64),
+          projectionRevision: "42",
+        },
+      ],
+    ),
   );
 }
 
 test("production release schema version tracks the latest committed migration", async () => {
-  const migrationDirectory = new URL("../../prisma/migrations/", import.meta.url);
+  const migrationDirectory = new URL(
+    "../../prisma/migrations/",
+    import.meta.url,
+  );
   const entries = await readdir(migrationDirectory, { withFileTypes: true });
   const versions = entries
     .filter((entry) => entry.isDirectory())

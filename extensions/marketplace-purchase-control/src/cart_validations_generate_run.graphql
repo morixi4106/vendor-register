@@ -30,8 +30,10 @@ query CartValidationsGenerateRunInput {
       }
     }
     lines {
+      quantity
       merchandise {
         ... on ProductVariant {
+          id
           product {
             id
             marketplaceCheckoutPolicy: metafield(

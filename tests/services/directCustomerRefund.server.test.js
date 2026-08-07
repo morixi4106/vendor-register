@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { recordDirectCustomerRefund } from "../../app/services/directCustomerRefund.server.js";
+import {
+  completeDirectCustomerRefund,
+  prepareDirectCustomerRefund,
+  recordDirectCustomerRefund,
+} from "../../app/services/directCustomerRefund.server.js";
 
 const SHOP = "example.myshopify.com";
 const ORDER_ID = "gid://shopify/Order/100";
@@ -135,6 +139,67 @@ function directRefundPrisma({ storedOrder = order(), ledgerEntries } = {}) {
 
 const refreshControl = async () => ({ ok: true, skipped: true });
 
+test("preparing a direct refund reserves the channel without recording a transfer", async () => {
+  const prismaClient = directRefundPrisma();
+  let refreshCount = 0;
+  const result = await prepareDirectCustomerRefund(
+    input({ confirm: "direct_customer_refund_prepare" }),
+    {
+      prismaClient,
+      now: NOW,
+      refreshLimitedLaunchControl: async () => {
+        refreshCount += 1;
+        return { ok: true };
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(prismaClient._state.guard.channel, "DIRECT");
+  assert.equal(prismaClient._state.guard.status, "RESERVED");
+  assert.equal(prismaClient._state.directRefund, null);
+  assert.equal(prismaClient._state.createdLedger.length, 0);
+  assert.equal(refreshCount, 1);
+});
+
+test("completing a direct refund without a reservation is rejected", async () => {
+  const prismaClient = directRefundPrisma();
+  const result = await completeDirectCustomerRefund(input(), {
+    prismaClient,
+    now: NOW,
+    refreshLimitedLaunchControl: refreshControl,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "direct_refund_not_prepared",
+  });
+  assert.equal(prismaClient._state.directRefund, null);
+  assert.equal(prismaClient._state.createdLedger.length, 0);
+});
+
+test("a prepared direct refund completes with the same consent evidence", async () => {
+  const prismaClient = directRefundPrisma();
+  const prepared = await prepareDirectCustomerRefund(
+    input({ confirm: "direct_customer_refund_prepare" }),
+    {
+      prismaClient,
+      now: NOW,
+      refreshLimitedLaunchControl: refreshControl,
+    },
+  );
+  const completed = await completeDirectCustomerRefund(input(), {
+    prismaClient,
+    now: NOW,
+    refreshLimitedLaunchControl: refreshControl,
+  });
+
+  assert.equal(prepared.ok, true);
+  assert.equal(completed.ok, true);
+  assert.equal(prismaClient._state.guard.status, "COMPLETED");
+  assert.equal(prismaClient._state.createdLedger.length, 1);
+});
+
 test("direct refund records one full debit and completes the refund guard", async () => {
   const prismaClient = directRefundPrisma();
   const result = await recordDirectCustomerRefund(input(), {
@@ -187,10 +252,14 @@ test("provider refund reservation prevents a later direct refund", async () => {
     now: NOW,
     refreshLimitedLaunchControl: refreshControl,
   });
-  assert.deepEqual(result, {
-    ok: false,
-    reason: "provider_refund_already_started",
-  });
+  assert.equal(result.ok, false);
+  assert.equal(result.conflict, true);
+  assert.equal(result.reason, "provider_refund_already_started");
+  assert.equal(prismaClient._state.guard.status, "CONFLICT");
+  assert.equal(
+    prismaClient._state.guard.metadataJson.conflictReason,
+    "direct_refund_after_provider_reservation",
+  );
   assert.equal(prismaClient._state.createdLedger.length, 0);
 });
 
