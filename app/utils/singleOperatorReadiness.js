@@ -1,6 +1,6 @@
 const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
 
-const THIRD_PARTY_COMMERCE_FLAGS = Object.freeze([
+export const THIRD_PARTY_COMMERCE_FLAGS = Object.freeze([
   "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED",
   "MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED",
   "MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED",
@@ -20,8 +20,12 @@ export function isSingleOperatorPayoutReadinessAllowed(
 ) {
   return Boolean(
     isEnabled(env.SINGLE_OPERATOR_PAYOUT_ATTESTATION_ENABLED) &&
-      THIRD_PARTY_COMMERCE_FLAGS.every((key) => !isEnabled(env[key])),
+      isThirdPartyCommerceDisabled(env),
   );
+}
+
+export function isThirdPartyCommerceDisabled(env = process.env) {
+  return THIRD_PARTY_COMMERCE_FLAGS.every((key) => !isEnabled(env[key]));
 }
 
 function isEnabled(value) {

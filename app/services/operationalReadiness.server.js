@@ -12,6 +12,16 @@ import {
   OPERATIONAL_CONTROL_TYPE,
   PLATFORM_OPERATIONAL_CONTROL_KEY,
 } from "./operationalControls.server.js";
+import {
+  applyKomojuLimitedLaunchReadiness,
+  isCompleteKomojuZeroBalanceLimitedLaunchAttestation,
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_DEFINITION,
+} from "./komojuLimitedLaunchReadiness.server.js";
+import { buildOperationalReadinessChecks } from "./operationalReadinessChecks.js";
+
+export { KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY };
+export { buildOperationalReadinessChecks };
 
 export {
   EMAIL_MESSAGE_CLASS,
@@ -111,6 +121,7 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 90,
     automated: true,
   },
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_DEFINITION,
 ]);
 
 export function inspectCheckoutValidationActivationEvidence(
@@ -1464,6 +1475,20 @@ export async function recordOperationalReadinessAttestation(
     };
   }
   if (
+    normalizedKey === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY &&
+    !isCompleteKomojuZeroBalanceLimitedLaunchAttestation({
+      metadata: normalizedMetadata,
+      evidenceReference: normalizedReference,
+      evidenceHash: normalizedHash,
+      confirmedBy: normalizedActor,
+    })
+  ) {
+    return {
+      ok: false,
+      reason: "komoju_zero_balance_limited_launch_evidence_required",
+    };
+  }
+  if (
     normalizedKey === CHECKOUT_VALIDATION_LIVE_PROBE_KEY &&
     !isCompleteCheckoutValidationLiveProbe(normalizedMetadata)
   ) {
@@ -1727,6 +1752,7 @@ export async function inspectOperationalReadiness({
     const releaseRequired = [
       LIVE_ORDER_REFUND_E2E_CHECK_KEY,
       SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+      KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
     ].includes(definition.key);
     const releaseConfigured = !releaseRequired || Boolean(currentReleaseId);
     const releaseMatches =
@@ -1776,104 +1802,22 @@ export async function inspectOperationalReadiness({
     };
   });
 
+  const effectiveRows = await applyKomojuLimitedLaunchReadiness({
+    rows,
+    prismaClient,
+    env,
+    strictCheckKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  });
+
   return {
     available: true,
     definitions: OPERATIONAL_READINESS_DEFINITIONS,
     attestations,
-    rows,
-    ready: rows.every((row) => row.ready),
+    rows: effectiveRows,
+    ready: effectiveRows
+      .filter((row) => row.definition.supplemental !== true)
+      .every((row) => row.ready),
   };
-}
-
-export function buildOperationalReadinessChecks({ inspection, control } = {}) {
-  const checks = (inspection?.rows || []).map((row) => ({
-    id: `operational_attestation_${row.definition.key.toLowerCase()}`,
-    category: "operations",
-    status: row.ready ? "pass" : "fail",
-    title: row.definition.label,
-    detail: row.ready
-      ? `証跡 ${row.attestation.evidenceReference} / 有効期限 ${row.attestation.expiresAt.toISOString()}`
-      : row.reason === "expired"
-        ? "確認証跡の有効期限が切れています。"
-        : row.reason === "release_mismatch"
-          ? "確認後にデプロイが更新されました。現在のリリースで再確認してください。"
-          : row.reason === "release_unconfigured"
-            ? "現在のリリースIDを特定できないため、実決済証跡を有効化できません。"
-            : "有効な確認証跡が登録されていません。",
-    action: row.ready
-      ? ""
-      : row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
-        ? "本番注文・返金 E2E確認画面で、実注文と全額返金を自動照合してください。"
-        : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
-  }));
-
-  const checkoutControlState = normalizeUpper(
-    control?.checkoutControlState || "IDLE",
-  );
-  const checkoutControlActive =
-    control?.checkoutHold === true || checkoutControlState !== "IDLE";
-  checks.push({
-    id: "platform_checkout_emergency_hold",
-    category: "operations",
-    status: checkoutControlActive ? "fail" : "pass",
-    title: "販売緊急停止",
-    detail: checkoutControlActive
-      ? `販売統制 ${checkoutControlState} / ${
-          control?.holdReason || "理由未記録"
-        }`
-      : "販売緊急停止は解除されています。",
-    action: checkoutControlActive
-      ? "原因を解消し、停止者とは別の管理者が証拠を確認して復旧してください。PARTIAL_FAILUREやRECOVERY_FAILEDでは購入拒否を維持します。"
-      : "",
-  });
-
-  checks.push({
-    id: "platform_automated_email_hold",
-    category: "operations",
-    status: control?.automatedEmailHold ? "fail" : "pass",
-    title: "自動メール緊急停止",
-    detail: control?.automatedEmailHold
-      ? `自動メール停止中です: ${control.holdReason || "理由未記録"}`
-      : "自動メール緊急停止は解除されています。",
-    action: control?.automatedEmailHold
-      ? "原因を解消し、停止者とは別の管理者が復旧証拠を確認して解除してください。"
-      : "",
-  });
-
-  const classHoldChecks = [
-    {
-      id: "platform_order_email_hold",
-      field: "orderEmailHold",
-      title: "注文メール緊急停止",
-    },
-    {
-      id: "platform_legal_email_hold",
-      field: "legalEmailHold",
-      title: "法務メール緊急保留",
-    },
-    {
-      id: "platform_security_email_hold",
-      field: "securityEmailHold",
-      title: "セキュリティメール緊急停止",
-    },
-  ];
-  for (const item of classHoldChecks) {
-    const active = control?.[item.field] === true;
-    checks.push({
-      id: item.id,
-      category: "operations",
-      status: active ? "fail" : "pass",
-      title: item.title,
-      detail: active
-        ? `${item.title}中です: ${control?.holdReason || "理由未記録"}`
-        : `${item.title}は解除されています。`,
-      action: active
-        ? "原因を解消し、停止者とは別の管理者が復旧証拠を確認して解除してください。"
-        : "",
-    });
-  }
-
-  return checks;
 }
 
 export function createEvidenceKey(prefix, values) {

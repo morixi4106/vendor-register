@@ -324,7 +324,9 @@ export default function ProductionReadinessPage() {
               </tr>
             </thead>
             <tbody>
-              {(data.operationalReadiness?.rows || []).map((row) => (
+              {(data.operationalReadiness?.rows || [])
+                .filter((row) => row.definition.supplemental !== true)
+                .map((row) => (
                 <tr
                   key={row.definition.key}
                   id={
@@ -347,11 +349,13 @@ export default function ProductionReadinessPage() {
                   </td>
                   <td>
                     {row.ready ? "確認済み" : "要確認"}
-                    {row.attestation?.expiresAt
+                    {(row.effectiveAttestation || row.attestation)?.expiresAt
                       ? ` / ${new Date(
-                          row.attestation.expiresAt,
+                          (row.effectiveAttestation || row.attestation)
+                            .expiresAt,
                         ).toLocaleDateString("ja-JP")}まで`
                       : ""}
+                    {row.substitutedBy ? " / 国内直販限定" : ""}
                   </td>
                   <td>
                     {row.definition.key ===

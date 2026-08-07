@@ -6,6 +6,7 @@ import {
   buildOperationalReadinessChecks,
   inspectCheckoutValidationActivationEvidence,
   inspectOperationalReadiness,
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   recordOperationalReadinessAttestation,
   recoverPlatformCheckoutEmergencyHold,
@@ -504,6 +505,190 @@ test("live order refund evidence is valid only for the current release", async (
   );
   assert.equal(row.ready, false);
   assert.equal(row.reason, "release_mismatch");
+});
+
+test("a current limited launch substitutes only the strict order-refund E2E check", async () => {
+  const env = {
+    RENDER_GIT_COMMIT: "a".repeat(40),
+    SHOPIFY_APP_VERSION: "app-v1",
+  };
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [
+          {
+            checkKey: KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+            status: "CONFIRMED",
+            evidenceReference: "komoju-limited-launch:probe_1",
+            evidenceHash: "d".repeat(64),
+            confirmedBy: "system:komoju-zero-balance-limited-launch",
+            confirmedAt: new Date("2026-08-07T00:00:00Z"),
+            expiresAt: new Date("2026-08-14T00:00:00Z"),
+            metadataJson: {
+              verificationSource: "komoju_zero_balance_limited_launch",
+              probeId: "probe_1",
+              releaseId: "aaaaaaaaaaaa:app-v1",
+              releaseFingerprint: "c".repeat(64),
+            },
+          },
+        ];
+      },
+    },
+    seller: {
+      async count() {
+        return 0;
+      },
+    },
+    product: {
+      async count() {
+        return 0;
+      },
+    },
+    productionTransactionProbe: {
+      async findUnique() {
+        return {
+          id: "probe_1",
+          status: "AWAITING_PAYOUT_EVIDENCE",
+          releaseId: "aaaaaaaaaaaa:app-v1",
+          releaseFingerprint: "c".repeat(64),
+          paidVerifiedAt: new Date("2026-08-07T00:00:00Z"),
+          paidEvidenceJson: { passed: true },
+          orderEvidenceJson: {
+            externalReadiness: {
+              strategy: "ZERO_BALANCE_LIMITED_LAUNCH",
+            },
+          },
+        };
+      },
+    },
+  };
+  const inspection = await inspectOperationalReadiness({
+    prismaClient,
+    env,
+    now: new Date("2026-08-08T00:00:00Z"),
+  });
+  const strictRow = inspection.rows.find(
+    (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  );
+  const limitedRow = inspection.rows.find(
+    (row) =>
+      row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+  );
+  const checks = buildOperationalReadinessChecks({ inspection });
+
+  assert.equal(strictRow.ready, true);
+  assert.equal(
+    strictRow.substitutedBy,
+    KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+  );
+  assert.equal(limitedRow.ready, true);
+  assert.equal(
+    checks.some((check) =>
+      check.id.includes("komoju_zero_balance_limited_launch"),
+    ),
+    false,
+  );
+  assert.match(
+    checks.find(
+      (check) =>
+        check.id === "operational_attestation_live_order_refund_e2e_completed",
+    ).detail,
+    /国内直販限定/,
+  );
+
+  const expandedScope = await inspectOperationalReadiness({
+    prismaClient,
+    env: {
+      ...env,
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
+    },
+    now: new Date("2026-08-08T00:00:00Z"),
+  });
+  assert.equal(
+    expandedScope.rows.find(
+      (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+    ).ready,
+    false,
+  );
+  assert.equal(
+    expandedScope.rows.find(
+      (row) =>
+        row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+    ).reason,
+    "scope_changed",
+  );
+
+  prismaClient.productionTransactionProbe.findUnique = async () => ({
+    id: "probe_1",
+    status: "CANCELLED",
+    releaseId: "aaaaaaaaaaaa:app-v1",
+    releaseFingerprint: "c".repeat(64),
+    paidVerifiedAt: new Date("2026-08-07T00:00:00Z"),
+    paidEvidenceJson: { passed: true },
+    orderEvidenceJson: {
+      externalReadiness: { strategy: "ZERO_BALANCE_LIMITED_LAUNCH" },
+    },
+  });
+  const cancelled = await inspectOperationalReadiness({
+    prismaClient,
+    env,
+    now: new Date("2026-08-08T00:00:00Z"),
+  });
+  assert.equal(
+    cancelled.rows.find(
+      (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+    ).ready,
+    false,
+  );
+  assert.equal(
+    cancelled.rows.find(
+      (row) =>
+        row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+    ).reason,
+    "probe_not_continuing",
+  );
+});
+
+test("expired or release-mismatched limited evidence never substitutes the strict E2E", async () => {
+  const buildClient = (expiresAt, releaseId) => ({
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [
+          {
+            checkKey: KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+            status: "CONFIRMED",
+            evidenceReference: "komoju-limited-launch:probe_1",
+            evidenceHash: "d".repeat(64),
+            confirmedBy: "system:komoju-zero-balance-limited-launch",
+            confirmedAt: new Date("2026-08-07T00:00:00Z"),
+            expiresAt,
+            metadataJson: { releaseId },
+          },
+        ];
+      },
+    },
+  });
+  const env = {
+    RENDER_GIT_COMMIT: "a".repeat(40),
+    SHOPIFY_APP_VERSION: "app-v1",
+  };
+  const now = new Date("2026-08-15T00:00:00Z");
+
+  for (const prismaClient of [
+    buildClient(new Date("2026-08-14T00:00:00Z"), "aaaaaaaaaaaa:app-v1"),
+    buildClient(new Date("2026-08-20T00:00:00Z"), "bbbbbbbbbbbb:app-v2"),
+  ]) {
+    const inspection = await inspectOperationalReadiness({
+      prismaClient,
+      env,
+      now,
+    });
+    const strictRow = inspection.rows.find(
+      (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+    );
+    assert.equal(strictRow.ready, false);
+    assert.equal(strictRow.substitutedBy, undefined);
+  }
 });
 
 test("live order refund evidence fails closed when the deployed release is unknown", async () => {

@@ -129,6 +129,36 @@ KOMOJU振込の集計値だけでなく、対象の`MarketplacePaymentAttempt`�
 本番E2Eの入金証跡として認めません。`RECONCILED`になった入金記録は変更できず、
 完全に同じ再送だけが冪等成功します。
 
+### New KOMOJU account with zero unsettled balance
+
+KOMOJU本番アカウントに取引履歴がなく、未精算残高が0円の場合だけ、
+`本番注文・返金 E2E`画面から国内運営直販限定の期限付き公開を選択できます。
+これは厳格な全額返金E2Eの免除ではありません。
+
+利用条件:
+
+- 現在のリリースでKOMOJUカードの実売上を1件だけ作成する
+- 売上、SellerOrder、商品行、Shadow、売上台帳、PaymentAttemptの自動照合を完了する
+- KOMOJU本番画面で未精算残高が0円である証跡を保存する
+- 注文総額以上の返金原資を会社資金として別途確保する
+- KOMOJUから返金できない場合の代替返金手順を用意する
+- 第三者販売・第三者精算・公開Draft Orderをすべて無効にする
+- EU販売可能なsellerとproductを0件にし、運営直販商品の国際配送設定も0件にする
+- 証跡一式の保存先と64桁のSHA-256を記録する
+
+期限付き証跡は現在のRender/Shopifyリリースへ固定され、記録から7日で失効します。
+同じ内容の再送だけが冪等成功し、別注文への付け替え、延長、再発行はできません。
+期間中に第三者販売フラグまたはEU販売対象が有効になった場合も即時失効します。
+期限までに同じ注文の全額返金と厳格E2Eを完了してください。
+
+期限付き公開では次を行いません:
+
+- アプリによる自動返金
+- 商品公開状態の自動変更
+- ストアパスワードの自動解除
+- 第三者店舗またはEU向け販売の開始
+- 厳格E2E証跡の自動生成
+
 Use `SELLER_PAYOUT_PROVIDER=wise` only after Wise sandbox transfer, funding failure, webhook duplication, and ledger idempotency tests pass.
 
 For Wise payout mode, configure:
