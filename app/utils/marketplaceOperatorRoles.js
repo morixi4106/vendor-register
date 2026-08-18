@@ -14,21 +14,18 @@ const PRODUCTION_READINESS_ROLE_BY_INTENT = Object.freeze({
     MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER,
   activate_emergency_checkout_hold:
     MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
-  release_emergency_checkout_hold:
-    MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
-  activate_automated_email_hold:
-    MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
-  release_automated_email_hold:
-    MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
-  activate_legal_email_hold:
-    MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
-  release_legal_email_hold:
-    MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
+  release_emergency_checkout_hold: MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
+  activate_automated_email_hold: MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
+  release_automated_email_hold: MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
+  activate_legal_email_hold: MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
+  release_legal_email_hold: MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
   activate_checkout_gate: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   prepare_komoju_limited_launch_baseline:
     MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   stage_checkout_validation: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
   activate_checkout_validation: MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
+  disable_checkout_validation_for_standard_direct:
+    MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
 });
 
 export function resolveProductionReadinessOperatorRole(intent) {

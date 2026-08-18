@@ -947,6 +947,133 @@ test("preflight permits one KOMOJU card run only when every automatic check pass
   );
 });
 
+test("standard direct preflight requires an inactive marketplace validation", async () => {
+  const release = releaseExpectation();
+  const options = {
+    prismaClient: {
+      product: {
+        async count() {
+          return 1;
+        },
+      },
+    },
+    env: {
+      PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+      PAYMENT_PROVIDERS: "komoju",
+      KOMOJU_PAYMENT_OPERATIONS_ENABLED: "true",
+    },
+    inspectPaymentOperationsImpl: () => ({
+      available: true,
+      pendingExpiredCount: 0,
+      attemptReviewCount: 0,
+      refundReviewCount: 0,
+      refundFailedCount: 0,
+      unmatchedSettlementCount: 0,
+      settlementBatchReviewCount: 0,
+    }),
+    getPlatformOperationalControlImpl: () => ({
+      available: true,
+      checkoutHold: false,
+      checkoutControlState: "IDLE",
+    }),
+    getMarketplaceCheckoutGateStatusImpl: () => ({
+      active: true,
+      publicationConfigurationReady: true,
+      exposedProductCount: 0,
+      failedProductCount: 0,
+    }),
+  };
+
+  const ready = await inspectProductionTransactionProbePreflight(
+    {
+      shopDomain: SHOP,
+      releaseExpectation: release,
+      checkoutValidation: {
+        ok: true,
+        exists: true,
+        prepared: true,
+        active: false,
+      },
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    },
+    options,
+  );
+  assert.equal(ready.canStart, true);
+  assert.equal(ready.checkoutMode, "PLATFORM_DIRECT_PAID_ONLY");
+
+  const blocked = await inspectProductionTransactionProbePreflight(
+    {
+      shopDomain: SHOP,
+      releaseExpectation: release,
+      checkoutValidation: {
+        ok: true,
+        exists: true,
+        prepared: true,
+        active: true,
+      },
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    },
+    options,
+  );
+  assert.equal(blocked.canStart, false);
+  assert.equal(
+    blocked.checks.find(
+      (entry) => entry.id === "purchase_control_release_ready",
+    ).passed,
+    false,
+  );
+});
+
+test("standard direct probe starts without payout or refund evidence", async () => {
+  let createdData = null;
+  const prismaClient = {
+    productionTransactionProbe: {
+      async findUnique() {
+        return null;
+      },
+      async create({ data }) {
+        createdData = data;
+        return { id: "probe_direct", ...data };
+      },
+    },
+  };
+
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+      komojuCardOnlyConfirmed: true,
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+    },
+    {
+      prismaClient,
+      env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.flow,
+    "PLATFORM_DIRECT_PAID_ONLY",
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.evidenceHash,
+    undefined,
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness
+      .untestedAsyncMethodsDisabledConfirmed,
+    undefined,
+  );
+});
+
 test("attaching an order rejects test orders before persisting evidence", async () => {
   const probe = probeRecord({ status: "AWAITING_ORDER" });
   let updated = false;
@@ -1350,6 +1477,57 @@ test("KOMOJU card payment advances to refund while other providers remain reject
     wrongProviderState.state.probe.lastErrorCode,
     "payment_transaction_provider_mismatch",
   );
+});
+
+test("standard direct flow completes after the paid order and ledger agree", async () => {
+  const probe = probeRecord({
+    target: KOMOJU_CARD_TARGET,
+    externalReadiness: {
+      version: 3,
+      flow: "PLATFORM_DIRECT_PAID_ONLY",
+      komojuLiveConfirmed: true,
+      singleCardIntegrationConfirmed: true,
+      automaticCaptureConfirmed: true,
+      untestedAsyncMethodsDisabledConfirmed: true,
+    },
+  });
+  const { prismaClient, state } = refreshPrisma({
+    probe,
+    paymentAttempts: [paymentAttempt({ target: KOMOJU_CARD_TARGET })],
+  });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "operator",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentGateway: "komoju_credit_card",
+          paymentFormattedGateway: "KOMOJU - Credit Card",
+        }),
+      ),
+      now: new Date("2026-07-29T01:06:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.pending, false);
+  assert.equal(result.stage, "complete");
+  assert.equal(state.probe.status, "PASSED");
+  assert.equal(state.probe.refundVerifiedAt, null);
+  assert.equal(
+    state.attestation.checkKey,
+    "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED",
+  );
+  assert.equal(state.probe.finalEvidenceJson.flow, "PLATFORM_DIRECT_PAID_ONLY");
+  assert.match(
+    state.probe.finalEvidenceJson.commercialFingerprint,
+    /^[a-f0-9]{64}$/,
+  );
+  assert.equal(state.probe.finalEvidenceJson.refundInspection, undefined);
 });
 
 test("current KOMOJU payment waits for its directly linked bank deposit before refund", async () => {

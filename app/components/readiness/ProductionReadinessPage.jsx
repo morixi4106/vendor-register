@@ -8,6 +8,8 @@ import {
 
 import { productionReadinessStyles } from "./ProductionReadinessPage.styles.js";
 import { KomojuLimitedLaunchBaselineControl } from "./KomojuLimitedLaunchBaselineControl.jsx";
+import { Metric, Status } from "./ProductionReadinessPrimitives.jsx";
+import { buildProductionReadinessPageState } from "./productionReadinessPageState.js";
 import {
   CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS,
   CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT,
@@ -15,77 +17,31 @@ import {
 
 import {
   categoryLabel,
-  decorateCheckForDisplay,
   heartbeatStatusLabel,
   paymentFlowLabel,
   sellerPayoutFlowLabel,
-  statusLabel,
-  statusSortOrder,
 } from "./productionReadinessViewModel.js";
 
 export default function ProductionReadinessPage() {
   const data = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
-  const submittingIntent = navigation.formData?.get("intent");
-  const isCarrierSubmitting =
-    navigation.state === "submitting" &&
-    submittingIntent === "register_carrier";
-  const isCheckoutGateSubmitting =
-    navigation.state === "submitting" &&
-    submittingIntent === "activate_checkout_gate";
-  const isCheckoutValidationSubmitting =
-    navigation.state === "submitting" &&
-    ["stage_checkout_validation", "activate_checkout_validation"].includes(
-      submittingIntent,
-    );
-  const isLimitedLaunchBaselineSubmitting =
-    navigation.state === "submitting" &&
-    submittingIntent === "prepare_komoju_limited_launch_baseline";
-  const displayChecks = data.checks.map((check) =>
-    decorateCheckForDisplay(check, data),
-  );
-  const blockingChecks = displayChecks.filter(
-    (check) => check.displayStatus === "fail",
-  );
-  const nonBlockingChecks = displayChecks.filter(
-    (check) => check.displayStatus !== "fail",
-  );
-  const displaySummary = {
-    blockingCount: blockingChecks.length,
-    warningCount: displayChecks.filter(
-      (check) => check.displayStatus === "warning",
-    ).length,
-    manualCount: displayChecks.filter(
-      (check) => check.displayStatus === "manual",
-    ).length,
-    optionalCount: displayChecks.filter(
-      (check) => check.displayStatus === "optional",
-    ).length,
-    decisionRequiredCount: Number(data.summary?.decisionRequiredCount || 0),
-    releaseBlockingCount: Number(data.summary?.releaseBlockingCount || 0),
-  };
-  const orderedChecks = [...blockingChecks, ...nonBlockingChecks].sort(
-    (a, b) =>
-      statusSortOrder(a.displayStatus) - statusSortOrder(b.displayStatus),
-  );
-  const checkoutValidationPrepared = data.checkoutValidation?.prepared === true;
-  const checkoutValidationActive = data.checkoutValidation?.active === true;
-  const checkoutValidationUnavailable =
-    data.checkoutValidation?.ok === false &&
-    data.checkoutValidation?.reason !== "validation_not_created";
-  const checkoutReplayReady = Boolean(
-    data.operationalReadiness?.rows?.some(
-      (row) =>
-        row.definition?.key === "CHECKOUT_VALIDATION_REPLAY_COMPLETED" &&
-        row.ready === true,
-    ),
-  );
-
+  const {
+    isCarrierSubmitting,
+    isCheckoutGateSubmitting,
+    isCheckoutValidationSubmitting,
+    isLimitedLaunchBaselineSubmitting,
+    displaySummary,
+    orderedChecks,
+    checkoutValidationPrepared,
+    checkoutValidationActive,
+    standardDirect,
+    checkoutValidationUnavailable,
+    checkoutReplayReady,
+  } = buildProductionReadinessPageState(data, navigation);
   return (
     <div className="readiness-page">
       <style>{productionReadinessStyles}</style>
-
       <section className="readiness-card">
         <div className="readiness-header">
           <div>
@@ -115,32 +71,58 @@ export default function ProductionReadinessPage() {
             className="readiness-next-step__title"
             id="readiness-next-step-title"
           >
-            {checkoutValidationActive
-              ? "購入制御は有効です"
-              : checkoutValidationPrepared
-                ? checkoutReplayReady
-                  ? "購入制御を有効化できます"
-                  : "次はFunction再生確認を記録します"
-                : checkoutValidationUnavailable
-                  ? "購入制御の状態を確認してください"
-                  : "購入制御を無効状態で準備します"}
+            {standardDirect
+              ? checkoutValidationActive
+                ? "マーケットプレイス用購入制御を無効化します"
+                : "標準チェックアウトの準備ができています"
+              : checkoutValidationActive
+                ? "購入制御は有効です"
+                : checkoutValidationPrepared
+                  ? checkoutReplayReady
+                    ? "購入制御を有効化できます"
+                    : "次はFunction再生確認を記録します"
+                  : checkoutValidationUnavailable
+                    ? "購入制御の状態を確認してください"
+                    : "購入制御を無効状態で準備します"}
           </h2>
           <p className="readiness-next-step__text">
-            {checkoutValidationActive
-              ? `次は実ストアで${CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT}個の必須シナリオを確認し、現在のリリースに証跡を記録します。`
-              : checkoutValidationPrepared
-                ? checkoutReplayReady
-                  ? "再生確認は記録済みです。下の購入制御欄で内容を確認してから有効化します。"
-                  : "まだ購入は止まりません。開発ストアでFunctionの許可・遮断を再生確認し、その証跡を記録します。"
-                : checkoutValidationUnavailable
-                  ? "Shopifyとの接続状態または購入制御の重複を、下の詳細欄で確認してください。"
-                  : "購入を止めない無効状態の設定だけをShopifyへ作成します。作成後もストアの購入動作は変わりません。"}
+            {standardDirect
+              ? checkoutValidationActive
+                ? "国内運営直販ではShopify標準チェックアウトとKOMOJUを使います。第三者販売は停止済みのため、旧Validationを無効化してください。"
+                : "KOMOJU本番カード1件で、Shopify注文、Webhook、SellerOrder、売上台帳の一致を確認します。16シナリオと着金・返金は公開前の必須条件ではありません。"
+              : checkoutValidationActive
+                ? `次は実ストアで${CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT}個の必須シナリオを確認し、現在のリリースに証跡を記録します。`
+                : checkoutValidationPrepared
+                  ? checkoutReplayReady
+                    ? "再生確認は記録済みです。下の購入制御欄で内容を確認してから有効化します。"
+                    : "まだ購入は止まりません。開発ストアでFunctionの許可・遮断を再生確認し、その証跡を記録します。"
+                  : checkoutValidationUnavailable
+                    ? "Shopifyとの接続状態または購入制御の重複を、下の詳細欄で確認してください。"
+                    : "購入を止めない無効状態の設定だけをShopifyへ作成します。作成後もストアの購入動作は変わりません。"}
           </p>
         </div>
         <div className="readiness-next-step__actions">
-          {!checkoutValidationPrepared &&
-          !checkoutValidationActive &&
-          !checkoutValidationUnavailable ? (
+          {standardDirect && checkoutValidationActive ? (
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="disable_checkout_validation_for_standard_direct"
+              />
+              <button
+                className="readiness-button"
+                type="submit"
+                disabled={isCheckoutValidationSubmitting}
+              >
+                {isCheckoutValidationSubmitting
+                  ? "無効化を確認中"
+                  : "標準チェックアウトへ切り替える"}
+              </button>
+            </Form>
+          ) : !standardDirect &&
+            !checkoutValidationPrepared &&
+            !checkoutValidationActive &&
+            !checkoutValidationUnavailable ? (
             <Form method="post">
               <input
                 type="hidden"
@@ -158,24 +140,26 @@ export default function ProductionReadinessPage() {
               </button>
             </Form>
           ) : null}
-          <a
-            className="readiness-secondary-link"
-            href={
-              checkoutValidationPrepared &&
-              !checkoutValidationActive &&
-              !checkoutReplayReady
-                ? "#checkout-validation-replay-evidence"
-                : "#checkout-validation-control"
-            }
-          >
-            {checkoutValidationActive
-              ? "状態を確認"
-              : checkoutValidationPrepared
-                ? checkoutReplayReady
-                  ? "確認と有効化へ"
-                  : "再生証跡を記録"
-                : "詳しい説明を見る"}
-          </a>
+          {!standardDirect ? (
+            <a
+              className="readiness-secondary-link"
+              href={
+                checkoutValidationPrepared &&
+                !checkoutValidationActive &&
+                !checkoutReplayReady
+                  ? "#checkout-validation-replay-evidence"
+                  : "#checkout-validation-control"
+              }
+            >
+              {checkoutValidationActive
+                ? "状態を確認"
+                : checkoutValidationPrepared
+                  ? checkoutReplayReady
+                    ? "確認と有効化へ"
+                    : "再生証跡を記録"
+                  : "詳しい説明を見る"}
+            </a>
+          ) : null}
         </div>
       </section>
 
@@ -335,197 +319,209 @@ export default function ProductionReadinessPage() {
               {(data.operationalReadiness?.rows || [])
                 .filter((row) => row.definition.supplemental !== true)
                 .map((row) => (
-                <tr
-                  key={row.definition.key}
-                  id={
-                    row.definition.key ===
-                    "CHECKOUT_VALIDATION_REPLAY_COMPLETED"
-                      ? "checkout-validation-replay-evidence"
-                      : undefined
-                  }
-                >
-                  <td>
-                    <strong>{row.definition.label}</strong>
-                    <div>有効期間 {row.definition.validityDays}日</div>
-                    {row.definition.key ===
-                    "CHECKOUT_VALIDATION_REPLAY_COMPLETED" ? (
-                      <div>
-                        開発ストアで許可ケースと遮断ケースを実行し、Shopify
-                        CLIのFunctionログまたは再生結果を証跡として登録します。
-                      </div>
-                    ) : null}
-                  </td>
-                  <td>
-                    {row.ready ? "確認済み" : "要確認"}
-                    {(row.effectiveAttestation || row.attestation)?.expiresAt
-                      ? ` / ${new Date(
-                          (row.effectiveAttestation || row.attestation)
-                            .expiresAt,
-                        ).toLocaleDateString("ja-JP")}まで`
-                      : ""}
-                    {row.substitutedBy ? " / 国内直販限定" : ""}
-                  </td>
-                  <td>
-                    {row.definition.key ===
-                    "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED" ? (
-                      <div className="readiness-inline-form">
-                        <p>
-                          Payout
-                          ID・金額・通貨・送金日・銀行着金日・証拠ファイルのSHA-256を登録し、承認してください。
-                        </p>
-                        <Link
-                          className="readiness-button"
-                          to="/app/shopify-payout-evidence"
-                        >
-                          Shopify着金証拠を確認
-                        </Link>
-                      </div>
-                    ) : row.definition.automated ? (
-                      <div className="readiness-inline-form">
-                        <p>
-                          この項目は、実注文と全額返金の自動照合が完了した場合だけ記録されます。
-                        </p>
-                        <Link
-                          className="readiness-button"
-                          to="/app/production-transaction-probe"
-                        >
-                          本番注文・返金 E2E を確認
-                        </Link>
-                      </div>
-                    ) : (
-                      <Form method="post" className="readiness-inline-form">
-                        <input
-                          type="hidden"
-                          name="intent"
-                          value="record_operational_attestation"
-                        />
-                        <input
-                          type="hidden"
-                          name="checkKey"
-                          value={row.definition.key}
-                        />
-                        <input type="hidden" name="status" value="CONFIRMED" />
-                        <input
-                          aria-label={`${row.definition.label}の証跡参照`}
-                          name="evidenceReference"
-                          placeholder="チケット番号、保存先URL、確認記録"
-                          required
-                        />
-                        <input
-                          aria-label={`${row.definition.label}のSHA-256`}
-                          name="evidenceHash"
-                          placeholder="SHA-256（任意）"
-                        />
-                        <input
-                          aria-label={`${row.definition.label}のメモ`}
-                          name="notes"
-                          placeholder="確認内容"
-                        />
-                        {row.definition.key ===
-                        "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED" ? (
-                          <fieldset className="readiness-release-manifest">
-                            <legend>
-                              現在のリリースと実チェックアウト結果
-                            </legend>
-                            {[
-                              ["releaseId", "Release ID"],
-                              ["renderCommit", "Render commit"],
-                              ["migrationVersion", "Migration"],
-                              ["shopifyAppVersion", "Shopify app version"],
-                              ["shopDomain", "Shop domain"],
-                              ["functionHandle", "Function handle"],
-                              ["functionUid", "Function UID"],
-                              ["functionId", "Shopify Function ID"],
-                              ["functionApiVersion", "Function API version"],
-                              ["validationId", "Validation ID"],
-                              ["policyVersion", "Policy version"],
-                              [
-                                "projectionSchemaVersion",
-                                "Projection schema version",
-                              ],
-                            ].map(([name, label]) => (
-                              <label key={name}>
-                                <span>{label}</span>
-                                <input
-                                  name={name}
-                                  defaultValue={
-                                    data.productionRelease?.expected?.[name] ||
-                                    ""
-                                  }
-                                  required
-                                />
-                              </label>
-                            ))}
-                            <input
-                              type="hidden"
-                              name="liveProbeChallenge"
-                              value={data.liveProbeChallenge?.token || ""}
-                              required
-                            />
-                            {CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(({
-                              id: name,
-                              label,
-                              expectedResult,
-                            }) => (
-                              <div key={name} className="readiness-probe-row">
-                                <label>
+                  <tr
+                    key={row.definition.key}
+                    id={
+                      row.definition.key ===
+                      "CHECKOUT_VALIDATION_REPLAY_COMPLETED"
+                        ? "checkout-validation-replay-evidence"
+                        : undefined
+                    }
+                  >
+                    <td>
+                      <strong>{row.definition.label}</strong>
+                      <div>有効期間 {row.definition.validityDays}日</div>
+                      {row.definition.key ===
+                      "CHECKOUT_VALIDATION_REPLAY_COMPLETED" ? (
+                        <div>
+                          開発ストアで許可ケースと遮断ケースを実行し、Shopify
+                          CLIのFunctionログまたは再生結果を証跡として登録します。
+                        </div>
+                      ) : null}
+                    </td>
+                    <td>
+                      {row.ready ? "確認済み" : "要確認"}
+                      {(row.effectiveAttestation || row.attestation)?.expiresAt
+                        ? ` / ${new Date(
+                            (row.effectiveAttestation || row.attestation)
+                              .expiresAt,
+                          ).toLocaleDateString("ja-JP")}まで`
+                        : ""}
+                      {row.substitutedBy ? " / 国内直販限定" : ""}
+                    </td>
+                    <td>
+                      {row.definition.key ===
+                      "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED" ? (
+                        <div className="readiness-inline-form">
+                          <p>
+                            Payout
+                            ID・金額・通貨・送金日・銀行着金日・証拠ファイルのSHA-256を登録し、承認してください。
+                          </p>
+                          <Link
+                            className="readiness-button"
+                            to="/app/shopify-payout-evidence"
+                          >
+                            Shopify着金証拠を確認
+                          </Link>
+                        </div>
+                      ) : row.definition.automated ? (
+                        <div className="readiness-inline-form">
+                          <p>
+                            {row.definition.key ===
+                            "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED"
+                              ? "KOMOJU本番カード1件について、Shopify注文、PaymentAttempt、SellerOrder、Shadow、売上台帳が一致した場合だけ記録されます。"
+                              : "この項目は、実注文と全額返金の自動照合が完了した場合だけ記録されます。"}
+                          </p>
+                          <Link
+                            className="readiness-button"
+                            to="/app/production-transaction-probe"
+                          >
+                            {row.definition.key ===
+                            "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED"
+                              ? "本番決済1件を確認"
+                              : "本番注文・返金 E2E を確認"}
+                          </Link>
+                        </div>
+                      ) : (
+                        <Form method="post" className="readiness-inline-form">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="record_operational_attestation"
+                          />
+                          <input
+                            type="hidden"
+                            name="checkKey"
+                            value={row.definition.key}
+                          />
+                          <input
+                            type="hidden"
+                            name="status"
+                            value="CONFIRMED"
+                          />
+                          <input
+                            aria-label={`${row.definition.label}の証跡参照`}
+                            name="evidenceReference"
+                            placeholder="チケット番号、保存先URL、確認記録"
+                            required
+                          />
+                          <input
+                            aria-label={`${row.definition.label}のSHA-256`}
+                            name="evidenceHash"
+                            placeholder="SHA-256（任意）"
+                          />
+                          <input
+                            aria-label={`${row.definition.label}のメモ`}
+                            name="notes"
+                            placeholder="確認内容"
+                          />
+                          {row.definition.key ===
+                          "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED" ? (
+                            <fieldset className="readiness-release-manifest">
+                              <legend>
+                                現在のリリースと実チェックアウト結果
+                              </legend>
+                              {[
+                                ["releaseId", "Release ID"],
+                                ["renderCommit", "Render commit"],
+                                ["migrationVersion", "Migration"],
+                                ["shopifyAppVersion", "Shopify app version"],
+                                ["shopDomain", "Shop domain"],
+                                ["functionHandle", "Function handle"],
+                                ["functionUid", "Function UID"],
+                                ["functionId", "Shopify Function ID"],
+                                ["functionApiVersion", "Function API version"],
+                                ["validationId", "Validation ID"],
+                                ["policyVersion", "Policy version"],
+                                [
+                                  "projectionSchemaVersion",
+                                  "Projection schema version",
+                                ],
+                              ].map(([name, label]) => (
+                                <label key={name}>
+                                  <span>{label}</span>
                                   <input
-                                    name={`${name}Passed`}
-                                    type="checkbox"
+                                    name={name}
+                                    defaultValue={
+                                      data.productionRelease?.expected?.[
+                                        name
+                                      ] || ""
+                                    }
                                     required
                                   />
-                                  <span>{label}</span>
                                 </label>
-                                <input
-                                  name={`${name}ObservedAt`}
-                                  type="datetime-local"
-                                  aria-label={`${label}の実行日時`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}ProjectionRevision`}
-                                  placeholder="対象商品のProjection revision"
-                                  aria-label={`${label}のProjection revision`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}ActualResult`}
-                                  placeholder={`実際の結果（${expectedResult}）`}
-                                  aria-label={`${label}の実際の結果`}
-                                  pattern={expectedResult}
-                                  required
-                                />
-                                <input
-                                  name={`${name}EvidenceReference`}
-                                  placeholder="このシナリオの証跡URL・実行ID"
-                                  aria-label={`${label}の証跡参照`}
-                                  required
-                                />
-                                <input
-                                  name={`${name}EvidenceHash`}
-                                  placeholder="証跡SHA-256（64桁）"
-                                  aria-label={`${label}の証跡SHA-256`}
-                                  minLength={64}
-                                  maxLength={64}
-                                  pattern="[A-Fa-f0-9]{64}"
-                                  required
-                                />
-                              </div>
-                            ))}
-                          </fieldset>
-                        ) : null}
-                        <button
-                          className="readiness-button"
-                          disabled={navigation.state !== "idle"}
-                          type="submit"
-                        >
-                          確認を記録
-                        </button>
-                      </Form>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                              ))}
+                              <input
+                                type="hidden"
+                                name="liveProbeChallenge"
+                                value={data.liveProbeChallenge?.token || ""}
+                                required
+                              />
+                              {CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS.map(
+                                ({ id: name, label, expectedResult }) => (
+                                  <div
+                                    key={name}
+                                    className="readiness-probe-row"
+                                  >
+                                    <label>
+                                      <input
+                                        name={`${name}Passed`}
+                                        type="checkbox"
+                                        required
+                                      />
+                                      <span>{label}</span>
+                                    </label>
+                                    <input
+                                      name={`${name}ObservedAt`}
+                                      type="datetime-local"
+                                      aria-label={`${label}の実行日時`}
+                                      required
+                                    />
+                                    <input
+                                      name={`${name}ProjectionRevision`}
+                                      placeholder="対象商品のProjection revision"
+                                      aria-label={`${label}のProjection revision`}
+                                      required
+                                    />
+                                    <input
+                                      name={`${name}ActualResult`}
+                                      placeholder={`実際の結果（${expectedResult}）`}
+                                      aria-label={`${label}の実際の結果`}
+                                      pattern={expectedResult}
+                                      required
+                                    />
+                                    <input
+                                      name={`${name}EvidenceReference`}
+                                      placeholder="このシナリオの証跡URL・実行ID"
+                                      aria-label={`${label}の証跡参照`}
+                                      required
+                                    />
+                                    <input
+                                      name={`${name}EvidenceHash`}
+                                      placeholder="証跡SHA-256（64桁）"
+                                      aria-label={`${label}の証跡SHA-256`}
+                                      minLength={64}
+                                      maxLength={64}
+                                      pattern="[A-Fa-f0-9]{64}"
+                                      required
+                                    />
+                                  </div>
+                                ),
+                              )}
+                            </fieldset>
+                          ) : null}
+                          <button
+                            className="readiness-button"
+                            disabled={navigation.state !== "idle"}
+                            type="submit"
+                          >
+                            確認を記録
+                          </button>
+                        </Form>
+                      )}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
@@ -624,57 +620,83 @@ export default function ProductionReadinessPage() {
               状態: {data.checkoutValidation?.active ? "有効" : "無効"}
             </p>
             <p className="readiness-tool__text">
-              Shopify標準チェックアウト、Shop Payなどを含む購入処理をShopify
-              Functionsで検証します。制御関数の実行失敗時も購入を拒否します。
+              {standardDirect
+                ? "国内運営直販はShopify標準チェックアウトとKOMOJUへ任せます。第三者販売を再開するまでは、マーケットプレイス用Validationを無効にします。"
+                : "Shopify標準チェックアウト、Shop Payなどを含む購入処理をShopify Functionsで検証します。制御関数の実行失敗時も購入を拒否します。"}
             </p>
           </div>
-          <div className="readiness-inline-form">
-            <KomojuLimitedLaunchBaselineControl
-              actionResult={actionData?.komojuLimitedLaunchBaseline}
-              isSubmitting={isLimitedLaunchBaselineSubmitting}
-            />
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="stage_checkout_validation"
+          {standardDirect ? (
+            <div className="readiness-inline-form">
+              {data.checkoutValidation?.active ? (
+                <Form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="disable_checkout_validation_for_standard_direct"
+                  />
+                  <button
+                    className="readiness-button"
+                    type="submit"
+                    disabled={isCheckoutValidationSubmitting}
+                  >
+                    標準チェックアウトへ切り替える
+                  </button>
+                </Form>
+              ) : (
+                <strong>標準チェックアウトへ切り替え済み</strong>
+              )}
+            </div>
+          ) : (
+            <div className="readiness-inline-form">
+              <KomojuLimitedLaunchBaselineControl
+                actionResult={actionData?.komojuLimitedLaunchBaseline}
+                isSubmitting={isLimitedLaunchBaselineSubmitting}
               />
-              <button
-                className="readiness-button"
-                type="submit"
-                disabled={isCheckoutValidationSubmitting}
-              >
-                無効状態で準備
-              </button>
-            </Form>
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="activate_checkout_validation"
-              />
-              <button
-                className="readiness-button"
-                type="submit"
-                disabled={
-                  isCheckoutValidationSubmitting || !checkoutReplayReady
-                }
-                title={
-                  checkoutReplayReady
-                    ? "購入制御を有効化します"
-                    : "先にFunction再生確認の証跡を記録してください"
-                }
-              >
-                {isCheckoutValidationSubmitting
-                  ? "購入制御を確認中"
-                  : checkoutReplayReady
-                    ? "再生証跡を確認して有効化"
-                    : "再生証跡の記録後に有効化"}
-              </button>
-            </Form>
-          </div>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="stage_checkout_validation"
+                />
+                <button
+                  className="readiness-button"
+                  type="submit"
+                  disabled={isCheckoutValidationSubmitting}
+                >
+                  無効状態で準備
+                </button>
+              </Form>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="activate_checkout_validation"
+                />
+                <button
+                  className="readiness-button"
+                  type="submit"
+                  disabled={
+                    isCheckoutValidationSubmitting || !checkoutReplayReady
+                  }
+                  title={
+                    checkoutReplayReady
+                      ? "購入制御を有効化します"
+                      : "先にFunction再生確認の証跡を記録してください"
+                  }
+                >
+                  {isCheckoutValidationSubmitting
+                    ? "購入制御を確認中"
+                    : checkoutReplayReady
+                      ? "再生証跡を確認して有効化"
+                      : "再生証跡の記録後に有効化"}
+                </button>
+              </Form>
+            </div>
+          )}
         </div>
-        {!data.checkoutValidation?.active && !checkoutReplayReady ? (
+        {!standardDirect &&
+        !data.checkoutValidation?.active &&
+        !checkoutReplayReady ? (
           <p className="readiness-tool__text">
             有効化前に「購入制御Functionの開発ストア再生・遮断確認」を記録してください。本番の必須シナリオは有効化後に実施します。
           </p>
@@ -688,15 +710,17 @@ export default function ProductionReadinessPage() {
                 : "readiness-result--error"
             }`}
           >
-            {actionData.checkoutValidation.ok &&
-            actionData.checkoutValidation.active
-              ? "Shopifyサーバー側の購入制御を有効化しました。"
+            {standardDirect && actionData.checkoutValidation.ok
+              ? "Shopify標準チェックアウトへ切り替えました。"
               : actionData.checkoutValidation.ok &&
-                  actionData.checkoutValidation.staged
-                ? "購入制御を無効状態で準備しました。開発ストアのFunction再生と正常・遮断確認を記録してから有効化してください。"
-                : `購入制御を有効化できませんでした: ${
-                    actionData.checkoutValidation.reason || "unknown"
-                  }`}
+                  actionData.checkoutValidation.active
+                ? "Shopifyサーバー側の購入制御を有効化しました。"
+                : actionData.checkoutValidation.ok &&
+                    actionData.checkoutValidation.staged
+                  ? "購入制御を無効状態で準備しました。開発ストアのFunction再生と正常・遮断確認を記録してから有効化してください。"
+                  : `購入制御を有効化できませんでした: ${
+                      actionData.checkoutValidation.reason || "unknown"
+                    }`}
           </div>
         ) : null}
       </section>
@@ -921,28 +945,5 @@ export default function ProductionReadinessPage() {
         </p>
       </section>
     </div>
-  );
-}
-
-function Metric({ label, value, compact = false }) {
-  return (
-    <div className="readiness-metric">
-      <p className="readiness-metric__label">{label}</p>
-      <p
-        className={`readiness-metric__value ${
-          compact ? "readiness-metric__value--compact" : ""
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function Status({ status }) {
-  return (
-    <span className={`readiness-status readiness-status--${status}`}>
-      {statusLabel(status)}
-    </span>
   );
 }

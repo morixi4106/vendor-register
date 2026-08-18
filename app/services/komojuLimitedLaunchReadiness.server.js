@@ -16,7 +16,9 @@ export const KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_DEFINITION = Object.freeze({
 });
 
 function clean(value) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function configuredShopDomain(env) {
@@ -34,12 +36,14 @@ export function isCompleteKomojuZeroBalanceLimitedLaunchAttestation({
   evidenceHash,
   confirmedBy,
 }) {
-  const hash = String(evidenceHash || "").trim().toLowerCase();
+  const hash = String(evidenceHash || "")
+    .trim()
+    .toLowerCase();
   return Boolean(
     isCompleteKomojuLimitedLaunchMetadata(metadata) &&
-      confirmedBy === "system:komoju-zero-balance-limited-launch" &&
-      evidenceReference === `komoju-limited-launch:${metadata?.probeId}` &&
-      /^[a-f0-9]{64}$/.test(hash)
+    confirmedBy === "system:komoju-zero-balance-limited-launch" &&
+    evidenceReference === `komoju-limited-launch:${metadata?.probeId}` &&
+    /^[a-f0-9]{64}$/.test(hash),
   );
 }
 
@@ -48,6 +52,7 @@ export async function applyKomojuLimitedLaunchReadiness({
   prismaClient,
   env,
   strictCheckKey,
+  now = new Date(),
 }) {
   const limitedRow = rows.find(
     (row) =>
@@ -65,6 +70,7 @@ export async function applyKomojuLimitedLaunchReadiness({
       evaluation = await evaluateKomojuLimitedLaunchControl(control, {
         prismaClient,
         env,
+        now,
       });
       if (
         evaluation.blockingReason &&

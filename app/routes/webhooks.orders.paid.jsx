@@ -4,6 +4,7 @@ import { authenticate } from "../shopify.server";
 import { processShopifyOrderPaidSettlement } from "../services/sellerPayments.server.js";
 import { syncShopifyOrderPaymentAttempts } from "../services/paymentOperations.server.js";
 import { refreshKomojuLimitedLaunchControl } from "../services/komojuLimitedLaunchControl.server.js";
+import { isShopifyStandardDirectCheckoutMode } from "../services/platformDirectCheckoutMode.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 
@@ -35,11 +36,14 @@ export const action = async ({ request }) => {
             shopifyGraphQLWithOfflineSession,
         },
       );
-      const limitedLaunchControl = settlement.ok
-        ? await refreshKomojuLimitedLaunchControl(
-            { shopDomain: shop, applyEmergencyHold: true },
-          )
-        : null;
+      const limitedLaunchControl = !settlement.ok
+        ? null
+        : isShopifyStandardDirectCheckoutMode()
+          ? { ok: true, skipped: true, reason: "standard_direct_mode" }
+          : await refreshKomojuLimitedLaunchControl({
+              shopDomain: shop,
+              applyEmergencyHold: true,
+            });
       if (limitedLaunchControl?.ok === false) {
         throw new Error(
           `komoju_limited_launch_refresh_failed:${limitedLaunchControl.reason}`,

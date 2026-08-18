@@ -28,6 +28,7 @@ import {
   refreshProductionTransactionProbe,
   serializeProductionTransactionProbe,
 } from "../services/productionTransactionProbe.server.js";
+import { inspectPlatformDirectCheckoutMode } from "../services/platformDirectCheckoutMode.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -42,7 +43,9 @@ export async function loader({ request }) {
   const { session } = await requireMarketplaceOperator(request, {
     roles: OPERATOR_ROLES,
   });
-  const releaseExpectation = await getReleaseExpectation(session.shop);
+  const { releaseExpectation, checkoutValidation } = await getReleaseContext(
+    session.shop,
+  );
   const data = await getProductionTransactionProbePageData({
     shopDomain: session.shop,
     releaseExpectation,
@@ -50,6 +53,7 @@ export async function loader({ request }) {
   const preflight = await inspectProductionTransactionProbePreflight({
     shopDomain: session.shop,
     releaseExpectation,
+    checkoutValidation,
     targetProvider: "KOMOJU",
     targetPaymentMethod: "CARD",
   });
@@ -77,8 +81,10 @@ export async function loader({ request }) {
         activeProbe: displayProbe,
         release: data.release,
         target: preflight.target,
+        flow: preflight.checkoutMode,
       }),
       preflight,
+      checkoutMode: inspectPlatformDirectCheckoutMode(),
       limitedLaunch: limitedLaunch || null,
     },
     { headers: privateHeaders() },
@@ -91,7 +97,9 @@ export async function action({ request }) {
   });
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
-  const releaseExpectation = await getReleaseExpectation(session.shop);
+  const { releaseExpectation, checkoutValidation } = await getReleaseContext(
+    session.shop,
+  );
   let result;
 
   try {
@@ -99,6 +107,7 @@ export async function action({ request }) {
       const preflight = await inspectProductionTransactionProbePreflight({
         shopDomain: session.shop,
         releaseExpectation,
+        checkoutValidation,
         targetProvider: "KOMOJU",
         targetPaymentMethod: "CARD",
       });
@@ -151,9 +160,7 @@ export async function action({ request }) {
           formData.get("directRefundFallbackConfirmed") === "yes",
         domesticPlatformDirectOnlyConfirmed:
           formData.get("domesticPlatformDirectOnlyConfirmed") === "yes",
-        limitedLaunchMaxOrderCount: formData.get(
-          "limitedLaunchMaxOrderCount",
-        ),
+        limitedLaunchMaxOrderCount: formData.get("limitedLaunchMaxOrderCount"),
         limitedLaunchMaxGrossAmount: formData.get(
           "limitedLaunchMaxGrossAmount",
         ),
@@ -282,6 +289,17 @@ export default function ProductionTransactionProbePage() {
     }, 15_000);
     return () => window.clearInterval(timer);
   }, [probe?.id, probe?.status, refreshFetcher]);
+
+  if (data.checkoutMode?.standardDirectReady === true) {
+    return (
+      <PlatformDirectPaymentProbePage
+        data={data}
+        actionData={actionData}
+        refreshFetcher={refreshFetcher}
+        busy={busy}
+      />
+    );
+  }
 
   return (
     <main style={styles.page}>
@@ -782,23 +800,33 @@ export default function ProductionTransactionProbePage() {
                     />
                     <div style={styles.previewPanel}>
                       <strong>一度だけ使える最終確認</strong>
+                      <span>Release: {limitedLaunchPreview.releaseId}</span>
                       <span>
-                        Release: {limitedLaunchPreview.releaseId}
+                        注文: {limitedLaunchPreview.shopifyOrderId} / 売上:{" "}
+                        {limitedLaunchPreview.actualPaidAmount.toLocaleString()}{" "}
+                        {limitedLaunchPreview.currencyCode}
                       </span>
                       <span>
-                        注文: {limitedLaunchPreview.shopifyOrderId} / 売上: {limitedLaunchPreview.actualPaidAmount.toLocaleString()} {limitedLaunchPreview.currencyCode}
+                        期限:{" "}
+                        {formatDate(limitedLaunchPreview.completionDeadline)}
                       </span>
                       <span>
-                        期限: {formatDate(limitedLaunchPreview.completionDeadline)}
+                        上限: {limitedLaunchPreview.maxOrderCount}件 / 累計{" "}
+                        {limitedLaunchPreview.maxGrossAmount.toLocaleString()}円
+                        / 未返金債務{" "}
+                        {limitedLaunchPreview.maxOutstandingLiability.toLocaleString()}
+                        円
                       </span>
                       <span>
-                        上限: {limitedLaunchPreview.maxOrderCount}件 / 累計 {limitedLaunchPreview.maxGrossAmount.toLocaleString()}円 / 未返金債務 {limitedLaunchPreview.maxOutstandingLiability.toLocaleString()}円
+                        会社返金予備資金:{" "}
+                        {limitedLaunchPreview.companyRefundReserveAmount.toLocaleString()}
+                        円
                       </span>
                       <span>
-                        会社返金予備資金: {limitedLaunchPreview.companyRefundReserveAmount.toLocaleString()}円
-                      </span>
-                      <span>
-                        対象商品: {limitedLaunchPreview.allowedProducts.map((product) => product.name).join("、")}
+                        対象商品:{" "}
+                        {limitedLaunchPreview.allowedProducts
+                          .map((product) => product.name)
+                          .join("、")}
                       </span>
                       <span>
                         証跡: {limitedLaunchPreview.evidenceReference}
@@ -807,7 +835,9 @@ export default function ProductionTransactionProbePage() {
                         SHA-256: {limitedLaunchPreview.evidenceHash}
                       </code>
                       <span>
-                        このプレビューは{formatDate(limitedLaunchPreview.expiresAt)}まで有効です。
+                        このプレビューは
+                        {formatDate(limitedLaunchPreview.expiresAt)}
+                        まで有効です。
                       </span>
                     </div>
                     <label style={styles.confirmationLabel}>
@@ -1024,7 +1054,7 @@ function StatusBadge({ tone, label }) {
   return <span style={{ ...styles.badge, ...toneStyle }}>{label}</span>;
 }
 
-async function getReleaseExpectation(shopDomain) {
+async function getReleaseContext(shopDomain) {
   const { inspectMarketplaceCheckoutValidation } =
     await import("../services/shopifyCheckoutValidation.server.js");
   const { buildProductionReleaseExpectation } =
@@ -1037,7 +1067,219 @@ async function getReleaseExpectation(shopDomain) {
       name: error instanceof Error ? error.name : "unknown",
     });
   }
-  return buildProductionReleaseExpectation({ checkoutValidation });
+  return {
+    checkoutValidation,
+    releaseExpectation: buildProductionReleaseExpectation({
+      checkoutValidation,
+    }),
+  };
+}
+
+function PlatformDirectPaymentProbePage({
+  data,
+  actionData,
+  refreshFetcher,
+  busy,
+}) {
+  const activeProbe = data.activeProbe;
+  const probe = data.displayProbe;
+  const page = data.page;
+  const paidEvidence = probe?.paidEvidence || {};
+  const result = actionData || refreshFetcher.data;
+
+  return (
+    <main style={styles.page}>
+      <header style={styles.header}>
+        <div>
+          <p style={styles.eyebrow}>PRODUCTION PAYMENT CHECK</p>
+          <h1 style={styles.title}>本番決済1件の照合</h1>
+          <p style={styles.lead}>
+            Shopify標準チェックアウトのKOMOJUカード決済を1件だけ使い、注文とアプリ内売上反映を確認します。
+          </p>
+        </div>
+        <StatusBadge tone={page.tone} label={page.statusLabel} />
+      </header>
+
+      <section style={styles.notice}>
+        <strong>この画面から購入、返金、商品変更は行いません。</strong>
+        <span>
+          ShopifyとKOMOJUが成立させた本番売上を読み取り、PaymentAttempt、SellerOrder、Shadow、売上台帳との一致だけを記録します。
+        </span>
+      </section>
+
+      {!data.available ? (
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>準備が必要です</h2>
+          <p style={styles.text}>データベースの準備が完了していません。</p>
+        </section>
+      ) : (
+        <>
+          <section style={styles.section}>
+            <div style={styles.sectionHeading}>
+              <div>
+                <h2 style={styles.sectionTitle}>次に行うこと</h2>
+                <p style={styles.text}>{page.instruction}</p>
+              </div>
+              <span style={styles.release}>
+                Release: {data.release.releaseId || "未設定"}
+              </span>
+            </div>
+
+            <div style={styles.preflight}>
+              <h3 style={styles.inspectionTitle}>決済前の自動確認</h3>
+              <ul style={styles.checks}>
+                {data.preflight.checks.map((item) => (
+                  <li key={item.id} style={styles.check}>
+                    <span
+                      style={
+                        item.passed ? styles.checkPassed : styles.checkPending
+                      }
+                      aria-hidden="true"
+                    >
+                      {item.passed ? "OK" : "-"}
+                    </span>
+                    <span>
+                      <strong>{preflightLabel(item.id)}</strong>
+                      <span style={styles.checkReason}>{item.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {!activeProbe && probe?.status !== "PASSED" ? (
+              <Form method="post" style={styles.form}>
+                <input type="hidden" name="intent" value="start_probe" />
+                {[
+                  [
+                    "komojuCardOnlyConfirmed",
+                    "今回はKOMOJUクレジットカードだけを確認します",
+                  ],
+                  ["komojuLiveConfirmed", "KOMOJUは本番モードです"],
+                  [
+                    "singleCardIntegrationConfirmed",
+                    "KOMOJUカード連携は1種類だけ有効です",
+                  ],
+                  ["automaticCaptureConfirmed", "支払い確定は自動です"],
+                ].map(([name, label]) => (
+                  <label key={name} style={styles.confirmationLabel}>
+                    <input type="checkbox" name={name} value="yes" required />
+                    {label}
+                  </label>
+                ))}
+                <button
+                  style={styles.primaryButton}
+                  disabled={busy || !data.preflight.canStart}
+                >
+                  確認を開始
+                </button>
+                <span style={styles.hint}>
+                  コンビニ・Pay-easy等を無効にする必要はありません。今回の証拠対象だけをカード決済に限定します。
+                </span>
+              </Form>
+            ) : null}
+
+            {activeProbe?.status === "AWAITING_ORDER" ? (
+              <Form method="post" style={styles.form}>
+                <input type="hidden" name="intent" value="attach_order" />
+                <input type="hidden" name="probeId" value={activeProbe.id} />
+                <label style={styles.label}>
+                  Shopify注文番号
+                  <span style={styles.hint}>
+                    確認開始後に運営直販商品をKOMOJUカードで購入し、注文番号を入力します。
+                  </span>
+                  <input
+                    style={styles.input}
+                    name="orderReference"
+                    placeholder="#1234"
+                    autoComplete="off"
+                    required
+                  />
+                </label>
+                <button style={styles.primaryButton} disabled={busy}>
+                  この注文を照合
+                </button>
+              </Form>
+            ) : null}
+
+            {activeProbe?.status === "AWAITING_SETTLEMENT" ? (
+              <div style={styles.actions}>
+                <refreshFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="refresh_probe" />
+                  <input type="hidden" name="probeId" value={activeProbe.id} />
+                  <button style={styles.secondaryButton} disabled={busy}>
+                    今すぐ再確認
+                  </button>
+                </refreshFetcher.Form>
+                <span style={styles.hint}>
+                  画面を開いている間は15秒ごとに自動確認します。
+                </span>
+              </div>
+            ) : null}
+
+            {probe?.status === "PASSED" ? (
+              <div style={styles.success} role="status">
+                <strong>本番決済の照合が完了しました。</strong>
+                <span>Shopify注文: {probe.shopifyOrderId || "-"}</span>
+                <span>MarketplaceOrder: {probe.marketplaceOrderId || "-"}</span>
+                <span>
+                  Shopify取引:{" "}
+                  {(paidEvidence.shopifyPaymentTransactionIds || []).join(
+                    ", ",
+                  ) || "-"}
+                </span>
+                <span>
+                  PaymentAttempt:{" "}
+                  {(paidEvidence.paymentAttemptIds || []).join(", ") || "-"}
+                </span>
+                <span>証跡SHA-256: {probe.evidenceHash || "-"}</span>
+              </div>
+            ) : null}
+
+            {activeProbe ? (
+              <Form method="post" style={styles.cancelForm}>
+                <input type="hidden" name="intent" value="cancel_probe" />
+                <input type="hidden" name="probeId" value={activeProbe.id} />
+                <button style={styles.textButton} disabled={busy}>
+                  この確認を中止
+                </button>
+              </Form>
+            ) : null}
+
+            <ResultMessage
+              result={result}
+              fallbackReason={probe?.lastErrorCode}
+            />
+          </section>
+
+          <section style={styles.section}>
+            <h2 style={styles.sectionTitle}>進行状況</h2>
+            <ol style={styles.steps}>
+              {page.steps.map((step, index) => (
+                <li key={step.id} style={styles.step}>
+                  <span
+                    style={{
+                      ...styles.stepNumber,
+                      ...(step.done ? styles.stepNumberDone : {}),
+                    }}
+                    aria-hidden="true"
+                  >
+                    {step.done ? "OK" : index + 1}
+                  </span>
+                  <span>
+                    <strong>{step.label}</strong>
+                    <span style={styles.stepDetail}>{step.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </>
+      )}
+
+      <Link to="/app/production-readiness">本番確認へ戻る</Link>
+    </main>
+  );
 }
 
 function privateHeaders() {

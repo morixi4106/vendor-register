@@ -55,11 +55,16 @@ function sortedStrings(value) {
 }
 
 function sameStrings(left, right) {
-  return JSON.stringify(sortedStrings(left)) === JSON.stringify(sortedStrings(right));
+  return (
+    JSON.stringify(sortedStrings(left)) === JSON.stringify(sortedStrings(right))
+  );
 }
 
 function projectionHash(payload) {
-  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
 }
 
 function currentReleaseId(env) {
@@ -76,12 +81,8 @@ export function isCompleteKomojuLimitedLaunchMetadata(metadata) {
   const expectedBankDepositAt = new Date(value.expectedBankDepositAt);
   const completionDeadline = new Date(value.completionDeadline);
   const actualPaidAmount = amount(value.actualPaidAmount);
-  const maximumPlannedChargeAmount = amount(
-    value.maximumPlannedChargeAmount,
-  );
-  const companyRefundReserveAmount = amount(
-    value.companyRefundReserveAmount,
-  );
+  const maximumPlannedChargeAmount = amount(value.maximumPlannedChargeAmount);
+  const companyRefundReserveAmount = amount(value.companyRefundReserveAmount);
   const maxGrossAmount = amount(value.maxGrossAmount);
   const maxOutstandingLiability = amount(value.maxOutstandingLiability);
   const minimumPayoutAmount = amount(value.minimumPayoutAmount);
@@ -91,51 +92,51 @@ export function isCompleteKomojuLimitedLaunchMetadata(metadata) {
 
   return Boolean(
     value.verificationSource === "komoju_zero_balance_limited_launch" &&
-      clean(value.probeId) &&
-      clean(value.shopDomain) &&
-      clean(value.shopifyOrderId) &&
-      clean(value.marketplaceOrderId) &&
-      clean(value.releaseId) &&
-      /^[a-f0-9]{64}$/.test(clean(value.releaseFingerprint).toLowerCase()) &&
-      Number.isFinite(saleVerifiedAt.getTime()) &&
-      Number.isFinite(expectedBankDepositAt.getTime()) &&
-      Number.isFinite(completionDeadline.getTime()) &&
-      saleVerifiedAt.getTime() <= expectedBankDepositAt.getTime() &&
-      expectedBankDepositAt.getTime() <= completionDeadline.getTime() &&
-      actualPaidAmount > 0 &&
-      clean(value.currencyCode).toUpperCase() === "JPY" &&
-      maximumPlannedChargeAmount >= actualPaidAmount &&
-      companyRefundReserveAmount >= maximumPlannedChargeAmount &&
-      Number(value.maxOrderCount) === 2 &&
-      maxGrossAmount >= actualPaidAmount &&
-      maxOutstandingLiability >= actualPaidAmount &&
-      maxGrossAmount <= companyRefundReserveAmount &&
-      maxOutstandingLiability <= companyRefundReserveAmount &&
-      sortedStrings(value.allowedProductIds).length === 1 &&
-      sortedStrings(value.allowedShopifyProductIds).length === 1 &&
-      clean(value.allowedShopifyVariantId) &&
-      Number(value.canaryQuantity) === 1 &&
-      Number(value.canaryInventoryQuantity) === 1 &&
-      value.canaryInventoryTracked === true &&
-      clean(value.canaryInventoryPolicy).toUpperCase() === "DENY" &&
-      sortedStrings(value.allowedProductNames).length === 1 &&
-      ["WEEKLY", "MONTHLY"].includes(
-        clean(value.komojuPayoutCycle).toUpperCase(),
-      ) &&
-      minimumPayoutAmount > 0 &&
-      actualPaidAmount - estimatedProcessingFeeAmount >= minimumPayoutAmount &&
-      value.payoutNotOnHoldConfirmed === true &&
-      Number(value.confirmedKomojuUnsettledBalanceAmount) === 0 &&
-      value.zeroUnsettledBalanceConfirmed === true &&
-      value.companyRefundReserveConfirmed === true &&
-      value.directRefundFallbackConfirmed === true &&
-      value.domesticPlatformDirectOnlyConfirmed === true &&
-      value.thirdPartyCommerceDisabled === true &&
-      Number(value.euEnabledSellerCount) === 0 &&
-      Number(value.euEnabledProductCount) === 0 &&
-      Number(value.internationalEnabledProductCount) === 0 &&
-      clean(value.evidencePackageReference) &&
-      value.strictE2eStillRequired === true
+    clean(value.probeId) &&
+    clean(value.shopDomain) &&
+    clean(value.shopifyOrderId) &&
+    clean(value.marketplaceOrderId) &&
+    clean(value.releaseId) &&
+    /^[a-f0-9]{64}$/.test(clean(value.releaseFingerprint).toLowerCase()) &&
+    Number.isFinite(saleVerifiedAt.getTime()) &&
+    Number.isFinite(expectedBankDepositAt.getTime()) &&
+    Number.isFinite(completionDeadline.getTime()) &&
+    saleVerifiedAt.getTime() <= expectedBankDepositAt.getTime() &&
+    expectedBankDepositAt.getTime() <= completionDeadline.getTime() &&
+    actualPaidAmount > 0 &&
+    clean(value.currencyCode).toUpperCase() === "JPY" &&
+    maximumPlannedChargeAmount >= actualPaidAmount &&
+    companyRefundReserveAmount >= maximumPlannedChargeAmount &&
+    Number(value.maxOrderCount) === 2 &&
+    maxGrossAmount >= actualPaidAmount &&
+    maxOutstandingLiability >= actualPaidAmount &&
+    maxGrossAmount <= companyRefundReserveAmount &&
+    maxOutstandingLiability <= companyRefundReserveAmount &&
+    sortedStrings(value.allowedProductIds).length === 1 &&
+    sortedStrings(value.allowedShopifyProductIds).length === 1 &&
+    clean(value.allowedShopifyVariantId) &&
+    Number(value.canaryQuantity) === 1 &&
+    Number(value.canaryInventoryQuantity) === 1 &&
+    value.canaryInventoryTracked === true &&
+    clean(value.canaryInventoryPolicy).toUpperCase() === "DENY" &&
+    sortedStrings(value.allowedProductNames).length === 1 &&
+    ["WEEKLY", "MONTHLY"].includes(
+      clean(value.komojuPayoutCycle).toUpperCase(),
+    ) &&
+    minimumPayoutAmount > 0 &&
+    actualPaidAmount - estimatedProcessingFeeAmount >= minimumPayoutAmount &&
+    value.payoutNotOnHoldConfirmed === true &&
+    Number(value.confirmedKomojuUnsettledBalanceAmount) === 0 &&
+    value.zeroUnsettledBalanceConfirmed === true &&
+    value.companyRefundReserveConfirmed === true &&
+    value.directRefundFallbackConfirmed === true &&
+    value.domesticPlatformDirectOnlyConfirmed === true &&
+    value.thirdPartyCommerceDisabled === true &&
+    Number(value.euEnabledSellerCount) === 0 &&
+    Number(value.euEnabledProductCount) === 0 &&
+    Number(value.internationalEnabledProductCount) === 0 &&
+    clean(value.evidencePackageReference) &&
+    value.strictE2eStillRequired === true,
   );
 }
 
@@ -182,10 +183,16 @@ export function buildKomojuLimitedLaunchProjection(
     variantId: metadata.allowedShopifyVariantId,
     maxSingleOrderAmount: control?.maxSingleOrderAmount,
     remainingOrders: active
-      ? Math.max(0, amount(control?.maxOrderCount) - amount(control?.orderCount))
+      ? Math.max(
+          0,
+          amount(control?.maxOrderCount) - amount(control?.orderCount),
+        )
       : 0,
     remainingGross: active
-      ? Math.max(0, amount(control?.maxGrossAmount) - amount(control?.grossAmount))
+      ? Math.max(
+          0,
+          amount(control?.maxGrossAmount) - amount(control?.grossAmount),
+        )
       : 0,
     remainingLiability: active
       ? Math.max(
@@ -198,7 +205,9 @@ export function buildKomojuLimitedLaunchProjection(
   return { ...payload, h: projectionHash(payload) };
 }
 
-export function buildKomojuLimitedLaunchBaselineProjection({ revision = 1 } = {}) {
+export function buildKomojuLimitedLaunchBaselineProjection({
+  revision = 1,
+} = {}) {
   const payload = buildProjectionPayload({
     state: "INACTIVE",
     revision,
@@ -215,7 +224,10 @@ export async function prepareKomojuLimitedLaunchBaseline(
   const sync = await syncProjection({ shopDomain, projection });
   return sync?.ok === true
     ? { ok: true, projection, sync }
-    : { ok: false, reason: sync?.reason || "limited_launch_baseline_sync_failed" };
+    : {
+        ok: false,
+        reason: sync?.reason || "limited_launch_baseline_sync_failed",
+      };
 }
 
 function isPaidOrder(order) {
@@ -284,15 +296,21 @@ export async function calculateKomojuLimitedLaunchExposure(
       directCustomerRefund: { select: { amount: true, status: true } },
     },
   });
-  const allowedProductIds = new Set(sortedStrings(control.allowedProductIdsJson));
-  const allowedVariantId = clean(control?.metadataJson?.allowedShopifyVariantId);
+  const allowedProductIds = new Set(
+    sortedStrings(control.allowedProductIdsJson),
+  );
+  const allowedVariantId = clean(
+    control?.metadataJson?.allowedShopifyVariantId,
+  );
   const paidOrders = orders.filter(isPaidOrder);
   const disallowedProductOrderIds = [];
   const invalidCanaryOrderIds = [];
   const directRefundGuardOrderIds = [];
 
   for (const order of paidOrders) {
-    const lines = order.sellerOrders.flatMap((sellerOrder) => sellerOrder.lines);
+    const lines = order.sellerOrders.flatMap(
+      (sellerOrder) => sellerOrder.lines,
+    );
     if (
       lines.length === 0 ||
       lines.some((line) => !allowedProductIds.has(clean(line.productId)))
@@ -344,12 +362,12 @@ function projectionMetadataMatches(control) {
   const projection = buildKomojuLimitedLaunchProjection(control);
   return Boolean(
     control?.projectionSyncedAt &&
-      clean(metadata.projectionState) === projection.s &&
-      Number(metadata.projectionRevision) === projection.r &&
-      clean(metadata.projectionHash) === projection.h &&
-      clean(metadata.projectionReadbackHash) === projection.h &&
-      Number(metadata.projectionReadbackRevision) === projection.r &&
-      clean(metadata.projectionCompareDigest),
+    clean(metadata.projectionState) === projection.s &&
+    Number(metadata.projectionRevision) === projection.r &&
+    clean(metadata.projectionHash) === projection.h &&
+    clean(metadata.projectionReadbackHash) === projection.h &&
+    Number(metadata.projectionReadbackRevision) === projection.r &&
+    clean(metadata.projectionCompareDigest),
   );
 }
 
@@ -359,45 +377,45 @@ function attestationMatches(control, attestation, probe, now) {
   const controlExpiresAt = new Date(control?.expiresAt);
   return Boolean(
     isCompleteKomojuLimitedLaunchMetadata(metadata) &&
-      !clean(control?.blockReason) &&
+    !clean(control?.blockReason) &&
     attestation?.id === control?.attestationId &&
-      attestation?.status === "CONFIRMED" &&
-      Number.isFinite(expiresAt.getTime()) &&
-      expiresAt.getTime() > now.getTime() &&
-      expiresAt.getTime() === controlExpiresAt.getTime() &&
-      clean(metadata.probeId) === clean(control?.probeId) &&
-      clean(metadata.releaseId) === clean(probe?.releaseId) &&
-      clean(metadata.releaseFingerprint) === clean(probe?.releaseFingerprint) &&
-      probe?.paidVerifiedAt &&
-      probe?.paidEvidenceJson?.passed === true &&
-      clean(probe?.orderEvidenceJson?.externalReadiness?.strategy) ===
-        "ZERO_BALANCE_LIMITED_LAUNCH" &&
-      clean(metadata.completionDeadline) === controlExpiresAt.toISOString() &&
-      Number(metadata.maxOrderCount) === Number(control?.maxOrderCount) &&
-      Number(metadata.maxGrossAmount) === Number(control?.maxGrossAmount) &&
-      Number(metadata.maxOutstandingLiability) ===
-        Number(control?.maxOutstandingLiability) &&
-      Number(metadata.maximumPlannedChargeAmount) ===
-        Number(control?.maxSingleOrderAmount) &&
-      Number(metadata.companyRefundReserveAmount) ===
-        Number(control?.companyRefundReserveAmount) &&
-      sameStrings(metadata.allowedProductIds, control?.allowedProductIdsJson) &&
-      sameStrings(
-        metadata.allowedShopifyProductIds,
-        control?.allowedShopifyProductIdsJson,
-      ) &&
-      clean(metadata.allowedShopifyVariantId) ===
-        clean(control?.metadataJson?.allowedShopifyVariantId) &&
-      Number(metadata.canaryQuantity) ===
-        Number(control?.metadataJson?.canaryQuantity) &&
-      Number(metadata.canaryInventoryQuantity) ===
-        Number(control?.metadataJson?.canaryInventoryQuantity) &&
-      metadata.canaryInventoryTracked ===
-        control?.metadataJson?.canaryInventoryTracked &&
-      clean(metadata.canaryInventoryPolicy).toUpperCase() ===
-        clean(control?.metadataJson?.canaryInventoryPolicy).toUpperCase() &&
-      clean(metadata.evidencePackageReference) ===
-        clean(control?.metadataJson?.evidencePackageReference),
+    attestation?.status === "CONFIRMED" &&
+    Number.isFinite(expiresAt.getTime()) &&
+    expiresAt.getTime() > now.getTime() &&
+    expiresAt.getTime() === controlExpiresAt.getTime() &&
+    clean(metadata.probeId) === clean(control?.probeId) &&
+    clean(metadata.releaseId) === clean(probe?.releaseId) &&
+    clean(metadata.releaseFingerprint) === clean(probe?.releaseFingerprint) &&
+    probe?.paidVerifiedAt &&
+    probe?.paidEvidenceJson?.passed === true &&
+    clean(probe?.orderEvidenceJson?.externalReadiness?.strategy) ===
+      "ZERO_BALANCE_LIMITED_LAUNCH" &&
+    clean(metadata.completionDeadline) === controlExpiresAt.toISOString() &&
+    Number(metadata.maxOrderCount) === Number(control?.maxOrderCount) &&
+    Number(metadata.maxGrossAmount) === Number(control?.maxGrossAmount) &&
+    Number(metadata.maxOutstandingLiability) ===
+      Number(control?.maxOutstandingLiability) &&
+    Number(metadata.maximumPlannedChargeAmount) ===
+      Number(control?.maxSingleOrderAmount) &&
+    Number(metadata.companyRefundReserveAmount) ===
+      Number(control?.companyRefundReserveAmount) &&
+    sameStrings(metadata.allowedProductIds, control?.allowedProductIdsJson) &&
+    sameStrings(
+      metadata.allowedShopifyProductIds,
+      control?.allowedShopifyProductIdsJson,
+    ) &&
+    clean(metadata.allowedShopifyVariantId) ===
+      clean(control?.metadataJson?.allowedShopifyVariantId) &&
+    Number(metadata.canaryQuantity) ===
+      Number(control?.metadataJson?.canaryQuantity) &&
+    Number(metadata.canaryInventoryQuantity) ===
+      Number(control?.metadataJson?.canaryInventoryQuantity) &&
+    metadata.canaryInventoryTracked ===
+      control?.metadataJson?.canaryInventoryTracked &&
+    clean(metadata.canaryInventoryPolicy).toUpperCase() ===
+      clean(control?.metadataJson?.canaryInventoryPolicy).toUpperCase() &&
+    clean(metadata.evidencePackageReference) ===
+      clean(control?.metadataJson?.evidencePackageReference),
   );
 }
 
@@ -414,7 +432,11 @@ export async function evaluateKomojuLimitedLaunchControl(
   } = {},
 ) {
   if (!control) {
-    return { ready: false, blockingReason: null, reason: "limited_launch_inactive" };
+    return {
+      ready: false,
+      blockingReason: null,
+      reason: "limited_launch_inactive",
+    };
   }
   const [resolvedAttestation, resolvedProbe, resolvedScope, resolvedExposure] =
     await Promise.all([
@@ -435,7 +457,8 @@ export async function evaluateKomojuLimitedLaunchControl(
         (prismaClient.seller?.count && prismaClient.product?.count
           ? inspectKomojuLimitedLaunchScope({ prismaClient, env })
           : { ready: true }),
-      exposure || calculateKomojuLimitedLaunchExposure(control, { prismaClient }),
+      exposure ||
+        calculateKomojuLimitedLaunchExposure(control, { prismaClient }),
     ]);
   const status = clean(control.status).toUpperCase();
   const strictE2ePassed = resolvedProbe?.status === "PASSED";
@@ -456,7 +479,8 @@ export async function evaluateKomojuLimitedLaunchControl(
 
   let blockingReason = null;
   if (status === KOMOJU_LIMITED_LAUNCH_STATUS.BLOCKED) {
-    blockingReason = clean(control.blockReason) || "komoju_limited_launch_blocked";
+    blockingReason =
+      clean(control.blockReason) || "komoju_limited_launch_blocked";
   } else if (status === KOMOJU_LIMITED_LAUNCH_STATUS.PREPARING) {
     blockingReason = "komoju_limited_launch_preparing";
   } else if (status !== KOMOJU_LIMITED_LAUNCH_STATUS.ACTIVE) {
@@ -473,12 +497,15 @@ export async function evaluateKomojuLimitedLaunchControl(
   ) {
     blockingReason = "komoju_limited_launch_attestation_mismatch";
   } else if (resolvedScope?.ready !== true) {
-    blockingReason = resolvedScope?.reason || "komoju_limited_launch_scope_changed";
+    blockingReason =
+      resolvedScope?.reason || "komoju_limited_launch_scope_changed";
   } else if (
     !resolvedProbe ||
-    !["AWAITING_PAYOUT_EVIDENCE", "AWAITING_REFUND_RESERVE_CONFIRMATION", "AWAITING_REFUND"].includes(
-      resolvedProbe.status,
-    )
+    ![
+      "AWAITING_PAYOUT_EVIDENCE",
+      "AWAITING_REFUND_RESERVE_CONFIRMATION",
+      "AWAITING_REFUND",
+    ].includes(resolvedProbe.status)
   ) {
     blockingReason = "komoju_limited_launch_probe_not_continuing";
   } else if (new Date(control.expiresAt).getTime() <= now.getTime()) {
@@ -514,7 +541,9 @@ export async function evaluateKomojuLimitedLaunchControl(
     ready: !blockingReason && projectionReady,
     completed: false,
     blockingReason,
-    reason: blockingReason || (projectionReady ? null : "limited_launch_projection_mismatch"),
+    reason:
+      blockingReason ||
+      (projectionReady ? null : "limited_launch_projection_mismatch"),
     syncRequired: !blockingReason && !projectionReady,
     exposure: resolvedExposure,
     probe: resolvedProbe,
@@ -539,9 +568,13 @@ function projectionChanged(control, state, exposure) {
   return currentHash !== sameRevision.h;
 }
 
-async function applyEmergencyHoldSafely(
-  { control, reason, prismaClient, now, emergencyHold },
-) {
+async function applyEmergencyHoldSafely({
+  control,
+  reason,
+  prismaClient,
+  now,
+  emergencyHold,
+}) {
   const hold =
     emergencyHold ||
     (await import("./operationalReadiness.server.js"))
@@ -624,7 +657,10 @@ export async function refreshKomojuLimitedLaunchControl(
       revision: blockRevision,
     });
     try {
-      await syncProjection({ shopDomain: control.shopDomain, projection: blockedProjection });
+      await syncProjection({
+        shopDomain: control.shopDomain,
+        projection: blockedProjection,
+      });
     } catch {
       // The emergency hold below is the independent fail-closed boundary.
     }
@@ -643,7 +679,8 @@ export async function refreshKomojuLimitedLaunchControl(
         status: KOMOJU_LIMITED_LAUNCH_STATUS.BLOCKED,
         projectionVersion: blockRevision,
         blockedAt: control.blockedAt || now,
-        blockReason: syncResult?.reason || "limited_launch_projection_sync_failed",
+        blockReason:
+          syncResult?.reason || "limited_launch_projection_sync_failed",
         lastEvaluatedAt: now,
       },
     });
@@ -694,7 +731,10 @@ export async function refreshKomojuLimitedLaunchControl(
       revision: revision + 1,
     });
     try {
-      await syncProjection({ shopDomain: control.shopDomain, projection: blockedProjection });
+      await syncProjection({
+        shopDomain: control.shopDomain,
+        projection: blockedProjection,
+      });
     } catch {
       // Preserve the original database failure while attempting fail-closed rollback.
     }

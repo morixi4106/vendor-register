@@ -241,6 +241,32 @@ export const action = async ({ request }) => {
     );
   }
 
+  if (intent === "disable_checkout_validation_for_standard_direct") {
+    const { inspectPlatformDirectCheckoutMode } =
+      await import("../services/platformDirectCheckoutMode.server.js");
+    const mode = inspectPlatformDirectCheckoutMode();
+    if (!mode.standardDirectReady) {
+      return json(
+        {
+          checkoutValidation: {
+            ok: false,
+            reason: mode.reason || "standard_direct_mode_not_ready",
+          },
+        },
+        { status: 409 },
+      );
+    }
+    const { ensureMarketplaceCheckoutValidation } =
+      await import("../services/shopifyCheckoutValidation.server.js");
+    const result = await ensureMarketplaceCheckoutValidation(session.shop, {
+      enabled: false,
+    });
+    return json(
+      { checkoutValidation: result },
+      { status: result.ok ? 200 : 400 },
+    );
+  }
+
   if (intent === "activate_checkout_gate") {
     try {
       const { reconcileShopifyProductCatalog } =

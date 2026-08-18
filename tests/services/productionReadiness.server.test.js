@@ -1308,6 +1308,61 @@ test("includeCheckoutValidationInProductionReadiness blocks launch until fail-cl
   );
 });
 
+test("standard direct readiness requires the marketplace validation to be inactive", () => {
+  const base = {
+    checks: [],
+    summary: {
+      totalChecks: 0,
+      blockingCount: 0,
+      warningCount: 0,
+      manualCount: 0,
+    },
+    canGoLive: true,
+  };
+  const env = {
+    PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+  };
+
+  const ready = includeCheckoutValidationInProductionReadiness(
+    base,
+    {
+      ok: true,
+      exists: true,
+      prepared: true,
+      active: false,
+    },
+    env,
+  );
+  assert.equal(ready.checkoutMode.standardDirectReady, true);
+  assert.equal(
+    ready.checks.find(
+      (check) => check.id === "marketplace_checkout_server_validation",
+    ).status,
+    "pass",
+  );
+  assert.equal(
+    ready.checks.some(
+      (check) =>
+        check.id ===
+        "operational_attestation_checkout_validation_live_probe_completed",
+    ),
+    false,
+  );
+
+  const blocked = includeCheckoutValidationInProductionReadiness(
+    base,
+    { ok: true, exists: true, prepared: true, active: true },
+    env,
+  );
+  assert.equal(blocked.canGoLive, false);
+  assert.equal(
+    blocked.checks.find(
+      (check) => check.id === "marketplace_checkout_server_validation",
+    ).status,
+    "fail",
+  );
+});
+
 test("strict readiness blocks unresolved warnings and manual checks", () => {
   const result = summarizeProductionReadinessChecks([
     { id: "pass", status: "pass" },
