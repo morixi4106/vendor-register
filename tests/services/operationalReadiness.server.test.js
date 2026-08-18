@@ -11,6 +11,7 @@ import {
   isCompleteCheckoutValidationLiveProbe,
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
   recordOperationalReadinessAttestation,
   recoverPlatformCheckoutEmergencyHold,
   setAutomatedEmailHold,
@@ -477,6 +478,47 @@ test("readiness inspection marks expired evidence as blocking", async () => {
         check.id === "operational_attestation_email_delivery_confirmed" &&
         check.status === "fail",
     ),
+  );
+});
+
+test("standard direct checkout requires one payment projection instead of marketplace settlement evidence", async () => {
+  const prismaClient = {
+    operationalReadinessAttestation: {
+      async findMany() {
+        return [];
+      },
+    },
+  };
+
+  const inspection = await inspectOperationalReadiness({
+    prismaClient,
+    env: {
+      PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "false",
+      MARKETPLACE_SETTLEMENT_ACTIONS_ENABLED: "false",
+      DOMESTIC_SELLER_SETTLEMENT_ENABLED: "false",
+      CROSS_BORDER_SELLER_SETTLEMENT_ENABLED: "false",
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "false",
+    },
+  });
+
+  assert.equal(
+    inspection.rows.find(
+      (row) => row.definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
+    ).definition.supplemental,
+    false,
+  );
+  assert.equal(
+    inspection.rows.find(
+      (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+    ).definition.supplemental,
+    true,
+  );
+  assert.equal(
+    inspection.rows.find(
+      (row) => row.definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+    ).definition.supplemental,
+    true,
   );
 });
 

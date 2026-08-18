@@ -11,10 +11,17 @@ payments, refunds, and provider settlements can be reconciled safely.
 PAYMENT_PROVIDERS=shopify_payments,komoju
 KOMOJU_PAYMENT_OPERATIONS_ENABLED=true
 PAYMENT_REFUND_CONFIRMATION_ENFORCED=true
+PLATFORM_DIRECT_CHECKOUT_MODE=SHOPIFY_STANDARD_DIRECT
 ```
 
 `PAYMENT_PROVIDER` remains a legacy single-value fallback. New environments
 must use `PAYMENT_PROVIDERS`.
+
+`SHOPIFY_STANDARD_DIRECT` applies only to domestic products sold directly by
+the platform through Shopify's standard checkout. If any third-party
+storefront, settlement, public Draft Order, or cross-border commerce flag is
+enabled, the application fails back to `MARKETPLACE_VALIDATED`. See
+`platform-direct-standard-checkout.md` for the ownership and launch boundary.
 
 ## Order flow
 

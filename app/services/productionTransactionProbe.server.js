@@ -5,8 +5,10 @@ import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.j
 import {
   LIVE_ORDER_REFUND_E2E_CHECK_KEY,
   OPERATIONAL_ATTESTATION_STATUS,
+  PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
   recordOperationalReadinessAttestation,
 } from "./operationalReadiness.server.js";
+import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 import {
   buildProductionReleaseFingerprint,
   buildProductionReleaseExpectation,
@@ -31,6 +33,11 @@ export const PRODUCTION_TRANSACTION_PROBE_STATUS = Object.freeze({
   PASSED: "PASSED",
   INVALIDATED: "INVALIDATED",
   CANCELLED: "CANCELLED",
+});
+
+export const PRODUCTION_TRANSACTION_PROBE_FLOW = Object.freeze({
+  STRICT_REFUND: "STRICT_REFUND",
+  PLATFORM_DIRECT_PAID_ONLY: "PLATFORM_DIRECT_PAID_ONLY",
 });
 
 const ACTIVE_PROBE_STATUSES = [
@@ -305,6 +312,17 @@ export function getProductionTransactionProbeTarget(probe) {
     normalizeProductionTransactionTarget(configured) ||
     DEFAULT_PRODUCTION_TRANSACTION_TARGET
   );
+}
+
+export function getProductionTransactionProbeFlow(probe) {
+  const externalReadiness = asObject(
+    asObject(probe?.orderEvidenceJson).externalReadiness,
+  );
+  return Object.values(PRODUCTION_TRANSACTION_PROBE_FLOW).includes(
+    externalReadiness.flow,
+  )
+    ? externalReadiness.flow
+    : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND;
 }
 
 function sameTransactionTarget(left, right) {
@@ -598,6 +616,7 @@ export async function inspectProductionTransactionProbePreflight(
   {
     shopDomain,
     releaseExpectation,
+    checkoutValidation = null,
     targetProvider = PAYMENT_PROVIDER.KOMOJU,
     targetPaymentMethod = PAYMENT_METHOD.CARD,
   },
@@ -714,6 +733,7 @@ export async function inspectProductionTransactionProbePreflight(
     target.provider === PAYMENT_PROVIDER.KOMOJU ? "komoju" : "shopify_payments",
   );
   const komojuTarget = target.provider === PAYMENT_PROVIDER.KOMOJU;
+  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
   const paymentOperationsClean = Boolean(
     paymentOperations.available === true &&
     paymentOperations.pendingExpiredCount === 0 &&
@@ -723,9 +743,14 @@ export async function inspectProductionTransactionProbePreflight(
     paymentOperations.unmatchedSettlementCount === 0 &&
     toNonNegativeInteger(paymentOperations.settlementBatchReviewCount) === 0,
   );
-  const purchaseControlReady = Boolean(
-    release.expected?.functionId && release.expected?.validationId,
-  );
+  const purchaseControlReady = standardDirect
+    ? Boolean(
+        checkoutValidation?.ok === true &&
+        checkoutValidation?.exists === true &&
+        checkoutValidation?.prepared === true &&
+        checkoutValidation?.active !== true,
+      )
+    : Boolean(release.expected?.functionId && release.expected?.validationId);
   const checks = [
     preflightCheck(
       "release_configured",
@@ -738,8 +763,12 @@ export async function inspectProductionTransactionProbePreflight(
       "purchase_control_release_ready",
       purchaseControlReady,
       purchaseControlReady
-        ? "本番FunctionとValidationを確認しました。"
-        : "本番FunctionまたはValidationを確認できません。",
+        ? standardDirect
+          ? "Shopify標準チェックアウトを使用し、マーケットプレイス用Validationは無効です。"
+          : "本番FunctionとValidationを確認しました。"
+        : standardDirect
+          ? "マーケットプレイス用Validationを無効にしてから確認してください。"
+          : "本番FunctionまたはValidationを確認できません。",
     ),
     preflightCheck(
       "payment_provider_configured",
@@ -757,8 +786,12 @@ export async function inspectProductionTransactionProbePreflight(
     ),
     preflightCheck(
       "refund_confirmation_enforced",
-      !komojuTarget || env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true",
-      !komojuTarget || env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true"
+      standardDirect ||
+        !komojuTarget ||
+        env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true",
+      standardDirect ||
+        !komojuTarget ||
+        env.PAYMENT_REFUND_CONFIRMATION_ENFORCED === "true"
         ? "返金確認の安全制御は有効です。"
         : "PAYMENT_REFUND_CONFIRMATION_ENFORCED=trueが必要です。",
     ),
@@ -828,6 +861,9 @@ export async function inspectProductionTransactionProbePreflight(
       existingReconciledPayoutDepositedAt:
         existingReconciledPayout?.bankDepositedAt || null,
     },
+    checkoutMode: standardDirect
+      ? PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
+      : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND,
   };
 }
 
@@ -863,7 +899,7 @@ export async function createProductionTransactionProbe(
     estimatedProcessingFeeAmount,
     payoutNotOnHoldConfirmed = false,
   },
-  { prismaClient = prisma, now = new Date() } = {},
+  { prismaClient = prisma, now = new Date(), env = process.env } = {},
 ) {
   if (!prismaClient?.productionTransactionProbe?.findUnique) {
     return { ok: false, reason: "production_transaction_probe_unavailable" };
@@ -875,17 +911,21 @@ export async function createProductionTransactionProbe(
     provider: targetProvider,
     paymentMethod: targetPaymentMethod,
   });
+  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
+  const flow = standardDirect
+    ? PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
+    : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND;
   if (!shop || !actor || !release.configured || !target) {
     return { ok: false, reason: "production_transaction_probe_input_invalid" };
   }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
     (komojuCardOnlyConfirmed !== true ||
-      untestedAsyncMethodsDisabledConfirmed !== true ||
       komojuLiveConfirmed !== true ||
       singleCardIntegrationConfirmed !== true ||
       automaticCaptureConfirmed !== true ||
-      releaseFreezeConfirmed !== true)
+      (!standardDirect && untestedAsyncMethodsDisabledConfirmed !== true) ||
+      (!standardDirect && releaseFreezeConfirmed !== true))
   ) {
     return { ok: false, reason: "komoju_scope_confirmation_required" };
   }
@@ -899,9 +939,7 @@ export async function createProductionTransactionProbe(
   );
   const confirmedUnsettledBalanceProvided =
     clean(confirmedKomojuUnsettledBalanceAmount) !== "";
-  const limitedMaxOrderCount = toNonNegativeInteger(
-    limitedLaunchMaxOrderCount,
-  );
+  const limitedMaxOrderCount = toNonNegativeInteger(limitedLaunchMaxOrderCount);
   const limitedMaxGrossAmount = toNonNegativeInteger(
     limitedLaunchMaxGrossAmount,
   );
@@ -911,11 +949,10 @@ export async function createProductionTransactionProbe(
   const payoutCycle = clean(komojuPayoutCycle).toUpperCase();
   const expectedDepositAt = parseDate(expectedBankDepositAt);
   const minimumPayoutAmount = toNonNegativeInteger(komojuMinimumPayoutAmount);
-  const estimatedFeeAmount = toNonNegativeInteger(
-    estimatedProcessingFeeAmount,
-  );
+  const estimatedFeeAmount = toNonNegativeInteger(estimatedProcessingFeeAmount);
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     (!strategy || !evidenceReference || !evidenceHash || maximumCharge <= 0)
   ) {
     return { ok: false, reason: "komoju_external_readiness_missing" };
@@ -923,6 +960,7 @@ export async function createProductionTransactionProbe(
   let existingPayout = null;
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.EXISTING_RECONCILED_PAYOUT
   ) {
     existingPayout = await prismaClient.paymentSettlementBatch.findFirst({
@@ -947,12 +985,14 @@ export async function createProductionTransactionProbe(
   }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     (refundReserve <= 0 || refundReserve < maximumCharge)
   ) {
     return { ok: false, reason: "komoju_refund_reserve_insufficient" };
   }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH &&
     (!confirmedUnsettledBalanceProvided ||
       confirmedUnsettledBalance !== 0 ||
@@ -965,6 +1005,7 @@ export async function createProductionTransactionProbe(
   }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     strategy === KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
   ) {
     const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -990,83 +1031,100 @@ export async function createProductionTransactionProbe(
       };
     }
   }
-  const externalReadiness = {
-    version: 2,
-    strategy,
-    maximumPlannedChargeAmount: maximumCharge,
-    confirmedRefundReserveAmount: refundReserve,
-    confirmedKomojuUnsettledBalanceAmount:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? confirmedUnsettledBalance
-        : null,
-    refundReserveType:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? "COMPANY_CASH"
-        : "KOMOJU_UNSETTLED_BALANCE",
-    zeroUnsettledBalanceConfirmed:
-      zeroUnsettledBalanceConfirmed === true,
-    companyRefundReserveConfirmed: companyRefundReserveConfirmed === true,
-    directRefundFallbackConfirmed: directRefundFallbackConfirmed === true,
-    domesticPlatformDirectOnlyConfirmed:
-      domesticPlatformDirectOnlyConfirmed === true,
-    limitedLaunchMaxOrderCount:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? limitedMaxOrderCount
-        : null,
-    limitedLaunchMaxGrossAmount:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? limitedMaxGrossAmount
-        : null,
-    limitedLaunchMaxOutstandingLiability:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? limitedMaxOutstandingLiability
-        : null,
-    komojuPayoutCycle:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? payoutCycle
-        : null,
-    expectedBankDepositAt:
-      strategy ===
-        KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH &&
-      expectedDepositAt
-        ? expectedDepositAt.toISOString()
-        : null,
-    komojuMinimumPayoutAmount:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? minimumPayoutAmount
-        : null,
-    estimatedProcessingFeeAmount:
-      strategy ===
-      KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
-        ? estimatedFeeAmount
-        : null,
-    payoutNotOnHoldConfirmed: payoutNotOnHoldConfirmed === true,
-    komojuLiveConfirmed: komojuLiveConfirmed === true,
-    singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
-    automaticCaptureConfirmed: automaticCaptureConfirmed === true,
-    untestedAsyncMethodsDisabledConfirmed:
-      untestedAsyncMethodsDisabledConfirmed === true,
-    releaseFreezeConfirmed: releaseFreezeConfirmed === true,
-    evidenceReference,
-    evidenceHash,
-    existingPayoutBatchId: existingPayout?.id || null,
-    existingPayoutReference: existingPayout?.externalBatchId || null,
-    confirmedAt: now.toISOString(),
-    confirmedBy: actor,
-  };
+  const externalReadiness = standardDirect
+    ? {
+        version: 3,
+        flow,
+        komojuLiveConfirmed: komojuLiveConfirmed === true,
+        singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
+        automaticCaptureConfirmed: automaticCaptureConfirmed === true,
+        confirmedAt: now.toISOString(),
+        confirmedBy: actor,
+      }
+    : {
+        version: 2,
+        flow,
+        strategy,
+        maximumPlannedChargeAmount: maximumCharge,
+        confirmedRefundReserveAmount: refundReserve,
+        confirmedKomojuUnsettledBalanceAmount:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? confirmedUnsettledBalance
+            : null,
+        refundReserveType:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? "COMPANY_CASH"
+            : "KOMOJU_UNSETTLED_BALANCE",
+        zeroUnsettledBalanceConfirmed: zeroUnsettledBalanceConfirmed === true,
+        companyRefundReserveConfirmed: companyRefundReserveConfirmed === true,
+        directRefundFallbackConfirmed: directRefundFallbackConfirmed === true,
+        domesticPlatformDirectOnlyConfirmed:
+          domesticPlatformDirectOnlyConfirmed === true,
+        limitedLaunchMaxOrderCount:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? limitedMaxOrderCount
+            : null,
+        limitedLaunchMaxGrossAmount:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? limitedMaxGrossAmount
+            : null,
+        limitedLaunchMaxOutstandingLiability:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? limitedMaxOutstandingLiability
+            : null,
+        komojuPayoutCycle:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? payoutCycle
+            : null,
+        expectedBankDepositAt:
+          strategy ===
+            KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH &&
+          expectedDepositAt
+            ? expectedDepositAt.toISOString()
+            : null,
+        komojuMinimumPayoutAmount:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? minimumPayoutAmount
+            : null,
+        estimatedProcessingFeeAmount:
+          strategy ===
+          KOMOJU_PAYOUT_EVIDENCE_STRATEGY.ZERO_BALANCE_LIMITED_LAUNCH
+            ? estimatedFeeAmount
+            : null,
+        payoutNotOnHoldConfirmed: payoutNotOnHoldConfirmed === true,
+        komojuLiveConfirmed: komojuLiveConfirmed === true,
+        singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
+        automaticCaptureConfirmed: automaticCaptureConfirmed === true,
+        untestedAsyncMethodsDisabledConfirmed:
+          untestedAsyncMethodsDisabledConfirmed === true,
+        releaseFreezeConfirmed: releaseFreezeConfirmed === true,
+        evidenceReference,
+        evidenceHash,
+        existingPayoutBatchId: existingPayout?.id || null,
+        existingPayoutReference: existingPayout?.externalBatchId || null,
+        confirmedAt: now.toISOString(),
+        confirmedBy: actor,
+      };
   const key = activeKey(shop);
   const existing = await prismaClient.productionTransactionProbe.findUnique({
     where: { activeKey: key },
   });
   if (existing) {
     if (existing.releaseFingerprint === release.releaseFingerprint) {
+      if (getProductionTransactionProbeFlow(existing) !== flow) {
+        return {
+          ok: false,
+          reason: "active_probe_flow_mismatch",
+          probe: existing,
+        };
+      }
       if (
         !sameTransactionTarget(
           getProductionTransactionProbeTarget(existing),
@@ -1123,6 +1181,7 @@ export async function createProductionTransactionProbe(
       return { ok: false, reason: "production_transaction_probe_conflict" };
     }
     if (
+      getProductionTransactionProbeFlow(concurrent) !== flow ||
       !sameTransactionTarget(
         getProductionTransactionProbeTarget(concurrent),
         target,
@@ -2214,6 +2273,156 @@ async function invalidateProbeForReleaseChange(probe, { prismaClient, now }) {
   };
 }
 
+async function completeProductionTransactionProbe(
+  {
+    probe,
+    actorKey,
+    paidInspection,
+    commercialFingerprint,
+    payoutEvidenceInspection = null,
+    refundReserveConfirmationInspection = null,
+    refundInspection = null,
+    now,
+  },
+  { prismaClient },
+) {
+  const flow = getProductionTransactionProbeFlow(probe);
+  const directPaidOnly =
+    flow === PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY;
+  const paidEvidence = directPaidOnly
+    ? paidInspection
+    : {
+        ...paidInspection,
+        payoutEvidenceInspection,
+        refundReserveConfirmationInspection,
+      };
+  const finalEvidence = {
+    version: directPaidOnly ? 6 : 5,
+    flow,
+    probeId: probe.id,
+    shopDomain: probe.shopDomain,
+    releaseId: probe.releaseId,
+    releaseFingerprint: probe.releaseFingerprint,
+    shopifyOrderId: probe.shopifyOrderId,
+    marketplaceOrderId: paidInspection.marketplaceOrderId,
+    commercialFingerprint,
+    paymentTarget: paidInspection.paymentTarget,
+    paidInspection,
+    ...(directPaidOnly
+      ? {}
+      : {
+          payoutEvidenceInspection,
+          refundReserveConfirmationInspection,
+          refundInspection,
+        }),
+    completedAt: now.toISOString(),
+    verifiedBy: clean(actorKey) || probe.startedBy,
+  };
+  const evidenceHash = hashEvidence(finalEvidence);
+  const attestationKey = directPaidOnly
+    ? PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+    : LIVE_ORDER_REFUND_E2E_CHECK_KEY;
+  const notes = directPaidOnly
+    ? `${paidInspection.paymentTarget.provider} ${paidInspection.paymentTarget.paymentMethod}の実売上、Shopify注文、PaymentAttempt、SellerOrder、Shadow、売上台帳を自動照合`
+    : `${paidInspection.paymentTarget.provider} ${paidInspection.paymentTarget.paymentMethod}の実取引、SellerOrder、売上台帳、元取引への全額返金を自動照合`;
+
+  const complete = async (tx) => {
+    const claimed = await tx.productionTransactionProbe.updateMany({
+      where: {
+        id: probe.id,
+        activeKey: activeKey(probe.shopDomain),
+        releaseFingerprint: probe.releaseFingerprint,
+        status: { in: ACTIVE_PROBE_STATUSES },
+      },
+      data: {
+        activeKey: null,
+        status: PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED,
+        paidVerifiedAt: probe.paidVerifiedAt || now,
+        refundVerifiedAt: directPaidOnly ? null : now,
+        completedAt: now,
+        lastCheckedAt: now,
+        lastErrorCode: null,
+        evidenceHash,
+        paidEvidenceJson: paidEvidence,
+        refundEvidenceJson: directPaidOnly ? null : refundInspection,
+        finalEvidenceJson: finalEvidence,
+        marketplaceOrderId: paidInspection.marketplaceOrderId,
+      },
+    });
+    if (claimed.count !== 1) {
+      const latest = await tx.productionTransactionProbe.findUnique({
+        where: { id: probe.id },
+      });
+      if (
+        latest?.status === PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED &&
+        latest?.releaseFingerprint === probe.releaseFingerprint &&
+        latest?.shopifyOrderId === probe.shopifyOrderId
+      ) {
+        return { updated: latest, attestation: null, alreadyCompleted: true };
+      }
+      const conflict = new Error("production_transaction_probe_conflict");
+      conflict.code = "PROBE_CONFLICT";
+      throw conflict;
+    }
+    const updated = await tx.productionTransactionProbe.findUnique({
+      where: { id: probe.id },
+    });
+    const attestation = await recordOperationalReadinessAttestation(
+      {
+        checkKey: attestationKey,
+        status: OPERATIONAL_ATTESTATION_STATUS.CONFIRMED,
+        evidenceReference: `production-transaction-probe:${probe.id}`,
+        evidenceHash,
+        confirmedBy: "system:production-transaction-probe",
+        notes,
+        metadataJson: {
+          verificationSource: "production_transaction_probe",
+          probeId: probe.id,
+          releaseId: probe.releaseId,
+          releaseFingerprint: probe.releaseFingerprint,
+          paymentProvider: paidInspection.paymentTarget.provider,
+          paymentMethod: paidInspection.paymentTarget.paymentMethod,
+          refundMode: directPaidOnly
+            ? "NOT_REQUIRED_FOR_PLATFORM_DIRECT_LAUNCH"
+            : paidInspection.paymentTarget.refundMode,
+          flow,
+          completedAt: now.toISOString(),
+        },
+      },
+      { prismaClient: tx, now },
+    );
+    if (!attestation.ok) {
+      throw new Error(
+        `production_transaction_probe_attestation_failed:${attestation.reason}`,
+      );
+    }
+    return { updated, attestation };
+  };
+
+  try {
+    const result =
+      typeof prismaClient.$transaction === "function"
+        ? await prismaClient.$transaction(complete, {
+            isolationLevel: "Serializable",
+          })
+        : await complete(prismaClient);
+    return {
+      ok: true,
+      pending: false,
+      stage: "complete",
+      probe: result.updated,
+      attestation: result.attestation?.attestation || null,
+      paidInspection,
+      ...(directPaidOnly ? {} : { refundInspection }),
+    };
+  } catch (error) {
+    if (error?.code === "PROBE_CONFLICT" || error?.code === "P2034") {
+      return { ok: false, reason: "production_transaction_probe_conflict" };
+    }
+    throw error;
+  }
+}
+
 export async function refreshProductionTransactionProbe(
   { probeId, actorKey, releaseExpectation },
   {
@@ -2344,6 +2553,21 @@ export async function refreshProductionTransactionProbe(
       paidInspection,
     };
   }
+  if (
+    getProductionTransactionProbeFlow(probe) ===
+    PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
+  ) {
+    return completeProductionTransactionProbe(
+      {
+        probe,
+        actorKey,
+        paidInspection,
+        commercialFingerprint: fetched.snapshot.commercialFingerprint,
+        now,
+      },
+      { prismaClient },
+    );
+  }
   const payoutEvidenceInspection = buildPayoutEvidenceInspection({
     probe,
     local,
@@ -2450,123 +2674,19 @@ export async function refreshProductionTransactionProbe(
       refundInspection,
     };
   }
-  const finalEvidence = {
-    version: 5,
-    probeId: probe.id,
-    shopDomain: probe.shopDomain,
-    releaseId: probe.releaseId,
-    releaseFingerprint: probe.releaseFingerprint,
-    shopifyOrderId: probe.shopifyOrderId,
-    marketplaceOrderId: paidInspection.marketplaceOrderId,
-    commercialFingerprint: fetched.snapshot.commercialFingerprint,
-    paymentTarget: paidInspection.paymentTarget,
-    paidInspection,
-    payoutEvidenceInspection,
-    refundReserveConfirmationInspection,
-    refundInspection,
-    completedAt: now.toISOString(),
-    verifiedBy: clean(actorKey) || probe.startedBy,
-  };
-  const evidenceHash = hashEvidence(finalEvidence);
-  const complete = async (tx) => {
-    const claimed = await tx.productionTransactionProbe.updateMany({
-      where: {
-        id: probe.id,
-        activeKey: activeKey(probe.shopDomain),
-        releaseFingerprint: probe.releaseFingerprint,
-        status: { in: ACTIVE_PROBE_STATUSES },
-      },
-      data: {
-        activeKey: null,
-        status: PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED,
-        paidVerifiedAt: probe.paidVerifiedAt || now,
-        refundVerifiedAt: now,
-        completedAt: now,
-        lastCheckedAt: now,
-        lastErrorCode: null,
-        evidenceHash,
-        paidEvidenceJson: {
-          ...paidInspection,
-          payoutEvidenceInspection,
-          refundReserveConfirmationInspection,
-        },
-        refundEvidenceJson: refundInspection,
-        finalEvidenceJson: finalEvidence,
-        marketplaceOrderId: paidInspection.marketplaceOrderId,
-      },
-    });
-    if (claimed.count !== 1) {
-      const latest = await tx.productionTransactionProbe.findUnique({
-        where: { id: probe.id },
-      });
-      if (
-        latest?.status === PRODUCTION_TRANSACTION_PROBE_STATUS.PASSED &&
-        latest?.releaseFingerprint === probe.releaseFingerprint &&
-        latest?.shopifyOrderId === probe.shopifyOrderId
-      ) {
-        return { updated: latest, attestation: null, alreadyCompleted: true };
-      }
-      const conflict = new Error("production_transaction_probe_conflict");
-      conflict.code = "PROBE_CONFLICT";
-      throw conflict;
-    }
-    const updated = await tx.productionTransactionProbe.findUnique({
-      where: { id: probe.id },
-    });
-    const attestation = await recordOperationalReadinessAttestation(
-      {
-        checkKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
-        status: OPERATIONAL_ATTESTATION_STATUS.CONFIRMED,
-        evidenceReference: `production-transaction-probe:${probe.id}`,
-        evidenceHash,
-        confirmedBy: "system:production-transaction-probe",
-        notes: `${paidInspection.paymentTarget.provider} ${paidInspection.paymentTarget.paymentMethod}の実取引、SellerOrder、売上台帳、元取引への全額返金を自動照合`,
-        metadataJson: {
-          verificationSource: "production_transaction_probe",
-          probeId: probe.id,
-          releaseId: probe.releaseId,
-          releaseFingerprint: probe.releaseFingerprint,
-          paymentProvider: paidInspection.paymentTarget.provider,
-          paymentMethod: paidInspection.paymentTarget.paymentMethod,
-          refundMode: paidInspection.paymentTarget.refundMode,
-          completedAt: now.toISOString(),
-        },
-      },
-      { prismaClient: tx, now },
-    );
-    if (!attestation.ok) {
-      throw new Error(
-        `production_transaction_probe_attestation_failed:${attestation.reason}`,
-      );
-    }
-    return { updated, attestation };
-  };
-  let transactionResult;
-  try {
-    transactionResult =
-      typeof prismaClient.$transaction === "function"
-        ? await prismaClient.$transaction(complete, {
-            isolationLevel: "Serializable",
-          })
-        : await complete(prismaClient);
-  } catch (error) {
-    if (error?.code === "PROBE_CONFLICT" || error?.code === "P2034") {
-      return {
-        ok: false,
-        reason: "production_transaction_probe_conflict",
-      };
-    }
-    throw error;
-  }
-  return {
-    ok: true,
-    pending: false,
-    stage: "complete",
-    probe: transactionResult.updated,
-    attestation: transactionResult.attestation?.attestation || null,
-    paidInspection,
-    refundInspection,
-  };
+  return completeProductionTransactionProbe(
+    {
+      probe,
+      actorKey,
+      paidInspection,
+      commercialFingerprint: fetched.snapshot.commercialFingerprint,
+      payoutEvidenceInspection,
+      refundReserveConfirmationInspection,
+      refundInspection,
+      now,
+    },
+    { prismaClient },
+  );
 }
 
 export async function cancelProductionTransactionProbe(
@@ -2672,7 +2792,16 @@ export function buildProductionTransactionProbePage({
   activeProbe,
   release,
   target = KOMOJU_CARD_TRANSACTION_TARGET,
+  flow,
 } = {}) {
+  const effectiveFlow =
+    flow ||
+    (activeProbe
+      ? getProductionTransactionProbeFlow(activeProbe)
+      : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND);
+  const directPaidOnly =
+    effectiveFlow ===
+    PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY;
   const paymentTarget = activeProbe
     ? getProductionTransactionProbeTarget(activeProbe)
     : normalizeProductionTransactionTarget(target) ||
@@ -2704,8 +2833,9 @@ export function buildProductionTransactionProbePage({
     AWAITING_SETTLEMENT: {
       tone: "warning",
       statusLabel: "売上反映待ち",
-      instruction:
-        "注文Webhook、SellerOrder、Shadow Check、売上台帳の反映を待っています。まだ返金しないでください。",
+      instruction: directPaidOnly
+        ? "注文Webhook、PaymentAttempt、SellerOrder、Shadow Check、売上台帳の反映を照合しています。"
+        : "注文Webhook、SellerOrder、Shadow Check、売上台帳の反映を待っています。まだ返金しないでください。",
     },
     AWAITING_PAYOUT_EVIDENCE: {
       tone: "warning",
@@ -2728,8 +2858,9 @@ export function buildProductionTransactionProbePage({
     PASSED: {
       tone: "success",
       statusLabel: "完了",
-      instruction:
-        "注文、売上、全額返金、台帳差引が一致し、現在のリリースへ証跡を登録しました。",
+      instruction: directPaidOnly
+        ? "KOMOJU本番売上、Shopify注文、PaymentAttempt、SellerOrder、Shadow、売上台帳が一致しました。"
+        : "注文、売上、全額返金、台帳差引が一致し、現在のリリースへ証跡を登録しました。",
     },
     INVALIDATED: {
       tone: "warning",
@@ -2752,7 +2883,7 @@ export function buildProductionTransactionProbePage({
     AWAITING_PAYOUT_EVIDENCE: 3,
     AWAITING_REFUND_RESERVE_CONFIRMATION: 3,
     AWAITING_REFUND: 3,
-    PASSED: 4,
+    PASSED: directPaidOnly ? 3 : 4,
     INVALIDATED: 0,
     CANCELLED: 0,
   }[status];
@@ -2772,17 +2903,22 @@ export function buildProductionTransactionProbePage({
       id: "settlement",
       label: "売上反映を照合",
       detail:
-        "MarketplaceOrder、SellerOrder、商品行、Shadow Check、売上台帳を比較します。",
+        "Shopify売上、PaymentAttempt、MarketplaceOrder、SellerOrder、商品行、Shadow、売上台帳を比較します。",
     },
-    {
-      id: "refund",
-      label: "全額返金を照合",
-      detail:
-        "Shopify返金、商品数量、返金台帳、二重差引がないことを確認します。",
-    },
+    ...(directPaidOnly
+      ? []
+      : [
+          {
+            id: "refund",
+            label: "全額返金を照合",
+            detail:
+              "Shopify返金、商品数量、返金台帳、二重差引がないことを確認します。",
+          },
+        ]),
   ];
   return {
     status,
+    flow: effectiveFlow,
     ...statusCopy,
     steps: stepDefinitions.map((step, index) => ({
       ...step,

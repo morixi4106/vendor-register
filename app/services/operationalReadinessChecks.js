@@ -1,7 +1,11 @@
 const LIVE_ORDER_REFUND_E2E_CHECK_KEY = "LIVE_ORDER_REFUND_E2E_COMPLETED";
+const PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY =
+  "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED";
 
 function upper(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 export function buildOperationalReadinessChecks({ inspection, control } = {}) {
@@ -27,7 +31,9 @@ export function buildOperationalReadinessChecks({ inspection, control } = {}) {
           ? ""
           : row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
             ? "本番注文・返金 E2E確認画面で、実注文と全額返金を自動照合してください。"
-            : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
+            : row.definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+              ? "本番決済1件の照合画面で、KOMOJU売上と注文・台帳の一致を確認してください。"
+              : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
       };
     });
 

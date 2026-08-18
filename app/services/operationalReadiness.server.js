@@ -20,6 +20,7 @@ import {
 } from "./komojuLimitedLaunchReadiness.server.js";
 import { buildOperationalReadinessChecks } from "./operationalReadinessChecks.js";
 import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "./checkoutValidationLiveProbe.js";
+import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 
 export { KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY };
 export { buildOperationalReadinessChecks };
@@ -47,6 +48,8 @@ export const CHECKOUT_VALIDATION_LIVE_PROBE_KEY =
   "CHECKOUT_VALIDATION_LIVE_PROBE_COMPLETED";
 export const LIVE_ORDER_REFUND_E2E_CHECK_KEY =
   "LIVE_ORDER_REFUND_E2E_COMPLETED";
+export const PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY =
+  "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED";
 export const SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY =
   "SHOPIFY_PAYMENTS_PAYOUT_CONFIRMED";
 
@@ -122,8 +125,40 @@ export const OPERATIONAL_READINESS_DEFINITIONS = Object.freeze([
     validityDays: 90,
     automated: true,
   },
+  {
+    key: PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
+    label: "KOMOJU本番決済・注文・台帳の直販確認",
+    validityDays: 90,
+    automated: true,
+    supplemental: true,
+  },
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_DEFINITION,
 ]);
+
+const STANDARD_DIRECT_SUPPLEMENTAL_KEYS = new Set([
+  CHECKOUT_VALIDATION_REPLAY_KEY,
+  CHECKOUT_VALIDATION_LIVE_PROBE_KEY,
+  LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+  "SHOPIFY_PAYMENTS_LIVE_CONFIRMED",
+  SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+  KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
+]);
+
+function resolveOperationalReadinessDefinitions(env) {
+  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
+  return OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
+    ...definition,
+    supplemental: standardDirect
+      ? definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+        ? false
+        : STANDARD_DIRECT_SUPPLEMENTAL_KEYS.has(definition.key)
+          ? true
+          : definition.supplemental === true
+      : definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+        ? true
+        : definition.supplemental === true,
+  }));
+}
 
 export function inspectCheckoutValidationActivationEvidence(
   operationalReadiness,
@@ -1462,7 +1497,10 @@ export async function recordOperationalReadinessAttestation(
   }
   const normalizedMetadata = asMetadataObject(metadataJson);
   if (
-    normalizedKey === LIVE_ORDER_REFUND_E2E_CHECK_KEY &&
+    [
+      LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
+    ].includes(normalizedKey) &&
     !isCompleteProductionTransactionProbeAttestation({
       metadata: normalizedMetadata,
       evidenceReference: normalizedReference,
@@ -1698,12 +1736,13 @@ export async function inspectOperationalReadiness({
   now = new Date(),
   env = process.env,
 } = {}) {
+  const definitions = resolveOperationalReadinessDefinitions(env);
   if (!prismaClient?.operationalReadinessAttestation?.findMany) {
     return {
       available: false,
-      definitions: OPERATIONAL_READINESS_DEFINITIONS,
+      definitions,
       attestations: [],
-      rows: OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
+      rows: definitions.map((definition) => ({
         definition,
         attestation: null,
         ready: false,
@@ -1743,11 +1782,12 @@ export async function inspectOperationalReadiness({
           where: { id: payoutEvidenceId },
         })
       : null;
-  const rows = OPERATIONAL_READINESS_DEFINITIONS.map((definition) => {
+  const rows = definitions.map((definition) => {
     const attestation = byKey.get(definition.key) || null;
     const metadata = asMetadataObject(attestation?.metadataJson);
     const releaseRequired = [
       LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
       SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
       KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
     ].includes(definition.key);
@@ -1799,16 +1839,19 @@ export async function inspectOperationalReadiness({
     };
   });
 
-  const effectiveRows = await applyKomojuLimitedLaunchReadiness({
-    rows,
-    prismaClient,
-    env,
-    strictCheckKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
-  });
+  const effectiveRows = isShopifyStandardDirectCheckoutMode(env)
+    ? rows
+    : await applyKomojuLimitedLaunchReadiness({
+        rows,
+        prismaClient,
+        env,
+        now,
+        strictCheckKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+      });
 
   return {
     available: true,
-    definitions: OPERATIONAL_READINESS_DEFINITIONS,
+    definitions,
     attestations,
     rows: effectiveRows,
     ready: effectiveRows

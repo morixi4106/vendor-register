@@ -34,6 +34,7 @@ import {
   inspectOperationalReadiness,
 } from "./operationalReadiness.server.js";
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
+import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -67,8 +68,7 @@ const READINESS_HEAVY_CHECK_IDS = new Set([
   "platform_checkout_emergency_hold",
   "platform_automated_email_hold",
   ...OPERATIONAL_READINESS_DEFINITIONS.map(
-    (definition) =>
-      `operational_attestation_${definition.key.toLowerCase()}`,
+    (definition) => `operational_attestation_${definition.key.toLowerCase()}`,
   ),
 ]);
 
@@ -165,9 +165,10 @@ export async function runLaunchMonitor({
       : null,
     completionSentAt: completionSentAt?.toISOString() || null,
     lastCheckedAt: now.toISOString(),
-    lastHeavyCheckedAt: runHeavyChecks && report.heavyCheckCompleted
-      ? now.toISOString()
-      : previousMetadata.lastHeavyCheckedAt || null,
+    lastHeavyCheckedAt:
+      runHeavyChecks && report.heavyCheckCompleted
+        ? now.toISOString()
+        : previousMetadata.lastHeavyCheckedAt || null,
     lastHeavyChecks: runHeavyChecks
       ? asCheckArray(report.heavyChecks)
       : asCheckArray(previousMetadata.lastHeavyChecks),
@@ -272,8 +273,7 @@ export async function collectLaunchMonitorReport({
     dependencies.inspectPaymentOperationReadiness ||
     inspectPaymentOperationReadiness;
   const getPlatformOperationalControlImpl =
-    dependencies.getPlatformOperationalControl ||
-    getPlatformOperationalControl;
+    dependencies.getPlatformOperationalControl || getPlatformOperationalControl;
   const refreshKomojuLimitedLaunchControlImpl =
     dependencies.refreshKomojuLimitedLaunchControl ||
     refreshKomojuLimitedLaunchControl;
@@ -292,7 +292,14 @@ export async function collectLaunchMonitorReport({
     const shopDomain = String(
       env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
     ).trim();
-    if (shopDomain) {
+    if (shopDomain && isShopifyStandardDirectCheckoutMode(env)) {
+      checks.push(
+        okCheck(
+          "komoju_limited_launch_control",
+          "Shopify標準直販モードでは限定公開制御を使用しません。",
+        ),
+      );
+    } else if (shopDomain) {
       const limitedLaunch = await refreshKomojuLimitedLaunchControlImpl(
         { shopDomain, applyEmergencyHold: true },
         { prismaClient, now },
@@ -443,10 +450,10 @@ export async function collectLaunchMonitorReport({
       recentContacts >= 10
         ? issueCheck(
             "contact_inquiry_spike",
-          recentContacts >= 30 ? CRITICAL_SEVERITY : WARNING_SEVERITY,
-          `直近の監視区間で問い合わせが${recentContacts}件あります。`,
-          null,
-          recentContacts,
+            recentContacts >= 30 ? CRITICAL_SEVERITY : WARNING_SEVERITY,
+            `直近の監視区間で問い合わせが${recentContacts}件あります。`,
+            null,
+            recentContacts,
           )
         : okCheck(
             "contact_inquiry_spike",
@@ -606,12 +613,11 @@ export async function collectLaunchMonitorReport({
       checkMode: runHeavyChecks ? "full" : "light",
     }),
     heavyCheckCompleted,
-    heavyChecks:
-      runHeavyChecks
-        ? heavyChecks
-        : asCheckArray(previousHeavyChecks).filter((check) =>
-            READINESS_HEAVY_CHECK_IDS.has(check.id),
-          ),
+    heavyChecks: runHeavyChecks
+      ? heavyChecks
+      : asCheckArray(previousHeavyChecks).filter((check) =>
+          READINESS_HEAVY_CHECK_IDS.has(check.id),
+        ),
   };
 }
 
@@ -637,9 +643,7 @@ export async function inspectShopifyProductCatalogSyncHeartbeat({
   const minutesSinceSuccess = lastSucceededAt
     ? Math.max(
         0,
-        Math.floor(
-          (now.getTime() - lastSucceededAt.getTime()) / (60 * 1000),
-        ),
+        Math.floor((now.getTime() - lastSucceededAt.getTime()) / (60 * 1000)),
       )
     : null;
 
@@ -650,7 +654,7 @@ export async function inspectShopifyProductCatalogSyncHeartbeat({
     stale: !lastSucceededAt,
     failureUnresolved: Boolean(
       lastFailedAt &&
-        (!lastSucceededAt || lastFailedAt.getTime() > lastSucceededAt.getTime()),
+      (!lastSucceededAt || lastFailedAt.getTime() > lastSucceededAt.getTime()),
     ),
   };
 }
@@ -723,11 +727,8 @@ export function buildShopifyProductCatalogSyncHeartbeatCheck({
 export function buildMarketplaceCheckoutPublicationBoundaryMonitorCheck(
   checkoutGate,
 ) {
-  const configured =
-    checkoutGate?.publicationConfigurationReady !== false;
-  const exposedProductCount = boundedCount(
-    checkoutGate?.exposedProductCount,
-  );
+  const configured = checkoutGate?.publicationConfigurationReady !== false;
+  const exposedProductCount = boundedCount(checkoutGate?.exposedProductCount);
   const failedProductCount = boundedCount(checkoutGate?.failedProductCount);
   const ready =
     checkoutGate?.active === true &&
