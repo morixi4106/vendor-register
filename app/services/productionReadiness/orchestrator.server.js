@@ -160,6 +160,7 @@ export async function getProductionReadiness({
   });
   const shopifyProductSync = await inspectShopifyProductSync({
     prismaClient,
+    shopDomain: normalizedShopDomain,
   });
   const productShippingProfiles = await inspectProductShippingProfiles({
     prismaClient,

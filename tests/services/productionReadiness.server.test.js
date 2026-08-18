@@ -16,6 +16,7 @@ import {
   OPERATIONAL_READINESS_DEFINITIONS,
   SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
+import { inspectShopifyProductSync } from "../../app/services/productionReadiness/products.server.js";
 
 const REQUIRED_SCOPE_STRING = [
   "read_products",
@@ -725,6 +726,28 @@ test("getProductionReadiness blocks active Shopify products without a store mapp
   assert.equal(result.canGoLive, false);
   assert.equal(check.status, "fail");
   assert.match(check.detail, /販売中 1件/);
+});
+
+test("inspectShopifyProductSync scopes unresolved issues to the authenticated shop", async () => {
+  let capturedWhere;
+  const result = await inspectShopifyProductSync({
+    prismaClient: {
+      shopifyProductSyncIssue: {
+        findMany: async ({ where }) => {
+          capturedWhere = where;
+          return [];
+        },
+      },
+    },
+    shopDomain: " Example.MyShopify.com ",
+  });
+
+  assert.deepEqual(capturedWhere, {
+    status: "unresolved",
+    shopDomain: "example.myshopify.com",
+  });
+  assert.equal(result.unresolvedCount, 0);
+  assert.equal(result.activeCount, 0);
 });
 
 test("inspectStripeEnvironment detects live Stripe keys", () => {

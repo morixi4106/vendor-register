@@ -2,9 +2,10 @@ import prisma from "../../db.server.js";
 import { EU_PRODUCT_ALLOWED_STATUSES } from "../../utils/deliveryEligibility.js";
 import { PRODUCT_SHIPPING_METHOD, SHOPIFY_WEIGHT_SYNC_STATUS, validateStoredAirPacketProfile } from "../../utils/productShippingProfile.js";
 import { INTERNATIONAL_SERVICE_STATUS } from ".././internationalShippingAvailability.server.js";
-import { createCheck } from "./common.js";
+import { createCheck, normalizeShopDomain } from "./common.js";
 export async function inspectShopifyProductSync({
-  prismaClient = prisma
+  prismaClient = prisma,
+  shopDomain = null
 } = {}) {
   if (!prismaClient.shopifyProductSyncIssue?.findMany) {
     return {
@@ -14,9 +15,11 @@ export async function inspectShopifyProductSync({
     };
   }
   try {
+    const normalizedShopDomain = normalizeShopDomain(shopDomain);
     const issues = await prismaClient.shopifyProductSyncIssue.findMany({
       where: {
-        status: "unresolved"
+        status: "unresolved",
+        ...(normalizedShopDomain ? { shopDomain: normalizedShopDomain } : {})
       },
       select: {
         id: true,
