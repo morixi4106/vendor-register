@@ -57,6 +57,18 @@ They are not prerequisites for opening the domestic platform-direct store.
 They remain mandatory before enabling seller settlement or treating a refund
 workflow as verified.
 
+The Production integrity monitor remains part of the launch gate. Before the
+password is removed, a fresh full run may satisfy this gate only when the
+storefront password page is its sole non-healthy result. A normal healthy or
+recovered full run is required immediately after opening.
+
+The independent marketplace sale-eligibility watchdog and the Render/DB-down
+publication-removal drill are supplemental in this mode. Standard Shopify
+checkout does not depend on the Render application being reachable, and only
+platform-direct products may be published. Both controls become mandatory
+again before any marketplace checkout, seller settlement, public Draft Order,
+or cross-border seller flow is enabled.
+
 ## Diagnostic attribution
 
 Use identifiers and statuses, not assumptions, to locate a failure:
