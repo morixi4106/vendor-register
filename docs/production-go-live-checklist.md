@@ -325,8 +325,9 @@ Before removing storefront password protection:
    non-healthy check: `official_storefront/password_page`, and the first
    Critical alert was sent. Any other warning or Critical fails the run.
 5. Confirm the Critical email was received and the release-readiness page
-   records the prelaunch password probe. This evidence does not make the
-   release green.
+   records the prelaunch password probe. While that probe remains fresh, it
+   satisfies the monitor portion of the prelaunch gate; it does not replace
+   any other readiness check.
 6. Set the Repository Variable
    `PRODUCTION_INTEGRITY_MONITOR_ENABLED=true` only after the full path is
    proven.

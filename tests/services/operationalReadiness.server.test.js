@@ -520,6 +520,13 @@ test("standard direct checkout requires one payment projection instead of market
     ).definition.supplemental,
     true,
   );
+  assert.equal(
+    inspection.rows.find(
+      (row) =>
+        row.definition.key === "INDEPENDENT_SALES_STOP_DRILL_COMPLETED",
+    ).definition.supplemental,
+    true,
+  );
 });
 
 test("live order refund evidence is valid only for the current release", async () => {

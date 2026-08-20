@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 
 export const PRODUCTION_INTEGRITY_MONITOR_HEARTBEAT_KEY =
   "production_integrity_monitor";
@@ -56,19 +57,24 @@ export async function inspectReleaseMonitoringReadiness({
   };
 }
 
-export function buildReleaseMonitoringChecks(inspection) {
+export function buildReleaseMonitoringChecks(
+  inspection,
+  { env = process.env } = {},
+) {
   const monitor = inspection?.monitor || unavailableState("not_inspected");
   const watchdog = inspection?.watchdog || unavailableState("not_inspected");
-  return [
+  const prelaunchMonitorReady =
+    monitor.ready || monitor.prelaunchPasswordProbePassed;
+  const checks = [
     {
       id: "production_integrity_monitor_live",
       category: "operations",
-      status: monitor.ready ? "pass" : "fail",
+      status: prelaunchMonitorReady ? "pass" : "fail",
       title: "Production integrity monitor",
       detail: monitor.ready
         ? `GitHub Actions由来のfull runが${monitor.ageMinutes}分前に正常完了しています。`
         : monitor.prelaunchPasswordProbePassed
-          ? "パスワード保護を検知するfull runとCritical通知は成功しました。一般公開後のhealthy runはまだありません。"
+          ? "パスワード保護だけを検知する事前full runが成功しました。公開直後に通常のhealthy runを実行してください。"
           : `監視を公開条件として確認できません: ${monitor.reason}`,
       action: monitor.ready
         ? ""
@@ -76,7 +82,10 @@ export function buildReleaseMonitoringChecks(inspection) {
           ? "パスワード解除直後にfull runを実行し、healthyまたはrecoveredを確認してください。"
           : "GitHub ActionsとRenderの監視フラグを有効にし、full runを成功させてください。",
     },
-    {
+  ];
+
+  if (!isShopifyStandardDirectCheckoutMode(env)) {
+    checks.push({
       id: "independent_sale_eligibility_watchdog_live",
       category: "operations",
       status: watchdog.ready ? "pass" : "fail",
@@ -87,8 +96,10 @@ export function buildReleaseMonitoringChecks(inspection) {
       action: watchdog.ready
         ? ""
         : "専用Shopifyアプリの最小権限を検証し、Watchdogのlive runと停止・復旧訓練を完了してください。",
-    },
-  ];
+    });
+  }
+
+  return checks;
 }
 
 export async function recordSaleEligibilityWatchdogHeartbeat(

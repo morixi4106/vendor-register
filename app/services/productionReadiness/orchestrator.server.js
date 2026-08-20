@@ -236,7 +236,7 @@ export async function getProductionReadiness({
       inspection: operationalReadiness,
       control: platformOperationalControl,
     }),
-    ...buildReleaseMonitoringChecks(releaseMonitoring),
+    ...buildReleaseMonitoringChecks(releaseMonitoring, { env }),
     ...buildShopifyChecks({
       configuredScopes,
       grantedScopes,

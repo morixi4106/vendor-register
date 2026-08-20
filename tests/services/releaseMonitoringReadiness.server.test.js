@@ -55,7 +55,7 @@ test("repository schedule flags must be proven by the GitHub agent heartbeat", a
   assert.equal(inspection.watchdog.reason, "watchdog_schedule_disabled");
 });
 
-test("password-only Critical proves prelaunch wiring but is not public GREEN", async () => {
+test("password-only Critical satisfies the short-lived prelaunch monitor gate", async () => {
   const rows = healthyRows();
   rows[0].metadataJson.lastOverallStatus = "critical";
   rows[0].metadataJson.lastNotifiedAt = "2026-07-30T11:58:00.000Z";
@@ -83,6 +83,26 @@ test("password-only Critical proves prelaunch wiring but is not public GREEN", a
   assert.equal(inspection.monitor.prelaunchPasswordProbePassed, true);
   assert.equal(inspection.monitor.ready, false);
   assert.equal(inspection.monitor.reason, "storefront_password_protected");
+  assert.equal(buildReleaseMonitoringChecks(inspection)[0].status, "pass");
+});
+
+test("standard direct launch does not require the marketplace watchdog", async () => {
+  const inspection = await inspectReleaseMonitoringReadiness({
+    prismaClient: fakePrisma(healthyRows()),
+    env: ENV,
+    now: NOW,
+  });
+
+  const checks = buildReleaseMonitoringChecks(inspection, {
+    env: {
+      PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+    },
+  });
+
+  assert.deepEqual(
+    checks.map((check) => check.id),
+    ["production_integrity_monitor_live"],
+  );
 });
 
 test("validation-only watchdog heartbeat cannot satisfy release readiness", async () => {
