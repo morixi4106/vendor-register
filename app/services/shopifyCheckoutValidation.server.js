@@ -292,12 +292,20 @@ export async function stageMarketplaceCheckoutValidation(
   });
 }
 
-export function buildMarketplaceCheckoutValidationReadinessCheck(status) {
-  const ready =
-    status?.ok === true &&
-    status?.active === true &&
-    status?.validationCount === 1 &&
-    status?.runtimeErrorDetected !== true;
+export function buildMarketplaceCheckoutValidationReadinessCheck(
+  status,
+  { standardDirect = false } = {},
+) {
+  const ready = standardDirect
+    ? status?.ok === true &&
+      status?.exists === true &&
+      status?.prepared === true &&
+      status?.active !== true &&
+      status?.runtimeErrorDetected !== true
+    : status?.ok === true &&
+      status?.active === true &&
+      status?.validationCount === 1 &&
+      status?.runtimeErrorDetected !== true;
   return {
     id: "marketplace_checkout_server_validation",
     category: "shopify",

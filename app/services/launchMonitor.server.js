@@ -514,7 +514,9 @@ export async function collectLaunchMonitorReport({
       const validationStatus =
         await inspectMarketplaceCheckoutValidationImpl(shopDomain);
       const validationCheck = readinessCheckToMonitorCheck(
-        buildMarketplaceCheckoutValidationReadinessCheck(validationStatus),
+        buildMarketplaceCheckoutValidationReadinessCheck(validationStatus, {
+          standardDirect: isShopifyStandardDirectCheckoutMode(env),
+        }),
       );
       heavyChecks.push(validationCheck);
       checks.push(validationCheck);
