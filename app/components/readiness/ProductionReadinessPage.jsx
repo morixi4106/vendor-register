@@ -14,7 +14,6 @@ import {
   CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS,
   CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT,
 } from "../../services/checkoutValidationLiveProbe.js";
-
 import {
   categoryLabel,
   heartbeatStatusLabel,
@@ -27,6 +26,7 @@ export default function ProductionReadinessPage() {
   const actionData = useActionData();
   const navigation = useNavigation();
   const {
+    blockingChecks,
     isCarrierSubmitting,
     isCheckoutGateSubmitting,
     isCheckoutValidationSubmitting,
