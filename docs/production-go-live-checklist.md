@@ -164,6 +164,16 @@ KOMOJU本番アカウントに取引履歴がなく、未精算残高が0円の�
 
 Use `SELLER_PAYOUT_PROVIDER=wise` only after Wise sandbox transfer, funding failure, webhook duplication, and ledger idempotency tests pass.
 
+### Domestic one-store marketplace pilot
+
+The domestic one-store pilot is separate from platform-direct launch and from
+the unrestricted marketplace flags. Follow
+[`docs/domestic-marketplace-pilot.md`](./domestic-marketplace-pilot.md) before
+enabling either `DOMESTIC_MARKETPLACE_PILOT_ENABLED` or
+`PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED`. Deploy the migration with both switches
+off first. The permit must remain limited to one Japanese third-party store,
+one approved product, one unit, and one paid KOMOJU card order.
+
 For Wise payout mode, configure:
 
 ```text

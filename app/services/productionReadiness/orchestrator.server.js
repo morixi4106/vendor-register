@@ -19,8 +19,10 @@ import {
 } from "./common.js";
 import {
   applyReleaseDisposition,
+  buildDomesticMarketplacePilotChecks,
   buildMarketplaceGovernanceChecks,
 } from "./marketplace.server.js";
+import { getDomesticMarketplacePilotDashboard } from "../domesticMarketplacePilot.server.js";
 import {
   buildDirectReturnChecks,
   buildWithdrawalOperationChecks,
@@ -171,6 +173,7 @@ export async function getProductionReadiness({
     now,
   });
   let marketplaceGovernance;
+  let domesticMarketplacePilot;
   const governanceModelsAvailable = Boolean(
     prismaClient?.sellerComplianceProfile?.findMany &&
     prismaClient?.productComplianceProfile?.findMany &&
@@ -194,6 +197,29 @@ export async function getProductionReadiness({
   } catch (error) {
     console.error("marketplace governance readiness inspection failed:", error);
     marketplaceGovernance = {
+      available: false,
+      errorCode: error?.code || "inspection_failed",
+    };
+  }
+  try {
+    if (!prismaClient?.domesticMarketplacePilot?.findMany) {
+      domesticMarketplacePilot = {
+        available: false,
+        errorCode: "models_unavailable",
+      };
+    } else {
+      domesticMarketplacePilot = {
+        available: true,
+        ...(await getDomesticMarketplacePilotDashboard({
+          prismaClient,
+          env,
+          now,
+        })),
+      };
+    }
+  } catch (error) {
+    console.error("domestic marketplace pilot inspection failed:", error);
+    domesticMarketplacePilot = {
       available: false,
       errorCode: error?.code || "inspection_failed",
     };
@@ -230,6 +256,10 @@ export async function getProductionReadiness({
     ...buildProductShippingProfileChecks(productShippingProfiles),
     ...buildMarketplaceGovernanceChecks({
       governance: marketplaceGovernance,
+      env,
+    }),
+    ...buildDomesticMarketplacePilotChecks({
+      pilotDashboard: domesticMarketplacePilot,
       env,
     }),
     ...buildOperationalReadinessChecks({
@@ -303,6 +333,7 @@ export async function getProductionReadiness({
     integrity: launchIntegrity,
     paymentOperations,
     marketplaceGovernance,
+    domesticMarketplacePilot,
     operationalReadiness,
     releaseMonitoring,
     platformOperationalControl,

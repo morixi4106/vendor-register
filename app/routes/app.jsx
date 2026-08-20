@@ -29,6 +29,7 @@ export default function App() {
         <Link to="/app/shopify-payout-evidence">Shopify着金証拠</Link>
         <Link to="/app/launch-monitor">公開監視</Link>
         <Link to="/app/marketplace-governance">販売責任・案件管理</Link>
+        <Link to="/app/marketplace-pilot">国内販売パイロット</Link>
         <Link to="/app/seller-order-shadow">SellerOrder検証</Link>
         <Link to="/app/shopify-product-sync">Shopify商品同期</Link>
         <Link to="/app/product-shipping">商品配送設定</Link>

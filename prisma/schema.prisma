@@ -43,13 +43,14 @@ model VendorStore {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  vendorAuth             Vendor?
-  seller                 Seller?
-  products               Product[]
-  returnAddresses        VendorReturnAddress[]
-  withdrawalContracts    WithdrawalContract[]
-  withdrawalReturnGroups WithdrawalReturnGroup[]
-  governanceCases        MarketplaceOperationalCase[]
+  vendorAuth               Vendor?
+  seller                   Seller?
+  products                 Product[]
+  returnAddresses          VendorReturnAddress[]
+  withdrawalContracts      WithdrawalContract[]
+  withdrawalReturnGroups   WithdrawalReturnGroup[]
+  governanceCases          MarketplaceOperationalCase[]
+  domesticMarketplacePilot DomesticMarketplacePilot?
 }
 
 model Product {
@@ -109,6 +110,7 @@ model Product {
   saleEligibilityProjections         SaleEligibilityProjection[]
   saleEligibilityProjectionRevisions SaleEligibilityProjectionRevision[]
   governanceCases                    MarketplaceOperationalCase[]
+  domesticMarketplacePilot           DomesticMarketplacePilot?
 
   @@unique([shopDomain, shopifyProductId])
   @@unique([shopDomain, shopifyVariantId])
@@ -117,6 +119,42 @@ model Product {
   @@index([internationalShippingMethod, approvalStatus])
   @@index([shopifyWeightSyncStatus, approvalStatus])
   @@index([productEuStatus, updatedAt])
+}
+
+model DomesticMarketplacePilot {
+  id                     String    @id @default(cuid())
+  vendorStoreId          String    @unique
+  productId              String    @unique
+  status                 String    @default("DRAFT")
+  countryCode            String    @default("JP")
+  maxQuantityPerOrder    Int       @default(1)
+  maxOrderSubtotalAmount Int
+  startsAt               DateTime?
+  expiresAt              DateTime?
+  approvalReference      String?
+  approvalEvidenceHash   String?
+  approvedAt             DateTime?
+  approvedBy             String?
+  checkoutClaimReference String?   @unique
+  checkoutClaimedAt      DateTime?
+  draftOrderId           String?
+  draftOrderCreatedAt    DateTime?
+  shopifyOrderId         String?   @unique
+  paidAt                 DateTime?
+  blockedAt              DateTime?
+  blockedBy              String?
+  blockReason            String?
+  completedAt            DateTime?
+  completedBy            String?
+  revision               Int       @default(1)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  vendorStore VendorStore @relation(fields: [vendorStoreId], references: [id], onDelete: Restrict)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([status, startsAt, expiresAt])
+  @@map("domestic_marketplace_pilots")
 }
 
 model InternationalShippingCountryAvailability {

@@ -1,4 +1,5 @@
 import prisma from "../../../db.server.js";
+import { completeDomesticMarketplacePilotForPaidOrder } from "../../domesticMarketplacePilot.server.js";
 import { createMarketplaceOperationalCase, getMarketplaceGovernanceConfiguration, getShopifyMarketplacePaymentsApproval, isMarketplaceGovernanceGateEnabled } from "../../marketplaceGovernance.server.js";
 import { inspectPaidOrderSaleEligibility, POST_ORDER_ELIGIBILITY_TRIGGER } from "../../saleEligibility.server.js";
 import { applyShopifyOrderQuarantine } from "../../shopifyOrderQuarantine.server.js";
@@ -854,6 +855,20 @@ export async function processShopifyOrderPaidSettlement({
     if (!sellerOrderShadow?.skipped) {
       response.sellerOrderShadow = sellerOrderShadow;
     }
+    const pilotCompletion = await completeDomesticMarketplacePilotForPaidOrder({
+      checkoutReference: getShopifyOrderAttribute(payload, "checkout_reference"),
+      shopifyOrderId,
+      paidAt: payload?.processed_at || payload?.created_at || new Date(),
+      sellerOrderRecorded: Boolean(sellerOrderShadow?.ok && !sellerOrderShadow?.skipped)
+    }, {
+      prismaClient
+    });
+    if (!pilotCompletion.ok) {
+      throw new Error(`Domestic marketplace pilot completion failed: ${pilotCompletion.reason}`);
+    }
+    if (!pilotCompletion.skipped) {
+      response.domesticMarketplacePilot = pilotCompletion;
+    }
     return response;
   }
   const variantIdCandidates = uniqueValues(lineItems.flatMap(getShopifyLineVariantIdCandidates));
@@ -1333,6 +1348,17 @@ export async function processShopifyOrderPaidSettlement({
       prismaClient: tx,
       env
     });
+    const pilotCompletion = await completeDomesticMarketplacePilotForPaidOrder({
+      checkoutReference: getShopifyOrderAttribute(payload, "checkout_reference"),
+      shopifyOrderId,
+      paidAt: occurredAt,
+      sellerOrderRecorded: Boolean(sellerOrderShadow?.ok && !sellerOrderShadow?.skipped)
+    }, {
+      prismaClient: tx
+    });
+    if (!pilotCompletion.ok) {
+      throw new Error(`Domestic marketplace pilot completion failed: ${pilotCompletion.reason}`);
+    }
     return {
       ok: true,
       duplicate: false,
@@ -1344,7 +1370,10 @@ export async function processShopifyOrderPaidSettlement({
       matchedLineCount: matchedLines.length,
       unmatchedProductIds: unmatchedProductIds.filter(Boolean),
       salesCreditCapture,
-      sellerOrderShadow
+      sellerOrderShadow,
+      ...(!pilotCompletion.skipped ? {
+        domesticMarketplacePilot: pilotCompletion
+      } : {})
     };
   });
 }

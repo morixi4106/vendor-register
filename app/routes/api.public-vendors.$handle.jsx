@@ -5,6 +5,7 @@ import {
   evaluateSaleEligibilitySnapshot,
 } from "../services/saleEligibility.server.js";
 import { isPublicDraftOrderCheckoutEnabled } from "../services/vendorStorefront.server.js";
+import { getActiveDomesticMarketplacePilot } from "../services/domesticMarketplacePilot.server.js";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 
 const PUBLIC_HEADERS = {
@@ -89,10 +90,26 @@ export const loader = async ({ params, request }) => {
     );
   }
 
+  const domesticMarketplacePilot = vendor.vendorStore.isPlatformStore
+    ? null
+    : await getActiveDomesticMarketplacePilot(
+        { vendorStoreId: vendor.vendorStore.id },
+        { env: process.env },
+      );
+  if (!vendor.vendorStore.isPlatformStore && !domesticMarketplacePilot) {
+    return jsonResponse(
+      { ok: false, error: "Vendor was not found." },
+      { status: 404 },
+    );
+  }
+
   const products = await prisma.product.findMany({
     where: {
       vendorStoreId: vendor.vendorStore.id,
       approvalStatus: "approved",
+      ...(domesticMarketplacePilot
+        ? { id: domesticMarketplacePilot.productId }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     select: {
@@ -144,7 +161,9 @@ export const loader = async ({ params, request }) => {
     products: availableProducts,
     deliveryCountry,
     filterByDeliveryEligibility,
-    draftOrderCheckoutEnabled,
+    draftOrderCheckoutEnabled:
+      draftOrderCheckoutEnabled &&
+      (vendor.vendorStore.isPlatformStore || Boolean(domesticMarketplacePilot)),
   });
 
   if (!storefront) {

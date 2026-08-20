@@ -27,6 +27,8 @@ function createVendorContext() {
       country: "JP",
       category: "Wine",
       note: "Natural wine selection",
+      isTestStore: false,
+      isPlatformStore: true,
     },
   };
 }
@@ -93,6 +95,8 @@ function createFakePrisma({ products = createProducts() } = {}) {
             country: "JP",
             category: "Wine",
             note: "Natural wine selection",
+            isTestStore: false,
+            isPlatformStore: true,
           },
         };
       },

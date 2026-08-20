@@ -1623,6 +1623,12 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
     sellerOrders: new Map(),
     sellerOrderLines: new Map(),
     sellerOrderShadowChecks: [],
+    domesticMarketplacePilot: {
+      id: "pilot_1",
+      status: "ORDER_CREATED",
+      checkoutClaimReference: "checkout:evidence-1101",
+      shopifyOrderId: null,
+    },
     checkoutEvidenceByReference: new Map([
       [
         "checkout:evidence-1101",
@@ -1667,6 +1673,45 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   };
   const fakePrisma = {
     ...createSellerOrderShadowFakeModels(state),
+    domesticMarketplacePilot: {
+      async findUnique({ where }) {
+        return where.checkoutClaimReference ===
+          state.domesticMarketplacePilot.checkoutClaimReference
+          ? state.domesticMarketplacePilot
+          : null;
+      },
+      async updateMany({ where, data }) {
+        const pilot = state.domesticMarketplacePilot;
+        const matches =
+          pilot.id === where.id &&
+          pilot.status === where.status &&
+          pilot.checkoutClaimReference === where.checkoutClaimReference &&
+          pilot.shopifyOrderId === where.shopifyOrderId;
+        if (!matches) return { count: 0 };
+        state.domesticMarketplacePilot = {
+          ...pilot,
+          ...data,
+          revision: pilot.revision + 1 || 1,
+        };
+        return { count: 1 };
+      },
+    },
+    marketplacePaymentAttempt: {
+      async findFirst({ where }) {
+        assert.equal(where.shopifyOrderId, "gid://shopify/Order/1101");
+        assert.equal(where.provider, "KOMOJU");
+        assert.equal(where.paymentMethod, "CARD");
+        assert.equal(where.status, "CAPTURED");
+        assert.equal(where.test, false);
+        return {
+          id: "payment_attempt_1",
+          metadataJson: {
+            paymentDetailsType: "CardPaymentDetails",
+            paymentWallet: null,
+          },
+        };
+      },
+    },
     ledgerEntry: {
       async findFirst({ where }) {
         assert.deepEqual(where, {
@@ -1731,6 +1776,7 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
         subtotal_price: "2000",
         total_discounts: "100",
         total_tax: "0",
+        payment_gateway_names: ["KOMOJU - Credit Card"],
         note_attributes: [
           { name: "checkout_reference", value: "checkout:evidence-1101" },
         ],
@@ -1758,6 +1804,15 @@ test("processShopifyOrderPaidSettlement shadow-writes a matching seller order", 
   assert.equal(result.amount, 1900);
   assert.equal(result.sellerOrderShadow.ok, true);
   assert.equal(result.sellerOrderShadow.status, "matched");
+  assert.equal(result.domesticMarketplacePilot.ok, true);
+  assert.equal(
+    state.domesticMarketplacePilot.status,
+    "COMPLETED",
+  );
+  assert.equal(
+    state.domesticMarketplacePilot.shopifyOrderId,
+    "gid://shopify/Order/1101",
+  );
   assert.equal(state.marketplaceOrders.size, 1);
   assert.equal(state.sellerOrders.size, 1);
   assert.equal(state.sellerOrderLines.size, 1);

@@ -108,6 +108,36 @@ test("public Draft Order checkout is critical unless it remains disabled", () =>
     }).severity,
     "critical",
   );
+
+  assert.equal(
+    buildPublicDraftOrderCheckoutSafetyCheck(
+      {
+        PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
+        DOMESTIC_MARKETPLACE_PILOT_ENABLED: "true",
+      },
+      {
+        available: true,
+        pilots: [
+          {
+            status: "ACTIVE",
+            evaluation: { ready: true },
+          },
+        ],
+      },
+    ).severity,
+    "ok",
+  );
+
+  assert.equal(
+    buildPublicDraftOrderCheckoutSafetyCheck(
+      {
+        PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
+        DOMESTIC_MARKETPLACE_PILOT_ENABLED: "true",
+      },
+      { available: true, pilots: [] },
+    ).severity,
+    "critical",
+  );
 });
 
 test("catalog sync heartbeat warns at 30 minutes and becomes critical at 3 hours", () => {

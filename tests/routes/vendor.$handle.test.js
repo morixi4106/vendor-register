@@ -28,6 +28,8 @@ function createVendorContext() {
       country: 'JP',
       category: 'Wine',
       note: 'Natural wine selection',
+      isTestStore: false,
+      isPlatformStore: true,
     },
   };
 }
@@ -113,6 +115,25 @@ function projectProduct(product, select) {
   return projected;
 }
 
+function matchesProductWhere(product, where = {}) {
+  if (Array.isArray(where.AND)) {
+    return where.AND.every((condition) => matchesProductWhere(product, condition));
+  }
+  if (where.vendorStoreId && product.vendorStoreId !== where.vendorStoreId) {
+    return false;
+  }
+  if (where.approvalStatus && product.approvalStatus !== where.approvalStatus) {
+    return false;
+  }
+  if (where.id?.in && !where.id.in.includes(product.id)) {
+    return false;
+  }
+  if (typeof where.id === 'string' && product.id !== where.id) {
+    return false;
+  }
+  return true;
+}
+
 function createFakePrisma({ products = createProducts() } = {}) {
   return {
     vendor: {
@@ -134,6 +155,8 @@ function createFakePrisma({ products = createProducts() } = {}) {
             country: 'JP',
             category: 'Wine',
             note: 'Natural wine selection',
+            isTestStore: false,
+            isPlatformStore: true,
           },
         };
       },
@@ -141,21 +164,7 @@ function createFakePrisma({ products = createProducts() } = {}) {
     product: {
       async findMany({ where, select }) {
         return products
-          .filter((product) => {
-            if (where?.vendorStoreId && product.vendorStoreId !== where.vendorStoreId) {
-              return false;
-            }
-
-            if (where?.approvalStatus && product.approvalStatus !== where.approvalStatus) {
-              return false;
-            }
-
-            if (where?.id?.in && !where.id.in.includes(product.id)) {
-              return false;
-            }
-
-            return true;
-          })
+          .filter((product) => matchesProductWhere(product, where))
           .map((product) => projectProduct(product, select));
       },
     },

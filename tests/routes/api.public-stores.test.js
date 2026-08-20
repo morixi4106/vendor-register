@@ -48,11 +48,33 @@ test("buildPublicStoresWhereInput hides third-party stores while draft checkout 
   });
 });
 
-test("buildPublicStoresWhereInput allows active third-party stores only after checkout is enabled", () => {
+test("buildPublicStoresWhereInput allows only the permitted third-party store", () => {
+  assert.deepEqual(
+    buildPublicStoresWhereInput({
+      draftOrderCheckoutEnabled: true,
+      pilotVendorStoreId: "store_pilot",
+    }),
+    {
+      isTestStore: false,
+      OR: [
+        { isPlatformStore: true },
+        { id: "store_pilot", isPlatformStore: false },
+      ],
+      vendorAuth: {
+        is: {
+          status: "active",
+        },
+      },
+    },
+  );
+});
+
+test("buildPublicStoresWhereInput remains platform-only without a permit", () => {
   assert.deepEqual(
     buildPublicStoresWhereInput({ draftOrderCheckoutEnabled: true }),
     {
       isTestStore: false,
+      isPlatformStore: true,
       vendorAuth: {
         is: {
           status: "active",

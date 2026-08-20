@@ -1,4 +1,5 @@
 import { DEFAULT_PAYMENT_PROVIDER, DEFAULT_SELLER_PAYOUT_PROVIDER, PAYMENT_PROVIDER_LABELS, SELLER_PAYOUT_PROVIDER_LABELS, STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES, SUPPORTED_PAYMENT_PROVIDERS, SUPPORTED_SELLER_PAYOUT_PROVIDERS, createCheck, detectStripeKeyMode, extractEmailAddress, isEnabledEnvFlag, normalizeText, requiredOrWarningStatus } from "./common.js";
+import { isDomesticMarketplacePilotEnabled } from "../domesticMarketplacePilot.server.js";
 const MULTI_SELLER_SETTLEMENT_FLAGS = [{
   key: "MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED",
   label: "paid"
@@ -151,6 +152,8 @@ export function buildEnvironmentChecks({
   const withdrawalEmailEnv = inspectWithdrawalEmailEnvironment(env);
   const sellerOrderShadowWriteEnabled = isEnabledEnvFlag(env, SELLER_ORDER_SHADOW_WRITE_FLAG);
   const sellerOrderVendorOrderReadsEnabled = isEnabledEnvFlag(env, VENDOR_ORDER_SELLER_ORDER_READ_FLAG);
+  const publicDraftOrderCheckoutEnabled = isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG);
+  const domesticMarketplacePilotEnabled = isDomesticMarketplacePilotEnabled(env);
   const {
     paymentProviders,
     sellerPayoutProvider,
@@ -170,10 +173,10 @@ export function buildEnvironmentChecks({
   checks.push(createCheck({
     id: "public_draft_order_checkout_disabled",
     category: "app",
-    status: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG) ? "fail" : "pass",
+    status: publicDraftOrderCheckoutEnabled && !domesticMarketplacePilotEnabled ? "fail" : "pass",
     title: "Public Draft Order checkout",
-    detail: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG) ? "The public Draft Order checkout endpoint is enabled." : "The public Draft Order checkout endpoint is disabled.",
-    action: isEnabledEnvFlag(env, PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG) ? "Set PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED=false before opening the storefront." : ""
+    detail: publicDraftOrderCheckoutEnabled ? domesticMarketplacePilotEnabled ? "公開Draft Orderは国内1店舗・1商品パイロットの許可証で制限されています。" : "The public Draft Order checkout endpoint is enabled without the pilot gate." : "The public Draft Order checkout endpoint is disabled.",
+    action: publicDraftOrderCheckoutEnabled && !domesticMarketplacePilotEnabled ? "Set PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED=false, or enable the domestic pilot gate with a valid DB permit." : ""
   }));
   checks.push(createCheck({
     id: "payment_provider",
