@@ -1,5 +1,6 @@
 import prisma from "../db.server";
 import { isPublicDraftOrderCheckoutEnabled } from "../services/vendorStorefront.server.js";
+import { getActiveDomesticMarketplacePilot } from "../services/domesticMarketplacePilot.server.js";
 import {
   buildPublicStoresWhereInput,
   serializePublicStore,
@@ -9,8 +10,14 @@ export const loader = async () => {
   const draftOrderCheckoutEnabled = isPublicDraftOrderCheckoutEnabled(
     process.env,
   );
+  const domesticMarketplacePilot = draftOrderCheckoutEnabled
+    ? await getActiveDomesticMarketplacePilot({}, { env: process.env })
+    : null;
   const stores = await prisma.vendorStore.findMany({
-    where: buildPublicStoresWhereInput({ draftOrderCheckoutEnabled }),
+    where: buildPublicStoresWhereInput({
+      draftOrderCheckoutEnabled,
+      pilotVendorStoreId: domesticMarketplacePilot?.vendorStoreId,
+    }),
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

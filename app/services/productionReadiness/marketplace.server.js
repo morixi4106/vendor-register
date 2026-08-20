@@ -1,6 +1,7 @@
 import { getShopifyMarketplacePaymentsApproval, isCrossBorderSellerSettlementEnabled, isDomesticSellerSettlementEnabled, isMarketplaceGovernanceGateEnabled, isMarketplaceSettlementActionsEnabled } from ".././marketplaceGovernance.server.js";
 import { getProductionProbeSigningSecret } from ".././productionRelease.server.js";
 import { createCheck, normalizeText } from "./common.js";
+import { isDomesticMarketplacePilotEnabled } from "../domesticMarketplacePilot.server.js";
 function isThirdPartySettlementDisabled(env) {
   return !isMarketplaceSettlementActionsEnabled(env) && !isDomesticSellerSettlementEnabled(env) && !isCrossBorderSellerSettlementEnabled(env);
 }
@@ -188,5 +189,70 @@ export function buildMarketplaceGovernanceChecks({
     title: "出金保留",
     detail: payoutHolds.length > 0 ? `${payoutHolds.length}店舗の出金が管理者判断で保留されています。` : "管理者判断による出金保留はありません。",
     action: payoutHolds.length > 0 ? "保留理由と解除条件を案件記録と照合してください。" : ""
+  })];
+}
+
+export function buildDomesticMarketplacePilotChecks({ pilotDashboard, env }) {
+  const pilotEnabled = isDomesticMarketplacePilotEnabled(env);
+  const publicDraftEnabled = ["1", "true", "yes", "on"].includes(
+    String(env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED || "")
+      .trim()
+      .toLowerCase(),
+  );
+
+  if (!pilotEnabled && !publicDraftEnabled) {
+    return [createCheck({
+      id: "domestic_marketplace_pilot",
+      category: "app",
+      status: "pass",
+      title: "国内マーケットプレイスパイロット",
+      detail: "パイロット販売は無効です。国内直販には影響しません。",
+      action: ""
+    })];
+  }
+
+  if (!pilotEnabled || !publicDraftEnabled) {
+    return [createCheck({
+      id: "domestic_marketplace_pilot",
+      category: "app",
+      status: "fail",
+      title: "国内マーケットプレイスパイロット",
+      detail: "パイロットフラグと公開Draft Orderフラグが一致していません。",
+      action: "両方をOFFへ戻すか、有効な許可証を準備して両方をONにしてください。"
+    })];
+  }
+
+  if (!pilotDashboard?.available) {
+    return [createCheck({
+      id: "domestic_marketplace_pilot",
+      category: "app",
+      status: "fail",
+      title: "国内マーケットプレイスパイロット",
+      detail: "パイロット許可証を検査できません。",
+      action: "migrationとDB接続を確認し、販売フラグをOFFへ戻してください。"
+    })];
+  }
+
+  const activePilots = (pilotDashboard.pilots || []).filter(
+    (pilot) => pilot.status === "ACTIVE" && pilot.evaluation?.ready,
+  );
+  const unsafePilots = (pilotDashboard.pilots || []).filter(
+    (pilot) =>
+      ["ACTIVE", "RESERVED"].includes(pilot.status) &&
+      !pilot.evaluation?.ready,
+  );
+  const ready = activePilots.length === 1 && unsafePilots.length === 0;
+
+  return [createCheck({
+    id: "domestic_marketplace_pilot",
+    category: "app",
+    status: ready ? "pass" : "fail",
+    title: "国内マーケットプレイスパイロット",
+    detail: ready
+      ? "国内1店舗・1商品・1回の注文許可証が有効です。"
+      : `有効な許可証 ${activePilots.length}件 / 不整合 ${unsafePilots.length}件です。`,
+    action: ready
+      ? ""
+      : "国内販売パイロット画面で許可証、期限、審査結果を確認してください。"
   })];
 }

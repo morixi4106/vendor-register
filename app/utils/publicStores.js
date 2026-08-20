@@ -6,10 +6,19 @@ import {
 
 export function buildPublicStoresWhereInput({
   draftOrderCheckoutEnabled = false,
+  pilotVendorStoreId = null,
 } = {}) {
+  const pilotStoreId = String(pilotVendorStoreId || "").trim();
   return {
     isTestStore: false,
-    ...(draftOrderCheckoutEnabled ? {} : { isPlatformStore: true }),
+    ...(draftOrderCheckoutEnabled && pilotStoreId
+      ? {
+          OR: [
+            { isPlatformStore: true },
+            { id: pilotStoreId, isPlatformStore: false },
+          ],
+        }
+      : { isPlatformStore: true }),
     vendorAuth: {
       is: {
         status: "active",

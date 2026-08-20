@@ -38,6 +38,18 @@ import {
   SALE_ELIGIBILITY_CHANNEL,
   evaluateSaleEligibilitySnapshot,
 } from "./saleEligibility.server.js";
+import {
+  claimDomesticMarketplacePilotCheckout,
+  evaluateDomesticMarketplacePilotCheckout,
+  getActiveDomesticMarketplacePilot,
+  isDomesticMarketplacePilotEnabled,
+  markDomesticMarketplacePilotDraftOrderCreated,
+  releaseDomesticMarketplacePilotCheckout,
+} from "./domesticMarketplacePilot.server.js";
+import {
+  consumePublicEndpointRateLimit,
+  getRequestClientIp,
+} from "./publicEndpointRateLimit.server.js";
 
 const GENERIC_CHECKOUT_ERROR_MESSAGE =
   "注文の作成に失敗しました。入力内容を確認して、もう一度お試しください。";
@@ -65,6 +77,10 @@ const MULTI_SELLER_SALES_CREDIT_UNAVAILABLE_MESSAGE =
   "複数店舗の商品を含むため、売上金は利用できません。店舗ごとに分けて購入してください。";
 const PUBLIC_CHECKOUT_SOURCE = "vendor_storefront";
 const PUBLIC_DRAFT_ORDER_CHECKOUT_FLAG = "PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED";
+const PUBLIC_DRAFT_ORDER_RATE_LIMIT_ENDPOINT = "public-draft-order-checkout";
+const PUBLIC_DRAFT_ORDER_MAX_BODY_BYTES = 32 * 1024;
+const PUBLIC_DRAFT_ORDER_IP_LIMIT = 10;
+const PUBLIC_DRAFT_ORDER_GLOBAL_LIMIT = 100;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALES_CREDIT_SUPPORTED_CURRENCY_CODE = "jpy";
 const MULTI_SELLER_STOREFRONT_CHECKOUT_FLAGS = [
@@ -119,6 +135,70 @@ function normalizeBooleanInput(value) {
   return ["1", "true", "yes", "on"].includes(
     String(value).trim().toLowerCase(),
   );
+}
+
+async function requestBodyFitsLimit(
+  request,
+  maxBytes = PUBLIC_DRAFT_ORDER_MAX_BODY_BYTES,
+) {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    return false;
+  }
+
+  const reader = request.clone().body?.getReader();
+  if (!reader) return true;
+
+  let bytesRead = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return true;
+      bytesRead += value?.byteLength || 0;
+      if (bytesRead > maxBytes) {
+        void reader.cancel("request_body_too_large").catch(() => {});
+        return false;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function consumeDomesticPilotCheckoutRateLimits({
+  request,
+  prismaClient,
+  env,
+  consumeRateLimitImpl = consumePublicEndpointRateLimit,
+}) {
+  if (!isDomesticMarketplacePilotEnabled(env)) {
+    return { ok: true };
+  }
+
+  const [ipLimit, globalLimit] = await Promise.all([
+    consumeRateLimitImpl({
+      endpoint: PUBLIC_DRAFT_ORDER_RATE_LIMIT_ENDPOINT,
+      key: `ip:${getRequestClientIp(request)}`,
+      limit: PUBLIC_DRAFT_ORDER_IP_LIMIT,
+      windowMs: 10 * 60 * 1000,
+      prismaClient,
+    }),
+    consumeRateLimitImpl({
+      endpoint: PUBLIC_DRAFT_ORDER_RATE_LIMIT_ENDPOINT,
+      key: "global:hour",
+      limit: PUBLIC_DRAFT_ORDER_GLOBAL_LIMIT,
+      windowMs: 60 * 60 * 1000,
+      prismaClient,
+    }),
+  ]);
+
+  return {
+    ok: ipLimit.ok && globalLimit.ok,
+    retryAfterSeconds: Math.max(
+      ipLimit.ok ? 0 : ipLimit.retryAfterSeconds,
+      globalLimit.ok ? 0 : globalLimit.retryAfterSeconds,
+    ),
+  };
 }
 
 export function isPublicDraftOrderCheckoutEnabled(env = process.env) {
@@ -1210,7 +1290,11 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
   };
 }
 
-async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
+async function getVendorStorefrontByHandle(
+  handle,
+  prismaClient = prisma,
+  env = process.env,
+) {
   const vendorContext = await getActiveVendorContextByHandle(
     handle,
     prismaClient,
@@ -1219,11 +1303,30 @@ async function getVendorStorefrontByHandle(handle, prismaClient = prisma) {
   if (!vendorContext) {
     return null;
   }
+  if (
+    vendorContext.store.isPlatformStore &&
+    isDomesticMarketplacePilotEnabled(env)
+  ) {
+    return null;
+  }
+
+  const domesticMarketplacePilot = vendorContext.store.isPlatformStore
+    ? null
+    : await getActiveDomesticMarketplacePilot(
+        { vendorStoreId: vendorContext.store.id },
+        { prismaClient, env },
+      );
+  if (!vendorContext.store.isPlatformStore && !domesticMarketplacePilot) {
+    return null;
+  }
 
   const products = await prismaClient.product.findMany({
     where: {
       vendorStoreId: vendorContext.store.id,
       approvalStatus: "approved",
+      ...(domesticMarketplacePilot
+        ? { id: domesticMarketplacePilot.productId }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     include: {
@@ -1619,6 +1722,31 @@ async function buildServerTrustedCheckoutPayload({
       error: CHECKOUT_UNAVAILABLE_MESSAGE,
     };
   }
+  if (
+    resolvedVendorContext.store.isPlatformStore &&
+    isDomesticMarketplacePilotEnabled(env)
+  ) {
+    return {
+      ok: false,
+      error: CHECKOUT_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  const domesticMarketplacePilot = resolvedVendorContext.store.isPlatformStore
+    ? null
+    : await getActiveDomesticMarketplacePilot(
+        { vendorStoreId: resolvedVendorContext.store.id },
+        { prismaClient, env },
+      );
+  if (
+    !resolvedVendorContext.store.isPlatformStore &&
+    !domesticMarketplacePilot
+  ) {
+    return {
+      ok: false,
+      error: CHECKOUT_UNAVAILABLE_MESSAGE,
+    };
+  }
 
   const uniqueProductIds = Array.from(
     new Set(submission.items.map((item) => item.productId).filter(Boolean)),
@@ -1627,10 +1755,17 @@ async function buildServerTrustedCheckoutPayload({
     isMultiSellerStorefrontCheckoutEnabled(env);
   const products = await prismaClient.product.findMany({
     where: {
-      id: { in: uniqueProductIds },
-      ...(multiSellerStorefrontEnabled
-        ? {}
-        : { vendorStoreId: resolvedVendorContext.store.id }),
+      AND: [
+        { id: { in: uniqueProductIds } },
+        domesticMarketplacePilot
+          ? {
+              id: domesticMarketplacePilot.productId,
+              vendorStoreId: domesticMarketplacePilot.vendorStoreId,
+            }
+          : multiSellerStorefrontEnabled
+            ? {}
+            : { vendorStoreId: resolvedVendorContext.store.id },
+      ],
       approvalStatus: "approved",
     },
     select: {
@@ -1929,6 +2064,32 @@ async function buildServerTrustedCheckoutPayload({
       error: INVALID_SELECTION_MESSAGE,
     };
   }
+  if (domesticMarketplacePilot) {
+    const subtotalAmount = selectedProducts.reduce(
+      (total, entry) =>
+        total +
+        Number(entry.product.calculatedPrice || entry.product.price) *
+          entry.quantity,
+      0,
+    );
+    const pilotCheckout = evaluateDomesticMarketplacePilotCheckout({
+      pilot: domesticMarketplacePilot,
+      vendorStoreId: resolvedVendorContext.store.id,
+      items: selectedProducts.map((entry) => ({
+        productId: entry.product.id,
+        quantity: entry.quantity,
+      })),
+      shippingCountry: submission.shippingAddress.countryCode,
+      subtotalAmount,
+      salesCreditRequested: Boolean(submission.salesCredit),
+    });
+    if (!pilotCheckout.ready) {
+      return {
+        ok: false,
+        error: CHECKOUT_UNAVAILABLE_MESSAGE,
+      };
+    }
+  }
 
   if (isMultiSellerCheckout && !multiSellerStorefrontEnabled) {
     return {
@@ -2038,6 +2199,7 @@ async function buildServerTrustedCheckoutPayload({
 
   return {
     ok: true,
+    domesticMarketplacePilotId: domesticMarketplacePilot?.id || null,
     salesCreditOffset: salesCredit.offset,
     checkoutReference: requiresMarketplaceGovernance ? checkoutReference : null,
     payload: {
@@ -2102,6 +2264,8 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
     payload: trustedPayload.payload,
     salesCreditOffset: trustedPayload.salesCreditOffset || null,
     checkoutReference: trustedPayload.checkoutReference || null,
+    domesticMarketplacePilotId:
+      trustedPayload.domesticMarketplacePilotId || null,
   };
 }
 
@@ -2151,6 +2315,8 @@ export async function buildDraftOrderCheckoutInputFromPublicRequest({
     payload: trustedPayload.payload,
     salesCreditOffset: trustedPayload.salesCreditOffset || null,
     checkoutReference: trustedPayload.checkoutReference || null,
+    domesticMarketplacePilotId:
+      trustedPayload.domesticMarketplacePilotId || null,
   };
 }
 
@@ -2166,6 +2332,7 @@ export function createVendorStorefrontLoader({
     const storefront = await getVendorStorefrontByHandle(
       params.handle,
       prismaClient,
+      env,
     );
 
     if (!storefront) {
@@ -2180,6 +2347,7 @@ export function createVendorStorefrontAction({
   prismaClient = prisma,
   draftOrderCheckoutImpl = draftOrderCheckout,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  consumePublicEndpointRateLimitImpl = consumePublicEndpointRateLimit,
   env = process.env,
 } = {}) {
   return async function action({ request, params }) {
@@ -2196,6 +2364,38 @@ export function createVendorStorefrontAction({
       throw buildNotFoundResponse();
     }
 
+    if (!(await requestBodyFitsLimit(request))) {
+      return new Response("Request Too Large", {
+        status: 413,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    let rateLimit;
+    try {
+      rateLimit = await consumeDomesticPilotCheckoutRateLimits({
+        request,
+        prismaClient,
+        env,
+        consumeRateLimitImpl: consumePublicEndpointRateLimitImpl,
+      });
+    } catch (error) {
+      console.error("vendor storefront checkout rate limit failed:", error);
+      return new Response("Service Unavailable", {
+        status: 503,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    if (!rateLimit.ok) {
+      return new Response("Too Many Requests", {
+        status: 429,
+        headers: {
+          "Cache-Control": "no-store",
+          "Retry-After": String(rateLimit.retryAfterSeconds || 60),
+        },
+      });
+    }
+
     const formData = await request.formData();
     const checkoutInput = await buildDraftOrderCheckoutInputFromStorefrontForm({
       request,
@@ -2210,8 +2410,45 @@ export function createVendorStorefrontAction({
       return buildInvalidPayloadResponse(checkoutInput.fieldErrors);
     }
 
+    const pilotClaim = checkoutInput.domesticMarketplacePilotId
+      ? await claimDomesticMarketplacePilotCheckout(
+          {
+            pilotId: checkoutInput.domesticMarketplacePilotId,
+            checkoutReference: checkoutInput.checkoutReference,
+          },
+          { prismaClient },
+        )
+      : null;
+    if (pilotClaim && !pilotClaim.ok) {
+      await markMarketplaceCheckoutEvidenceFailed(
+        checkoutInput.checkoutReference,
+        { prismaClient },
+      ).catch(() => {});
+      return buildInvalidPayloadResponse({
+        ...buildDefaultFieldErrors(),
+        cart: CHECKOUT_UNAVAILABLE_MESSAGE,
+      });
+    }
+
+    let draftOrderCreated = false;
+
     try {
       const result = await draftOrderCheckoutImpl(checkoutInput.payload);
+      draftOrderCreated = true;
+      if (pilotClaim) {
+        const pilotResult =
+          await markDomesticMarketplacePilotDraftOrderCreated(
+            {
+              pilotId: pilotClaim.pilotId,
+              checkoutReference: pilotClaim.checkoutReference,
+              draftOrderId: result?.draftOrder?.id || result?.id,
+            },
+            { prismaClient },
+          );
+        if (!pilotResult.ok) {
+          throw new Error("Domestic marketplace pilot draft order record failed.");
+        }
+      }
       const invoiceUrl = normalizeText(
         result?.invoiceUrl || result?.draftOrder?.invoiceUrl,
       );
@@ -2236,6 +2473,11 @@ export function createVendorStorefrontAction({
 
       return redirect(invoiceUrl);
     } catch (error) {
+      if (pilotClaim && !draftOrderCreated) {
+        await releaseDomesticMarketplacePilotCheckout(pilotClaim, {
+          prismaClient,
+        }).catch(() => {});
+      }
       await markMarketplaceCheckoutEvidenceFailed(
         checkoutInput.checkoutReference,
         { prismaClient },
@@ -2259,6 +2501,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
   prismaClient = prisma,
   draftOrderCheckoutImpl = draftOrderCheckout,
   shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
+  consumePublicEndpointRateLimitImpl = consumePublicEndpointRateLimit,
   env = process.env,
 } = {}) {
   return async function action({ request }) {
@@ -2268,6 +2511,47 @@ export function createPublicVendorDraftOrderCheckoutAction({
 
     if (request.method !== "POST") {
       return buildMethodNotAllowedResponse();
+    }
+
+    if (!(await requestBodyFitsLimit(request))) {
+      return json(
+        { ok: false, reason: "request_too_large" },
+        {
+          status: 413,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+    }
+
+    let rateLimit;
+    try {
+      rateLimit = await consumeDomesticPilotCheckoutRateLimits({
+        request,
+        prismaClient,
+        env,
+        consumeRateLimitImpl: consumePublicEndpointRateLimitImpl,
+      });
+    } catch (error) {
+      console.error("public vendor checkout rate limit failed:", error);
+      return json(
+        { ok: false, reason: "temporarily_unavailable" },
+        {
+          status: 503,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+    }
+    if (!rateLimit.ok) {
+      return json(
+        { ok: false, reason: "rate_limited" },
+        {
+          status: 429,
+          headers: {
+            "Cache-Control": "no-store",
+            "Retry-After": String(rateLimit.retryAfterSeconds || 60),
+          },
+        },
+      );
     }
 
     let body;
@@ -2292,8 +2576,42 @@ export function createPublicVendorDraftOrderCheckoutAction({
       return buildJsonInvalidPayloadResponse(checkoutInput.errors);
     }
 
+    const pilotClaim = checkoutInput.domesticMarketplacePilotId
+      ? await claimDomesticMarketplacePilotCheckout(
+          {
+            pilotId: checkoutInput.domesticMarketplacePilotId,
+            checkoutReference: checkoutInput.checkoutReference,
+          },
+          { prismaClient },
+        )
+      : null;
+    if (pilotClaim && !pilotClaim.ok) {
+      await markMarketplaceCheckoutEvidenceFailed(
+        checkoutInput.checkoutReference,
+        { prismaClient },
+      ).catch(() => {});
+      return buildJsonInvalidPayloadResponse([CHECKOUT_UNAVAILABLE_MESSAGE]);
+    }
+
+    let draftOrderCreated = false;
+
     try {
       const result = await draftOrderCheckoutImpl(checkoutInput.payload);
+      draftOrderCreated = true;
+      if (pilotClaim) {
+        const pilotResult =
+          await markDomesticMarketplacePilotDraftOrderCreated(
+            {
+              pilotId: pilotClaim.pilotId,
+              checkoutReference: pilotClaim.checkoutReference,
+              draftOrderId: result?.draftOrder?.id || result?.id,
+            },
+            { prismaClient },
+          );
+        if (!pilotResult.ok) {
+          throw new Error("Domestic marketplace pilot draft order record failed.");
+        }
+      }
 
       await markCheckoutSalesCreditOffsetCreated({
         salesCreditOffset: checkoutInput.salesCreditOffset,
@@ -2320,6 +2638,11 @@ export function createPublicVendorDraftOrderCheckoutAction({
 
       return json(responsePayload);
     } catch (error) {
+      if (pilotClaim && !draftOrderCreated) {
+        await releaseDomesticMarketplacePilotCheckout(pilotClaim, {
+          prismaClient,
+        }).catch(() => {});
+      }
       await markMarketplaceCheckoutEvidenceFailed(
         checkoutInput.checkoutReference,
         { prismaClient },

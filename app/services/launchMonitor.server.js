@@ -35,6 +35,10 @@ import {
 } from "./operationalReadiness.server.js";
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
 import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import {
+  getDomesticMarketplacePilotDashboard,
+  isDomesticMarketplacePilotEnabled,
+} from "./domesticMarketplacePilot.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -277,10 +281,31 @@ export async function collectLaunchMonitorReport({
   const refreshKomojuLimitedLaunchControlImpl =
     dependencies.refreshKomojuLimitedLaunchControl ||
     refreshKomojuLimitedLaunchControl;
+  const getDomesticMarketplacePilotDashboardImpl =
+    dependencies.getDomesticMarketplacePilotDashboard ||
+    getDomesticMarketplacePilotDashboard;
+  let domesticMarketplacePilot = null;
+  if (isDomesticMarketplacePilotEnabled(env)) {
+    try {
+      domesticMarketplacePilot = {
+        available: true,
+        ...(await getDomesticMarketplacePilotDashboardImpl({
+          prismaClient,
+          env,
+          now,
+        })),
+      };
+    } catch (error) {
+      domesticMarketplacePilot = {
+        available: false,
+        errorCode: error?.code || "inspection_failed",
+      };
+    }
+  }
   const checks = [
     ...evaluateRenderSnapshot(renderSnapshot),
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
-    buildPublicDraftOrderCheckoutSafetyCheck(env),
+    buildPublicDraftOrderCheckoutSafetyCheck(env, domesticMarketplacePilot),
   ];
   const windowStartedAt =
     parseDate(renderSnapshot.windowStartedAt) ||
@@ -758,18 +783,57 @@ export function buildMarketplaceCheckoutPublicationBoundaryMonitorCheck(
       );
 }
 
-export function buildPublicDraftOrderCheckoutSafetyCheck(env = {}) {
-  return isEnabled(env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED)
-    ? issueCheck(
+export function buildPublicDraftOrderCheckoutSafetyCheck(
+  env = {},
+  pilotDashboard = null,
+) {
+  const draftOrderEnabled = isEnabled(
+    env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED,
+  );
+  const pilotEnabled = isDomesticMarketplacePilotEnabled(env);
+
+  if (!draftOrderEnabled && !pilotEnabled) {
+    return okCheck(
+      "public_draft_order_checkout_disabled",
+      "The public Draft Order checkout endpoint is disabled.",
+    );
+  }
+
+  if (draftOrderEnabled !== pilotEnabled) {
+    return issueCheck(
+      "public_draft_order_checkout_disabled",
+      CRITICAL_SEVERITY,
+      "The public Draft Order checkout and domestic pilot flags do not match.",
+      "domestic_marketplace_pilot_flag_mismatch",
+      1,
+    );
+  }
+
+  const activePilots = Array.isArray(pilotDashboard?.pilots)
+    ? pilotDashboard.pilots.filter(
+        (pilot) =>
+          pilot?.status === "ACTIVE" && pilot?.evaluation?.ready === true,
+      )
+    : [];
+  const pilot = activePilots[0];
+  const safelyScoped =
+    pilotDashboard?.available === true &&
+    activePilots.length === 1 &&
+    pilot?.status === "ACTIVE" &&
+    pilot?.evaluation?.ready === true;
+
+  return safelyScoped
+    ? okCheck(
+        "public_draft_order_checkout_disabled",
+        "The public Draft Order checkout is restricted to one active domestic pilot permit.",
+      )
+    : issueCheck(
         "public_draft_order_checkout_disabled",
         CRITICAL_SEVERITY,
-        "The public Draft Order checkout endpoint is enabled.",
-        "public_draft_order_checkout_enabled",
-        1,
-      )
-    : okCheck(
-        "public_draft_order_checkout_disabled",
-        "The public Draft Order checkout endpoint is disabled.",
+        "The public Draft Order checkout is enabled without one valid domestic pilot permit.",
+        pilotDashboard?.errorCode ||
+          "domestic_marketplace_pilot_permit_invalid",
+        Math.max(1, activePilots.length),
       );
 }
 

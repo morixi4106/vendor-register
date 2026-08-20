@@ -17,6 +17,8 @@ const OUT_OF_STOCK_MESSAGE =
   '選択した商品の在庫数を確認してください。数量を変更して、もう一度お試しください。';
 const UNAVAILABLE_PRODUCT_MESSAGE =
   '選択した商品は購入できません。内容を確認して、もう一度お試しください。';
+const CHECKOUT_UNAVAILABLE_MESSAGE =
+  '購入設定を確認できませんでした。時間をおいて、もう一度お試しください。';
 
 const TRUSTED_SALES_CREDIT_METADATA = {
   salesCreditPaymentRiskClass:
@@ -182,6 +184,24 @@ function projectProduct(product, select) {
   return projected;
 }
 
+function matchesProductWhere(product, where = {}) {
+  if (Array.isArray(where.AND)) {
+    return where.AND.every((clause) => matchesProductWhere(product, clause));
+  }
+  if (where.id?.in && !where.id.in.includes(product.id)) return false;
+  if (typeof where.id === 'string' && product.id !== where.id) return false;
+  if (where.vendorStoreId && product.vendorStoreId !== where.vendorStoreId) {
+    return false;
+  }
+  if (
+    where.approvalStatus &&
+    product.approvalStatus !== where.approvalStatus
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function createVerifiedSeller(overrides = {}) {
   return {
     id: 'seller_buyer',
@@ -238,6 +258,8 @@ function createFakePrisma({
             country: 'JP',
             category: 'Wine',
             note: 'Natural wine selection',
+            isTestStore: false,
+            isPlatformStore: true,
           },
         };
       },
@@ -358,21 +380,7 @@ function createFakePrisma({
     product: {
       async findMany({ where, select }) {
         return products
-          .filter((product) => {
-            if (where?.vendorStoreId && product.vendorStoreId !== where.vendorStoreId) {
-              return false;
-            }
-
-            if (where?.approvalStatus && product.approvalStatus !== where.approvalStatus) {
-              return false;
-            }
-
-            if (where?.id?.in && !where.id.in.includes(product.id)) {
-              return false;
-            }
-
-            return true;
-          })
+          .filter((product) => matchesProductWhere(product, where))
           .map((product) => projectProduct(product, select));
       },
     },
@@ -505,6 +513,91 @@ test('api.draft-order.checkout is hidden unless the public checkout flag is expl
       error.headers.get('Cache-Control') === 'no-store' &&
       error.headers.get('X-Robots-Tag') === 'noindex, nofollow',
   );
+});
+
+test('api.draft-order.checkout rejects platform products while the domestic marketplace pilot is enabled', async () => {
+  let callCount = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: {
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: 'true',
+      DOMESTIC_MARKETPLACE_PILOT_ENABLED: 'true',
+    },
+    prismaClient: createFakePrisma(),
+    consumePublicEndpointRateLimitImpl: async () => ({
+      ok: true,
+      retryAfterSeconds: 0,
+    }),
+    draftOrderCheckoutImpl: async () => {
+      callCount += 1;
+      return {};
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createValidBody()),
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(callCount, 0);
+  assert.equal(response.status, 400);
+  assert.equal(payload.reason, 'invalid_payload');
+  assert.deepEqual(payload.errors, [CHECKOUT_UNAVAILABLE_MESSAGE]);
+});
+
+test('api.draft-order.checkout rejects oversized pilot requests before parsing', async () => {
+  let limiterCalls = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: {
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: 'true',
+      DOMESTIC_MARKETPLACE_PILOT_ENABLED: 'true',
+    },
+    consumePublicEndpointRateLimitImpl: async () => {
+      limiterCalls += 1;
+      return { ok: true, retryAfterSeconds: 0 };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ padding: 'x'.repeat(33 * 1024) }),
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(response.status, 413);
+  assert.equal(payload.reason, 'request_too_large');
+  assert.equal(limiterCalls, 0);
+});
+
+test('api.draft-order.checkout rate-limits pilot requests before checkout work', async () => {
+  let limiterCalls = 0;
+  const action = createPublicVendorDraftOrderCheckoutAction({
+    env: {
+      PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: 'true',
+      DOMESTIC_MARKETPLACE_PILOT_ENABLED: 'true',
+    },
+    consumePublicEndpointRateLimitImpl: async () => {
+      limiterCalls += 1;
+      return { ok: false, retryAfterSeconds: 120 };
+    },
+  });
+  const request = new Request('http://localhost/api/draft-order/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createValidBody()),
+  });
+
+  const response = await action({ request });
+  const payload = await response.json();
+
+  assert.equal(response.status, 429);
+  assert.equal(payload.reason, 'rate_limited');
+  assert.equal(response.headers.get('Retry-After'), '120');
+  assert.equal(limiterCalls, 2);
 });
 
 test('api.draft-order.checkout creates a server-trusted payload and ignores shopDomain tampering', async () => {
