@@ -349,6 +349,29 @@ test("failed heavy checks remain critical and are safe to reuse until retry", as
   assert.equal(find(light.checks, "launch_integrity").severity, "critical");
 });
 
+test("standard direct mode treats a prepared disabled marketplace validation as healthy", async () => {
+  const report = await collectReport({
+    env: {
+      PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "false",
+    },
+    checkoutValidation: {
+      ok: true,
+      exists: true,
+      prepared: true,
+      active: false,
+      validationCount: 1,
+      runtimeErrorDetected: false,
+      reason: "validation_disabled",
+    },
+  });
+
+  assert.equal(
+    find(report.checks, "marketplace_checkout_server_validation").severity,
+    "ok",
+  );
+});
+
 test("incident identity ignores count changes while result hash records them", () => {
   const first = buildReport({
     now: NOW,
@@ -571,6 +594,12 @@ async function collectReport({
   runHeavyChecks = true,
   previousHeavyChecks = [],
   limitedLaunch = { ok: true, skipped: true },
+  checkoutValidation = {
+    ok: true,
+    active: true,
+    validationCount: 1,
+    runtimeErrorDetected: false,
+  },
 } = {}) {
   return collectLaunchMonitorReport({
     renderSnapshot: healthySnapshot(),
@@ -592,12 +621,7 @@ async function collectReport({
       inspectShopifyProductCatalogSyncHeartbeat: async () =>
         catalogSyncHeartbeat(),
       getMarketplaceCheckoutGateStatus: async () => checkoutGateStatus(),
-      inspectMarketplaceCheckoutValidation: async () => ({
-        ok: true,
-        active: true,
-        validationCount: 1,
-        runtimeErrorDetected: false,
-      }),
+      inspectMarketplaceCheckoutValidation: async () => checkoutValidation,
       loadLaunchIntegritySellerRows: async () => [],
       inspectLaunchIntegrity: async () => integrity,
       inspectOperationalReadiness: async () => ({
