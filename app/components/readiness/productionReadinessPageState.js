@@ -15,6 +15,7 @@ export function buildProductionReadinessPageState(data, navigation) {
   const checkoutValidationActive = data.checkoutValidation?.active === true;
 
   return {
+    blockingChecks,
     isCarrierSubmitting:
       navigation.state === "submitting" &&
       submittingIntent === "register_carrier",
