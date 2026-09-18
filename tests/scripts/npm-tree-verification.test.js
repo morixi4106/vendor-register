@@ -239,7 +239,7 @@ test("fails closed when an npm command fails or times out", () => {
           stdout: "",
         }),
       }),
-    /exit code 1/,
+    /exit code 1\. failure/,
   );
   assert.throws(
     () =>

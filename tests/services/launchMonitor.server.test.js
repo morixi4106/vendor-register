@@ -208,6 +208,27 @@ test("collectLaunchMonitorReport is healthy when shared checks are healthy", asy
   );
 });
 
+test("international destination readiness becomes critical when an allowed country is unavailable", async () => {
+  const report = await collectReport({
+    shippingProfiles: healthyProductShippingProfiles({
+      airPacketCount: 1,
+      serviceAvailability: {
+        available: true,
+        activeCount: 0,
+        staleActiveCount: 0,
+        requiredCountryCount: 1,
+        unavailableCountries: ["US"],
+        staleCountries: [],
+      },
+    }),
+  });
+
+  assert.equal(
+    find(report.checks, "air_packet_country_availability").severity,
+    "critical",
+  );
+});
+
 test("an expired limited launch is critical even when other checks are healthy", async () => {
   const report = await collectReport({
     limitedLaunch: {
@@ -630,6 +651,7 @@ async function collectReport({
     validationCount: 1,
     runtimeErrorDetected: false,
   },
+  shippingProfiles = healthyProductShippingProfiles(),
 } = {}) {
   return collectLaunchMonitorReport({
     renderSnapshot: healthySnapshot(),
@@ -669,9 +691,37 @@ async function collectReport({
       getPlatformOperationalControl: async () => ({
         checkoutHold: false,
       }),
+      inspectProductShippingProfiles: async () => shippingProfiles,
       refreshKomojuLimitedLaunchControl: async () => limitedLaunch,
     },
   });
+}
+
+function healthyProductShippingProfiles(overrides = {}) {
+  return {
+    available: true,
+    approvedCount: 0,
+    missingWeight: [],
+    invalidAirPacket: [],
+    invalidInternationalCustoms: [],
+    missingInternationalCountryAllowlist: [],
+    internationalComplianceBlocked: [],
+    internationalRequirementCatalogMissing: [],
+    euShippingBlocked: [],
+    airPacketCount: 0,
+    multiVariantAirPacket: [],
+    weightSyncIssues: [],
+    serviceAvailability: {
+      available: true,
+      activeCount: 0,
+      staleActiveCount: 0,
+      requiredCountryCount: 0,
+      unavailableCountries: [],
+      staleCountries: [],
+    },
+    error: null,
+    ...overrides,
+  };
 }
 
 function basePrisma(contactCount = 0) {

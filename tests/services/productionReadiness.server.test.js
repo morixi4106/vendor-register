@@ -17,6 +17,7 @@ import {
   SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
 } from "../../app/services/operationalReadiness.server.js";
 import { inspectShopifyProductSync } from "../../app/services/productionReadiness/products.server.js";
+import { INTERNATIONAL_COMPLIANCE_REQUIREMENTS } from "../../app/utils/internationalMarketCompliance.js";
 
 const REQUIRED_SCOPE_STRING = [
   "read_products",
@@ -66,8 +67,8 @@ function createFakePrisma({
   heartbeat = undefined,
   shadowChecks = undefined,
   productSyncIssues = undefined,
-  productShippingProfiles = undefined,
-  internationalShippingAvailability = undefined,
+  productShippingProfiles = [],
+  internationalShippingAvailability = [],
 } = {}) {
   const sessionRows = sessions || [
     {
@@ -176,16 +177,12 @@ function createFakePrisma({
       findMany: async () => productSyncIssues,
     };
   }
-  if (productShippingProfiles !== undefined) {
-    fakePrisma.product = {
-      findMany: async () => productShippingProfiles,
-    };
-  }
-  if (internationalShippingAvailability !== undefined) {
-    fakePrisma.internationalShippingCountryAvailability = {
-      findMany: async () => internationalShippingAvailability,
-    };
-  }
+  fakePrisma.product = {
+    findMany: async () => productShippingProfiles,
+  };
+  fakePrisma.internationalShippingCountryAvailability = {
+    findMany: async () => internationalShippingAvailability,
+  };
 
   return fakePrisma;
 }
@@ -544,6 +541,157 @@ test("product shipping readiness excludes test-store products at the query bound
     approvalStatus: "approved",
     vendorStore: { is: { isTestStore: false } },
   });
+});
+
+function buildInternationalGeneralGoodsProduct(overrides = {}) {
+  return {
+    id: "product_international_1",
+    name: "Cotton pouch",
+    approvalStatus: "approved",
+    shippingWeightGrams: 500,
+    shippingLengthMm: 250,
+    shippingWidthMm: 180,
+    shippingHeightMm: 70,
+    internationalShippingMethod: "AIR_PACKET",
+    productEuStatus: "DISABLED",
+    shippingWeightConfirmedAt: new Date("2026-09-17T00:00:00.000Z"),
+    shippingWeightSource: "MANUAL_CONFIRMED",
+    shopifyVariantCount: 1,
+    shopifyWeightSyncStatus: "SYNCED",
+    category: "GENERAL_GOODS",
+    countryPolicy: {
+      allowedCountries: ["US"],
+      blockedCountries: [],
+      requiresWarningCountries: [],
+    },
+    complianceProfile: {
+      approvalStatus: "APPROVED",
+      countryOfOriginCode: "JP",
+      hsCode: "420292",
+      customsDescriptionEn: "Cotton pouch",
+      regulatoryCategory: "GENERAL_GOODS",
+    },
+    complianceEvidence: [],
+    complianceDecisions: [],
+    ...overrides,
+  };
+}
+
+test("international shipping readiness fails when an allowed country has no current service record", async () => {
+  const result = await inspectProductShippingProfiles({
+    prismaClient: {
+      product: {
+        findMany: async () => [buildInternationalGeneralGoodsProduct()],
+      },
+      complianceRequirement: {
+        findMany: async () => [],
+      },
+      internationalShippingCountryAvailability: {
+        findMany: async () => [],
+      },
+    },
+    now: new Date("2026-09-18T00:00:00.000Z"),
+  });
+
+  assert.deepEqual(result.serviceAvailability.unavailableCountries, ["US"]);
+  assert.equal(result.serviceAvailability.requiredCountryCount, 1);
+});
+
+test("general goods can pass international readiness without cosmetics requirements", async () => {
+  const result = await inspectProductShippingProfiles({
+    prismaClient: {
+      product: {
+        findMany: async () => [buildInternationalGeneralGoodsProduct()],
+      },
+      complianceRequirement: {
+        findMany: async () => [],
+      },
+      internationalShippingCountryAvailability: {
+        findMany: async () => [
+          {
+            countryCode: "US",
+            status: "ACTIVE",
+            checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+          },
+        ],
+      },
+    },
+    now: new Date("2026-09-18T00:00:00.000Z"),
+  });
+
+  assert.deepEqual(result.internationalRequirementCatalogMissing, []);
+  assert.deepEqual(result.internationalComplianceBlocked, []);
+  assert.deepEqual(result.serviceAvailability.unavailableCountries, []);
+  assert.deepEqual(result.serviceAvailability.staleCountries, []);
+});
+
+test("US cosmetics readiness does not require EU or GB catalog entries", async () => {
+  const product = buildInternationalGeneralGoodsProduct({
+    name: "Face cream",
+    category: "COSMETICS",
+    complianceProfile: {
+      approvalStatus: "APPROVED",
+      countryOfOriginCode: "JP",
+      hsCode: "330499",
+      customsDescriptionEn: "Face cream",
+      regulatoryCategory: "COSMETICS",
+    },
+  });
+  const usRequirements = INTERNATIONAL_COMPLIANCE_REQUIREMENTS.filter(
+    (entry) => entry.market === "CROSS_BORDER" || entry.market === "US",
+  );
+  product.complianceEvidence = usRequirements.map((requirement, index) => ({
+    id: `evidence_${index}`,
+    status: "VERIFIED",
+    verificationLevel: requirement.requiredVerificationLevel,
+    reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+    requirement: {
+      ...requirement,
+      isActive: true,
+      status: "ACTIVE",
+      reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+    },
+  }));
+  product.complianceDecisions = usRequirements.map((requirement, index) => ({
+    id: `decision_${index}`,
+    decision: "COMPLIANT",
+    decidedAt: new Date("2026-09-18T00:00:00.000Z"),
+    reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+    requirement: {
+      ...requirement,
+      isActive: true,
+      status: "ACTIVE",
+      reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+    },
+  }));
+
+  const result = await inspectProductShippingProfiles({
+    prismaClient: {
+      product: { findMany: async () => [product] },
+      complianceRequirement: {
+        findMany: async () =>
+          usRequirements.map((requirement) => ({
+            code: requirement.code,
+            isActive: true,
+            status: "ACTIVE",
+            reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+          })),
+      },
+      internationalShippingCountryAvailability: {
+        findMany: async () => [
+          {
+            countryCode: "US",
+            status: "ACTIVE",
+            checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+          },
+        ],
+      },
+    },
+    now: new Date("2026-09-18T00:00:00.000Z"),
+  });
+
+  assert.deepEqual(result.internationalRequirementCatalogMissing, []);
+  assert.deepEqual(result.internationalComplianceBlocked, []);
 });
 
 test("direct-return readiness excludes test stores at the query boundary", async () => {

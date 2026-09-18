@@ -95,6 +95,107 @@ test("dark deploy keeps legacy platform product sellable but records review requ
   assert.ok(result.inputHash);
 });
 
+function internationalReadyPlatformProduct(overrides = {}) {
+  return platformProduct({
+    productEuStatus: "DISABLED",
+    internationalShippingMethod: "AIR_PACKET",
+    shippingWeightGrams: 500,
+    shippingLengthMm: 250,
+    shippingWidthMm: 180,
+    shippingHeightMm: 70,
+    shippingWeightConfirmedAt: new Date("2026-09-17T00:00:00.000Z"),
+    shippingWeightSource: "MANUAL_CONFIRMED",
+    shopifyVariantCount: 1,
+    shopifyWeightSyncStatus: "SYNCED",
+    category: "GENERAL_GOODS",
+    countryPolicy: {
+      allowedCountries: ["US"],
+      blockedCountries: [],
+      requiresWarningCountries: [],
+    },
+    complianceProfile: {
+      approvalStatus: "APPROVED",
+      legalSellerType: "PLATFORM",
+      conditionStatus: "NEW",
+      countryOfOriginCode: "JP",
+      hsCode: "420292",
+      customsDescriptionEn: "Cotton pouch",
+      regulatoryCategory: "GENERAL_GOODS",
+      authenticityConfirmedAt: new Date("2026-01-01T00:00:00.000Z"),
+      ipRightsConfirmedAt: new Date("2026-01-01T00:00:00.000Z"),
+      applicabilityStatus: "REQUIRED",
+      verificationLevel: "DOCUMENT_REVIEWED",
+      applicabilityReasonText: "General goods reviewed for export.",
+      applicabilitySourceUrl: "https://example.com/export-review",
+      applicabilityDecidedAt: new Date("2026-01-01T00:00:00.000Z"),
+      applicabilityDecidedBy: "operator",
+      nextReviewAt: new Date("2099-01-01T00:00:00.000Z"),
+    },
+    complianceEvidence: [
+      {
+        id: "evidence_global_1",
+        status: "VERIFIED",
+        verificationLevel: "DOCUMENT_REVIEWED",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reviewDueAt: new Date("2099-01-01T00:00:00.000Z"),
+        revokedAt: null,
+      },
+    ],
+    complianceDecisions: [
+      {
+        id: "decision_global_1",
+        decision: "COMPLIANT",
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+        reviewDueAt: new Date("2099-01-01T00:00:00.000Z"),
+      },
+    ],
+    ...overrides,
+  });
+}
+
+test("international sales fail closed even while the legacy governance gate is disabled", () => {
+  const result = evaluateSaleEligibilitySnapshot({
+    product: internationalReadyPlatformProduct({
+      complianceProfile: {
+        approvalStatus: "APPROVED",
+        legalSellerType: "PLATFORM",
+        regulatoryCategory: "GENERAL_GOODS",
+      },
+    }),
+    destinationCountry: "US",
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    operationalControl: {
+      checkoutHold: false,
+      checkoutControlState: "IDLE",
+    },
+    env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+  });
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(
+    result.reasonCodes.some((reason) =>
+      reason.startsWith("INTERNATIONAL_"),
+    ),
+  );
+});
+
+test("valid international general goods remain eligible without cosmetics evidence", () => {
+  const result = evaluateSaleEligibilitySnapshot({
+    product: internationalReadyPlatformProduct(),
+    destinationCountry: "US",
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    operationalControl: {
+      checkoutHold: false,
+      checkoutControlState: "IDLE",
+    },
+    env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+  });
+
+  assert.equal(result.allowed, true);
+  assert.equal(result.status, "ELIGIBLE");
+});
+
 test("sale eligibility input hash ignores unrelated Product.updatedAt changes", () => {
   const base = platformProduct({
     updatedAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -131,6 +232,52 @@ test("sale eligibility input hash ignores unrelated Product.updatedAt changes", 
 
   assert.equal(first.inputHash, second.inputHash);
   assert.notEqual(first.inputHash, blocked.inputHash);
+});
+
+test("sale eligibility input hash changes with requirement review metadata", () => {
+  const requirement = {
+    code: "US_COSMETICS_LABEL_CLAIMS_REVIEW",
+    version: "2026-09-v1",
+    isActive: true,
+    status: "ACTIVE",
+    reviewDueAt: new Date("2027-01-01T00:00:00.000Z"),
+  };
+  const baseProduct = internationalReadyPlatformProduct({
+    complianceEvidence: [
+      {
+        id: "evidence_1",
+        status: "VERIFIED",
+        verificationLevel: "DOCUMENT_REVIEWED",
+        requirementId: "requirement_1",
+        requirement,
+      },
+    ],
+  });
+  const options = {
+    destinationCountry: "US",
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    operationalControl: { checkoutHold: false, checkoutControlState: "IDLE" },
+    env: { MARKETPLACE_GOVERNANCE_GATE_ENABLED: "false" },
+  };
+
+  const first = evaluateSaleEligibilitySnapshot({ product: baseProduct, ...options });
+  const changed = evaluateSaleEligibilitySnapshot({
+    product: {
+      ...baseProduct,
+      complianceEvidence: [
+        {
+          ...baseProduct.complianceEvidence[0],
+          requirement: {
+            ...requirement,
+            reviewDueAt: new Date("2027-02-01T00:00:00.000Z"),
+          },
+        },
+      ],
+    },
+    ...options,
+  });
+
+  assert.notEqual(first.inputHash, changed.inputHash);
 });
 
 test("enforcement blocks the same legacy product until governance is ready", () => {

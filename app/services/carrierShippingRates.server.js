@@ -327,6 +327,8 @@ export async function resolveCarrierFulfillmentOwnership({
     },
     select: {
       id: true,
+      name: true,
+      category: true,
       approvalStatus: true,
       shopDomain: true,
       shopifyProductId: true,
@@ -524,11 +526,23 @@ export async function validateCarrierInternationalDeliveryPolicy({
     },
     select: {
       id: true,
+      name: true,
+      category: true,
       shopifyProductId: true,
       shopifyVariantId: true,
       productEuStatus: true,
       approvalStatus: true,
       countryPolicy: true,
+      shippingWeightGrams: true,
+      shippingLengthMm: true,
+      shippingWidthMm: true,
+      shippingHeightMm: true,
+      internationalShippingMethod: true,
+      shippingWeightConfirmedAt: true,
+      shippingWeightSource: true,
+      shopifyVariantCount: true,
+      shopifyWeightSyncStatus: true,
+      complianceProfile: true,
       vendorStore: {
         select: {
           vendorAuth: {

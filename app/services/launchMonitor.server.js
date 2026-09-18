@@ -17,6 +17,10 @@ import {
   buildPaymentOperationChecks,
   inspectPaymentOperationReadiness,
 } from "./productionReadiness/payments.server.js";
+import {
+  buildProductShippingProfileChecks,
+  inspectProductShippingProfiles,
+} from "./productionReadiness/products.server.js";
 import { getMarketplaceCheckoutGateStatus } from "./marketplaceCheckoutGate.server.js";
 import {
   buildMarketplaceCheckoutValidationReadinessCheck,
@@ -63,8 +67,17 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "payment_settlements_unmatched",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
+  "product_shipping_profiles_available",
   "marketplace_checkout_publication_boundary",
   "marketplace_checkout_server_validation",
+  "international_requirement_catalog",
+  "international_product_customs_profiles",
+  "international_product_country_allowlist",
+  "international_market_compliance",
+  "air_packet_country_availability",
+  "air_packet_product_profiles",
+  "air_packet_single_variant_products",
+  "air_packet_weight_sync",
   "seller_order_unresolved_shadow_checks",
   "seller_ledger_repair_candidates",
   "test_store_pending_payout_runs",
@@ -276,6 +289,9 @@ export async function collectLaunchMonitorReport({
   const inspectPaymentOperationReadinessImpl =
     dependencies.inspectPaymentOperationReadiness ||
     inspectPaymentOperationReadiness;
+  const inspectProductShippingProfilesImpl =
+    dependencies.inspectProductShippingProfiles ||
+    inspectProductShippingProfiles;
   const getPlatformOperationalControlImpl =
     dependencies.getPlatformOperationalControl || getPlatformOperationalControl;
   const refreshKomojuLimitedLaunchControlImpl =
@@ -501,6 +517,7 @@ export async function collectLaunchMonitorReport({
     let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;
     let operationalReadinessCompleted = false;
+    let productShippingProfilesCompleted = false;
 
     try {
       const shopDomain = String(
@@ -586,6 +603,27 @@ export async function collectLaunchMonitorReport({
       checks.push(failure);
     }
     try {
+      const shippingProfiles = await inspectProductShippingProfilesImpl({
+        prismaClient,
+        now,
+      });
+      const shippingChecks = buildProductShippingProfileChecks(shippingProfiles)
+        .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
+        .map(readinessCheckToMonitorCheck);
+      heavyChecks.push(...shippingChecks);
+      checks.push(...shippingChecks);
+      productShippingProfilesCompleted = true;
+    } catch (error) {
+      const failure = issueCheck(
+        "international_product_readiness",
+        CRITICAL_SEVERITY,
+        "International product shipping readiness could not be inspected.",
+        safeErrorCode(error),
+      );
+      heavyChecks.push(failure);
+      checks.push(failure);
+    }
+    try {
       const [operationalReadiness, platformOperationalControl] =
         await Promise.all([
           inspectOperationalReadinessImpl({ prismaClient, now }),
@@ -614,6 +652,7 @@ export async function collectLaunchMonitorReport({
       checkoutBoundaryCompleted &&
       checkoutValidationCompleted &&
       launchIntegrityCompleted &&
+      productShippingProfilesCompleted &&
       operationalReadinessCompleted;
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(

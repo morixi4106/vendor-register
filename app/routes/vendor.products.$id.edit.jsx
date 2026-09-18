@@ -15,6 +15,7 @@ import {
   buildConfirmedShippingProfileData,
   parseProductShippingProfileFormData,
 } from "../utils/productShippingProfile";
+import { validateInternationalCustomsProfile } from "../utils/internationalProductProfile.js";
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 import { syncAndRecordShopifyVariantWeight } from "../services/shopifyInventoryWeight.server";
 import {
@@ -195,6 +196,21 @@ export const action = async ({ request, params }) => {
 
     if (!shippingProfile.ok) {
       return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+    }
+
+    if (shippingProfile.data.internationalShippingMethod === "AIR_PACKET") {
+      const customsValidation =
+        validateInternationalCustomsProfile(complianceProfile);
+      if (!customsValidation.ok) {
+        return json(
+          {
+            ok: false,
+            error:
+              "国際配送には、原産国、6〜10桁のHSコード、税関向け英語品名、規制区分が必要です。",
+          },
+          { status: 400 },
+        );
+      }
     }
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {

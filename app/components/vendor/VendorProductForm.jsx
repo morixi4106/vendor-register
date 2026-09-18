@@ -212,8 +212,12 @@ export default function VendorProductForm({
                 inputMode="numeric"
                 name="hsCode"
                 placeholder="例: 330499"
+                required={shippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET}
                 type="text"
               />
+              <div className="vendor-helper-text">
+                国際配送では6〜10桁の数字を入力してください。
+              </div>
             </div>
 
             <div className="vendor-form__field">
@@ -241,6 +245,7 @@ export default function VendorProductForm({
                 id="regulatoryCategory"
                 name="regulatoryCategory"
                 placeholder="例: 化粧品 / 一般雑貨 / 食品"
+                required={shippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET}
                 type="text"
               />
             </div>

@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  acceptedRiskTargetIsInstalled,
   buildRiskReviewEvidence,
   collectGitEvidence,
   collectRiskStatusAtCommit,
@@ -592,6 +593,7 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
   try {
     emitWorkflowOutputs({
       env: { GITHUB_OUTPUT: outputPath },
+      lockfile: { packages: {} },
       risk: { status: "proposed" },
     });
     assert.equal(fs.readFileSync(outputPath, "utf8"), "accepted=false\n");
@@ -599,6 +601,13 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
     fs.writeFileSync(outputPath, "");
     emitWorkflowOutputs({
       env: { GITHUB_OUTPUT: outputPath },
+      lockfile: {
+        packages: {
+          "extensions/example/node_modules/brace-expansion": {
+            version: "2.1.2",
+          },
+        },
+      },
       risk: acceptedRisk(),
     });
     const output = fs.readFileSync(outputPath, "utf8");
@@ -614,6 +623,7 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
       () =>
         emitWorkflowOutputs({
           env: {},
+          lockfile: { packages: {} },
           risk: { status: "proposed" },
         }),
       /GITHUB_OUTPUT/,
@@ -622,6 +632,11 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
       () =>
         emitWorkflowOutputs({
           env: { GITHUB_OUTPUT: outputPath },
+          lockfile: {
+            packages: {
+              "node_modules/brace-expansion": { version: "2.1.2" },
+            },
+          },
           risk: acceptedRisk({ reviewedPullRequest: 0 }),
         }),
       /pull request number is invalid/,
@@ -630,6 +645,11 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
       () =>
         emitWorkflowOutputs({
           env: { GITHUB_OUTPUT: outputPath },
+          lockfile: {
+            packages: {
+              "node_modules/brace-expansion": { version: "2.1.2" },
+            },
+          },
           risk: acceptedRisk({ reviewedCiRunId: "not-a-run" }),
         }),
       /CI run ID is invalid/,
@@ -637,6 +657,38 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+});
+
+test("requests accepted provenance only while its exact target is installed", () => {
+  const risk = acceptedRisk();
+  assert.equal(
+    acceptedRiskTargetIsInstalled(risk, {
+      packages: {
+        "node_modules/brace-expansion": { version: "2.1.2" },
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    acceptedRiskTargetIsInstalled(risk, {
+      packages: {
+        "node_modules/brace-expansion": { version: "2.1.4" },
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    acceptedRiskTargetIsInstalled({ ...risk, status: "proposed" }, {
+      packages: {
+        "node_modules/brace-expansion": { version: "2.1.2" },
+      },
+    }),
+    false,
+  );
+  assert.throws(
+    () => acceptedRiskTargetIsInstalled(risk, {}),
+    /package-lock\.json packages are invalid/,
+  );
 });
 
 test("verifies accepted provenance through bounded GitHub API reads", async () => {

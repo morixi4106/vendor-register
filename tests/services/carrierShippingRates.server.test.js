@@ -368,7 +368,10 @@ test("carrier shipping rates blocks EU checkout when the current product EU stat
               shopifyVariantId: "gid://shopify/ProductVariant/111222333",
               approvalStatus: "approved",
               productEuStatus: "REJECTED_HIGH_RISK",
-              countryPolicy: null,
+              countryPolicy: {
+                allowedCountries: ["FR"],
+                blockedCountries: [],
+              },
               vendorStore: {
                 vendorAuth: {
                   id: "vendor_1",
@@ -460,9 +463,26 @@ test("validateCarrierEuDeliveryPolicy allows EU delivery only for approved selle
               shopifyVariantId: "gid://shopify/ProductVariant/111222333",
               approvalStatus: "approved",
               productEuStatus: "APPROVED_LOW_RISK",
+              category: "GENERAL_GOODS",
               countryPolicy: {
                 allowedCountries: ["FR"],
                 blockedCountries: [],
+              },
+              shippingWeightGrams: 120,
+              shippingLengthMm: 200,
+              shippingWidthMm: 150,
+              shippingHeightMm: 30,
+              internationalShippingMethod: "AIR_PACKET",
+              shippingWeightConfirmedAt: new Date("2026-09-18T00:00:00.000Z"),
+              shippingWeightSource: "MANUAL_CONFIRMED",
+              shopifyVariantCount: 1,
+              shopifyWeightSyncStatus: "SYNCED",
+              complianceProfile: {
+                approvalStatus: "APPROVED",
+                countryOfOriginCode: "JP",
+                hsCode: "330499",
+                customsDescriptionEn: "General consumer goods",
+                regulatoryCategory: "GENERAL_GOODS",
               },
               vendorStore: {
                 vendorAuth: {

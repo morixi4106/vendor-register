@@ -6,6 +6,11 @@ import {
   normalizeText,
   serializePublicDeliveryEligibility,
 } from '../utils/deliveryEligibility.js';
+import { evaluateInternationalMarketCompliance } from '../utils/internationalMarketCompliance.js';
+import {
+  evaluateInternationalShippingAvailability,
+  getInternationalShippingCountryAvailability,
+} from './internationalShippingAvailability.server.js';
 
 function normalizeShopifyProductGid(value) {
   const normalized = normalizeText(value);
@@ -46,6 +51,8 @@ function jsonResponse(body, { status = 200 } = {}) {
 
 export function createProductDeliveryEligibilityLoader({
   prismaClient = prisma,
+  getInternationalShippingCountryAvailabilityImpl =
+    getInternationalShippingCountryAvailability,
 } = {}) {
   return async function loader({ request }) {
     if (request.method === 'OPTIONS') {
@@ -106,7 +113,28 @@ export function createProductDeliveryEligibilityLoader({
         shopifyProductId: true,
         approvalStatus: true,
         productEuStatus: true,
+        category: true,
+        internationalShippingMethod: true,
+        shippingWeightGrams: true,
+        shippingLengthMm: true,
+        shippingWidthMm: true,
+        shippingHeightMm: true,
+        shippingWeightConfirmedAt: true,
+        shippingWeightSource: true,
+        shopifyVariantCount: true,
+        shopifyWeightSyncStatus: true,
         countryPolicy: true,
+        complianceProfile: true,
+        complianceEvidence: {
+          include: { requirement: true },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        },
+        complianceDecisions: {
+          include: { requirement: true },
+          orderBy: { decidedAt: 'desc' },
+          take: 100,
+        },
         vendorStore: {
           select: {
             vendorAuth: {
@@ -135,11 +163,48 @@ export function createProductDeliveryEligibilityLoader({
     }
 
     const seller = product.vendorStore?.vendorAuth?.seller || null;
-    const eligibility = evaluateProductDeliveryEligibility({
+    let eligibility = evaluateProductDeliveryEligibility({
       product,
       seller,
       deliveryCountry,
     });
+    if (eligibility.isAvailable && deliveryCountry && deliveryCountry !== 'JP') {
+      const availability = await getInternationalShippingCountryAvailabilityImpl({
+        countryCode: deliveryCountry,
+        prismaClient,
+      });
+      const service = evaluateInternationalShippingAvailability(availability);
+      if (!service.deliverable) {
+        eligibility = {
+          ...eligibility,
+          status: 'UNAVAILABLE_INTERNATIONAL_SERVICE',
+          reason: 'international_shipping_service_unavailable',
+          isAvailable: false,
+          requiresImportWarning: false,
+          severity: 'block',
+          warningVersion: null,
+          publicMessage: 'This product cannot currently be shipped to the selected destination.',
+        };
+      }
+    }
+    if (eligibility.isAvailable && deliveryCountry && deliveryCountry !== 'JP') {
+      const compliance = evaluateInternationalMarketCompliance({
+        product,
+        destinationCountry: deliveryCountry,
+      });
+      if (!compliance.ready) {
+        eligibility = {
+          ...eligibility,
+          status: 'UNAVAILABLE_INTERNATIONAL_COMPLIANCE',
+          reason: 'international_compliance_unavailable',
+          isAvailable: false,
+          requiresImportWarning: false,
+          severity: 'block',
+          warningVersion: null,
+          publicMessage: 'この配送先には販売できません。',
+        };
+      }
+    }
 
     return jsonResponse({
       ok: true,

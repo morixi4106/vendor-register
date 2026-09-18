@@ -134,7 +134,27 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
         shopDomain: "shop-a.myshopify.com",
         approvalStatus: "approved",
         productEuStatus: "APPROVED_LOW_RISK",
-        countryPolicy: null,
+        countryPolicy: {
+          allowedCountries: ["FR"],
+          blockedCountries: [],
+          requiresWarningCountries: [],
+        },
+        internationalShippingMethod: "AIR_PACKET",
+        shippingWeightGrams: 500,
+        shippingLengthMm: 250,
+        shippingWidthMm: 180,
+        shippingHeightMm: 70,
+        shippingWeightConfirmedAt: new Date("2026-09-01T00:00:00.000Z"),
+        shippingWeightSource: "MANUAL_CONFIRMED",
+        shopifyVariantCount: 1,
+        shopifyWeightSyncStatus: "SYNCED",
+        complianceProfile: {
+          approvalStatus: "APPROVED",
+          countryOfOriginCode: "JP",
+          hsCode: "491191",
+          customsDescriptionEn: "Printed poster",
+          regulatoryCategory: "GENERAL_GOODS",
+        },
       },
       {
         id: "product_ng",
@@ -145,7 +165,11 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
         shopDomain: "shop-a.myshopify.com",
         approvalStatus: "approved",
         productEuStatus: "REJECTED_HIGH_RISK",
-        countryPolicy: null,
+        countryPolicy: {
+          allowedCountries: ["FR"],
+          blockedCountries: [],
+          requiresWarningCountries: [],
+        },
       },
     ],
   });
@@ -172,6 +196,6 @@ test("serializePublicVendorStorefront can filter products by selected delivery c
   );
   assert.equal(
     storefront.products[0].deliveryRestrictionSummary.hasRestrictions,
-    false,
+    true,
   );
 });

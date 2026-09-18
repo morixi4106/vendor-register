@@ -10,7 +10,30 @@ function createProduct(overrides = {}) {
     shopifyProductId: 'gid://shopify/Product/1',
     approvalStatus: 'approved',
     productEuStatus: 'APPROVED_LOW_RISK',
-    countryPolicy: null,
+    category: 'GENERAL_GOODS',
+    countryPolicy: {
+      blockedCountries: [],
+      allowedCountries: ['DE', 'FR'],
+      requiresWarningCountries: [],
+    },
+    internationalShippingMethod: 'AIR_PACKET',
+    shippingWeightGrams: 500,
+    shippingLengthMm: 250,
+    shippingWidthMm: 180,
+    shippingHeightMm: 70,
+    shippingWeightConfirmedAt: new Date('2026-09-01T00:00:00.000Z'),
+    shippingWeightSource: 'MANUAL_CONFIRMED',
+    shopifyVariantCount: 1,
+    shopifyWeightSyncStatus: 'SYNCED',
+    complianceProfile: {
+      approvalStatus: 'APPROVED',
+      countryOfOriginCode: 'JP',
+      hsCode: '420292',
+      customsDescriptionEn: 'Cotton pouch',
+      regulatoryCategory: 'GENERAL_GOODS',
+    },
+    complianceEvidence: [],
+    complianceDecisions: [],
     vendorStore: {
       vendorAuth: {
         handle: 'amber-cellar',
@@ -28,6 +51,16 @@ function createFakePrisma(product = createProduct()) {
     product: {
       async findFirst() {
         return product;
+      },
+    },
+    internationalShippingCountryAvailability: {
+      async findUnique() {
+        return {
+          countryCode: 'FR',
+          service: 'JAPAN_POST_AIR_PACKET',
+          status: 'ACTIVE',
+          checkedAt: new Date(),
+        };
       },
     },
   };
@@ -85,5 +118,30 @@ test('product delivery eligibility blocks rejected EU products', async () => {
       (country) => country.code === 'DE',
     ),
     true,
+  );
+});
+
+test('product delivery eligibility blocks stale international service data', async () => {
+  const loader = createProductDeliveryEligibilityLoader({
+    prismaClient: createFakePrisma(),
+    getInternationalShippingCountryAvailabilityImpl: async () => ({
+      countryCode: 'FR',
+      service: 'JAPAN_POST_AIR_PACKET',
+      status: 'ACTIVE',
+      checkedAt: new Date('2000-01-01T00:00:00.000Z'),
+    }),
+  });
+  const response = await loader({
+    request: new Request(
+      'http://localhost/api/product-delivery-eligibility?productId=prod_1&deliveryCountry=FR',
+    ),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.deliveryEligibility.isAvailable, false);
+  assert.equal(
+    body.deliveryEligibility.reason,
+    'unavailable',
   );
 });
