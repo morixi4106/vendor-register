@@ -16,6 +16,7 @@ test("international shipping availability requires a current ACTIVE check", () =
     {
       status: "ACTIVE",
       checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+      marketReadiness: { ready: true },
     },
     { now },
   );
@@ -23,6 +24,7 @@ test("international shipping availability requires a current ACTIVE check", () =
     {
       status: "ACTIVE",
       checkedAt: new Date("2026-09-01T00:00:00.000Z"),
+      marketReadiness: { ready: true },
     },
     { now },
   );
@@ -30,6 +32,7 @@ test("international shipping availability requires a current ACTIVE check", () =
     {
       status: "PARTIAL",
       checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+      marketReadiness: { ready: true },
     },
     { now },
   );
@@ -37,6 +40,7 @@ test("international shipping availability requires a current ACTIVE check", () =
     {
       status: "ACTIVE",
       checkedAt: new Date("2026-09-19T00:00:00.000Z"),
+      marketReadiness: { ready: true },
     },
     { now },
   );
@@ -49,6 +53,19 @@ test("international shipping availability requires a current ACTIVE check", () =
   assert.equal(partial.reason, "international_service_not_active");
   assert.equal(future.deliverable, false);
   assert.equal(future.reason, "international_service_status_invalid");
+
+  const missingEvidence = evaluateInternationalShippingAvailability(
+    {
+      status: "ACTIVE",
+      checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+    },
+    { now },
+  );
+  assert.equal(missingEvidence.deliverable, false);
+  assert.equal(
+    missingEvidence.reason,
+    "international_market_evidence_incomplete",
+  );
 });
 
 test("international shipping availability defaults unknown and only ACTIVE is deliverable", async () => {
@@ -78,11 +95,31 @@ test("international shipping availability saves an auditable country status", as
     status: "active",
     note: "  Japan Post checked  ",
     sourceUrl: " https://www.post.japanpost.jp/ ",
+    evidenceReference: "evidence/fr/shipping.pdf",
+    evidenceHash: "a".repeat(64),
+    confirmedBy: "operator@example.com",
+    deliveryProfileId: "gid://shopify/DeliveryProfile/1",
+    carrierConfirmations: {
+      officialStatusChecked: true,
+      countryServiceMatched: true,
+    },
+    routeAuditConfirmations: {
+      deliveryProfileMatched: true,
+      manualRatesReviewed: true,
+      freeShippingReviewed: true,
+      alternateCarrierReviewed: true,
+      alternateProfilesReviewed: true,
+    },
     now,
     prismaClient: {
       internationalShippingCountryAvailability: {
         async upsert(input) {
           received = input;
+          return input.create;
+        },
+      },
+      operationalReadinessAttestation: {
+        async upsert(input) {
           return input.create;
         },
       },
@@ -104,5 +141,32 @@ test("international shipping availability rejects unsupported country codes", as
       prismaClient: {},
     }),
     /料金地帯を特定できない/,
+  );
+});
+
+test("active international shipping requires a Shopify delivery profile ID", async () => {
+  await assert.rejects(
+    saveInternationalShippingCountryAvailability({
+      countryCode: "FR",
+      status: "ACTIVE",
+      sourceUrl: "https://www.post.japanpost.jp/int/information/overview.html",
+      evidenceReference: "evidence/fr-shipping.pdf",
+      evidenceHash: "a".repeat(64),
+      confirmedBy: "operator@example.com",
+      deliveryProfileId: "",
+      carrierConfirmations: {
+        officialStatusChecked: true,
+        countryServiceMatched: true,
+      },
+      routeAuditConfirmations: {
+        deliveryProfileMatched: true,
+        manualRatesReviewed: true,
+        freeShippingReviewed: true,
+        alternateCarrierReviewed: true,
+        alternateProfilesReviewed: true,
+      },
+      prismaClient: {},
+    }),
+    /delivery profile ID/i,
   );
 });

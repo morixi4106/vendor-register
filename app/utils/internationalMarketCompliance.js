@@ -1,6 +1,6 @@
 import { EU_COUNTRY_CODES, normalizeCountryCode } from "./deliveryEligibility.js";
 
-export const INTERNATIONAL_REQUIREMENT_VERSION = "2026-09-v1";
+export const INTERNATIONAL_REQUIREMENT_VERSION = "2026-09-v2";
 
 export const INTERNATIONAL_COMPLIANCE_REQUIREMENTS = Object.freeze([
   {
@@ -40,6 +40,30 @@ export const INTERNATIONAL_COMPLIANCE_REQUIREMENTS = Object.freeze([
     sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
   },
   {
+    code: "EU_COSMETICS_PRODUCT_INFORMATION_FILE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "EU cosmetics product information file",
+    jurisdiction: "EU",
+    market: "EU",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "EU Cosmetics Regulation",
+    sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
+  },
+  {
+    code: "EU_COSMETICS_GMP",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "EU cosmetics good manufacturing practice evidence",
+    jurisdiction: "EU",
+    market: "EU",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "EU Cosmetics Regulation",
+    sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
+  },
+  {
     code: "EU_COSMETICS_NOTIFICATION",
     version: INTERNATIONAL_REQUIREMENT_VERSION,
     name: "EU CPNP notification",
@@ -65,6 +89,30 @@ export const INTERNATIONAL_COMPLIANCE_REQUIREMENTS = Object.freeze([
     sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
   },
   {
+    code: "EU_COSMETICS_SERIOUS_UNDESIRABLE_EFFECT_PROCEDURE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "EU cosmetics serious undesirable effect procedure",
+    jurisdiction: "EU",
+    market: "EU",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "EU Cosmetics Regulation",
+    sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
+  },
+  {
+    code: "EU_COSMETICS_RECALL_TRACEABILITY_PROCEDURE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "EU cosmetics recall and traceability procedure",
+    jurisdiction: "EU",
+    market: "EU",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "EU Cosmetics Regulation",
+    sourceUrl: "https://eur-lex.europa.eu/eli/reg/2009/1223/oj/eng",
+  },
+  {
     code: "GB_COSMETICS_RESPONSIBLE_PERSON",
     version: INTERNATIONAL_REQUIREMENT_VERSION,
     name: "Great Britain cosmetics responsible person",
@@ -81,6 +129,32 @@ export const INTERNATIONAL_COMPLIANCE_REQUIREMENTS = Object.freeze([
     code: "GB_COSMETICS_SAFETY_REPORT",
     version: INTERNATIONAL_REQUIREMENT_VERSION,
     name: "Great Britain cosmetic product safety report",
+    jurisdiction: "GB",
+    market: "GB",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "Making cosmetic products available in Great Britain",
+    sourceUrl:
+      "https://www.gov.uk/guidance/making-cosmetic-products-available-to-consumers-in-great-britain",
+  },
+  {
+    code: "GB_COSMETICS_PRODUCT_INFORMATION_FILE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "Great Britain cosmetics product information file",
+    jurisdiction: "GB",
+    market: "GB",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "Making cosmetic products available in Great Britain",
+    sourceUrl:
+      "https://www.gov.uk/guidance/making-cosmetic-products-available-to-consumers-in-great-britain",
+  },
+  {
+    code: "GB_COSMETICS_GMP",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "Great Britain cosmetics good manufacturing practice evidence",
     jurisdiction: "GB",
     market: "GB",
     productCategory: "COSMETICS",
@@ -117,17 +191,111 @@ export const INTERNATIONAL_COMPLIANCE_REQUIREMENTS = Object.freeze([
       "https://www.gov.uk/guidance/making-cosmetic-products-available-to-consumers-in-great-britain",
   },
   {
-    code: "US_COSMETICS_MOCRA_REGISTRATION_LISTING",
+    code: "GB_COSMETICS_SERIOUS_UNDESIRABLE_EFFECT_PROCEDURE",
     version: INTERNATIONAL_REQUIREMENT_VERSION,
-    name: "US MoCRA facility registration and product listing review",
+    name: "Great Britain cosmetics serious undesirable effect procedure",
+    jurisdiction: "GB",
+    market: "GB",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "Making cosmetic products available in Great Britain",
+    sourceUrl:
+      "https://www.gov.uk/guidance/making-cosmetic-products-available-to-consumers-in-great-britain",
+  },
+  {
+    code: "GB_COSMETICS_RECALL_TRACEABILITY_PROCEDURE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "Great Britain cosmetics recall and traceability procedure",
+    jurisdiction: "GB",
+    market: "GB",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "Making cosmetic products available in Great Britain",
+    sourceUrl:
+      "https://www.gov.uk/guidance/making-cosmetic-products-available-to-consumers-in-great-britain",
+  },
+  {
+    code: "US_COSMETICS_FACILITY_REGISTRATION",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US MoCRA facility registration applicability and evidence",
+    jurisdiction: "US",
+    market: "US",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    allowNotApplicable: true,
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "FDA MoCRA registration and listing",
+    sourceUrl:
+      "https://www.fda.gov/cosmetics/registration-listing-cosmetic-product-facilities-and-products",
+  },
+  {
+    code: "US_COSMETICS_PRODUCT_LISTING",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US MoCRA product listing applicability and evidence",
+    jurisdiction: "US",
+    market: "US",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    allowNotApplicable: true,
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "FDA MoCRA registration and listing",
+    sourceUrl:
+      "https://www.fda.gov/cosmetics/registration-listing-cosmetic-product-facilities-and-products",
+  },
+  {
+    code: "US_COSMETICS_GMP_APPLICABILITY",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US MoCRA GMP applicability and readiness",
+    jurisdiction: "US",
+    market: "US",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    allowNotApplicable: true,
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "FDA Modernization of Cosmetics Regulation Act",
+    sourceUrl:
+      "https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra",
+  },
+  {
+    code: "US_COSMETICS_SAFETY_SUBSTANTIATION",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US cosmetics safety substantiation",
     jurisdiction: "US",
     market: "US",
     productCategory: "COSMETICS",
     severity: "BLOCKING",
     requiredVerificationLevel: "DOCUMENT_REVIEWED",
-    sourceTitle: "FDA MoCRA registration and listing",
+    sourceTitle: "FDA Modernization of Cosmetics Regulation Act",
     sourceUrl:
-      "https://www.fda.gov/cosmetics/registration-listing-cosmetic-product-facilities-and-products",
+      "https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra",
+  },
+  {
+    code: "US_COSMETICS_SERIOUS_ADVERSE_EVENT_PROCEDURE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US cosmetics serious adverse event reporting procedure",
+    jurisdiction: "US",
+    market: "US",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "FDA Modernization of Cosmetics Regulation Act",
+    sourceUrl:
+      "https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra",
+  },
+  {
+    code: "US_COSMETICS_RECALL_PROCEDURE",
+    version: INTERNATIONAL_REQUIREMENT_VERSION,
+    name: "US cosmetics recall procedure",
+    jurisdiction: "US",
+    market: "US",
+    productCategory: "COSMETICS",
+    severity: "BLOCKING",
+    requiredVerificationLevel: "DOCUMENT_REVIEWED",
+    sourceTitle: "FDA Modernization of Cosmetics Regulation Act",
+    sourceUrl:
+      "https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra",
   },
   {
     code: "US_COSMETICS_LABEL_CLAIMS_REVIEW",
@@ -326,7 +494,8 @@ export function evaluateInternationalMarketCompliance({
     );
     const decision = normalizeUpper(currentDecision?.decision);
     const ready =
-      decision === "NOT_APPLICABLE" ||
+      (decision === "NOT_APPLICABLE" &&
+        requirement.allowNotApplicable === true) ||
       (decision === "COMPLIANT" && verifiedEvidence.length > 0);
 
     if (matchingEntries.length > 0 && !currentRequirementFound) {
@@ -337,6 +506,11 @@ export function evaluateInternationalMarketCompliance({
       reasons.push(`requirement_blocked:${requirement.code}`);
     } else if (decision === "COMPLIANT" && verifiedEvidence.length === 0) {
       reasons.push(`requirement_evidence_missing:${requirement.code}`);
+    } else if (
+      decision === "NOT_APPLICABLE" &&
+      requirement.allowNotApplicable !== true
+    ) {
+      reasons.push(`requirement_not_applicable_not_allowed:${requirement.code}`);
     } else if (!ready) {
       reasons.push(`requirement_not_satisfied:${requirement.code}`);
     }
