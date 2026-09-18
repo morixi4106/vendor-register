@@ -18,7 +18,26 @@ function createProduct(overrides = {}) {
     shopifyProductId: 'gid://shopify/Product/1',
     approvalStatus: 'approved',
     productEuStatus: 'APPROVED_LOW_RISK',
-    countryPolicy: null,
+    countryPolicy: {
+      blockedCountries: [],
+      allowedCountries: ['DE', 'FR'],
+      requiresWarningCountries: [],
+    },
+    internationalShippingMethod: 'AIR_PACKET',
+    shippingWeightGrams: 500,
+    shippingLengthMm: 250,
+    shippingWidthMm: 180,
+    shippingHeightMm: 70,
+    shippingWeightConfirmedAt: new Date('2026-09-01T00:00:00.000Z'),
+    shippingWeightSource: 'MANUAL_CONFIRMED',
+    shopifyVariantCount: 1,
+    shopifyWeightSyncStatus: 'SYNCED',
+    complianceProfile: {
+      countryOfOriginCode: 'JP',
+      hsCode: '420292',
+      customsDescriptionEn: 'Cotton cosmetic pouch',
+      regulatoryCategory: 'GENERAL_GOODS',
+    },
     ...overrides,
   };
 }
@@ -70,6 +89,76 @@ test('evaluateProductDeliveryEligibility omits public copy for plainly available
   assert.equal(result.isAvailable, true);
   assert.equal(result.label, null);
   assert.equal(result.message, null);
+});
+
+test('evaluateProductDeliveryEligibility keeps domestic delivery available without an international profile', () => {
+  const result = evaluateProductDeliveryEligibility({
+    product: createProduct({
+      countryPolicy: null,
+      internationalShippingMethod: 'DOMESTIC_ONLY',
+      complianceProfile: null,
+    }),
+    seller: approvedSeller,
+    deliveryCountry: 'JP',
+  });
+
+  assert.equal(result.status, DELIVERY_ELIGIBILITY_STATUS.AVAILABLE);
+  assert.equal(result.isAvailable, true);
+});
+
+test('evaluateProductDeliveryEligibility fails closed when an overseas allowlist is missing', () => {
+  const result = evaluateProductDeliveryEligibility({
+    product: createProduct({
+      countryPolicy: {
+        blockedCountries: [],
+        allowedCountries: [],
+        requiresWarningCountries: [],
+      },
+    }),
+    seller: approvedSeller,
+    deliveryCountry: 'FR',
+  });
+
+  assert.equal(
+    result.status,
+    DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_COUNTRY_NOT_ALLOWED,
+  );
+  assert.equal(result.isAvailable, false);
+});
+
+test('evaluateProductDeliveryEligibility fails closed for incomplete overseas shipping data', () => {
+  const result = evaluateProductDeliveryEligibility({
+    product: createProduct({ shippingWeightConfirmedAt: null }),
+    seller: approvedSeller,
+    deliveryCountry: 'FR',
+  });
+
+  assert.equal(
+    result.status,
+    DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_INTERNATIONAL_SHIPPING,
+  );
+  assert.equal(result.isAvailable, false);
+});
+
+test('evaluateProductDeliveryEligibility fails closed for incomplete customs data', () => {
+  const result = evaluateProductDeliveryEligibility({
+    product: createProduct({
+      complianceProfile: {
+        countryOfOriginCode: 'JP',
+        hsCode: null,
+        customsDescriptionEn: 'Cotton cosmetic pouch',
+        regulatoryCategory: 'GENERAL_GOODS',
+      },
+    }),
+    seller: approvedSeller,
+    deliveryCountry: 'FR',
+  });
+
+  assert.equal(
+    result.status,
+    DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_CUSTOMS_PROFILE,
+  );
+  assert.equal(result.isAvailable, false);
 });
 
 test('evaluateCartDeliveryEligibility blocks mixed EU carts when any product is unavailable', () => {

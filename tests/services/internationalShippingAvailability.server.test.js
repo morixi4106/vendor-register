@@ -2,12 +2,54 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  evaluateInternationalShippingAvailability,
   getInternationalShippingCountryAvailability,
   INTERNATIONAL_SERVICE_STATUS,
   isInternationalServiceActive,
   normalizeInternationalServiceStatus,
   saveInternationalShippingCountryAvailability,
 } from "../../app/services/internationalShippingAvailability.server.js";
+
+test("international shipping availability requires a current ACTIVE check", () => {
+  const now = new Date("2026-09-18T00:00:00.000Z");
+  const current = evaluateInternationalShippingAvailability(
+    {
+      status: "ACTIVE",
+      checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+    },
+    { now },
+  );
+  const stale = evaluateInternationalShippingAvailability(
+    {
+      status: "ACTIVE",
+      checkedAt: new Date("2026-09-01T00:00:00.000Z"),
+    },
+    { now },
+  );
+  const partial = evaluateInternationalShippingAvailability(
+    {
+      status: "PARTIAL",
+      checkedAt: new Date("2026-09-17T00:00:00.000Z"),
+    },
+    { now },
+  );
+  const future = evaluateInternationalShippingAvailability(
+    {
+      status: "ACTIVE",
+      checkedAt: new Date("2026-09-19T00:00:00.000Z"),
+    },
+    { now },
+  );
+
+  assert.equal(current.deliverable, true);
+  assert.equal(current.reason, null);
+  assert.equal(stale.deliverable, false);
+  assert.equal(stale.reason, "international_service_status_stale");
+  assert.equal(partial.deliverable, false);
+  assert.equal(partial.reason, "international_service_not_active");
+  assert.equal(future.deliverable, false);
+  assert.equal(future.reason, "international_service_status_invalid");
+});
 
 test("international shipping availability defaults unknown and only ACTIVE is deliverable", async () => {
   const result = await getInternationalShippingCountryAvailability({

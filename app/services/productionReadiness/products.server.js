@@ -1,7 +1,18 @@
 import prisma from "../../db.server.js";
 import { EU_PRODUCT_ALLOWED_STATUSES } from "../../utils/deliveryEligibility.js";
+import {
+  evaluateInternationalMarketCompliance,
+  getRequiredInternationalRequirements,
+  INTERNATIONAL_REQUIREMENT_VERSION,
+  isCosmeticsProduct,
+  isInternationalRequirementCurrent,
+} from "../../utils/internationalMarketCompliance.js";
+import { validateInternationalCustomsProfile } from "../../utils/internationalProductProfile.js";
 import { PRODUCT_SHIPPING_METHOD, SHOPIFY_WEIGHT_SYNC_STATUS, validateStoredAirPacketProfile } from "../../utils/productShippingProfile.js";
-import { INTERNATIONAL_SERVICE_STATUS } from ".././internationalShippingAvailability.server.js";
+import {
+  evaluateInternationalShippingAvailability,
+  INTERNATIONAL_SERVICE_STATUS,
+} from "../internationalShippingAvailability.server.js";
 import { createCheck, normalizeShopDomain } from "./common.js";
 export async function inspectShopifyProductSync({
   prismaClient = prisma,
@@ -74,13 +85,20 @@ export async function inspectProductShippingProfiles({
       approvedCount: 0,
       missingWeight: [],
       invalidAirPacket: [],
+      invalidInternationalCustoms: [],
+      missingInternationalCountryAllowlist: [],
+      internationalComplianceBlocked: [],
+      internationalRequirementCatalogMissing: [],
       euShippingBlocked: [],
       multiVariantAirPacket: [],
       weightSyncIssues: [],
       serviceAvailability: {
         available: false,
         activeCount: 0,
-        staleActiveCount: 0
+        staleActiveCount: 0,
+        requiredCountryCount: 0,
+        unavailableCountries: [],
+        staleCountries: []
       },
       error: "product_shipping_profile_table_unavailable"
     };
@@ -107,9 +125,37 @@ export async function inspectProductShippingProfiles({
         shippingWeightConfirmedAt: true,
         shippingWeightSource: true,
         shopifyVariantCount: true,
-        shopifyWeightSyncStatus: true
+        shopifyWeightSyncStatus: true,
+        category: true,
+        countryPolicy: true,
+        complianceProfile: true,
+        complianceEvidence: {
+          include: { requirement: true },
+          orderBy: { createdAt: "desc" },
+          take: 100
+        },
+        complianceDecisions: {
+          include: { requirement: true },
+          orderBy: { decidedAt: "desc" },
+          take: 100
+        }
       }
     });
+    const internationalRequirements = prismaClient.complianceRequirement?.findMany ? await prismaClient.complianceRequirement.findMany({
+      where: {
+        version: INTERNATIONAL_REQUIREMENT_VERSION,
+        isActive: true,
+        status: "ACTIVE"
+      },
+      select: {
+        code: true,
+        effectiveFrom: true,
+        effectiveUntil: true,
+        reviewDueAt: true,
+        isActive: true,
+        status: true
+      }
+    }) : [];
     const availabilityRows = prismaClient.internationalShippingCountryAvailability?.findMany ? await prismaClient.internationalShippingCountryAvailability.findMany({
       where: {
         service: "JAPAN_POST_AIR_PACKET"
@@ -127,16 +173,80 @@ export async function inspectProductShippingProfiles({
     const invalidAirPacket = products.filter(product => product.internationalShippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET && !validateStoredAirPacketProfile(product).ok);
     const euShippingBlocked = products.filter(product => EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus) && !validateStoredAirPacketProfile(product).ok);
     const airPacketProducts = products.filter(product => product.internationalShippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET);
+    const cosmeticsAirPacketProducts = airPacketProducts.filter(isCosmeticsProduct);
+    const invalidInternationalCustoms = airPacketProducts.filter(product => !validateInternationalCustomsProfile(product).ok);
+    const missingInternationalCountryAllowlist = airPacketProducts.filter(product => {
+      const countries = Array.isArray(product.countryPolicy?.allowedCountries) ? product.countryPolicy.allowedCountries : [];
+      return countries.filter(country => String(country || "").trim().toUpperCase() !== "JP").length === 0;
+    });
+    const internationalComplianceBlocked = airPacketProducts.flatMap(product => {
+      const countries = Array.isArray(product.countryPolicy?.allowedCountries) ? product.countryPolicy.allowedCountries : [];
+      return Array.from(new Set(countries.map(country => String(country || "").trim().toUpperCase()).filter(country => country && country !== "JP"))).flatMap(countryCode => {
+        const result = evaluateInternationalMarketCompliance({
+          product,
+          destinationCountry: countryCode,
+          evaluatedAt: now
+        });
+        return result.ready ? [] : [{ ...product, countryCode, complianceReasons: result.reasons }];
+      });
+    });
+    const activeRequirementCodes = new Set(
+      internationalRequirements
+        .filter(entry => isInternationalRequirementCurrent(entry, now))
+        .map(entry => entry.code)
+    );
+    const requiredRequirementCatalog = new Map();
+    for (const product of cosmeticsAirPacketProducts) {
+      const countries = Array.isArray(product.countryPolicy?.allowedCountries)
+        ? product.countryPolicy.allowedCountries
+        : [];
+      for (const countryCode of countries) {
+        const normalizedCountry = String(countryCode || "").trim().toUpperCase();
+        if (!normalizedCountry || normalizedCountry === "JP") continue;
+        for (const requirement of getRequiredInternationalRequirements(
+          product,
+          normalizedCountry,
+        )) {
+          requiredRequirementCatalog.set(requirement.code, requirement);
+        }
+      }
+    }
+    const internationalRequirementCatalogMissing = Array.from(
+      requiredRequirementCatalog.values(),
+    ).filter((requirement) => !activeRequirementCodes.has(requirement.code));
     const multiVariantAirPacket = airPacketProducts.filter(product => Number(product.shopifyVariantCount) !== 1);
     const weightSyncIssues = airPacketProducts.filter(product => product.shopifyWeightSyncStatus !== SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED);
-    const staleBefore = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const activeRows = (availabilityRows || []).filter(row => row.status === INTERNATIONAL_SERVICE_STATUS.ACTIVE);
-    const staleActiveRows = activeRows.filter(row => !row.checkedAt || new Date(row.checkedAt) < staleBefore);
+    const staleActiveRows = activeRows.filter(row =>
+      evaluateInternationalShippingAvailability(row, { now }).stale
+    );
+    const requiredCountries = Array.from(new Set(airPacketProducts.flatMap(product => {
+      const countries = Array.isArray(product.countryPolicy?.allowedCountries) ? product.countryPolicy.allowedCountries : [];
+      return countries.map(country => String(country || "").trim().toUpperCase()).filter(country => country && country !== "JP");
+    })));
+    const availabilityByCountry = new Map((availabilityRows || []).map(row => [String(row.countryCode || "").trim().toUpperCase(), row]));
+    const unavailableCountries = requiredCountries.filter(countryCode =>
+      !evaluateInternationalShippingAvailability(
+        availabilityByCountry.get(countryCode),
+        { now }
+      ).deliverable
+    );
+    const staleCountries = requiredCountries.filter(countryCode => {
+      const row = availabilityByCountry.get(countryCode);
+      return (
+        row?.status === INTERNATIONAL_SERVICE_STATUS.ACTIVE &&
+        evaluateInternationalShippingAvailability(row, { now }).stale
+      );
+    });
     return {
       available: true,
       approvedCount: products.length,
       missingWeight,
       invalidAirPacket,
+      invalidInternationalCustoms,
+      missingInternationalCountryAllowlist,
+      internationalComplianceBlocked,
+      internationalRequirementCatalogMissing,
       euShippingBlocked,
       airPacketCount: airPacketProducts.length,
       multiVariantAirPacket,
@@ -144,7 +254,10 @@ export async function inspectProductShippingProfiles({
       serviceAvailability: {
         available: Array.isArray(availabilityRows),
         activeCount: activeRows.length,
-        staleActiveCount: staleActiveRows.length
+        staleActiveCount: staleActiveRows.length,
+        requiredCountryCount: requiredCountries.length,
+        unavailableCountries,
+        staleCountries
       },
       error: null
     };
@@ -155,13 +268,20 @@ export async function inspectProductShippingProfiles({
         approvedCount: 0,
         missingWeight: [],
         invalidAirPacket: [],
+        invalidInternationalCustoms: [],
+        missingInternationalCountryAllowlist: [],
+        internationalComplianceBlocked: [],
+        internationalRequirementCatalogMissing: [],
         euShippingBlocked: [],
         multiVariantAirPacket: [],
         weightSyncIssues: [],
         serviceAvailability: {
           available: false,
           activeCount: 0,
-          staleActiveCount: 0
+          staleActiveCount: 0,
+          requiredCountryCount: 0,
+          unavailableCountries: [],
+          staleCountries: []
         },
         error: error.code
       };
@@ -179,7 +299,7 @@ export function buildProductShippingProfileChecks(shippingProfiles) {
     return [createCheck({
       id: "product_shipping_profiles_available",
       category: "shopify",
-      status: "warning",
+      status: "fail",
       title: "商品配送プロフィール",
       detail: `配送プロフィールを確認できませんでした（${shippingProfiles.error}）。`,
       action: "最新のPrisma migrationを適用し、本番確認を再実行してください。"
@@ -192,6 +312,34 @@ export function buildProductShippingProfileChecks(shippingProfiles) {
     title: "販売中商品の梱包後重量",
     detail: shippingProfiles.missingWeight.length > 0 ? `販売承認済み商品のうち${shippingProfiles.missingWeight.length}件で梱包後重量が未設定です：${formatProductSamples(shippingProfiles.missingWeight)}` : `販売承認済み${shippingProfiles.approvedCount}件の梱包後重量が設定されています。`,
     action: shippingProfiles.missingWeight.length > 0 ? "商品詳細の配送プロフィールで、梱包材を含む重量を登録してください。国内配送は継続できますが、国際送料には使用できません。" : ""
+  }), createCheck({
+    id: "international_requirement_catalog",
+    category: "shopify",
+    status: shippingProfiles.internationalRequirementCatalogMissing.length > 0 ? "fail" : "pass",
+    title: "国際販売の規制要件カタログ",
+    detail: shippingProfiles.airPacketCount === 0 ? "国際配送対象商品はありません。" : shippingProfiles.internationalRequirementCatalogMissing.length > 0 ? `${shippingProfiles.internationalRequirementCatalogMissing.length}件の国際販売要件が未同期です。` : "国際販売要件は現行版で同期されています。",
+    action: shippingProfiles.internationalRequirementCatalogMissing.length > 0 ? "販売責任・案件管理で国際販売要件を同期してください。" : ""
+  }), createCheck({
+    id: "international_product_customs_profiles",
+    category: "shopify",
+    status: shippingProfiles.invalidInternationalCustoms.length > 0 ? "fail" : "pass",
+    title: "国際配送商品の税関情報",
+    detail: shippingProfiles.invalidInternationalCustoms.length > 0 ? `${shippingProfiles.invalidInternationalCustoms.length}件で原産国、HSコード、英語品名または規制区分が不足しています：${formatProductSamples(shippingProfiles.invalidInternationalCustoms)}` : "国際配送商品の税関情報は入力済みです。",
+    action: shippingProfiles.invalidInternationalCustoms.length > 0 ? "商品詳細で税関情報を修正してください。" : ""
+  }), createCheck({
+    id: "international_product_country_allowlist",
+    category: "shopify",
+    status: shippingProfiles.missingInternationalCountryAllowlist.length > 0 ? "fail" : "pass",
+    title: "国際配送商品の販売国",
+    detail: shippingProfiles.missingInternationalCountryAllowlist.length > 0 ? `${shippingProfiles.missingInternationalCountryAllowlist.length}件で海外の販売許可国が明示されていません：${formatProductSamples(shippingProfiles.missingInternationalCountryAllowlist)}` : "国際配送商品の販売許可国は明示されています。",
+    action: shippingProfiles.missingInternationalCountryAllowlist.length > 0 ? "商品配送設定で販売を許可する国だけを登録してください。" : ""
+  }), createCheck({
+    id: "international_market_compliance",
+    category: "shopify",
+    status: shippingProfiles.internationalComplianceBlocked.length > 0 ? "fail" : "pass",
+    title: "販売国別の商品適合証拠",
+    detail: shippingProfiles.internationalComplianceBlocked.length > 0 ? `${shippingProfiles.internationalComplianceBlocked.length}件の商品・販売国の組み合わせで証拠または判断が不足しています：${formatProductSamples(shippingProfiles.internationalComplianceBlocked)}` : "許可した販売国について必要な商品適合証拠を確認済みです。",
+    action: shippingProfiles.internationalComplianceBlocked.length > 0 ? "販売責任・案件管理で国別要件の証拠と判断を登録するか、販売許可国から外してください。" : ""
   }), createCheck({
     id: "air_packet_single_variant_products",
     category: "shopify",
@@ -209,10 +357,10 @@ export function buildProductShippingProfileChecks(shippingProfiles) {
   }), createCheck({
     id: "air_packet_country_availability",
     category: "shopify",
-    status: shippingProfiles.airPacketCount === 0 ? "pass" : !shippingProfiles.serviceAvailability.available || shippingProfiles.serviceAvailability.activeCount === 0 ? "fail" : shippingProfiles.serviceAvailability.staleActiveCount > 0 ? "warning" : "pass",
+    status: shippingProfiles.airPacketCount === 0 ? "pass" : !shippingProfiles.serviceAvailability.available || shippingProfiles.serviceAvailability.requiredCountryCount === 0 || shippingProfiles.serviceAvailability.unavailableCountries.length > 0 || shippingProfiles.serviceAvailability.staleCountries.length > 0 ? "fail" : "pass",
     title: "国際エアパケットの国別受付状況",
     detail: shippingProfiles.airPacketCount === 0 ? "国際エアパケット対象商品はありません。" : !shippingProfiles.serviceAvailability.available ? "国別受付状況を確認できません。migrationの適用状況を確認してください。" : shippingProfiles.serviceAvailability.activeCount === 0 ? "受付中として確認済みの国・地域がありません。" : `受付中 ${shippingProfiles.serviceAvailability.activeCount}か国・地域、7日以上未確認 ${shippingProfiles.serviceAvailability.staleActiveCount}件です。`,
-    action: shippingProfiles.airPacketCount > 0 && (shippingProfiles.serviceAvailability.activeCount === 0 || shippingProfiles.serviceAvailability.staleActiveCount > 0) ? "国際配送状況を開き、日本郵便の最新受付状況を確認してください。" : ""
+    action: shippingProfiles.airPacketCount > 0 && (!shippingProfiles.serviceAvailability.available || shippingProfiles.serviceAvailability.requiredCountryCount === 0 || shippingProfiles.serviceAvailability.unavailableCountries.length > 0 || shippingProfiles.serviceAvailability.staleCountries.length > 0) ? "国際配送状況を開き、販売許可国すべてについて日本郵便の最新受付状況を確認してください。" : ""
   }), createCheck({
     id: "air_packet_product_profiles",
     category: "shopify",

@@ -1,3 +1,5 @@
+import { validateInternationalProductProfile } from './internationalProductProfile.js';
+
 export const BUYER_IMPORT_WARNING_VERSION = 'import-responsibility-v1';
 
 export const DELIVERY_ELIGIBILITY_STATUS = {
@@ -8,6 +10,8 @@ export const DELIVERY_ELIGIBILITY_STATUS = {
   UNAVAILABLE_SELLER_EU_REVIEW: 'UNAVAILABLE_SELLER_EU_REVIEW',
   UNAVAILABLE_COUNTRY_BLOCKED: 'UNAVAILABLE_COUNTRY_BLOCKED',
   UNAVAILABLE_COUNTRY_NOT_ALLOWED: 'UNAVAILABLE_COUNTRY_NOT_ALLOWED',
+  UNAVAILABLE_INTERNATIONAL_SHIPPING: 'UNAVAILABLE_INTERNATIONAL_SHIPPING',
+  UNAVAILABLE_CUSTOMS_PROFILE: 'UNAVAILABLE_CUSTOMS_PROFILE',
   UNAVAILABLE_PRODUCT_UNAPPROVED: 'UNAVAILABLE_PRODUCT_UNAPPROVED',
 };
 
@@ -407,7 +411,10 @@ export function evaluateProductDeliveryEligibility({
     });
   }
 
-  if (allowedCountries.length > 0 && !allowedCountries.includes(countryCode)) {
+  if (
+    countryCode !== 'JP' &&
+    (allowedCountries.length === 0 || !allowedCountries.includes(countryCode))
+  ) {
     return buildEligibilityResult({
       status: DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_COUNTRY_NOT_ALLOWED,
       countryCode,
@@ -440,6 +447,30 @@ export function evaluateProductDeliveryEligibility({
         reason: 'eu_product_not_allowed',
         message:
           'この商品はEU向け販売の確認が完了していないため、この配送先国には販売できません。',
+      });
+    }
+  }
+
+  if (countryCode !== 'JP') {
+    const internationalProfile = validateInternationalProductProfile(product);
+    if (!internationalProfile.shipping.ok) {
+      return buildEligibilityResult({
+        status: DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_INTERNATIONAL_SHIPPING,
+        countryCode,
+        product,
+        sellerEuStatus,
+        reason: internationalProfile.shipping.reason,
+        message: 'International shipping is not available for this product.',
+      });
+    }
+    if (!internationalProfile.customs.ok) {
+      return buildEligibilityResult({
+        status: DELIVERY_ELIGIBILITY_STATUS.UNAVAILABLE_CUSTOMS_PROFILE,
+        countryCode,
+        product,
+        sellerEuStatus,
+        reason: internationalProfile.customs.reasons[0] || 'customs_profile_invalid',
+        message: 'The customs information for this product is incomplete.',
       });
     }
   }

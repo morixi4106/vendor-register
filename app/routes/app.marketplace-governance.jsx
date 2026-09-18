@@ -104,6 +104,7 @@ export const action = async ({ request }) => {
     case "record_product_evidence":
       result = await governance.recordProductComplianceEvidence({
         productId: String(formData.get("productId") || ""),
+        requirementId: formData.get("requirementId"),
         evidenceType: formData.get("evidenceType"),
         evidenceReference: formData.get("evidenceReference"),
         verificationLevel: formData.get("verificationLevel"),
@@ -122,6 +123,7 @@ export const action = async ({ request }) => {
     case "record_product_decision":
       result = await governance.recordProductComplianceDecision({
         productId: String(formData.get("productId") || ""),
+        requirementId: formData.get("requirementId"),
         applicabilityStatus: formData.get("applicabilityStatus"),
         decision: formData.get("complianceDecision"),
         reasonCode: formData.get("applicabilityReasonCode"),
@@ -159,6 +161,25 @@ export const action = async ({ request }) => {
         }
       }
       break;
+    case "sync_international_requirements": {
+      const { syncInternationalComplianceRequirements } = await import(
+        "../services/internationalComplianceRequirements.server.js"
+      );
+      result = await syncInternationalComplianceRequirements({ actor });
+      break;
+    }
+    case "review_international_requirements": {
+      const { reviewInternationalComplianceRequirements } = await import(
+        "../services/internationalComplianceRequirements.server.js"
+      );
+      result = await reviewInternationalComplianceRequirements({
+        actor,
+        confirmed: formData.get("confirmed") === "on",
+        reviewReference: formData.get("reviewReference"),
+        evidenceHash: formData.get("evidenceHash"),
+      });
+      break;
+    }
     case "create_case":
       result = await governance.createMarketplaceOperationalCase(
         Object.fromEntries(formData),
@@ -335,6 +356,65 @@ export default function MarketplaceGovernancePage() {
             <h2>商品コンプライアンス</h2>
             <p>直接Shopifyで登録された商品も含め、販売主体・原産国・通関情報・真正性を確認します。</p>
           </div>
+          <Form method="post">
+            <input
+              name="intent"
+              type="hidden"
+              value="sync_international_requirements"
+            />
+            <button disabled={busy} type="submit">
+              国際販売要件を同期
+            </button>
+          </Form>
+        </div>
+        <Form method="post" className="governance-form governance-form--compact">
+          <input
+            name="intent"
+            type="hidden"
+            value="review_international_requirements"
+          />
+          <Field
+            label="法務レビュー証拠の保存先またはチケット番号"
+            name="reviewReference"
+          />
+          <Field
+            label="法務レビュー証拠のSHA-256"
+            name="evidenceHash"
+          />
+          <label>
+            <input name="confirmed" type="checkbox" />
+            公式情報と販売対象国を再確認し、現行要件を承認しました
+          </label>
+          <button disabled={busy} type="submit">
+            法務レビュー期限を更新
+          </button>
+        </Form>
+        <div className="governance-history">
+          <h3>有効な国際販売要件</h3>
+          {(data.internationalRequirements || []).map((requirement) => (
+            <p key={requirement.id}>
+              {requirement.market} / {requirement.code} / {requirement.name} /{" "}
+              {requirement.requiredVerificationLevel}
+              {requirement.reviewDueAt
+                ? ` / 再確認期限 ${new Date(requirement.reviewDueAt).toLocaleDateString("ja-JP")}`
+                : " / 再確認期限なし"}
+              {requirement.sourceUrl ? (
+                <>
+                  {" / "}
+                  <a
+                    href={requirement.sourceUrl}
+                    rel="noreferrer noopener"
+                    target="_blank"
+                  >
+                    根拠
+                  </a>
+                </>
+              ) : null}
+            </p>
+          ))}
+          {(data.internationalRequirements || []).length === 0 ? (
+            <p>国際販売要件は未同期です。同期するまで海外販売は許可されません。</p>
+          ) : null}
         </div>
         <div className="governance-list">
           {data.products.map(({ product, readiness }) => (
@@ -347,8 +427,16 @@ export default function MarketplaceGovernancePage() {
               </summary>
               <div className="governance-row__body">
                 <ProductComplianceForm product={product} busy={busy} />
-                <ProductEvidenceForm product={product} busy={busy} />
-                <ProductDecisionForm product={product} busy={busy} />
+                <ProductEvidenceForm
+                  busy={busy}
+                  product={product}
+                  requirements={data.internationalRequirements || []}
+                />
+                <ProductDecisionForm
+                  busy={busy}
+                  product={product}
+                  requirements={data.internationalRequirements || []}
+                />
                 <ProductComplianceHistory product={product} />
               </div>
             </details>
@@ -501,11 +589,28 @@ function ProductComplianceForm({ product, busy }) {
   );
 }
 
-function ProductEvidenceForm({ product, busy }) {
+function RequirementSelect({ requirements }) {
+  return (
+    <label>
+      対象要件
+      <select defaultValue="" name="requirementId">
+        <option value="">商品全般の審査</option>
+        {requirements.map((requirement) => (
+          <option key={requirement.id} value={requirement.id}>
+            {requirement.market} / {requirement.code} / {requirement.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ProductEvidenceForm({ product, busy, requirements }) {
   return (
     <Form method="post" className="governance-form">
       <input type="hidden" name="intent" value="record_product_evidence" />
       <input type="hidden" name="productId" value={product.id} />
+      <RequirementSelect requirements={requirements} />
       <Field
         label="証拠種別"
         name="evidenceType"
@@ -549,12 +654,13 @@ function ProductEvidenceForm({ product, busy }) {
   );
 }
 
-function ProductDecisionForm({ product, busy }) {
+function ProductDecisionForm({ product, busy, requirements }) {
   const profile = product.complianceProfile || {};
   return (
     <Form method="post" className="governance-form">
       <input type="hidden" name="intent" value="record_product_decision" />
       <input type="hidden" name="productId" value={product.id} />
+      <RequirementSelect requirements={requirements} />
       <label>
         規制・表示要件の適用
         <select
@@ -614,14 +720,16 @@ function ProductComplianceHistory({ product }) {
       <h3>証拠・判断履歴</h3>
       {(product.complianceDecisions || []).map((entry) => (
         <p key={entry.id}>
-          判断 {entry.decision} / {entry.verificationLevel} /{" "}
+          判断 {entry.requirement?.code || "商品全般"} / {entry.decision} /{" "}
+          {entry.verificationLevel} /{" "}
           {new Date(entry.decidedAt).toLocaleString("ja-JP")} /{" "}
           {entry.decidedBy}
         </p>
       ))}
       {(product.complianceEvidence || []).map((entry) => (
         <p key={entry.id}>
-          証拠 {entry.evidenceType} / {entry.status} /{" "}
+          証拠 {entry.requirement?.code || "商品全般"} / {entry.evidenceType} /{" "}
+          {entry.status} /{" "}
           {entry.verificationLevel} / {entry.evidenceReference}
         </p>
       ))}

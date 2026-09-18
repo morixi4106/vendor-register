@@ -1,5 +1,6 @@
 import { json } from '@remix-run/node';
 import {
+  evaluateInternationalShippingAvailability,
   getInternationalShippingCountryAvailability,
   INTERNATIONAL_SERVICE_STATUS,
 } from './internationalShippingAvailability.server.js';
@@ -462,7 +463,14 @@ export function createShippingQuoteAction({
           await getInternationalShippingCountryAvailabilityImpl({
             countryCode: normalizedInput.shippingAddress.countryCode,
           });
-        internationalServiceAvailabilityStatus = availability.status;
+        const evaluatedAvailability =
+          evaluateInternationalShippingAvailability(availability);
+        internationalServiceAvailabilityStatus =
+          evaluatedAvailability.deliverable
+            ? INTERNATIONAL_SERVICE_STATUS.ACTIVE
+            : availability.status === INTERNATIONAL_SERVICE_STATUS.ACTIVE
+              ? INTERNATIONAL_SERVICE_STATUS.UNKNOWN
+              : availability.status;
       } catch (error) {
         recordQuoteDiagnostic({
           requestId,

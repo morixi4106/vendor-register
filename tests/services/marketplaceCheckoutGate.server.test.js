@@ -14,6 +14,10 @@ import {
   syncShopKomojuLimitedLaunchControl,
   syncMarketplaceCheckoutPolicyForProduct,
 } from "../../app/services/marketplaceCheckoutGate.server.js";
+import {
+  SALE_ELIGIBILITY_POLICY_VERSION,
+  SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION,
+} from "../../app/services/saleEligibility.server.js";
 
 function limitedLaunchShopState(value, compareDigest = "digest-1") {
   return {
@@ -724,10 +728,10 @@ test("platform product sync persists and verifies a versioned eligibility projec
   assert.equal(result.ok, true);
   assert.equal(result.policy, MARKETPLACE_CHECKOUT_POLICY.PLATFORM_DIRECT);
   assert.equal(result.projectionRevision, 7);
-  assert.equal(projection.v, 2);
+  assert.equal(projection.v, SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION);
   assert.equal(projection.c, "PLATFORM_DIRECT");
   assert.equal(projection.a, true);
-  assert.equal(projection.p, "sale-eligibility-2026-07-v1");
+  assert.equal(projection.p, SALE_ELIGIBILITY_POLICY_VERSION);
   assert.equal(projection.r, 7);
   assert.match(projection.h, /^[a-f0-9]{64}$/);
   assert.ok(projection.d);

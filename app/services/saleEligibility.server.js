@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
 import { evaluateProductDeliveryEligibility } from "../utils/deliveryEligibility.js";
+import { evaluateInternationalMarketCompliance } from "../utils/internationalMarketCompliance.js";
 import {
   evaluateProductGovernanceReadiness,
   evaluateSellerGovernanceReadiness,
@@ -13,8 +14,8 @@ import {
 import { getPlatformOperationalControl } from "./operationalControls.server.js";
 import { OPERATIONAL_TIMING_DEFAULTS } from "./operationalTimingPolicy.js";
 
-export const SALE_ELIGIBILITY_POLICY_VERSION = "sale-eligibility-2026-07-v1";
-export const SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION = 2;
+export const SALE_ELIGIBILITY_POLICY_VERSION = "sale-eligibility-2026-09-v2";
+export const SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION = 3;
 export const SALE_ELIGIBILITY_PROJECTION_TTL_HOURS =
   OPERATIONAL_TIMING_DEFAULTS.projectionTtlMinutes / 60;
 const SALE_ELIGIBILITY_PROJECTION_REFRESH_LEAD_MS =
@@ -192,6 +193,16 @@ function buildInputHash({
         approvalStatus: product?.approvalStatus || null,
         shopifyProductId: product?.shopifyProductId || null,
         productEuStatus: product?.productEuStatus || null,
+        internationalShippingMethod:
+          product?.internationalShippingMethod || null,
+        shippingWeightGrams: product?.shippingWeightGrams || null,
+        shippingLengthMm: product?.shippingLengthMm || null,
+        shippingWidthMm: product?.shippingWidthMm || null,
+        shippingHeightMm: product?.shippingHeightMm || null,
+        shippingWeightConfirmedAt: product?.shippingWeightConfirmedAt || null,
+        shippingWeightSource: product?.shippingWeightSource || null,
+        shopifyVariantCount: product?.shopifyVariantCount || null,
+        shopifyWeightSyncStatus: product?.shopifyWeightSyncStatus || null,
         store: store
           ? {
               id: store.id,
@@ -226,7 +237,9 @@ function buildInputHash({
               legalSellerType: profile.legalSellerType,
               conditionStatus: profile.conditionStatus,
               countryOfOriginCode: profile.countryOfOriginCode,
+              hsCode: profile.hsCode,
               customsDescriptionEn: profile.customsDescriptionEn,
+              regulatoryCategory: profile.regulatoryCategory,
               applicabilityStatus: profile.applicabilityStatus,
               verificationLevel: profile.verificationLevel,
               applicabilityReasonCode: profile.applicabilityReasonCode,
@@ -248,8 +261,14 @@ function buildInputHash({
           entry.expiresAt,
           entry.reviewDueAt,
           entry.revokedAt,
+          entry.requirementId,
           entry.requirement?.code,
           entry.requirement?.version,
+          entry.requirement?.isActive,
+          entry.requirement?.status,
+          entry.requirement?.effectiveFrom,
+          entry.requirement?.effectiveUntil,
+          entry.requirement?.reviewDueAt,
         ]),
         decisions: asArray(product?.complianceDecisions).map((entry) => [
           entry.id,
@@ -257,8 +276,14 @@ function buildInputHash({
           entry.reasonCode,
           entry.decidedAt,
           entry.reviewDueAt,
+          entry.requirementId,
           entry.requirement?.code,
           entry.requirement?.version,
+          entry.requirement?.isActive,
+          entry.requirement?.status,
+          entry.requirement?.effectiveFrom,
+          entry.requirement?.effectiveUntil,
+          entry.requirement?.reviewDueAt,
         ]),
       }),
     )
@@ -323,6 +348,14 @@ export function evaluateSaleEligibilitySnapshot({
         deliveryCountry: normalizedCountry,
       })
     : null;
+  const internationalCompliance =
+    normalizedCountry && normalizedCountry !== "JP"
+      ? evaluateInternationalMarketCompliance({
+          product,
+          destinationCountry: normalizedCountry,
+          evaluatedAt,
+        })
+      : { ready: true, reasons: [], requirements: [], market: "DOMESTIC" };
 
   if (!product?.id) reasons.push("PRODUCT_NOT_FOUND");
   if (operationalControl?.checkoutHold === true) {
@@ -368,6 +401,22 @@ export function evaluateSaleEligibilitySnapshot({
       `DELIVERY_${normalizeUpper(delivery.reason || delivery.status)}`,
     );
   }
+  if (normalizedCountry && normalizedCountry !== "JP") {
+    if (!productGovernance.ready) {
+      reasons.push(
+        ...productGovernance.reasons.map(
+          (reason) => `INTERNATIONAL_${normalizeUpper(reason)}`,
+        ),
+      );
+    }
+    if (!internationalCompliance.ready) {
+      reasons.push(
+        ...internationalCompliance.reasons.map(
+          (reason) => `INTERNATIONAL_${normalizeUpper(reason)}`,
+        ),
+      );
+    }
+  }
 
   const hardReasons = unique(reasons);
   let status;
@@ -402,6 +451,9 @@ export function evaluateSaleEligibilitySnapshot({
       new Date(decision.reviewDueAt).getTime() > evaluatedAt.getTime(),
   );
   const requirementVersions = unique([
+    ...internationalCompliance.requirements.map(
+      (entry) => `${entry.code}:${entry.version}`,
+    ),
     ...asArray(product?.complianceEvidence).map((entry) =>
       entry.requirement
         ? `${entry.requirement.code}:${entry.requirement.version || "v1"}`

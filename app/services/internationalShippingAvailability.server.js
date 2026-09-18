@@ -6,12 +6,49 @@ import {
   normalizeInternationalServiceStatus,
 } from "../utils/internationalShipping.js";
 
+export const INTERNATIONAL_SHIPPING_AVAILABILITY_MAX_AGE_DAYS = 7;
+
 export {
   INTERNATIONAL_SERVICE_STATUS,
   INTERNATIONAL_SHIPPING_SERVICE,
   isInternationalServiceActive,
   normalizeInternationalServiceStatus,
 } from "../utils/internationalShipping.js";
+
+export function evaluateInternationalShippingAvailability(
+  availability,
+  {
+    now = new Date(),
+    maxAgeDays = INTERNATIONAL_SHIPPING_AVAILABILITY_MAX_AGE_DAYS,
+  } = {},
+) {
+  const status = normalizeInternationalServiceStatus(availability?.status);
+  const checkedAt = availability?.checkedAt
+    ? new Date(availability.checkedAt)
+    : null;
+  const checkedAtValid = checkedAt && !Number.isNaN(checkedAt.getTime());
+  const checkedAtInFuture = checkedAtValid && checkedAt.getTime() > now.getTime();
+  const staleBefore = new Date(
+    now.getTime() - Number(maxAgeDays) * 24 * 60 * 60 * 1000,
+  );
+  const stale = !checkedAtValid || checkedAtInFuture || checkedAt < staleBefore;
+
+  return {
+    status,
+    checkedAt: checkedAtValid ? checkedAt : null,
+    configured: availability?.configured !== false && Boolean(availability),
+    stale,
+    deliverable: status === INTERNATIONAL_SERVICE_STATUS.ACTIVE && !stale,
+    reason:
+      status !== INTERNATIONAL_SERVICE_STATUS.ACTIVE
+        ? "international_service_not_active"
+        : checkedAtInFuture
+          ? "international_service_status_invalid"
+          : stale
+          ? "international_service_status_stale"
+          : null,
+  };
+}
 
 export async function getInternationalShippingCountryAvailability({
   countryCode,

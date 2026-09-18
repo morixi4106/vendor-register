@@ -14,9 +14,78 @@ import {
   getMarketplaceGovernanceConfiguration,
   getSellerAgreementReadinessOptions,
   getShopifyMarketplacePaymentsApproval,
+  recordProductComplianceDecision,
+  recordProductComplianceEvidence,
   recordSellerAgreementAcceptance,
   updateMarketplaceOperationalCase,
 } from "../../app/services/marketplaceGovernance.server.js";
+
+test("product compliance evidence rejects an expired requirement catalog entry", async () => {
+  const result = await recordProductComplianceEvidence(
+    {
+      productId: "product_1",
+      requirementId: "requirement_1",
+      evidenceType: "REGULATORY_REVIEW",
+      evidenceReference: "ticket-123",
+      verificationLevel: "DOCUMENT_REVIEWED",
+      status: "VERIFIED",
+      submittedBy: "operator@example.com",
+      verifiedBy: "operator@example.com",
+    },
+    {
+      now: new Date("2026-09-18T00:00:00.000Z"),
+      prismaClient: {
+        product: { findUnique: async () => ({ id: "product_1" }) },
+        complianceRequirement: {
+          findFirst: async () => ({
+            id: "requirement_1",
+            requiredVerificationLevel: "DOCUMENT_REVIEWED",
+            isActive: true,
+            status: "ACTIVE",
+            reviewDueAt: new Date("2026-09-17T00:00:00.000Z"),
+          }),
+        },
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "compliance_requirement_not_current");
+});
+
+test("product compliance decision rejects a not-yet-effective requirement", async () => {
+  const result = await recordProductComplianceDecision(
+    {
+      productId: "product_1",
+      requirementId: "requirement_1",
+      applicabilityStatus: "REQUIRED",
+      decision: "COMPLIANT",
+      reasonText: "Reviewed against the official requirement.",
+      verificationLevel: "DOCUMENT_REVIEWED",
+      sourceUrl: "https://example.com/review",
+      reviewDueAt: "2027-01-01T00:00:00.000Z",
+      decidedBy: "operator@example.com",
+    },
+    {
+      now: new Date("2026-09-18T00:00:00.000Z"),
+      prismaClient: {
+        product: { findUnique: async () => ({ id: "product_1" }) },
+        complianceRequirement: {
+          findFirst: async () => ({
+            id: "requirement_1",
+            requiredVerificationLevel: "DOCUMENT_REVIEWED",
+            isActive: true,
+            status: "ACTIVE",
+            effectiveFrom: new Date("2026-09-19T00:00:00.000Z"),
+          }),
+        },
+      },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "compliance_requirement_not_current");
+});
 
 function readySeller() {
   return {
@@ -337,6 +406,32 @@ test("not-applicable product decisions require a current formal decision", () =>
       reviewDueAt: new Date("2099-01-01T00:00:00Z"),
     },
   ];
+
+  assert.equal(evaluateProductGovernanceReadiness(product).ready, true);
+});
+
+test("market-scoped evidence does not replace or invalidate global product governance", () => {
+  const product = readyProduct();
+  product.complianceEvidence.push({
+    requirementId: "requirement_us_cosmetics",
+    requirement: {
+      code: "US_COSMETICS_LABEL_CLAIMS_REVIEW",
+      version: "2026-09-v1",
+    },
+    status: "REJECTED",
+    verificationLevel: "UNVERIFIED",
+    expiresAt: new Date("2020-01-01T00:00:00Z"),
+  });
+  product.complianceDecisions.push({
+    requirementId: "requirement_us_cosmetics",
+    requirement: {
+      code: "US_COSMETICS_LABEL_CLAIMS_REVIEW",
+      version: "2026-09-v1",
+    },
+    decision: "BLOCKED",
+    decidedAt: new Date("2026-09-18T00:00:00Z"),
+    reviewDueAt: new Date("2099-01-01T00:00:00Z"),
+  });
 
   assert.equal(evaluateProductGovernanceReadiness(product).ready, true);
 });

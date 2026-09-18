@@ -128,6 +128,7 @@ test('api.shipping-quote returns a different default quote for US addresses', as
   const action = createShippingQuoteAction({
     getInternationalShippingCountryAvailabilityImpl: async () => ({
       status: 'ACTIVE',
+      checkedAt: new Date(),
     }),
   });
   const response = await action({

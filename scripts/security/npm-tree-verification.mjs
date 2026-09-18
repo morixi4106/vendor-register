@@ -54,6 +54,15 @@ function npmCommand() {
   };
 }
 
+function boundedCommandError(stderr, maxLength = 2_000) {
+  const normalized = String(stderr || "")
+    .replaceAll("\u001b", "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+  return normalized.slice(0, maxLength);
+}
+
 export function runNpmJsonCommand(
   args,
   { cwd, description, limits: limitOverrides, spawn = spawnSync } = {},
@@ -72,7 +81,10 @@ export function runNpmJsonCommand(
     throw new Error(`${description} could not start: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error(`${description} failed with exit code ${result.status}.`);
+    const detail = boundedCommandError(result.stderr);
+    throw new Error(
+      `${description} failed with exit code ${result.status}.${detail ? ` ${detail}` : ""}`,
+    );
   }
   return parseBoundedJson(result.stdout, description, limits.maxJsonBytes);
 }

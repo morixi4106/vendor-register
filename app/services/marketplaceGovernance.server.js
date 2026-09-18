@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
 import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
+import {
+  INTERNATIONAL_REQUIREMENT_VERSION,
+  isInternationalRequirementCurrent,
+} from "../utils/internationalMarketCompliance.js";
 
 export const GOVERNANCE_SNAPSHOT_VERSION = "marketplace-governance-v1";
 export const SELLER_AGREEMENT_TYPE = "SELLER_MASTER";
@@ -411,8 +415,12 @@ export function evaluateSellerGovernanceReadiness(
 export function evaluateProductGovernanceReadiness(product) {
   const reasons = [];
   const profile = product?.complianceProfile || null;
-  const evidence = asArray(product?.complianceEvidence);
-  const decisions = asArray(product?.complianceDecisions);
+  const evidence = asArray(product?.complianceEvidence).filter(
+    (entry) => !entry.requirementId && !entry.requirement,
+  );
+  const decisions = asArray(product?.complianceDecisions).filter(
+    (entry) => !entry.requirementId && !entry.requirement,
+  );
   const now = new Date();
   const applicabilityStatus = normalizeUpper(profile?.applicabilityStatus);
   const verificationLevel = normalizeUpper(profile?.verificationLevel);
@@ -885,6 +893,7 @@ export async function upsertProductComplianceProfile(
 export async function recordProductComplianceEvidence(
   {
     productId,
+    requirementId = null,
     evidenceType,
     evidenceReference,
     verificationLevel,
@@ -914,6 +923,7 @@ export async function recordProductComplianceEvidence(
   const normalizedSubmitter = normalizeText(submittedBy);
   const normalizedVerifier = normalizeText(verifiedBy);
   const normalizedFileHash = normalizeLower(fileHash);
+  const normalizedRequirementId = normalizeText(requirementId);
   const parsedExpiresAt = expiresAt ? new Date(expiresAt) : null;
   const parsedReviewDueAt = reviewDueAt ? new Date(reviewDueAt) : null;
 
@@ -941,10 +951,40 @@ export async function recordProductComplianceEvidence(
   ) {
     return { ok: false, reason: "verified_evidence_review_required" };
   }
+  if (normalizedRequirementId) {
+    const requirement = await prismaClient.complianceRequirement.findFirst({
+      where: { id: normalizedRequirementId },
+      select: {
+        id: true,
+        requiredVerificationLevel: true,
+        isActive: true,
+        status: true,
+        effectiveFrom: true,
+        effectiveUntil: true,
+        reviewDueAt: true,
+      },
+    });
+    if (!requirement) {
+      return { ok: false, reason: "compliance_requirement_not_found" };
+    }
+    if (!isInternationalRequirementCurrent(requirement, now)) {
+      return { ok: false, reason: "compliance_requirement_not_current" };
+    }
+    if (
+      normalizedStatus === "VERIFIED" &&
+      COMPLIANCE_VERIFICATION_LEVELS.indexOf(normalizedLevel) <
+        COMPLIANCE_VERIFICATION_LEVELS.indexOf(
+          requirement.requiredVerificationLevel,
+        )
+    ) {
+      return { ok: false, reason: "requirement_verification_level_insufficient" };
+    }
+  }
 
   const evidenceKey = hashValue(
     JSON.stringify({
       productId,
+      normalizedRequirementId,
       normalizedType,
       normalizedReference,
       normalizedLevel,
@@ -957,6 +997,7 @@ export async function recordProductComplianceEvidence(
     data: {
       evidenceKey,
       productId,
+      requirementId: normalizedRequirementId,
       status: normalizedStatus,
       verificationLevel: normalizedLevel,
       evidenceType: normalizedType,
@@ -982,6 +1023,7 @@ export async function recordProductComplianceEvidence(
 export async function recordProductComplianceDecision(
   {
     productId,
+    requirementId = null,
     applicabilityStatus,
     decision,
     reasonCode = null,
@@ -999,6 +1041,7 @@ export async function recordProductComplianceDecision(
   const normalizedReason = normalizeText(reasonText);
   const normalizedSource = normalizePublicHttpUrl(sourceUrl);
   const normalizedActor = normalizeText(decidedBy);
+  const normalizedRequirementId = normalizeText(requirementId);
   const parsedReviewDueAt = reviewDueAt ? new Date(reviewDueAt) : null;
   const expectedDecision =
     normalizedApplicability === "NOT_APPLICABLE"
@@ -1028,6 +1071,7 @@ export async function recordProductComplianceDecision(
   const decisionKey = hashValue(
     JSON.stringify({
       productId,
+      normalizedRequirementId,
       normalizedApplicability,
       expectedDecision,
       normalizedReason,
@@ -1046,8 +1090,40 @@ export async function recordProductComplianceDecision(
     });
     if (!product) return { ok: false, reason: "product_not_found" };
 
+    if (normalizedRequirementId) {
+      const requirement = await tx.complianceRequirement.findFirst({
+        where: { id: normalizedRequirementId },
+        select: {
+          id: true,
+          requiredVerificationLevel: true,
+          isActive: true,
+          status: true,
+          effectiveFrom: true,
+          effectiveUntil: true,
+          reviewDueAt: true,
+        },
+      });
+      if (!requirement) {
+        return { ok: false, reason: "compliance_requirement_not_found" };
+      }
+      if (!isInternationalRequirementCurrent(requirement, now)) {
+        return { ok: false, reason: "compliance_requirement_not_current" };
+      }
+      if (
+        COMPLIANCE_VERIFICATION_LEVELS.indexOf(normalizedLevel) <
+        COMPLIANCE_VERIFICATION_LEVELS.indexOf(
+          requirement.requiredVerificationLevel,
+        )
+      ) {
+        return { ok: false, reason: "requirement_verification_level_insufficient" };
+      }
+    }
+
     const currentDecision = await tx.productComplianceDecision.findFirst({
-      where: { productId },
+      where: {
+        productId,
+        requirementId: normalizedRequirementId,
+      },
       orderBy: { decidedAt: "desc" },
       select: { id: true },
     });
@@ -1055,6 +1131,7 @@ export async function recordProductComplianceDecision(
       data: {
         decisionKey,
         productId,
+        requirementId: normalizedRequirementId,
         decision: expectedDecision,
         reasonCode: normalizeUpper(reasonCode) || null,
         reasonText: normalizedReason,
@@ -1066,6 +1143,15 @@ export async function recordProductComplianceDecision(
         supersedesId: currentDecision?.id || null,
       },
     });
+    if (normalizedRequirementId) {
+      if (expectedDecision === "BLOCKED") {
+        await tx.productComplianceProfile.updateMany({
+          where: { productId },
+          data: { approvalStatus: "HOLD" },
+        });
+      }
+      return { ok: true, decision: created, profile: null };
+    }
     const profile = await tx.productComplianceProfile.upsert({
       where: { productId },
       create: {
@@ -1114,6 +1200,7 @@ export async function getMarketplaceGovernanceDashboard({
     productReadinessCandidates,
     cases,
     criticalCaseCount,
+    internationalRequirements,
   ] = await Promise.all([
     prismaClient.seller.findMany({
       orderBy: { updatedAt: "desc" },
@@ -1131,8 +1218,16 @@ export async function getMarketplaceGovernanceDashboard({
       orderBy: { updatedAt: "desc" },
       include: {
         complianceProfile: true,
-        complianceEvidence: { orderBy: { createdAt: "desc" }, take: 20 },
-        complianceDecisions: { orderBy: { decidedAt: "desc" }, take: 20 },
+        complianceEvidence: {
+          include: { requirement: true },
+          orderBy: { createdAt: "desc" },
+          take: 100,
+        },
+        complianceDecisions: {
+          include: { requirement: true },
+          orderBy: { decidedAt: "desc" },
+          take: 100,
+        },
         vendorStore: true,
       },
       take: 200,
@@ -1146,10 +1241,12 @@ export async function getMarketplaceGovernanceDashboard({
         complianceProfile: true,
         complianceEvidence: {
           where: { status: "VERIFIED" },
+          include: { requirement: true },
           orderBy: { createdAt: "desc" },
           take: 20,
         },
         complianceDecisions: {
+          include: { requirement: true },
           orderBy: { decidedAt: "desc" },
           take: 20,
         },
@@ -1174,6 +1271,16 @@ export async function getMarketplaceGovernanceDashboard({
         status: { notIn: ["RESOLVED", "CLOSED"] },
       },
     }),
+    prismaClient.complianceRequirement?.findMany
+      ? prismaClient.complianceRequirement.findMany({
+          where: {
+            version: INTERNATIONAL_REQUIREMENT_VERSION,
+            isActive: true,
+            status: "ACTIVE",
+          },
+          orderBy: [{ market: "asc" }, { code: "asc" }],
+        })
+      : [],
   ]);
 
   const sellerRows = sellers.map((seller) => ({
@@ -1205,6 +1312,7 @@ export async function getMarketplaceGovernanceDashboard({
     gateEnabled: isMarketplaceGovernanceGateEnabled(env),
     sellers: sellerRows,
     products: productRows,
+    internationalRequirements,
     cases,
     inspection: {
       productionProductCount: productionProductReadiness.length,

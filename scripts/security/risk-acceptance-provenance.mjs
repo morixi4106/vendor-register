@@ -8,6 +8,7 @@ const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..", "..");
 const RISK_RELATIVE_PATH = "security/risk-decisions/GHSA-mh99-v99m-4gvg.json";
 const RISK_PATH = path.join(REPOSITORY_ROOT, RISK_RELATIVE_PATH);
+const PACKAGE_LOCK_PATH = path.join(REPOSITORY_ROOT, "package-lock.json");
 const REVIEW_EVIDENCE_PATH = path.join(
   REPOSITORY_ROOT,
   ".audit",
@@ -72,6 +73,31 @@ export function reviewArtifactName(runId) {
     throw new Error("reviewed CI run ID is invalid");
   }
   return `${REVIEW_ARTIFACT_PREFIX}-${runId}`;
+}
+
+export function acceptedRiskTargetIsInstalled(risk, lockfile) {
+  if (risk?.status !== "accepted") return false;
+  if (!lockfile?.packages || typeof lockfile.packages !== "object") {
+    throw new Error("package-lock.json packages are invalid");
+  }
+
+  const packageName = String(risk.packageName || "");
+  const allowedVersions = new Set(
+    Array.isArray(risk.allowedVersions) ? risk.allowedVersions.map(String) : [],
+  );
+  if (!packageName || allowedVersions.size === 0) {
+    throw new Error("accepted risk target is invalid");
+  }
+
+  const suffix = `/node_modules/${packageName}`;
+  return Object.entries(lockfile.packages).some(([location, metadata]) => {
+    const normalizedLocation = String(location).replaceAll("\\", "/");
+    return (
+      (normalizedLocation === `node_modules/${packageName}` ||
+        normalizedLocation.endsWith(suffix)) &&
+      allowedVersions.has(String(metadata?.version || ""))
+    );
+  });
 }
 
 export function buildRiskReviewEvidence({
@@ -488,9 +514,10 @@ function appendWorkflowOutput(name, value, env = process.env) {
 
 export function emitWorkflowOutputs({
   env = process.env,
+  lockfile = readBoundedJson(PACKAGE_LOCK_PATH, "package-lock.json"),
   risk = readBoundedJson(RISK_PATH, "Toolchain risk definition"),
 } = {}) {
-  const accepted = risk.status === "accepted";
+  const accepted = acceptedRiskTargetIsInstalled(risk, lockfile);
   const reviewedArtifactName = accepted
     ? reviewArtifactName(risk.reviewedCiRunId)
     : null;
