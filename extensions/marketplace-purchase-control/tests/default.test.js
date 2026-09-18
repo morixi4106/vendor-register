@@ -70,6 +70,11 @@ function buildDirectInput({
   },
   cartAmount = "100.0",
   productId = "gid://shopify/Product/1",
+  destinationCountry = "JP",
+  provinceCode = null,
+  postalCode = null,
+  deliveryAddresses = null,
+  internationalSaleGate = null,
 } = {}) {
   const defaultProjection = JSON.stringify({
     v: 2,
@@ -95,6 +100,17 @@ function buildDirectInput({
       },
     },
   };
+  const addresses = Array.isArray(deliveryAddresses)
+    ? deliveryAddresses
+    : destinationCountry
+      ? [
+          {
+            countryCode: destinationCountry,
+            provinceCode,
+            zip: postalCode,
+          },
+        ]
+      : [];
   return {
     shop: {
       localTime: { date: currentDate },
@@ -105,15 +121,111 @@ function buildDirectInput({
       watchdogPurchaseStop: watchdogPurchaseStop
         ? { value: watchdogPurchaseStop }
         : null,
+      internationalSaleGate: internationalSaleGate
+        ? { value: JSON.stringify(internationalSaleGate) }
+        : null,
     },
     cart: {
       cost: {
         totalAmount: { amount: cartAmount, currencyCode: "JPY" },
       },
+      deliveryGroups: addresses.map((deliveryAddress) => ({
+        deliveryAddress,
+      })),
       lines: Array.from({ length: lineCount }, () => line),
     },
   };
 }
+
+describe("international destination gate", () => {
+  const validFranceGate = {
+    v: 1,
+    r: 1,
+    d: "2026-07-24",
+    e: "2026-07-25",
+    c: ["FR"],
+    h: "b".repeat(64),
+  };
+
+  test("does not require an international gate for a domestic destination", () => {
+    const result = cartValidationsGenerateRun(buildDirectInput());
+    expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  test("fails closed for an international destination without a gate", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({ destinationCountry: "FR" }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("allows an international destination covered by a current gate", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        destinationCountry: "FR",
+        internationalSaleGate: validFranceGate,
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  test("blocks an expired international gate", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        currentDate: "2026-07-25",
+        destinationCountry: "FR",
+        internationalSaleGate: validFranceGate,
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks a country that is absent from the gate", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        destinationCountry: "US",
+        internationalSaleGate: validFranceGate,
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each([
+    [{ countryCode: "GB", provinceCode: "NIR", zip: "BT1 1AA" }],
+    [{ countryCode: "GB", provinceCode: null, zip: "BT48 6DQ" }],
+  ])("blocks Northern Ireland even when GB is covered", (address) => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        deliveryAddresses: [address],
+        internationalSaleGate: {
+          ...validFranceGate,
+          c: ["GB"],
+        },
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("blocks when any delivery group has an uncovered destination", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({
+        deliveryAddresses: [
+          { countryCode: "FR", provinceCode: null, zip: "75001" },
+          { countryCode: "US", provinceCode: "CA", zip: "94105" },
+        ],
+        internationalSaleGate: validFranceGate,
+      }),
+    );
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("does not block before a delivery address is available", () => {
+    const result = cartValidationsGenerateRun(
+      buildDirectInput({ destinationCountry: null }),
+    );
+    expect(result.operations[0].validationAdd.errors).toEqual([]);
+  });
+});
 
 describe("fail-closed operational and calendar boundaries", () => {
   for (const state of [

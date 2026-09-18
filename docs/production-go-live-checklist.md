@@ -147,6 +147,7 @@ KOMOJU本番アカウントに取引履歴がなく、未精算残高が0円の�
 - KOMOJUから返金できない場合の代替返金手順を用意する
 - 第三者販売・第三者精算・公開Draft Orderをすべて無効にする
 - EU販売可能なsellerとproductを0件にし、運営直販商品の国際配送設定も0件にする
+- 海外販売を有効にする場合は [International sales launch gates](./international-launch-gates.md) の国別・商品別・配送経路証拠を満たし、Shopifyへの同期結果を読み戻す
 - 証跡一式の保存先と64桁のSHA-256を記録する
 
 期限付き証跡は現在のRender/Shopifyリリースへ固定され、記録から7日で失効します。
