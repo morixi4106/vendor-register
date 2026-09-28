@@ -1,6 +1,6 @@
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { useEffect } from "react";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 
 import prisma from "../db.server.js";
 import {
@@ -53,7 +53,7 @@ export const loader = async ({ request }) => {
         orderBy: { createdAt: "desc" },
       });
 
-      return json({
+      return Response.json({
         appBaseUrl,
         mode: "select",
         currentVendorId: session.vendorId,
@@ -67,7 +67,7 @@ export const loader = async ({ request }) => {
     }
   }
 
-  return json({ appBaseUrl, mode: "redirect" });
+  return Response.json({ appBaseUrl, mode: "redirect" });
 };
 
 export default function VendorDashboardEntry() {

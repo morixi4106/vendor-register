@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, Link, useActionData, useLoaderData } from "react-router";
 import { useMemo, useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
@@ -92,7 +92,7 @@ export const loader = async ({ request }) => {
     quantity: 0,
   }));
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     summaryCards,
     chartData,
@@ -116,7 +116,7 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent !== "delete") {
-    return json(
+    return Response.json(
       { ok: false, error: "未対応の操作です。" },
       { status: 400 }
     );
@@ -128,7 +128,7 @@ export const action = async ({ request }) => {
   });
 
   if (!deletion.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: deletion.publicError,

@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { processShopifyDisputeSettlement } from "../services/sellerPayments.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
@@ -33,7 +33,7 @@ export const action = async ({ request }) => {
     });
   }
 
-  return json({
+  return Response.json({
     ok: true,
     settlement: {
       ok: Boolean(result.ok),

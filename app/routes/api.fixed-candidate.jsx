@@ -1,11 +1,11 @@
-import { json } from "@remix-run/node";
+
 import prisma from "../db.server";
 import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
 export const action = async ({ request }) => {
   await requireShopifyAdmin(request);
   if (request.method !== "POST") {
-    return json({ ok: false }, { status: 405 });
+    return Response.json({ ok: false }, { status: 405 });
   }
 
   try {
@@ -15,7 +15,7 @@ export const action = async ({ request }) => {
     const replyText = String(body?.replyText || "").trim();
 
     if (!message || !replyText) {
-      return json({ ok: false, error: "invalid" }, { status: 400 });
+      return Response.json({ ok: false, error: "invalid" }, { status: 400 });
     }
 
     await prisma.fixedReplyCandidate.create({
@@ -25,9 +25,9 @@ export const action = async ({ request }) => {
       },
     });
 
-    return json({ ok: true });
+    return Response.json({ ok: true });
   } catch (e) {
     console.error(e);
-    return json({ ok: false }, { status: 500 });
+    return Response.json({ ok: false }, { status: 500 });
   }
 };

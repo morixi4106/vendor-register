@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+
+import { Form, useFetcher, useLoaderData, useNavigation } from "react-router";
 
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
@@ -24,7 +24,7 @@ export const loader = async ({ request }) => {
   const limit = clampLimit(url.searchParams.get("limit"));
 
   if (!prisma.sellerOrderShadowCheck) {
-    return json({
+    return Response.json({
       available: false,
       status,
       limit,
@@ -56,7 +56,7 @@ export const loader = async ({ request }) => {
       }),
     ]);
 
-    return json({
+    return Response.json({
       available: true,
       status,
       limit,
@@ -71,7 +71,7 @@ export const loader = async ({ request }) => {
     });
   } catch (error) {
     console.error("seller order shadow page load error:", error);
-    return json({
+    return Response.json({
       available: false,
       status,
       limit,

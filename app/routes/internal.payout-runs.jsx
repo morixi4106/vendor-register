@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 
 import { createPayoutRun } from "../services/sellerPayments.server.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../utils/marketplaceOperator.server.js";
 
 export const loader = async () => {
-  return json(
+  return Response.json(
     { ok: false, message: "Method not allowed." },
     { status: 405, headers: { Allow: "POST" } },
   );
@@ -29,7 +29,7 @@ export const action = async ({ request }) => {
   });
 
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         reason: result.reason,
@@ -41,7 +41,7 @@ export const action = async ({ request }) => {
 
   const acceptsJson = request.headers.get("Accept")?.includes("application/json");
   if (acceptsJson) {
-    return json(result);
+    return Response.json(result);
   }
 
   return redirect(`/app/payout-runs/${result.payoutRun.id}`);

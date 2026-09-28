@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 export const loader = async () => {
   const commit = process.env.RENDER_GIT_COMMIT || "";
@@ -6,7 +6,7 @@ export const loader = async () => {
   const serviceId = process.env.RENDER_SERVICE_ID || "";
   const serviceName = process.env.RENDER_SERVICE_NAME || "";
 
-  return json(
+  return Response.json(
     {
       ok: true,
       platform: "render",

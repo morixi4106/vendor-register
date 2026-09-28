@@ -819,7 +819,7 @@ test("reports artifact classes with required minima", () => {
   }
 });
 
-test("fails closed when the Remix client entry bundle is missing", () => {
+test("fails closed when the React Router client entry bundle is missing", () => {
   const fixture = createFixture();
   try {
     fs.rmSync(
@@ -833,7 +833,7 @@ test("fails closed when the Remix client entry bundle is missing", () => {
     assert.equal(result.ok, false);
     assert.ok(
       result.invalidArtifacts.includes(
-        "artifact_class_missing:remix-client-entry:build/client/assets/entry.client-*.js",
+        "artifact_class_missing:react-router-client-entry:build/client/assets/entry.client-*.js",
       ),
     );
   } finally {
@@ -841,7 +841,7 @@ test("fails closed when the Remix client entry bundle is missing", () => {
   }
 });
 
-test("fails closed when the Remix client runtime manifest is missing", () => {
+test("fails closed when the React Router client runtime manifest is missing", () => {
   const fixture = createFixture();
   try {
     fs.rmSync(
@@ -855,7 +855,7 @@ test("fails closed when the Remix client runtime manifest is missing", () => {
     assert.equal(result.ok, false);
     assert.ok(
       result.invalidArtifacts.includes(
-        "artifact_class_missing:remix-client-runtime-manifest:build/client/assets/manifest-*.js",
+        "artifact_class_missing:react-router-client-runtime-manifest:build/client/assets/manifest-*.js",
       ),
     );
   } finally {
@@ -863,7 +863,7 @@ test("fails closed when the Remix client runtime manifest is missing", () => {
   }
 });
 
-test("fails closed when the Remix client stylesheet is missing", () => {
+test("fails closed when the React Router client stylesheet is missing", () => {
   const fixture = createFixture();
   try {
     fs.rmSync(
@@ -877,7 +877,7 @@ test("fails closed when the Remix client stylesheet is missing", () => {
     assert.equal(result.ok, false);
     assert.ok(
       result.invalidArtifacts.includes(
-        "artifact_class_missing:remix-client-styles:build/client/assets/*.css",
+        "artifact_class_missing:react-router-client-styles:build/client/assets/*.css",
       ),
     );
   } finally {

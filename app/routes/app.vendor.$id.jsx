@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
@@ -31,7 +31,7 @@ export const loader = async ({ request, params }) => {
     throw new Response("Not Found", { status: 404 });
   }
 
-  return json({ store });
+  return Response.json({ store });
 };
 
 export const action = async ({ request, params }) => {
@@ -41,7 +41,7 @@ export const action = async ({ request, params }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent !== "sync-collection") {
-    return json({ ok: false, error: "Unknown action" }, { status: 400 });
+    return Response.json({ ok: false, error: "Unknown action" }, { status: 400 });
   }
 
   let result;
@@ -57,7 +57,7 @@ export const action = async ({ request, params }) => {
     };
   }
 
-  return json(
+  return Response.json(
     {
       ok: result.ok,
       collectionSync: result,

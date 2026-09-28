@@ -1,12 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  Outlet,
-  useActionData,
-  useLoaderData,
-  useOutlet,
-} from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, Link, Outlet, useActionData, useLoaderData, useOutlet } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
   appendVendorIdToPath,
@@ -54,7 +47,7 @@ export const loader = async ({ request }) => {
     (product) => product.deliveryPolicyLabel !== "国別制限なし"
   ).length;
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     filters,
     products,
@@ -81,7 +74,7 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent !== "delete") {
-    return json(
+    return Response.json(
       { ok: false, error: "未対応の操作です。" },
       { status: 400 }
     );
@@ -93,7 +86,7 @@ export const action = async ({ request }) => {
   });
 
   if (!deletion.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: deletion.publicError,

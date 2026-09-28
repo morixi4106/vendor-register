@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import crypto from "node:crypto";
 
 import { reconcileShopifyProductCatalog } from "../services/shopifyProductSync.server.js";
@@ -22,7 +22,7 @@ export async function action({ request }) {
   ).replace(/^Bearer\s+/i, "");
 
   if (!configuredToken || !tokensMatch(providedToken, configuredToken)) {
-    return json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
   const formData = await request.formData().catch(() => new FormData());
@@ -65,7 +65,7 @@ export async function action({ request }) {
       },
     });
 
-    return json({
+    return Response.json({
       ok: completion.complete,
       shopDomain,
       scanned: result.scanned,
@@ -85,7 +85,7 @@ export async function action({ request }) {
       status: "failed",
       errorCode: "shopify_product_catalog_sync_failed",
     });
-    return json(
+    return Response.json(
       { ok: false, error: "shopify_product_catalog_sync_failed" },
       { status: 500 },
     );
@@ -102,5 +102,5 @@ function tokensMatch(provided, expected) {
 }
 
 export async function loader() {
-  return json({ ok: false, error: "method_not_allowed" }, { status: 405 });
+  return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405 });
 }

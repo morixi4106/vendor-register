@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, Link, useLoaderData } from "@remix-run/react";
+
+import { Form, Link, useLoaderData } from "react-router";
 import { useState } from "react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -36,7 +36,7 @@ export const loader = async ({ request }) => {
     take: 100,
   });
 
-  return json({
+  return Response.json({
     inquiries,
     replyType,
     q,

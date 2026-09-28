@@ -1,10 +1,5 @@
-import { redirect } from "@remix-run/node";
-import {
-  isRouteErrorResponse,
-  Outlet,
-  useLocation,
-  useRouteError,
-} from "@remix-run/react";
+import { redirect } from "react-router";
+import { isRouteErrorResponse, Outlet, useLocation, useRouteError } from "react-router";
 
 export const loader = async ({ request }) => {
   const { pathname } = new URL(request.url);

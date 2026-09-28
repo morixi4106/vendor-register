@@ -1,4 +1,4 @@
-import { json } from '@remix-run/node';
+
 import { applyProductPrice } from '../utils/applyProductPrice.server.js';
 
 export function createApplyPriceAction({ applyProductPriceImpl = applyProductPrice } = {}) {
@@ -9,15 +9,15 @@ export function createApplyPriceAction({ applyProductPriceImpl = applyProductPri
       const shopDomain = body?.shopDomain;
 
       if (!productId) {
-        return json({ ok: false, error: 'productId is required' }, { status: 400 });
+        return Response.json({ ok: false, error: 'productId is required' }, { status: 400 });
       }
 
       const result = await applyProductPriceImpl(productId, { shopDomain });
-      return json(result);
+      return Response.json(result);
     } catch (error) {
       const failure = error?.priceSyncFailure || null;
 
-      return json(
+      return Response.json(
         {
           ok: false,
           error: failure?.message || (error instanceof Error ? error.message : 'Unknown error'),

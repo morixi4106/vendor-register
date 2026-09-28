@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 export const loader = async ({ request }) => {
   const { requireVendorContext } =
@@ -12,7 +12,7 @@ export const loader = async ({ request }) => {
     .trim()
     .toUpperCase();
   if (countryCode !== "JP") {
-    return json(
+    return Response.json(
       { ok: false, found: false, error: "unsupported_country", candidates: [] },
       { status: 400 },
     );
@@ -21,7 +21,7 @@ export const loader = async ({ request }) => {
   const result = await lookupJapanesePostalAddress(
     url.searchParams.get("postalCode"),
   );
-  return json(result, {
+  return Response.json(result, {
     status: result.error === "invalid_postal_code" ? 400 : 200,
     headers: { "Cache-Control": "private, max-age=3600" },
   });

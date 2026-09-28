@@ -1,9 +1,9 @@
-import { json } from "@remix-run/node";
+
 
 import { handleStripeWebhook } from "../services/sellerPayments.server.js";
 
 function methodNotAllowed() {
-  return json(
+  return Response.json(
     { ok: false, message: "Method not allowed." },
     { status: 405, headers: { Allow: "POST" } },
   );
@@ -19,7 +19,7 @@ export const action = async ({ request }) => {
   const signature = request.headers.get("stripe-signature");
 
   if (!signature) {
-    return json(
+    return Response.json(
       { ok: false, message: "Missing Stripe signature." },
       { status: 400 },
     );
@@ -33,7 +33,7 @@ export const action = async ({ request }) => {
       signature,
     });
 
-    return json({
+    return Response.json({
       ok: true,
       duplicate: Boolean(result?.duplicate),
     });
@@ -46,7 +46,7 @@ export const action = async ({ request }) => {
       message.includes("Unable to extract timestamp and signatures from header") ||
       message.includes("JSON object requested")
     ) {
-      return json(
+      return Response.json(
         { ok: false, message: "Invalid Stripe webhook." },
         { status: 400 },
       );
@@ -54,7 +54,7 @@ export const action = async ({ request }) => {
 
     console.error("stripe webhook route error:", error);
 
-    return json(
+    return Response.json(
       { ok: false, message: "Stripe webhook processing failed." },
       { status: 500 },
     );

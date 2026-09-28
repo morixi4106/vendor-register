@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+
+import { useLoaderData } from "react-router";
 
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 
@@ -11,7 +11,7 @@ export const loader = async ({ request }) => {
   const { vendor } = await requireVendorContext(request);
   const pageData = await getSellerPaymentsPageData({ vendorId: vendor.id });
 
-  return json({
+  return Response.json({
     ...pageData,
     vendor: {
       id: vendor.id,

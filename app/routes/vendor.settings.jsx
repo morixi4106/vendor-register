@@ -1,11 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import { useVendorScopedPath } from "../components/vendor/vendorNavigation";
 
@@ -45,7 +39,7 @@ export const loader = async ({ request }) => {
     vendorStoreId: store.id,
   });
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     saved: url.searchParams.get("saved") === "1",
     governance,
@@ -75,7 +69,7 @@ export const action = async ({ request }) => {
       vendorStoreId: store.id,
     });
     if (!governance?.seller?.id) {
-      return json({ ok: false, formError: "出店者情報が見つかりません。" }, { status: 404 });
+      return Response.json({ ok: false, formError: "出店者情報が見つかりません。" }, { status: 404 });
     }
     const values = sellerComplianceProfileFromFormData(formData);
     if (
@@ -87,7 +81,7 @@ export const action = async ({ request }) => {
       !values.shipFromConfirmedAt ||
       !values.privacyNoticeAcceptedAt
     ) {
-      return json(
+      return Response.json(
         { ok: false, formError: "法的情報と3つの確認事項をすべて入力してください。" },
         { status: 400 },
       );
@@ -116,13 +110,13 @@ export const action = async ({ request }) => {
       !governance.agreementUrl ||
       !documentHash
     ) {
-      return json(
+      return Response.json(
         { ok: false, formError: "出店者契約の本文、版、または文書ハッシュが未設定です。運営へ連絡してください。" },
         { status: 503 },
       );
     }
     if (formData.get("agreementConfirmed") !== "on") {
-      return json({ ok: false, formError: "契約内容への同意を確認してください。" }, { status: 400 });
+      return Response.json({ ok: false, formError: "契約内容への同意を確認してください。" }, { status: 400 });
     }
     await recordSellerAgreementAcceptance({
       sellerId: governance.seller.id,
@@ -140,7 +134,7 @@ export const action = async ({ request }) => {
   }
 
   if (intent !== "save") {
-    return json(
+    return Response.json(
       {
         ok: false,
         formError: "未対応の操作です。",
@@ -168,7 +162,7 @@ export const action = async ({ request }) => {
   }
 
   if (Object.keys(fieldErrors).length > 0) {
-    return json(
+    return Response.json(
       {
         ok: false,
         formError: "入力内容を確認してください。",
@@ -187,7 +181,7 @@ export const action = async ({ request }) => {
   });
 
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         formError: result.publicError,

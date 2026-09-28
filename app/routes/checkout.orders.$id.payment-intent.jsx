@@ -1,9 +1,9 @@
-import { json } from "@remix-run/node";
+
 
 import { createCheckoutOrderPaymentIntent } from "../services/sellerPayments.server.js";
 
 function methodNotAllowed() {
-  return json(
+  return Response.json(
     { ok: false, reason: "method_not_allowed" },
     { status: 405, headers: { Allow: "POST" } },
   );
@@ -36,7 +36,7 @@ export const action = async ({ request, params }) => {
 
     if (!result.ok) {
       const failure = mapPaymentIntentFailure(result.reason);
-      return json(
+      return Response.json(
         {
           ok: false,
           reason: result.reason,
@@ -46,10 +46,10 @@ export const action = async ({ request, params }) => {
       );
     }
 
-    return json(result);
+    return Response.json(result);
   } catch (error) {
     console.error("checkout payment intent error:", error);
-    return json(
+    return Response.json(
       {
         ok: false,
         reason: "internal_error",

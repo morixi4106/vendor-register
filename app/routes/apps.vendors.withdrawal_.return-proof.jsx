@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useEffect } from "react";
 
 import {
@@ -38,7 +38,7 @@ export const loader = async ({ request }) => {
       request,
       groupResult.returnGroup?.withdrawalRequest?.correspondenceLocale,
     );
-    return json(
+    return Response.json(
       {
         ok: groupResult.ok,
         error: groupResult.error || null,
@@ -61,7 +61,7 @@ export const loader = async ({ request }) => {
     request,
     result.withdrawalRequest?.correspondenceLocale,
   );
-  return json(
+  return Response.json(
     {
       ok: result.ok,
       error: result.error || null,
@@ -112,7 +112,7 @@ export const action = async ({ request }) => {
       },
     });
     if (!result.ok) {
-      return json(
+      return Response.json(
         {
           ok: false,
           error: result.error || "return_proof_submit_failed",
@@ -132,7 +132,7 @@ export const action = async ({ request }) => {
     request,
   });
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: result.error || "return_proof_submit_failed",

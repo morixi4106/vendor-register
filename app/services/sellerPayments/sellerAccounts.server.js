@@ -342,7 +342,6 @@ export async function upsertSellerWiseRecipient({
   status = "active"
 }, {
   prismaClient = prisma,
-  env = process.env
 } = {}) {
   const normalizedSellerId = normalizeText(sellerId);
   const normalizedWiseRecipientId = normalizeText(wiseRecipientId);

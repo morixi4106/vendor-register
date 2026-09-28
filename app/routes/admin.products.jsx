@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { Form, Link, Outlet, useLoaderData, useLocation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, Link, Outlet, useLoaderData, useLocation } from "react-router";
 import prisma from "../db.server";
 import { formatMoney } from "../utils/money";
 import {
@@ -19,7 +19,7 @@ export const loader = async ({ request }) => {
     },
   });
 
-  return json({ products });
+  return Response.json({ products });
 };
 
 export const action = async ({ request }) => {

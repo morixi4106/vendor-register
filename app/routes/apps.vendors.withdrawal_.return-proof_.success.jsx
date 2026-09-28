@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+
+import { Link, useLoaderData } from "react-router";
 import { useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import {
@@ -16,7 +16,7 @@ export const loader = async ({ request }) => {
     urlLocale: url.searchParams.get("lang"),
     acceptLanguage: request.headers.get("accept-language"),
   }).locale;
-  return json({
+  return Response.json({
     ref: url.searchParams.get("ref") || "",
     embedded: url.searchParams.get("embedded") === "1",
     locale,

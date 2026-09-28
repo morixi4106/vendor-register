@@ -1,12 +1,4 @@
-import { json } from "@remix-run/node";
-import {
-  Links,
-  Meta,
-  Outlet,
-  Scripts,
-  ScrollRestoration,
-  useLoaderData,
-} from "@remix-run/react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "react-router";
 import { resolveWithdrawalLocale } from "./utils/withdrawalLocale.js";
 
 const FALLBACK_FAVICON_VERSION = "local";
@@ -18,13 +10,13 @@ export const loader = async ({ request }) => {
     process.env.GIT_COMMIT ||
     "";
 
-  return json({
+  return {
     faviconVersion: commit ? commit.slice(0, 12) : FALLBACK_FAVICON_VERSION,
     documentLocale: resolveWithdrawalLocale({
       urlLocale: new URL(request.url).searchParams.get("lang"),
       acceptLanguage: request.headers.get("accept-language"),
     }).locale,
-  });
+  };
 };
 
 export default function App() {

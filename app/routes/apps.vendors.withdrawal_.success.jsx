@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+
+import { Link, useLoaderData } from "react-router";
 import { useEffect } from "react";
 
 import prisma from "../db.server.js";
@@ -69,7 +69,7 @@ export const loader = async ({ request }) => {
     withdrawalRequest?.eligibilityStatus,
   );
 
-  return json(
+  return Response.json(
     {
       found: Boolean(withdrawalRequest),
       duplicate,

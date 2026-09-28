@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
   appendVendorIdToPath,
@@ -53,7 +47,7 @@ export const loader = async ({ request, params }) => {
   });
   if (!detail) throw new Response("Not Found", { status: 404 });
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     ...detail,
   });
@@ -66,14 +60,14 @@ export const action = async ({ request, params }) => {
   const { store } = await requireVendorContext(request);
   const formData = await request.formData();
   if (String(formData.get("intent") || "") !== "update-return-info") {
-    return json({ ok: false, message: "操作内容が正しくありません。" }, { status: 400 });
+    return Response.json({ ok: false, message: "操作内容が正しくありません。" }, { status: 400 });
   }
   const result = await updateVendorWithdrawalReturnInfo({
     storeId: store.id,
     withdrawalRequestId: params.id,
     formData,
   });
-  return json(
+  return Response.json(
     { ok: result.ok, message: result.ok ? result.message : result.error },
     { status: result.ok ? 200 : result.status || 400 },
   );

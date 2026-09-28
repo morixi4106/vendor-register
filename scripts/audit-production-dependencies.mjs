@@ -245,13 +245,13 @@ export function evaluateProductionAuditReport(
             !npmTreeErrors.has("production_sbom_root_mismatch"),
         )
       : "skipped",
-    remixArtifacts: artifactClassStatus(
-      "remix-server-entry",
-      "remix-server-chunks",
-      "remix-client-entry",
-      "remix-client-runtime-manifest",
-      "remix-client-route-bundles",
-      "remix-client-styles",
+    reactRouterArtifacts: artifactClassStatus(
+      "react-router-server-entry",
+      "react-router-server-chunks",
+      "react-router-client-entry",
+      "react-router-client-runtime-manifest",
+      "react-router-client-route-bundles",
+      "react-router-client-styles",
     ),
     riskAcceptance: riskStatus(!riskErrors.has("risk_not_accepted")),
     rootRuntimeReachability: status(
@@ -439,11 +439,6 @@ export function main() {
 
   if (!evaluation.ok) return 1;
 
-  if (evaluation.runtime.allowed.length > 0) {
-    console.warn(
-      `Temporary React Router moderate exception active until ${evaluation.runtime.exceptionExpiresAt}.`,
-    );
-  }
   if (evaluation.toolchain.accepted.length > 0) {
     console.warn(
       `Temporary non-runtime toolchain acceptance active until ${risk.expiresAt}.`,

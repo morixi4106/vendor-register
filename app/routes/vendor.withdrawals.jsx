@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+
+import { Link, useLoaderData } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
   appendVendorIdToPath,
@@ -18,7 +18,7 @@ export const loader = async ({ request }) => {
     first: 100,
   });
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     withdrawalRequests,
     summary: {

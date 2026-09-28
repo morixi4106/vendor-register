@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { useActionData, useLoaderData, useNavigation } from "react-router";
 import { Resend } from "resend";
 import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
@@ -92,7 +92,7 @@ export const loader = async ({ request }) => {
     throw new Response(COPY.storeNotFound, { status: 404 });
   }
 
-  return json({
+  return Response.json({
     vendor: {
       id: vendor.id,
     },
@@ -107,7 +107,7 @@ export const action = async ({ request }) => {
   const { vendor, store } = await requireVendorContext(request);
 
   if (!store) {
-    return json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
+    return Response.json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
   }
 
   try {
@@ -137,14 +137,14 @@ export const action = async ({ request }) => {
     const complianceProfile = productComplianceProfileFromFormData(formData);
 
     if (!shippingProfile.ok) {
-      return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+      return Response.json({ ok: false, error: shippingProfile.error }, { status: 400 });
     }
 
     if (shippingProfile.data.internationalShippingMethod === "AIR_PACKET") {
       const customsValidation =
         validateInternationalCustomsProfile(complianceProfile);
       if (!customsValidation.ok) {
-        return json(
+        return Response.json(
           {
             ok: false,
             error:
@@ -156,34 +156,34 @@ export const action = async ({ request }) => {
     }
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.unsupportedCurrency },
         { status: 400 }
       );
     }
 
     if (!name) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.productNameRequired },
         { status: 400 }
       );
     }
 
     if (!category) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.categoryRequired },
         { status: 400 },
       );
     }
 
     if (!priceRaw) {
-      return json({ ok: false, error: COPY.priceRequired }, { status: 400 });
+      return Response.json({ ok: false, error: COPY.priceRequired }, { status: 400 });
     }
 
     const costAmount = Number(priceRaw);
 
     if (!Number.isFinite(costAmount) || costAmount < 0) {
-      return json({ ok: false, error: COPY.invalidPrice }, { status: 400 });
+      return Response.json({ ok: false, error: COPY.invalidPrice }, { status: 400 });
     }
 
     let shopDomain = null;
@@ -245,7 +245,7 @@ ${adminUrl}`,
   } catch (error) {
     console.error("vendor product create error:", error);
 
-    return json({ ok: false, error: COPY.registerFailed }, { status: 500 });
+    return Response.json({ ok: false, error: COPY.registerFailed }, { status: 500 });
   }
 
   return redirect(appendVendorIdToPath("/vendor/products", vendor.id));

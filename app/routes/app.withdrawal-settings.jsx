@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState } from "react";
 import {
   Badge,
@@ -29,7 +29,7 @@ export const loader = async ({ request }) => {
   const policies = prisma.withdrawalWorkflowPolicy
     ? await prisma.withdrawalWorkflowPolicy.findMany({ orderBy: [{ version: "desc" }] })
     : [];
-  return json({ policies });
+  return Response.json({ policies });
 };
 
 export const action = async ({ request }) => {
@@ -49,7 +49,7 @@ export const action = async ({ request }) => {
       notes: String(formData.get("notes") || ""),
       changedBy,
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -64,7 +64,7 @@ export const action = async ({ request }) => {
       policyId: String(formData.get("policyId") || ""),
       changedBy,
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -74,7 +74,7 @@ export const action = async ({ request }) => {
       { status: result.ok ? 200 : result.status || 400 },
     );
   }
-  return json({ ok: false, message: "操作内容が正しくありません。" }, { status: 400 });
+  return Response.json({ ok: false, message: "操作内容が正しくありません。" }, { status: 400 });
 };
 
 export default function WithdrawalSettingsPage() {

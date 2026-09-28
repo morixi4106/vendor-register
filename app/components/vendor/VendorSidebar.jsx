@@ -1,4 +1,4 @@
-import { NavLink } from "@remix-run/react";
+import { NavLink } from "react-router";
 import { appendVendorIdToPath } from "./vendorNavigation";
 
 const NAV_ITEMS = [

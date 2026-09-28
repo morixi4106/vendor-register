@@ -1,4 +1,4 @@
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 
 const PUBLIC_STOREFRONT_URL = "https://oja-immanuel-bacchus.com/";
 

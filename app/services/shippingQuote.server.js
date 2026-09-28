@@ -1,4 +1,4 @@
-import { json } from '@remix-run/node';
+
 import {
   evaluateInternationalShippingAvailability,
   getInternationalShippingCountryAvailability,
@@ -403,7 +403,7 @@ export function buildShippingQuoteResponse(body, options = {}) {
 
 export function createShippingQuoteLoader() {
   return async function loader() {
-    return json(
+    return Response.json(
       {
         ok: false,
         reason: 'method_not_allowed',
@@ -442,7 +442,7 @@ export function createShippingQuoteAction({
           contentType: request.headers.get('content-type') || '',
         },
       });
-      return json(
+      return Response.json(
         {
           ok: false,
           reason: 'invalid_json',
@@ -499,6 +499,6 @@ export function createShippingQuoteAction({
       },
     });
 
-    return json(payload);
+    return Response.json(payload);
   };
 }

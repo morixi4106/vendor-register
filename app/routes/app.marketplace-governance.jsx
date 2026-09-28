@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import {
   MARKETPLACE_OPERATOR_ROLES,
@@ -24,7 +18,7 @@ export const loader = async ({ request }) => {
   const { getMarketplaceGovernanceDashboard } = await import(
     "../services/marketplaceGovernance.server.js"
   );
-  return json(await getMarketplaceGovernanceDashboard());
+  return Response.json(await getMarketplaceGovernanceDashboard());
 };
 
 export const action = async ({ request }) => {
@@ -214,16 +208,16 @@ export const action = async ({ request }) => {
       });
       break;
     default:
-      return json({ ok: false, message: "未対応の操作です。" }, { status: 400 });
+      return Response.json({ ok: false, message: "未対応の操作です。" }, { status: 400 });
   }
 
   if (!result?.ok) {
-    return json(
+    return Response.json(
       { ok: false, message: `保存できませんでした: ${result?.reason || "unknown"}` },
       { status: 400 },
     );
   }
-  return json({ ok: true, message: "保存しました。" });
+  return Response.json({ ok: true, message: "保存しました。" });
 };
 
 const REASON_LABELS = {

@@ -1,4 +1,4 @@
-import { createCookie, redirect } from "@remix-run/node";
+import { createCookie, redirect } from "react-router";
 import prisma from "../../db.server.js";
 export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,

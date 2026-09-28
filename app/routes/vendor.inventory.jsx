@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import { useVendorScopedPath } from "../components/vendor/vendorNavigation";
@@ -64,7 +64,7 @@ export const loader = async ({ request }) => {
     (product) => product.approvalLabel === "申請中"
   ).length;
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     products,
     stats: {
@@ -85,7 +85,7 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent !== "updateInventory") {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: "未対応の操作です。",
@@ -100,7 +100,7 @@ export const action = async ({ request }) => {
     .filter(Boolean);
 
   if (productIds.length === 0) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: "保存する商品がありません。",
@@ -119,7 +119,7 @@ export const action = async ({ request }) => {
     });
 
     if (!result.ok) {
-      return json(
+      return Response.json(
         {
           ok: false,
           error: result.error,
@@ -133,7 +133,7 @@ export const action = async ({ request }) => {
     }
   }
 
-  return json({
+  return Response.json({
     ok: true,
     message: `${productIds.length}件の在庫数を保存しました。`,
     warning: warnings.length > 0 ? warnings.join(" / ") : null,

@@ -1,4 +1,4 @@
-import { useMatches } from "@remix-run/react";
+import { useMatches } from "react-router";
 
 export function appendVendorIdToPath(to, vendorId) {
   const normalizedVendorId = String(vendorId || "").trim();

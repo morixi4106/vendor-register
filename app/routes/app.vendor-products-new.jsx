@@ -1,5 +1,5 @@
-import { createCookie, json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { createCookie, redirect } from "react-router";
+import { Form, useActionData, useNavigation } from "react-router";
 import prisma from "../db.server";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
@@ -51,7 +51,7 @@ async function getVendorFromSession(request) {
 export const loader = async ({ request }) => {
   const { vendor, store } = await getVendorFromSession(request);
 
-  return json({
+  return Response.json({
     vendor: {
       id: vendor.id,
       storeName: vendor.storeName,
@@ -73,14 +73,14 @@ export const action = async ({ request }) => {
   const price = String(formData.get("price") || "").trim();
 
   if (!title) {
-    return json({ ok: false, error: "商品名は必須です。" }, { status: 400 });
+    return Response.json({ ok: false, error: "商品名は必須です。" }, { status: 400 });
   }
 
   if (!price || Number.isNaN(Number(price))) {
-    return json({ ok: false, error: "価格を正しく入力してください。" }, { status: 400 });
+    return Response.json({ ok: false, error: "価格を正しく入力してください。" }, { status: 400 });
   }
 
-  return json({
+  return Response.json({
     ok: true,
     message: "（テスト）認証を外した状態で通過成功",
   });

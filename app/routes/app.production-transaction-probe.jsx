@@ -1,12 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useFetcher,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
 import { useEffect } from "react";
 
 import {
@@ -71,7 +64,7 @@ export async function loader({ request }) {
     ) ||
     null;
 
-  return json(
+  return Response.json(
     {
       ...data,
       activeProbe: serializeProductionTransactionProbe(data.activeProbe),
@@ -112,7 +105,7 @@ export async function action({ request }) {
         targetPaymentMethod: "CARD",
       });
       if (!preflight.canStart) {
-        return json(
+        return Response.json(
           {
             ok: false,
             reason: "production_transaction_preflight_failed",
@@ -231,7 +224,7 @@ export async function action({ request }) {
         actorKey: operator.actorKey,
       });
     } else {
-      return json(
+      return Response.json(
         { ok: false, reason: "unsupported_intent" },
         { status: 400, headers: privateHeaders() },
       );
@@ -241,13 +234,13 @@ export async function action({ request }) {
       intent,
       name: error instanceof Error ? error.name : "unknown",
     });
-    return json(
+    return Response.json(
       { ok: false, reason: "production_transaction_probe_failed" },
       { status: 500, headers: privateHeaders() },
     );
   }
 
-  return json(result, {
+  return Response.json(result, {
     status: result.ok ? 200 : result.reason?.includes("conflict") ? 409 : 400,
     headers: privateHeaders(),
   });

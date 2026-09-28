@@ -1,4 +1,4 @@
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import prisma from "../db.server";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server";
 
