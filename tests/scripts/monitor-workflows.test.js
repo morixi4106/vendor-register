@@ -87,3 +87,13 @@ test("prelaunch full monitor accepts only the exact first password-page alert", 
   assert.match(source, /issues\[0\]\?\.code === "password_page"/);
   assert.match(source, /if \(dryRun && expectPasswordCritical\)/);
 });
+
+test("launch monitor logs only sanitized issue fields", async () => {
+  const source = await readFile(launchAgentUrl, "utf8");
+
+  assert.match(
+    source,
+    /\.map\(\(\{ id, status, code, count \}\) => \(\{ id, status, code, count \}\)\)/,
+  );
+  assert.doesNotMatch(source, /issues:[\s\S]*?detail/);
+});

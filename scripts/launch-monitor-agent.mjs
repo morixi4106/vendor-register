@@ -163,6 +163,9 @@ async function main({
       ).length,
       warningCount: payload.checks.filter((check) => check.status === "warning")
         .length,
+      issues: payload.checks
+        .filter((check) => check.status !== "healthy")
+        .map(({ id, status, code, count }) => ({ id, status, code, count })),
       notificationKind: payload.notificationKind || null,
       expectedPasswordCritical:
         expectPasswordCritical &&
