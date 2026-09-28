@@ -21,12 +21,25 @@ query CartValidationsGenerateRunInput {
     ) {
       value
     }
+    internationalSaleGate: metafield(
+      namespace: "$app"
+      key: "international_sale_gate"
+    ) {
+      value
+    }
   }
   cart {
     cost {
       totalAmount {
         amount
         currencyCode
+      }
+    }
+    deliveryGroups {
+      deliveryAddress {
+        countryCode
+        provinceCode
+        zip
       }
     }
     lines {

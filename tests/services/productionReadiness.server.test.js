@@ -18,6 +18,11 @@ import {
 } from "../../app/services/operationalReadiness.server.js";
 import { inspectShopifyProductSync } from "../../app/services/productionReadiness/products.server.js";
 import { INTERNATIONAL_COMPLIANCE_REQUIREMENTS } from "../../app/utils/internationalMarketCompliance.js";
+import {
+  getInternationalMarketRequirements,
+  INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+  INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
+} from "../../app/utils/internationalMarketReadiness.js";
 
 const REQUIRED_SCOPE_STRING = [
   "read_products",
@@ -69,6 +74,7 @@ function createFakePrisma({
   productSyncIssues = undefined,
   productShippingProfiles = [],
   internationalShippingAvailability = [],
+  internationalMarketAttestations = [],
 } = {}) {
   const sessionRows = sessions || [
     {
@@ -109,8 +115,10 @@ function createFakePrisma({
       count: async () => withdrawalCounts.emailFailedCount || 0,
     },
     operationalReadinessAttestation: {
-      findMany: async () =>
-        OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
+      findMany: async ({ where } = {}) =>
+        where?.scopeType === INTERNATIONAL_MARKET_EVIDENCE_SCOPE
+          ? internationalMarketAttestations
+          : OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
           checkKey: definition.key,
           status: "CONFIRMED",
           evidenceReference:
@@ -143,7 +151,7 @@ function createFakePrisma({
               : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
                 ? buildPayoutEvidenceMetadata()
                 : null,
-        })),
+            })),
     },
     shopifyPayoutEvidence: {
       findUnique: async () => buildPayoutEvidence(),
@@ -577,6 +585,31 @@ function buildInternationalGeneralGoodsProduct(overrides = {}) {
   };
 }
 
+function buildInternationalMarketAttestations(
+  countryCode,
+  now = new Date("2026-09-18T00:00:00.000Z"),
+) {
+  return getInternationalMarketRequirements(countryCode).map((requirement) => ({
+    checkKey: requirement.code,
+    scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+    scopeId: countryCode,
+    status: "CONFIRMED",
+    evidenceReference: `test:${countryCode}:${requirement.code}`,
+    evidenceHash: "e".repeat(64),
+    confirmedBy: "test_operator",
+    confirmedAt: now,
+    expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+    metadataJson: {
+      countryCode,
+      requirementVersion: INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
+      officialSourceUrl: requirement.sourceUrl,
+      confirmations: Object.fromEntries(
+        requirement.confirmations.map((key) => [key, true]),
+      ),
+    },
+  }));
+}
+
 test("international shipping readiness fails when an allowed country has no current service record", async () => {
   const result = await inspectProductShippingProfiles({
     prismaClient: {
@@ -614,6 +647,9 @@ test("general goods can pass international readiness without cosmetics requireme
             checkedAt: new Date("2026-09-17T00:00:00.000Z"),
           },
         ],
+      },
+      operationalReadinessAttestation: {
+        findMany: async () => buildInternationalMarketAttestations("US"),
       },
     },
     now: new Date("2026-09-18T00:00:00.000Z"),
@@ -685,6 +721,9 @@ test("US cosmetics readiness does not require EU or GB catalog entries", async (
             checkedAt: new Date("2026-09-17T00:00:00.000Z"),
           },
         ],
+      },
+      operationalReadinessAttestation: {
+        findMany: async () => buildInternationalMarketAttestations("US"),
       },
     },
     now: new Date("2026-09-18T00:00:00.000Z"),

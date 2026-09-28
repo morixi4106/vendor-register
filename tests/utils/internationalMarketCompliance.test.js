@@ -95,6 +95,36 @@ test('cosmetics pass when all current market requirements are evidenced', () => 
   assert.equal(result.requirements.every((entry) => entry.ready), true);
 });
 
+test('US MoCRA exemptions only satisfy explicitly exemptible requirements', () => {
+  const product = cosmeticsWithRequirements('US');
+  for (const decision of product.complianceDecisions) {
+    decision.decision = 'NOT_APPLICABLE';
+  }
+
+  const result = evaluateInternationalMarketCompliance({
+    product,
+    destinationCountry: 'US',
+    evaluatedAt,
+  });
+
+  assert.equal(result.ready, false);
+  assert.ok(
+    result.reasons.includes(
+      'requirement_not_applicable_not_allowed:US_COSMETICS_SAFETY_SUBSTANTIATION',
+    ),
+  );
+  for (const code of [
+    'US_COSMETICS_FACILITY_REGISTRATION',
+    'US_COSMETICS_PRODUCT_LISTING',
+    'US_COSMETICS_GMP_APPLICABILITY',
+  ]) {
+    assert.equal(
+      result.requirements.find((requirement) => requirement.code === code)?.ready,
+      true,
+    );
+  }
+});
+
 test('cosmetics fail closed when the requirement catalog review has expired', () => {
   const product = cosmeticsWithRequirements('US');
   for (const entry of [

@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createProductDeliveryEligibilityLoader } from '../../app/services/productDeliveryEligibility.server.js';
+import {
+  getInternationalMarketRequirements,
+  INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
+} from '../../app/utils/internationalMarketReadiness.js';
+
+function buildMarketEvidence(countryCode) {
+  const confirmedAt = new Date('2026-09-01T00:00:00.000Z');
+  return getInternationalMarketRequirements(countryCode).map((requirement) => ({
+    checkKey: requirement.code,
+    status: 'CONFIRMED',
+    evidenceReference: `test:${requirement.code}`,
+    evidenceHash: 'e'.repeat(64),
+    confirmedBy: 'test_operator',
+    confirmedAt,
+    expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+    metadataJson: {
+      countryCode,
+      requirementVersion: INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
+      officialSourceUrl: requirement.sourceUrl,
+      confirmations: Object.fromEntries(
+        requirement.confirmations.map((key) => [key, true]),
+      ),
+    },
+  }));
+}
 
 function createProduct(overrides = {}) {
   return {
@@ -61,6 +86,11 @@ function createFakePrisma(product = createProduct()) {
           status: 'ACTIVE',
           checkedAt: new Date(),
         };
+      },
+    },
+    operationalReadinessAttestation: {
+      async findMany() {
+        return buildMarketEvidence('FR');
       },
     },
   };

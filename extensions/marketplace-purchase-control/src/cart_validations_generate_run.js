@@ -48,6 +48,84 @@ function parseLimitedLaunchControl(value) {
   return { present: true, valid, control: valid ? control : null };
 }
 
+function parseInternationalSaleGate(value) {
+  if (!value) return { present: false, valid: false, gate: null };
+  const gate = parseProjection(value);
+  const countries = Array.isArray(gate?.c) ? gate.c.map(String) : [];
+  const valid = Boolean(
+    gate &&
+      Number(gate.v) === 1 &&
+      Number.isInteger(gate.r) &&
+      gate.r >= 1 &&
+      /^\d{4}-\d{2}-\d{2}$/.test(String(gate.d || "")) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(String(gate.e || "")) &&
+      /^[a-f0-9]{64}$/.test(String(gate.h || "")) &&
+      countries.every((country) => /^[A-Z]{2}$/.test(country)),
+  );
+  return {
+    present: true,
+    valid,
+    gate: valid ? { ...gate, c: countries } : null,
+  };
+}
+
+function isNorthernIrelandAddress(address) {
+  const countryCode = String(address?.countryCode || "").toUpperCase();
+  if (countryCode !== "GB") return false;
+  const provinceCode = String(address?.provinceCode || "")
+    .toUpperCase()
+    .replace(/^GB-/, "");
+  const postalCode = String(address?.zip || "")
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  return (
+    provinceCode === "NIR" ||
+    provinceCode === "NI" ||
+    postalCode.startsWith("BT")
+  );
+}
+
+function getInternationalDestinationError(input, currentDate) {
+  const deliveryGroups = Array.isArray(input.cart?.deliveryGroups)
+    ? input.cart.deliveryGroups
+    : [];
+  const addresses = deliveryGroups
+    .map((group) => group?.deliveryAddress)
+    .filter((address) => address?.countryCode);
+  const internationalAddresses = addresses.filter(
+    (address) => String(address.countryCode).toUpperCase() !== "JP",
+  );
+  if (internationalAddresses.length === 0) return null;
+  if (internationalAddresses.some(isNorthernIrelandAddress)) {
+    return "現在、北アイルランドへの配送は受け付けていません。";
+  }
+
+  const parsed = parseInternationalSaleGate(
+    input.shop?.internationalSaleGate?.value,
+  );
+  if (!parsed.present || !parsed.valid) {
+    return "海外販売条件を確認できないため、この配送先への注文を受け付けられません。";
+  }
+  const gate = parsed.gate;
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(currentDate) ||
+    gate.d > currentDate ||
+    currentDate >= gate.e
+  ) {
+    return "海外販売条件の有効期限を確認できないため、この配送先への注文を受け付けられません。";
+  }
+  const allowedCountries = new Set(gate.c);
+  if (
+    internationalAddresses.some(
+      (address) =>
+        !allowedCountries.has(String(address.countryCode).toUpperCase()),
+    )
+  ) {
+    return "現在、この国・地域への販売は受け付けていません。";
+  }
+  return null;
+}
+
 function getCartAmount(input) {
   const amount = Number(input.cart?.cost?.totalAmount?.amount);
   return Number.isFinite(amount) && amount >= 0 ? Math.round(amount) : null;
@@ -169,6 +247,10 @@ export function cartValidationsGenerateRun(input) {
     operationalState !== "ALLOWED" || watchdogStopActive;
   const currentDate = String(input.shop?.localTime?.date || "");
   const limitedLaunchError = getLimitedLaunchError(input, currentDate);
+  const internationalDestinationError = getInternationalDestinationError(
+    input,
+    currentDate,
+  );
   const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
   const unsupportedCartSize = cartLines.length > MAX_SUPPORTED_CART_LINES;
   const invalidProductPresent = cartLines.some((line) => {
@@ -199,7 +281,14 @@ export function cartValidationsGenerateRun(input) {
             target: "$.cart",
           },
         ]
-    : unsupportedCartSize
+      : internationalDestinationError
+        ? [
+            {
+              message: internationalDestinationError,
+              target: "$.cart",
+            },
+          ]
+      : unsupportedCartSize
       ? [
           {
             message:

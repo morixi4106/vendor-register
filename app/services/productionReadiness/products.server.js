@@ -8,6 +8,10 @@ import {
   isInternationalRequirementCurrent,
 } from "../../utils/internationalMarketCompliance.js";
 import { validateInternationalCustomsProfile } from "../../utils/internationalProductProfile.js";
+import {
+  evaluateInternationalMarketReadiness,
+  INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+} from "../../utils/internationalMarketReadiness.js";
 import { PRODUCT_SHIPPING_METHOD, SHOPIFY_WEIGHT_SYNC_STATUS, validateStoredAirPacketProfile } from "../../utils/productShippingProfile.js";
 import {
   evaluateInternationalShippingAvailability,
@@ -94,11 +98,13 @@ export async function inspectProductShippingProfiles({
       weightSyncIssues: [],
       serviceAvailability: {
         available: false,
+        marketEvidenceAvailable: false,
         activeCount: 0,
         staleActiveCount: 0,
         requiredCountryCount: 0,
         unavailableCountries: [],
-        staleCountries: []
+        staleCountries: [],
+        marketEvidenceBlockedCountries: []
       },
       error: "product_shipping_profile_table_unavailable"
     };
@@ -216,15 +222,58 @@ export async function inspectProductShippingProfiles({
     ).filter((requirement) => !activeRequirementCodes.has(requirement.code));
     const multiVariantAirPacket = airPacketProducts.filter(product => Number(product.shopifyVariantCount) !== 1);
     const weightSyncIssues = airPacketProducts.filter(product => product.shopifyWeightSyncStatus !== SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED);
-    const activeRows = (availabilityRows || []).filter(row => row.status === INTERNATIONAL_SERVICE_STATUS.ACTIVE);
-    const staleActiveRows = activeRows.filter(row =>
-      evaluateInternationalShippingAvailability(row, { now }).stale
-    );
     const requiredCountries = Array.from(new Set(airPacketProducts.flatMap(product => {
       const countries = Array.isArray(product.countryPolicy?.allowedCountries) ? product.countryPolicy.allowedCountries : [];
       return countries.map(country => String(country || "").trim().toUpperCase()).filter(country => country && country !== "JP");
     })));
-    const availabilityByCountry = new Map((availabilityRows || []).map(row => [String(row.countryCode || "").trim().toUpperCase(), row]));
+    const marketEvidenceAvailable = Boolean(
+      prismaClient.operationalReadinessAttestation?.findMany,
+    );
+    const marketAttestations =
+      marketEvidenceAvailable && requiredCountries.length > 0
+        ? await prismaClient.operationalReadinessAttestation.findMany({
+            where: {
+              scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+              scopeId: { in: requiredCountries },
+            },
+          })
+        : [];
+    const attestationsByCountry = new Map();
+    for (const attestation of marketAttestations) {
+      const countryCode = String(attestation.scopeId || "").trim().toUpperCase();
+      if (!attestationsByCountry.has(countryCode)) {
+        attestationsByCountry.set(countryCode, []);
+      }
+      attestationsByCountry.get(countryCode).push(attestation);
+    }
+    const marketReadinessByCountry = new Map(
+      requiredCountries.map(countryCode => [
+        countryCode,
+        evaluateInternationalMarketReadiness({
+          countryCode,
+          attestations: attestationsByCountry.get(countryCode) || [],
+          now,
+        }),
+      ]),
+    );
+    const availabilityRowsWithEvidence = (availabilityRows || []).map(row => {
+      const countryCode = String(row.countryCode || "").trim().toUpperCase();
+      return {
+        ...row,
+        marketReadiness:
+          marketReadinessByCountry.get(countryCode) ||
+          evaluateInternationalMarketReadiness({
+            countryCode,
+            attestations: attestationsByCountry.get(countryCode) || [],
+            now,
+          }),
+      };
+    });
+    const activeRows = availabilityRowsWithEvidence.filter(row => row.status === INTERNATIONAL_SERVICE_STATUS.ACTIVE);
+    const staleActiveRows = activeRows.filter(row =>
+      evaluateInternationalShippingAvailability(row, { now }).stale
+    );
+    const availabilityByCountry = new Map(availabilityRowsWithEvidence.map(row => [String(row.countryCode || "").trim().toUpperCase(), row]));
     const unavailableCountries = requiredCountries.filter(countryCode =>
       !evaluateInternationalShippingAvailability(
         availabilityByCountry.get(countryCode),
@@ -238,6 +287,9 @@ export async function inspectProductShippingProfiles({
         evaluateInternationalShippingAvailability(row, { now }).stale
       );
     });
+    const marketEvidenceBlockedCountries = requiredCountries.filter(
+      countryCode => marketReadinessByCountry.get(countryCode)?.ready !== true,
+    );
     return {
       available: true,
       approvedCount: products.length,
@@ -253,11 +305,13 @@ export async function inspectProductShippingProfiles({
       weightSyncIssues,
       serviceAvailability: {
         available: Array.isArray(availabilityRows),
+        marketEvidenceAvailable,
         activeCount: activeRows.length,
         staleActiveCount: staleActiveRows.length,
         requiredCountryCount: requiredCountries.length,
         unavailableCountries,
-        staleCountries
+        staleCountries,
+        marketEvidenceBlockedCountries
       },
       error: null
     };
@@ -277,11 +331,13 @@ export async function inspectProductShippingProfiles({
         weightSyncIssues: [],
         serviceAvailability: {
           available: false,
+          marketEvidenceAvailable: false,
           activeCount: 0,
           staleActiveCount: 0,
           requiredCountryCount: 0,
           unavailableCountries: [],
-          staleCountries: []
+          staleCountries: [],
+          marketEvidenceBlockedCountries: []
         },
         error: error.code
       };
@@ -354,6 +410,13 @@ export function buildProductShippingProfileChecks(shippingProfiles) {
     title: "梱包後重量のShopify同期",
     detail: shippingProfiles.weightSyncIssues.length > 0 ? `${shippingProfiles.weightSyncIssues.length}件で重量の確認またはShopify同期が未完了です：${formatProductSamples(shippingProfiles.weightSyncIssues)}` : "国際配送商品の梱包後重量は確認・同期済みです。",
     action: shippingProfiles.weightSyncIssues.length > 0 ? "商品配送設定で梱包後重量を再確認して保存してください。" : ""
+  }), createCheck({
+    id: "international_market_country_evidence",
+    category: "shopify",
+    status: shippingProfiles.airPacketCount === 0 ? "pass" : !shippingProfiles.serviceAvailability.marketEvidenceAvailable || shippingProfiles.serviceAvailability.marketEvidenceBlockedCountries.length > 0 ? "fail" : "pass",
+    title: "販売国別の法務・税務・配送運用証拠",
+    detail: shippingProfiles.airPacketCount === 0 ? "国際配送対象商品はありません。" : !shippingProfiles.serviceAvailability.marketEvidenceAvailable ? "国別証拠を確認できません。migrationの適用状況を確認してください。" : shippingProfiles.serviceAvailability.marketEvidenceBlockedCountries.length > 0 ? `${shippingProfiles.serviceAvailability.marketEvidenceBlockedCountries.length}か国・地域で市場単位の証拠が不足または期限切れです。` : "販売許可国の市場単位証拠は有効です。",
+    action: shippingProfiles.airPacketCount > 0 && (!shippingProfiles.serviceAvailability.marketEvidenceAvailable || shippingProfiles.serviceAvailability.marketEvidenceBlockedCountries.length > 0) ? "国際配送状況を開き、消費者保護、税関、EPR、プライバシー、配送経路の証拠を登録してください。" : ""
   }), createCheck({
     id: "air_packet_country_availability",
     category: "shopify",

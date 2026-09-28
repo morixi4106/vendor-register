@@ -13,7 +13,8 @@
         },
         "komojuLimitedLaunchControl": {
           "value": "{\"v\":2,\"s\":\"INACTIVE\",\"r\":1,\"e\":\"9999-12-31\",\"x\":\"9999-12-31T00:00:00.000Z\",\"p\":[],\"q\":\"\",\"m\":0,\"o\":0,\"g\":0,\"l\":0,\"c\":\"JPY\",\"h\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
-        }
+        },
+        "internationalSaleGate": null
       },
       "cart": {
         "lines": [
@@ -38,7 +39,8 @@
             "amount": "100.0",
             "currencyCode": "JPY"
           }
-        }
+        },
+        "deliveryGroups": []
       }
     },
     "output": {
