@@ -1,12 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-  useRevalidator,
-} from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, Link, useActionData, useLoaderData, useNavigation, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useState } from "react";
 
@@ -75,7 +68,7 @@ export const loader = async ({ request }) => {
       : null,
   ]);
 
-  return json({
+  return Response.json({
     stores,
     draftOrdersScope,
     publicationContext: {
@@ -107,7 +100,7 @@ export const action = async ({ request }) => {
   const store = await loadStoreForProtectedAction(id);
 
   if (!store) {
-    return json(
+    return Response.json(
       { ok: false, message: "対象の店舗が見つかりません。" },
       { status: 404 },
     );
@@ -115,7 +108,7 @@ export const action = async ({ request }) => {
 
   if (intent === "set_test_store") {
     if (store.isPlatformStore) {
-      return json(
+      return Response.json(
         {
           ok: false,
           message: "運営直販店舗のデータ区分はこの画面では変更できません。",
@@ -135,14 +128,14 @@ export const action = async ({ request }) => {
   }
 
   if (intent !== "delete") {
-    return json(
+    return Response.json(
       { ok: false, message: "対応していない操作です。" },
       { status: 400 },
     );
   }
 
   if (store.isPlatformStore) {
-    return json(
+    return Response.json(
       { ok: false, message: "運営直販店舗は削除できません。" },
       { status: 400 },
     );

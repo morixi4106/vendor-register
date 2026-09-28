@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { enforceCatalogSyncSaleEligibilityFailSafe } from "../services/saleEligibilityWatchdog.server.js";
 import { recordSaleEligibilityWatchdogHeartbeat } from "../services/releaseMonitoringReadiness.server.js";
@@ -14,7 +14,7 @@ const RESPONSE_HEADERS = Object.freeze({
 });
 
 export const loader = () =>
-  json(
+  Response.json(
     { ok: false, error: "method_not_allowed" },
     {
       status: 405,
@@ -53,7 +53,7 @@ export async function action({ request }) {
         schedulerEnabled,
         runId,
       });
-      return json(
+      return Response.json(
         {
           ok: true,
           protected: false,
@@ -77,7 +77,7 @@ export async function action({ request }) {
       runId,
       errorCode: result.ok ? null : result.reason || "watchdog_failed",
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         protected: result.protected,
@@ -105,7 +105,7 @@ export async function action({ request }) {
     console.error("sale eligibility watchdog failed", {
       code: error?.code || error?.name || "watchdog_failed",
     });
-    return json(
+    return Response.json(
       { ok: false, error: "sale_eligibility_watchdog_failed" },
       { status: 500, headers: RESPONSE_HEADERS },
     );

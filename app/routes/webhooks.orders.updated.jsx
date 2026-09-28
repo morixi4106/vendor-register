@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { authenticate } from "../shopify.server";
 import { reconcileShopifyOrderIntegrity } from "../services/shopifyOrderIntegrity.server.js";
@@ -43,7 +43,7 @@ export const action = async ({ request }) => {
     },
   });
 
-  return json({
+  return Response.json({
     ok: true,
     duplicate: delivery.duplicate,
     integrity: delivery.result

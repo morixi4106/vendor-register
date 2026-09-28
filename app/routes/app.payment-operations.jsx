@@ -1,10 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import {
   backfillPaymentAttemptsFromPaidLedger,
@@ -64,7 +59,7 @@ function actorFromOperator(operator) {
 
 export const loader = async ({ request }) => {
   await requireMarketplaceOperator(request, { roles: ACCESS_ROLES });
-  return json(await getPaymentOperationsDashboard());
+  return Response.json(await getPaymentOperationsDashboard());
 };
 
 export const action = async ({ request }) => {
@@ -146,7 +141,7 @@ export const action = async ({ request }) => {
     result = { ok: false, reason: "unsupported_action" };
   }
 
-  return json(
+  return Response.json(
     {
       ok: Boolean(result?.ok),
       message: result?.ok

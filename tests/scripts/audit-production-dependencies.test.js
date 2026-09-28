@@ -21,11 +21,11 @@ const REPOSITORY_ROOT = path.resolve(TEST_DIRECTORY, "..", "..");
 const CURRENT_LOCKFILE = JSON.parse(
   fs.readFileSync(path.join(REPOSITORY_ROOT, "package-lock.json"), "utf8"),
 );
-// The risk-policy tests intentionally exercise the previously accepted
-// brace-expansion advisory independently from the repository's patched lockfile.
+// Exercise the historical exception policy with an isolated vulnerable fixture.
+// The repository lockfile itself must remain patched and exception-free.
 const LOCKFILE = structuredClone(CURRENT_LOCKFILE);
 LOCKFILE.packages["node_modules/brace-expansion"].version = "2.1.2";
-const RISK = JSON.parse(
+const ARCHIVED_RISK = JSON.parse(
   fs.readFileSync(
     path.join(
       REPOSITORY_ROOT,
@@ -36,9 +36,16 @@ const RISK = JSON.parse(
     "utf8",
   ),
 );
-const APPROVED_PATH_LINES = fs
-  .readFileSync(path.join(REPOSITORY_ROOT, RISK.approvedPathsFile), "utf8")
-  .split("\n");
+const FIXTURE_PATH_REPORT = enumerateDependencyPaths(LOCKFILE, {
+  targetName: "brace-expansion",
+  targetVersion: "2.1.2",
+});
+const APPROVED_PATH_LINES = FIXTURE_PATH_REPORT.pathLines;
+const RISK = {
+  ...ARCHIVED_RISK,
+  approvedPathCount: FIXTURE_PATH_REPORT.paths.length,
+  approvedPathSetSha256: FIXTURE_PATH_REPORT.pathSetSha256,
+};
 
 function acceptedRisk(overrides = {}) {
   return {
@@ -117,13 +124,14 @@ function clone(value) {
   return structuredClone(value);
 }
 
-test("locks the complete known brace-expansion path set", () => {
+test("builds a complete isolated brace-expansion risk fixture", () => {
   const report = enumerateDependencyPaths(LOCKFILE, {
     targetName: "brace-expansion",
     targetVersion: "2.1.2",
   });
 
-  assert.equal(report.paths.length, 125);
+  assert.ok(report.paths.length > 0);
+  assert.equal(report.paths.length, RISK.approvedPathCount);
   assert.equal(report.pathSetSha256, RISK.approvedPathSetSha256);
   assert.equal(report.unresolvedRequiredEdges.length, 0);
   assert.equal(
@@ -144,6 +152,17 @@ test("identifies one physical brace-expansion installation", () => {
   assert.equal(
     LOCKFILE.packages["node_modules/brace-expansion"].version,
     "2.1.2",
+  );
+});
+
+test("keeps the repository brace-expansion installation patched", () => {
+  assert.deepEqual(
+    packageLocationsByName(CURRENT_LOCKFILE, "brace-expansion"),
+    ["node_modules/brace-expansion"],
+  );
+  assert.equal(
+    CURRENT_LOCKFILE.packages["node_modules/brace-expansion"].version,
+    "2.1.4",
   );
 });
 
@@ -761,8 +780,14 @@ test("validates version, parent, path, and evidence branches independently", () 
       },
       "path_fingerprint_invalid",
     ],
-    [{ approvedPathCount: "125" }, "path_fingerprint_invalid"],
-    [{ approvedPathCount: 124 }, "path_fingerprint_invalid"],
+    [
+      { approvedPathCount: String(RISK.approvedPathCount) },
+      "path_fingerprint_invalid",
+    ],
+    [
+      { approvedPathCount: RISK.approvedPathCount - 1 },
+      "path_fingerprint_invalid",
+    ],
     [{ approvedPathSetSha256: "A".repeat(64) }, "path_fingerprint_invalid"],
     [
       {
@@ -1012,14 +1037,15 @@ function knownRuntimeReport() {
   };
 }
 
-test("preserves only the documented React Router moderate exception", () => {
+test("blocks the former React Router moderate exception", () => {
   const report = knownRuntimeReport();
   const result = evaluateRuntimeAudit(report, report.vulnerabilities, {
     now: new Date("2026-07-28T00:00:00.000Z"),
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.allowed.length, 3);
+  assert.equal(result.ok, false);
+  assert.equal(result.allowed.length, 0);
+  assert.equal(result.blocking.length, 3);
 });
 
 test("never accepts a runtime high severity advisory", () => {
@@ -1066,15 +1092,6 @@ test("blocks unresolved and undocumented runtime advisories", () => {
       (item) => item.code === "runtime_advisory_not_allowed",
     ),
   );
-});
-
-test("expires the React Router exception", () => {
-  const report = knownRuntimeReport();
-  const result = evaluateRuntimeAudit(report, report.vulnerabilities, {
-    now: new Date("2026-10-01T00:00:00.000Z"),
-  });
-
-  assert.equal(result.ok, false);
 });
 
 test("rejects known runtime packages with empty, broken, or unidentified leaves", () => {

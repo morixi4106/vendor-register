@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { authenticate } from "../shopify.server";
 import { syncShopifyOrderPaymentAttempts } from "../services/paymentOperations.server.js";
@@ -18,7 +18,7 @@ export const action = async ({ request }) => {
         sourceTopic: topic || "ORDERS_CREATE",
       }),
   });
-  return json({
+  return Response.json({
     ok: true,
     duplicate: delivery.duplicate,
     paymentTracking: delivery.result

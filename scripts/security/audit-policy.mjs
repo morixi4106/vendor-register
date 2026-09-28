@@ -5,19 +5,7 @@ import {
   packageLocationsByName,
 } from "./package-lock-graph.mjs";
 
-export const REACT_ROUTER_EXCEPTION_EXPIRES_AT = "2026-09-30T23:59:59.999Z";
 export const TOOLCHAIN_EXCEPTION_MAX_EXPIRES_AT = "2026-08-27T23:59:59.999Z";
-
-const REACT_ROUTER_PACKAGES = new Set([
-  "@remix-run/react",
-  "react-router",
-  "react-router-dom",
-]);
-const REACT_ROUTER_ADVISORIES = new Set([
-  "GHSA-WRJC-X8RR-H8H6",
-  "GHSA-337J-9HXR-RHXG",
-  "GHSA-JJMJ-JMHJ-QWJ2",
-]);
 const NEVER_ALLOW_SEVERITIES = new Set(["high", "critical"]);
 
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -45,28 +33,10 @@ function timestampIsExpired(timestamp, now) {
   return !date || now.getTime() >= date.getTime();
 }
 
-function evaluateReactRouterException(packageName, vulnerability, report, now) {
-  if (timestampIsExpired(REACT_ROUTER_EXCEPTION_EXPIRES_AT, now)) return false;
-  if (
-    String(vulnerability?.severity || "").toLowerCase() !== "moderate" ||
-    !REACT_ROUTER_PACKAGES.has(packageName)
-  ) {
-    return false;
-  }
-
-  const leaf = collectLeafAdvisories(report, packageName);
-  if (leaf.errors.length > 0 || leaf.advisories.length === 0) return false;
-
-  return leaf.advisories.every(
-    (advisory) =>
-      advisory.advisoryId && REACT_ROUTER_ADVISORIES.has(advisory.advisoryId),
-  );
-}
-
 export function evaluateRuntimeAudit(
-  report,
+  _report,
   runtimeVulnerabilities,
-  { now = new Date(), unresolvedAuditPackages = [] } = {},
+  { unresolvedAuditPackages = [] } = {},
 ) {
   const allowed = [];
   const blocking = unresolvedAuditPackages.map((packageName) => ({
@@ -88,14 +58,6 @@ export function evaluateRuntimeAudit(
       continue;
     }
 
-    if (evaluateReactRouterException(packageName, vulnerability, report, now)) {
-      allowed.push({
-        packageName,
-        severity,
-      });
-      continue;
-    }
-
     blocking.push({
       code: "runtime_advisory_not_allowed",
       packageName,
@@ -106,7 +68,6 @@ export function evaluateRuntimeAudit(
   return {
     allowed,
     blocking,
-    exceptionExpiresAt: REACT_ROUTER_EXCEPTION_EXPIRES_AT,
     ok: blocking.length === 0,
   };
 }

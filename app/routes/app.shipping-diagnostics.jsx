@@ -1,5 +1,5 @@
-import { json } from '@remix-run/node';
-import { Form, useLoaderData, useNavigation } from '@remix-run/react';
+
+import { Form, useLoaderData, useNavigation } from 'react-router';
 
 import { authenticate } from '../shopify.server.js';
 import {
@@ -12,7 +12,7 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get('limit') || 100);
 
-  return json({
+  return Response.json({
     events: listShippingDiagnosticEvents({ limit }),
   });
 };
@@ -21,7 +21,7 @@ export const action = async ({ request }) => {
   await authenticate.admin(request);
   clearShippingDiagnosticEvents();
 
-  return json({
+  return Response.json({
     ok: true,
   });
 };

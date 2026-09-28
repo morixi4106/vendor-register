@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 
 import prisma from "../db.server.js";
 import { draftOrderCheckout } from "./draftOrderCheckout.server.js";
@@ -1088,7 +1088,7 @@ function buildNotFoundResponse() {
 }
 
 function buildMethodNotAllowedResponse() {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: "method_not_allowed",
@@ -1121,7 +1121,7 @@ function buildDefaultFieldErrors() {
 }
 
 function buildInvalidPayloadResponse(fieldErrors) {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: "invalid_payload",
@@ -1133,7 +1133,7 @@ function buildInvalidPayloadResponse(fieldErrors) {
 }
 
 function buildJsonInvalidPayloadResponse(errors) {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: "invalid_payload",
@@ -1144,7 +1144,7 @@ function buildJsonInvalidPayloadResponse(errors) {
 }
 
 function buildInternalErrorResponse(message, status = 500) {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: "internal_error",
@@ -1708,7 +1708,6 @@ async function buildServerTrustedCheckoutPayload({
   vendorHandle,
   submission,
   prismaClient = prisma,
-  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
   checkoutSource = PUBLIC_CHECKOUT_SOURCE,
   env = process.env,
 }) {
@@ -2231,7 +2230,6 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
   formData,
   vendorContext,
   prismaClient = prisma,
-  shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession,
   env = process.env,
 }) {
   const submission = normalizeStorefrontCheckoutSubmission(formData);
@@ -2245,7 +2243,6 @@ export async function buildDraftOrderCheckoutInputFromStorefrontForm({
     vendorContext,
     submission: submission.submission,
     prismaClient,
-    shopifyGraphQLWithOfflineSessionImpl,
     env,
   });
 
@@ -2339,7 +2336,7 @@ export function createVendorStorefrontLoader({
       throw buildNotFoundResponse();
     }
 
-    return json(storefront);
+    return Response.json(storefront);
   };
 }
 
@@ -2514,7 +2511,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
     }
 
     if (!(await requestBodyFitsLimit(request))) {
-      return json(
+      return Response.json(
         { ok: false, reason: "request_too_large" },
         {
           status: 413,
@@ -2533,7 +2530,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
       });
     } catch (error) {
       console.error("public vendor checkout rate limit failed:", error);
-      return json(
+      return Response.json(
         { ok: false, reason: "temporarily_unavailable" },
         {
           status: 503,
@@ -2542,7 +2539,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
       );
     }
     if (!rateLimit.ok) {
-      return json(
+      return Response.json(
         { ok: false, reason: "rate_limited" },
         {
           status: 429,
@@ -2636,7 +2633,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
         };
       }
 
-      return json(responsePayload);
+      return Response.json(responsePayload);
     } catch (error) {
       if (pilotClaim && !draftOrderCreated) {
         await releaseDomesticMarketplacePilotCheckout(pilotClaim, {

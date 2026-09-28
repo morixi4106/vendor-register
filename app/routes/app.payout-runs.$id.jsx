@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import {
   MARKETPLACE_OPERATOR_ROLES,
@@ -31,7 +25,7 @@ export const loader = async ({ request, params }) => {
     throw new Response("出金予定が見つかりません。", { status: 404 });
   }
 
-  return json({ payoutRun });
+  return Response.json({ payoutRun });
 };
 
 export const action = async ({ request, params }) => {
@@ -83,7 +77,7 @@ export const action = async ({ request, params }) => {
               };
 
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         reason: result.reason,
@@ -93,7 +87,7 @@ export const action = async ({ request, params }) => {
     );
   }
 
-  return json({
+  return Response.json({
     ok: true,
     message:
       intent === "approve"

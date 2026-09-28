@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { authenticate } from "../shopify.server";
 import { processShopifyOrderCancelledSettlement } from "../services/sellerPayments.server.js";
@@ -52,7 +52,7 @@ export const action = async ({ request }) => {
     });
   }
 
-  return json({
+  return Response.json({
     ok: true,
     settlement: {
       ok: Boolean(result.ok),

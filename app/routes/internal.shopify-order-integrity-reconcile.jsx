@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { json } from "@remix-run/node";
+
 
 import { reconcileRecentShopifyOrderIntegrity } from "../services/shopifyOrderIntegrity.server.js";
 import { resolveShopDomain } from "../utils/shopifyAdmin.server.js";
@@ -25,7 +25,7 @@ export async function action({ request }) {
     configuredToken.length < 32 ||
     !tokensMatch(providedToken, configuredToken)
   ) {
-    return json(
+    return Response.json(
       { ok: false, error: "unauthorized" },
       {
         status: 401,
@@ -53,7 +53,7 @@ export async function action({ request }) {
       limit,
       lookbackHours,
     });
-    return json(result, {
+    return Response.json(result, {
       status: result.ok ? 200 : 503,
       headers: { "Cache-Control": "no-store" },
     });
@@ -61,7 +61,7 @@ export async function action({ request }) {
     console.error("Shopify order integrity reconciliation failed:", {
       code: error?.code || error?.name || "error",
     });
-    return json(
+    return Response.json(
       {
         ok: false,
         error: "shopify_order_integrity_reconciliation_failed",
@@ -75,7 +75,7 @@ export async function action({ request }) {
 }
 
 export async function loader() {
-  return json(
+  return Response.json(
     { ok: false, error: "method_not_allowed" },
     {
       status: 405,

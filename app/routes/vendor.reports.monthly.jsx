@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+
+import { Form, useLoaderData } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import { useVendorIdFromMatches } from "../components/vendor/vendorNavigation";
 
@@ -85,7 +85,7 @@ export const loader = async ({ request }) => {
       month,
     });
 
-    return json({
+    return Response.json({
       ...getVendorPublicContext(vendor, store),
       month,
       monthLabel: formatMonthLabel(month),
@@ -97,7 +97,7 @@ export const loader = async ({ request }) => {
   } catch (error) {
     console.error("vendor monthly report loader error:", error);
 
-    return json(
+    return Response.json(
       {
         ...getVendorPublicContext(vendor, store),
         month,

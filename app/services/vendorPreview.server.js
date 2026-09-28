@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import prisma from "../db.server";
 import { serializePublicVendorStorefront } from "../utils/publicVendorStorefront";
 const PREVIEW_HEADERS = {
@@ -111,7 +111,7 @@ export const loadVendorPreview = async ({
   }
   const visibleProducts = filterEligible && deliveryCountry ? storefront.products.filter(product => product.isPurchasable && product.deliveryEligibility?.isAvailable) : storefront.products;
   const unavailableProductCount = storefront.products.filter(product => !product.isPurchasable || !product.deliveryEligibility?.isAvailable).length;
-  return json({
+  return Response.json({
     ...storefront,
     products: visibleProducts,
     visibleProductCount: visibleProducts.length,

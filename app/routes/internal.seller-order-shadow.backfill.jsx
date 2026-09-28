@@ -1,10 +1,10 @@
-import { json } from "@remix-run/node";
+
 
 import { authenticate } from "../shopify.server";
 import { backfillSellerOrderShadowChecks } from "../services/sellerPayments.server.js";
 
 export const loader = async () => {
-  return json(
+  return Response.json(
     { ok: false, message: "Method not allowed." },
     { status: 405, headers: { Allow: "POST" } },
   );
@@ -17,7 +17,7 @@ export const action = async ({ request }) => {
   const confirm = String(formData.get("confirm") || "");
 
   if (confirm !== "backfill") {
-    return json(
+    return Response.json(
       { ok: false, reason: "confirmation_required" },
       { status: 400 },
     );
@@ -29,5 +29,5 @@ export const action = async ({ request }) => {
     retryFailed: formData.get("retryFailed") || false,
   });
 
-  return json(result, { status: result.ok ? 200 : 400 });
+  return Response.json(result, { status: result.ok ? 200 : 400 });
 };

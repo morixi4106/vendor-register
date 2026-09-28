@@ -1,10 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import {
   MARKETPLACE_OPERATOR_ROLES,
@@ -18,7 +13,7 @@ export const loader = async ({ request }) => {
   const { getDomesticMarketplacePilotDashboard } = await import(
     "../services/domesticMarketplacePilot.server.js"
   );
-  return json(await getDomesticMarketplacePilotDashboard());
+  return Response.json(await getDomesticMarketplacePilotDashboard());
 };
 
 export const action = async ({ request }) => {
@@ -62,7 +57,7 @@ export const action = async ({ request }) => {
     result = { ok: false, reason: "unknown_intent" };
   }
 
-  return json(result, { status: result.ok ? 200 : 400 });
+  return Response.json(result, { status: result.ok ? 200 : 400 });
 };
 
 function formatDate(value) {

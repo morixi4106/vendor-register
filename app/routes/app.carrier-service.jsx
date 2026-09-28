@@ -1,5 +1,5 @@
-import { json } from '@remix-run/node';
-import { Form, useActionData, useLoaderData, useNavigation } from '@remix-run/react';
+
+import { Form, useActionData, useLoaderData, useNavigation } from 'react-router';
 
 import { authenticate } from '../shopify.server.js';
 import {
@@ -11,7 +11,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const appUrl = process.env.APP_URL || 'https://low-alpine-hosts-contributed.trycloudflare.com';
 
-  return json({
+  return Response.json({
     shopDomain: session.shop,
     appUrl,
     callbackUrl: getCarrierCallbackUrl(appUrl),
@@ -26,7 +26,7 @@ export const action = async ({ request }) => {
     appUrl,
   });
 
-  return json(result);
+  return Response.json(result);
 };
 
 export default function CarrierServicePage() {

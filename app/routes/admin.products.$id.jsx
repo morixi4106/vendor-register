@@ -1,5 +1,5 @@
 import { resolveDutyCategory } from "../utils/dutyCategory";
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import prisma from "../db.server";
 import { calculateProductPriceResult } from "../utils/buildCalculatedPrice";
 import { buildPriceSnapshot } from "../utils/priceSnapshot";
@@ -206,7 +206,7 @@ export const loader = async ({
       priceApplyLogs = Array.from(new Map([...directPriceApplyLogs, ...unresolvedPriceApplyLogs].sort((a, b) => new Date(b.attemptedAt) - new Date(a.attemptedAt)).map(log => [log.id, log])).values()).slice(0, 10);
     }
   }
-  return json({
+  return Response.json({
     product,
     shopifyPrice,
     needsReconnect,
@@ -232,7 +232,7 @@ export const action = async ({
     const intent = String(formData.get("intent") || "");
     const productId = String(formData.get("productId") || "");
     if (!productId) {
-      return json({
+      return Response.json({
         ok: false,
         error: "productId がありません"
       }, {
@@ -250,7 +250,7 @@ export const action = async ({
       }
     });
     if (!product) {
-      return json({
+      return Response.json({
         ok: false,
         error: "商品が見つかりません"
       }, {
@@ -262,7 +262,7 @@ export const action = async ({
         variantCount: product.shopifyVariantCount ?? (product.shopifyVariantId ? 1 : null)
       });
       if (!shippingProfile.ok) {
-        return json({
+        return Response.json({
           ok: false,
           error: shippingProfile.error
         }, {
@@ -300,7 +300,7 @@ export const action = async ({
     if (intent === "apply-country-template") {
       const template = await resolveDeliveryPolicyTemplate(formData.get("countryPolicyTemplate"));
       if (!template) {
-        return json({
+        return Response.json({
           ok: false,
           error: "配送先テンプレートが不正です"
         }, {
@@ -331,7 +331,7 @@ export const action = async ({
       const templateDescription = String(formData.get("templateDescription") || "").trim();
       const productEuStatus = String(formData.get("productEuStatus") || "DISABLED").trim().toUpperCase();
       if (!templateName) {
-        return json({
+        return Response.json({
           ok: false,
           error: "テンプレート名を入力してください"
         }, {
@@ -339,7 +339,7 @@ export const action = async ({
         });
       }
       if (!PRODUCT_EU_STATUS_VALUES.has(productEuStatus)) {
-        return json({
+        return Response.json({
           ok: false,
           error: "EU販売ステータスが不正です"
         }, {
@@ -373,7 +373,7 @@ export const action = async ({
         });
       } catch (error) {
         if (isMissingDeliveryTemplateTableError(error)) {
-          return json({
+          return Response.json({
             ok: false,
             error: "配送先テンプレート用のDBマイグレーションがまだ反映されていません。Renderのpre-deployでマイグレーションを通してから再度保存してください。"
           }, {
@@ -387,7 +387,7 @@ export const action = async ({
     if (intent === "update-eu-policy") {
       const productEuStatus = String(formData.get("productEuStatus") || "DISABLED").trim().toUpperCase();
       if (!PRODUCT_EU_STATUS_VALUES.has(productEuStatus)) {
-        return json({
+        return Response.json({
           ok: false,
           error: "EU販売ステータスが不正です"
         }, {
@@ -423,7 +423,7 @@ export const action = async ({
     }
     if (intent === "apply-price") {
       if (!productWithResolvedShopDomain.shopifyProductId) {
-        return json({
+        return Response.json({
           ok: false,
           error: "Shopify商品IDがありません"
         }, {
@@ -435,7 +435,7 @@ export const action = async ({
       });
       const refreshData = await refreshRes.json();
       if (!refreshRes.ok || !refreshData?.ok) {
-        return json({
+        return Response.json({
           ok: false,
           error: refreshData?.error || "為替更新に失敗しました"
         }, {
@@ -449,7 +449,7 @@ export const action = async ({
         shopDomain: productWithResolvedShopDomain.shopDomain,
         localProductId: productWithResolvedShopDomain.id
       });
-      return json({
+      return Response.json({
         ok: true,
         message: `為替更新後に価格を更新しました（¥${result.oldPrice} → ¥${result.newPrice}）`,
         priceApplied: true,
@@ -581,7 +581,7 @@ export const action = async ({
       });
       return redirect(`/admin/products/${productId}`);
     }
-    return json({
+    return Response.json({
       ok: false,
       error: "不明な intent です"
     }, {
@@ -592,7 +592,7 @@ export const action = async ({
     const message = error instanceof Error ? error.message : "不明なエラーです";
     const needsReconnect = isReconnectableShopifyError(message);
     const showInternalPriceDebug = shouldShowInternalPriceDebug();
-    return json({
+    return Response.json({
       ok: false,
       error: showInternalPriceDebug ? message : getPublicAdminActionErrorMessage(needsReconnect),
       needsReconnect

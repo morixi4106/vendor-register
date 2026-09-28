@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { useActionData, useLoaderData, useNavigation } from "react-router";
 import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
 import prisma from "../db.server";
@@ -47,7 +47,7 @@ export const loader = async ({ request }) => {
     }
   }
 
-  return json({ returnTo, targetVendorId });
+  return Response.json({ returnTo, targetVendorId });
 };
 
 export const action = async ({ request }) => {
@@ -68,14 +68,14 @@ export const action = async ({ request }) => {
     const isAdminEmail = isConfiguredAdminEmail(email);
 
     if (!email) {
-      return json(
+      return Response.json(
         { ok: false, step: "email", error: "メールアドレスを入力してください。", returnTo },
         { status: 400 }
       );
     }
 
     if (isAdminEmail && !targetVendorId) {
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "email",
@@ -100,7 +100,7 @@ export const action = async ({ request }) => {
     });
 
     if (!vendor) {
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "email",
@@ -140,7 +140,7 @@ export const action = async ({ request }) => {
       if (error) {
         console.error("❌ resend error:", error);
 
-        return json(
+        return Response.json(
           {
             ok: false,
             step: "email",
@@ -153,7 +153,7 @@ export const action = async ({ request }) => {
     } catch (e) {
       console.error("❌ verify mail error:", e);
 
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "email",
@@ -164,7 +164,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    return json({
+    return Response.json({
       ok: true,
       step: "code",
       message: "確認コードを送信しました。",
@@ -181,7 +181,7 @@ export const action = async ({ request }) => {
     const isAdminEmail = isConfiguredAdminEmail(email);
 
     if (!email || !vendorId || !code) {
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "code",
@@ -203,7 +203,7 @@ export const action = async ({ request }) => {
       vendor.status !== "active" ||
       (!isAdminEmail && vendor.managementEmail.toLowerCase() !== email)
     ) {
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "code",
@@ -228,7 +228,7 @@ export const action = async ({ request }) => {
     });
 
     if (!loginCode) {
-      return json(
+      return Response.json(
         {
           ok: false,
           step: "code",
@@ -265,7 +265,7 @@ export const action = async ({ request }) => {
     });
   }
 
-  return json(
+  return Response.json(
     { ok: false, step: "email", error: "不正な操作です。", returnTo },
     { status: 400 }
   );

@@ -5,8 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import compression from "compression";
 import express from "express";
-import { createRequestHandler } from "@remix-run/express";
-import { installGlobals } from "@remix-run/node";
+import { createRequestHandler } from "@react-router/express";
 
 import { createSafeRequestLogger } from "./app/utils/requestLog.server.js";
 
@@ -17,10 +16,6 @@ const buildPath = path.resolve("./build/server/index.js");
 const buildUrl = pathToFileURL(buildPath);
 buildUrl.searchParams.set("t", String(statSync(buildPath).mtimeMs));
 const build = await import(buildUrl.href);
-
-installGlobals({
-  nativeFetch: build.future.v3_singleFetch,
-});
 
 const app = express();
 app.disable("x-powered-by");

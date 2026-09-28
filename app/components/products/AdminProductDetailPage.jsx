@@ -1,4 +1,4 @@
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useLoaderData } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { CATEGORY_DELIVERY_POLICY_TEMPLATES, DELIVERY_COUNTRY_GROUPS, DELIVERY_COUNTRY_OPTIONS, getRecommendedDeliveryPolicyTemplate, normalizeProductCountryPolicy } from "../../utils/productCountryPolicy";
 import { PRODUCT_SHIPPING_METHOD, PRODUCT_SHIPPING_METHOD_OPTIONS, getProductShippingMethodLabel, millimetersToCentimeters } from "../../utils/productShippingProfile";

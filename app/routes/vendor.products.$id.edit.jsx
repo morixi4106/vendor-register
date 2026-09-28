@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { useActionData, useLoaderData, useNavigation } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
@@ -133,7 +133,7 @@ export const loader = async ({ request, params }) => {
     throw new Response(COPY.productNotFound, { status: 404 });
   }
 
-  return json({
+  return Response.json({
     vendor: {
       id: vendor.id,
     },
@@ -150,13 +150,13 @@ export const action = async ({ request, params }) => {
     const { vendor, store } = await requireVendorContext(request);
 
     if (!store) {
-      return json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
+      return Response.json({ ok: false, error: COPY.storeNotFound }, { status: 404 });
     }
 
     const productId = String(params.id || "");
 
     if (!productId) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.productIdRequired },
         { status: 400 }
       );
@@ -168,7 +168,7 @@ export const action = async ({ request, params }) => {
     });
 
     if (!product || product.vendorStoreId !== store.id) {
-      return json({ ok: false, error: COPY.productNotFound }, { status: 404 });
+      return Response.json({ ok: false, error: COPY.productNotFound }, { status: 404 });
     }
 
     const formData = await request.formData();
@@ -195,14 +195,14 @@ export const action = async ({ request, params }) => {
     const complianceProfile = productComplianceProfileFromFormData(formData);
 
     if (!shippingProfile.ok) {
-      return json({ ok: false, error: shippingProfile.error }, { status: 400 });
+      return Response.json({ ok: false, error: shippingProfile.error }, { status: 400 });
     }
 
     if (shippingProfile.data.internationalShippingMethod === "AIR_PACKET") {
       const customsValidation =
         validateInternationalCustomsProfile(complianceProfile);
       if (!customsValidation.ok) {
-        return json(
+        return Response.json(
           {
             ok: false,
             error:
@@ -214,34 +214,34 @@ export const action = async ({ request, params }) => {
     }
 
     if (!ALLOWED_CURRENCIES.includes(costCurrency)) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.unsupportedCurrency },
         { status: 400 }
       );
     }
 
     if (!name) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.productNameRequired },
         { status: 400 }
       );
     }
 
     if (!category) {
-      return json(
+      return Response.json(
         { ok: false, error: COPY.categoryRequired },
         { status: 400 },
       );
     }
 
     if (!priceRaw) {
-      return json({ ok: false, error: COPY.priceRequired }, { status: 400 });
+      return Response.json({ ok: false, error: COPY.priceRequired }, { status: 400 });
     }
 
     const costAmount = Number(priceRaw);
 
     if (!Number.isFinite(costAmount) || costAmount < 0) {
-      return json({ ok: false, error: COPY.invalidPrice }, { status: 400 });
+      return Response.json({ ok: false, error: COPY.invalidPrice }, { status: 400 });
     }
 
     const imageFile = formData.get("image");
@@ -423,7 +423,7 @@ export const action = async ({ request, params }) => {
       ? COPY.reconnectRequired
       : COPY.updateFailed;
 
-    return json({ ok: false, error: safeError }, { status: 500 });
+    return Response.json({ ok: false, error: safeError }, { status: 500 });
   }
 };
 

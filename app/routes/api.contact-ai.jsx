@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { json } from "@remix-run/node";
+
 import { Resend } from "resend";
 
 import prisma from "../db.server.js";
@@ -31,34 +31,34 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   const origin = getAllowedOrigin(request);
-  if (!origin) return json({ ok: false, error: "origin_not_allowed" }, { status: 403 });
+  if (!origin) return Response.json({ ok: false, error: "origin_not_allowed" }, { status: 403 });
   const headers = corsHeaders(origin);
 
   if (request.method !== "POST") {
-    return json(
+    return Response.json(
       { ok: false, error: "method_not_allowed" },
       { status: 405, headers: { ...headers, Allow: "POST, OPTIONS" } },
     );
   }
   if (!String(request.headers.get("content-type") || "").includes("application/json")) {
-    return json({ ok: false, error: "invalid_content_type" }, { status: 415, headers });
+    return Response.json({ ok: false, error: "invalid_content_type" }, { status: 415, headers });
   }
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (contentLength > MAX_BODY_BYTES) {
-    return json({ ok: false, error: "request_too_large" }, { status: 413, headers });
+    return Response.json({ ok: false, error: "request_too_large" }, { status: 413, headers });
   }
 
   try {
     const body = await request.json();
     if (String(body?.website || body?.company || "").trim()) {
-      return json({ ok: true, accepted: true }, { headers });
+      return Response.json({ ok: true, accepted: true }, { headers });
     }
     const name = normalizeField(body?.name, 120);
     const email = normalizeField(body?.email, 254).toLowerCase();
     const phone = normalizeField(body?.phone, 40);
     const message = normalizeField(body?.message, 4_000);
     if (!name || !EMAIL_PATTERN.test(email) || !message) {
-      return json({ ok: false, error: "invalid_fields" }, { status: 400, headers });
+      return Response.json({ ok: false, error: "invalid_fields" }, { status: 400, headers });
     }
     const submissionKey = crypto
       .createHash("sha256")
@@ -83,7 +83,7 @@ export const action = async ({ request }) => {
         globalHourStatus.ok ? 0 : globalHourStatus.retryAfterSeconds,
         globalDayStatus.ok ? 0 : globalDayStatus.retryAfterSeconds,
       );
-      return json(
+      return Response.json(
         { ok: false, error: "temporarily_unavailable" },
         { status: 429, headers: { ...headers, "Retry-After": String(retryAfter) } },
       );
@@ -106,7 +106,7 @@ export const action = async ({ request }) => {
         ipLimit.ok ? 0 : ipLimit.retryAfterSeconds,
         emailLimit.ok ? 0 : emailLimit.retryAfterSeconds,
       );
-      return json(
+      return Response.json(
         { ok: false, error: "rate_limited" },
         { status: 429, headers: { ...headers, "Retry-After": String(retryAfter) } },
       );
@@ -133,7 +133,7 @@ export const action = async ({ request }) => {
         hourlyCount: globalHourLimit.count,
         dailyCount: globalDayLimit.count,
       });
-      return json(
+      return Response.json(
         { ok: false, error: "temporarily_unavailable" },
         { status: 429, headers: { ...headers, "Retry-After": String(retryAfter) } },
       );
@@ -160,7 +160,7 @@ export const action = async ({ request }) => {
       },
     });
     if (await isAutomatedEmailHoldActive()) {
-      return json(
+      return Response.json(
         {
           ok: true,
           accepted: true,
@@ -200,13 +200,13 @@ export const action = async ({ request }) => {
     );
     if (adminResult?.error) throw new Error(adminResult.error.message || "admin_email_failed");
 
-    return json(
+    return Response.json(
       { ok: true, replyType, matchedRuleId: null },
       { headers },
     );
   } catch (error) {
     console.error("api.contact-ai error:", error);
-    return json({ ok: false, error: "internal_server_error" }, { status: 500, headers });
+    return Response.json({ ok: false, error: "internal_server_error" }, { status: 500, headers });
   }
 };
 

@@ -1,5 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import {
   Badge,
   BlockStack,
@@ -122,7 +122,7 @@ export const loader = async ({ request }) => {
     }),
   ]);
 
-  return json(
+  return Response.json(
     { rows, evidenceRows },
     { headers: { "Cache-Control": "private, no-store" } },
   );
@@ -141,7 +141,7 @@ export const action = async ({ request }) => {
       const result = await syncInternationalSaleGate({
         shopDomain: session?.shop,
       });
-      return json({
+      return Response.json({
         ok: true,
         message: `Shopifyへ同期し、読み戻しました。販売可能国: ${
           result.allowedCountries.join(", ") || "なし"
@@ -197,7 +197,7 @@ export const action = async ({ request }) => {
       });
     }
   } catch (error) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: error instanceof Error ? error.message : "保存できませんでした。",

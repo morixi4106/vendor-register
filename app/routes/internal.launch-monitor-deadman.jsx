@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { readLaunchMonitorDeadmanState } from "../services/launchMonitor.server.js";
 import {
@@ -13,7 +13,7 @@ const RESPONSE_HEADERS = {
 };
 
 export const loader = () =>
-  json(
+  Response.json(
     { ok: false, error: "method_not_allowed" },
     { status: 405, headers: { ...RESPONSE_HEADERS, Allow: "POST" } },
   );
@@ -26,12 +26,12 @@ export async function action({ request }) {
 
   try {
     const state = await readLaunchMonitorDeadmanState();
-    return json(state, { status: 200, headers: RESPONSE_HEADERS });
+    return Response.json(state, { status: 200, headers: RESPONSE_HEADERS });
   } catch (error) {
     console.error("launch monitor deadman check failed", {
       code: error?.code || error?.name || "deadman_check_failed",
     });
-    return json(
+    return Response.json(
       { ok: false, error: "deadman_check_failed" },
       { status: 500, headers: RESPONSE_HEADERS },
     );

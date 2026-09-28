@@ -5,7 +5,7 @@ largest operational risk. It describes ownership boundaries, not every file.
 
 ## Route boundary
 
-Remix route files own HTTP concerns only:
+React Router route files own HTTP concerns only:
 
 - authenticate the request;
 - parse and validate request parameters;

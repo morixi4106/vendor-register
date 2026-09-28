@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
@@ -7,7 +7,7 @@ const RESPONSE_HEADERS = {
 };
 
 export const loader = async () =>
-  json(
+  Response.json(
     {
       ok: false,
       reason: "method_not_allowed",
@@ -24,7 +24,7 @@ export const loader = async () =>
 export const action = async ({ request }) => {
   await requireShopifyAdmin(request);
 
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: "legacy_product_create_retired",

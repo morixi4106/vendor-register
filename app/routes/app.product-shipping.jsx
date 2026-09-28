@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+
+import { Link, useLoaderData } from "react-router";
 import {
   Badge,
   BlockStack,
@@ -81,7 +81,7 @@ export const loader = async ({ request }) => {
     profileStatus: classifyShippingProfile(product),
   }));
 
-  return json({
+  return Response.json({
     rows,
     truncated,
     summary: {

@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+
+import { Link, useLoaderData } from "react-router";
 
 import prisma from "../db.server.js";
 import { buildLaunchMonitorGuide } from "../services/launchMonitorGuide.js";
@@ -16,7 +16,7 @@ export async function loader({ request }) {
     enabled: monitorEnabled,
     metadata: heartbeat?.metadataJson || {},
   });
-  return json(
+  return Response.json(
     { heartbeat, guide },
     { headers: { "Cache-Control": "private, no-store" } },
   );

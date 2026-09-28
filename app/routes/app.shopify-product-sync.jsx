@@ -1,10 +1,5 @@
-import { json, redirect } from "@remix-run/node";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+import { redirect } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import {
   Badge,
   BlockStack,
@@ -52,7 +47,7 @@ export const loader = async ({ request }) => {
     }),
   ]);
 
-  return json({ issues, stores, unresolvedCount, resolvedCount });
+  return Response.json({ issues, stores, unresolvedCount, resolvedCount });
 };
 
 export const action = async ({ request }) => {
@@ -68,14 +63,14 @@ export const action = async ({ request }) => {
       const checkoutPolicies = await backfillMarketplaceCheckoutPolicies(
         session.shop,
       );
-      return json({
+      return Response.json({
         ok: checkoutPolicies.ok,
         message: `確認 ${result.scanned}件 / 新規 ${result.created}件 / 更新 ${result.updated}件 / 要確認 ${result.unresolved}件`,
         checkoutPolicies,
       });
     } catch (error) {
       console.error("Shopify product catalog reconciliation failed:", error);
-      return json(
+      return Response.json(
         {
           ok: false,
           message: "Shopify商品一覧の同期に失敗しました。接続状態を確認してください。",
@@ -90,7 +85,7 @@ export const action = async ({ request }) => {
     const vendorStoreId = String(formData.get("vendorStoreId") || "").trim();
 
     if (!issueId || !vendorStoreId) {
-      return json(
+      return Response.json(
         { ok: false, message: "店舗を選択してください。" },
         { status: 400 },
       );
@@ -102,7 +97,7 @@ export const action = async ({ request }) => {
     });
 
     if (!result.ok) {
-      return json(
+      return Response.json(
         { ok: false, message: "商品の店舗紐付けに失敗しました。" },
         { status: 400 },
       );
@@ -116,7 +111,7 @@ export const action = async ({ request }) => {
     return redirect("/app/shopify-product-sync");
   }
 
-  return json({ ok: false, message: "不正な操作です。" }, { status: 400 });
+  return Response.json({ ok: false, message: "不正な操作です。" }, { status: 400 });
 };
 
 function formatDateTime(value) {

@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import {
   buildShippingV2QuoteRequest,
@@ -940,7 +940,7 @@ export function createCarrierShippingRatesLoader({
       request,
     });
 
-    return json({
+    return Response.json({
       ok: true,
       rates: [],
       service: CARRIER_SERVICE_NAME,
@@ -978,7 +978,7 @@ export function createCarrierShippingRatesAction({
         message: "body_read_failed",
         details,
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     const debugInfo = buildRequestDebugInfo({ request, rawBody });
@@ -1001,7 +1001,7 @@ export function createCarrierShippingRatesAction({
         message: "empty_body",
         details: debugInfo,
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     let body;
@@ -1023,7 +1023,7 @@ export function createCarrierShippingRatesAction({
           error: error instanceof Error ? error.message : String(error),
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     const rate = isPlainObject(body?.rate) ? body.rate : {};
@@ -1052,7 +1052,7 @@ export function createCarrierShippingRatesAction({
           error: error instanceof Error ? error.message : String(error),
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     if (!ownershipResolution.ok) {
@@ -1072,7 +1072,7 @@ export function createCarrierShippingRatesAction({
           vendorStoreIds: ownershipResolution.vendorStoreIds || [],
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     if (ownershipResolution.requiresMarketplaceCheckout) {
@@ -1090,7 +1090,7 @@ export function createCarrierShippingRatesAction({
           governedProductCount: ownershipResolution.governedProductCount,
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     if (ownershipResolution.saleEligibilityFailures?.length > 0) {
@@ -1108,7 +1108,7 @@ export function createCarrierShippingRatesAction({
           failures: ownershipResolution.saleEligibilityFailures.slice(0, 20),
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
 
     quoteRequest = ownershipResolution.quoteRequest;
@@ -1152,7 +1152,7 @@ export function createCarrierShippingRatesAction({
             quoteRequest: quoteRequestSummary,
           },
         });
-        return json({ rates: [] });
+        return Response.json({ rates: [] });
       }
 
       const quoteResponse = await fetchShippingV2QuoteImpl({
@@ -1188,7 +1188,7 @@ export function createCarrierShippingRatesAction({
           ratesResponse,
         },
       });
-      return json(ratesResponse);
+      return Response.json(ratesResponse);
     } catch (error) {
       logError?.("carrier shipping rates quote_error:", {
         requestId,
@@ -1205,7 +1205,7 @@ export function createCarrierShippingRatesAction({
           error: error instanceof Error ? error.message : String(error),
         },
       });
-      return json({ rates: [] });
+      return Response.json({ rates: [] });
     }
   };
 }

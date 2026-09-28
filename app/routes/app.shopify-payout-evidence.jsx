@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import {
   approveShopifyPayoutEvidence,
@@ -41,7 +35,7 @@ export async function loader({ request }) {
         releaseId: release.releaseId,
       })
     : [];
-  return json(
+  return Response.json(
     {
       release: {
         configured: release.configured,
@@ -106,7 +100,7 @@ export async function action({ request }) {
     result = { ok: false, reason: "unsupported_intent" };
   }
 
-  return json(result, {
+  return Response.json(result, {
     status: result.ok ? 200 : 400,
     headers: privateHeaders(),
   });

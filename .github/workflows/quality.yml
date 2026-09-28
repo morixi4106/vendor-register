@@ -101,7 +101,7 @@ jobs:
           --no-color
           --skip-dependencies-installation
 
-      - name: Build Remix app for artifact verification
+      - name: Build React Router app for artifact verification
         run: npm run build
 
       - name: Remove generated Shopify manifests

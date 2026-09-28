@@ -1,10 +1,4 @@
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import { withdrawalDetailStyles } from "./WithdrawalDetailPage.styles.js";
 

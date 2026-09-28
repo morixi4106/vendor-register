@@ -1,4 +1,4 @@
-import { createCookie, json, redirect } from "@remix-run/node";
+import { createCookie, redirect } from "react-router";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
@@ -298,7 +298,7 @@ export const loader = async ({
         amount
       });
     }
-    return json({
+    return Response.json({
       vendor: {
         id: vendor.id,
         storeName: vendor.storeName,

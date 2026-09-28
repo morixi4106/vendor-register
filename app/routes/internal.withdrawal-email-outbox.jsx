@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import crypto from "node:crypto";
 
 import {
@@ -15,7 +15,7 @@ export async function action({ request }) {
     request.headers.get("authorization") || "",
   ).replace(/^Bearer\s+/i, "");
   if (!configuredToken || !tokensMatch(providedToken, configuredToken)) {
-    return json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const formData = await request.formData().catch(() => new FormData());
   const url = new URL(request.url);
@@ -39,7 +39,7 @@ export async function action({ request }) {
         failed: result.failed,
       },
     });
-    return json(result, { status: result.ok ? 200 : 207 });
+    return Response.json(result, { status: result.ok ? 200 : 207 });
   } catch (error) {
     await recordOperationalHeartbeatSafely({
       key: WITHDRAWAL_EMAIL_OUTBOX_HEARTBEAT_KEY,
@@ -47,7 +47,7 @@ export async function action({ request }) {
       errorCode: String(error?.message || error || "worker_failed"),
     });
     console.error("withdrawal email outbox worker failed:", error);
-    return json(
+    return Response.json(
       { ok: false, error: "withdrawal_email_outbox_worker_failed" },
       { status: 500 },
     );
@@ -64,5 +64,5 @@ function tokensMatch(provided, expected) {
 }
 
 export async function loader() {
-  return json({ ok: false, error: "method_not_allowed" }, { status: 405 });
+  return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405 });
 }

@@ -1,6 +1,6 @@
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { randomUUID } from "node:crypto";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useLoaderData } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -76,7 +76,7 @@ export const loader = async ({ request }) => {
     }),
   );
 
-  return json(
+  return Response.json(
     {
       shopDomain,
       embedded: isEmbeddedRequest(request),
@@ -101,7 +101,7 @@ export const action = async ({ request }) => {
 
   if (!result.ok) {
     const locale = formData.get("correspondenceLocale") || "en-GB";
-    return json(
+    return Response.json(
       {
         ok: false,
         errors: result.errors || { form: getWithdrawalDictionary(locale).errors.form },

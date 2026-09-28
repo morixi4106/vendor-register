@@ -1,5 +1,3 @@
-/* global globalThis */
-
 const STORE_KEY = Symbol.for('vendor-register.shippingDiagnostics');
 const DEFAULT_MAX_EVENTS = 200;
 

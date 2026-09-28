@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import ProductionReadinessPage from "../components/readiness/ProductionReadinessPage.jsx";
 import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../services/checkoutValidationLiveProbe.js";
 import {
@@ -73,7 +73,7 @@ export const loader = async ({ request }) => {
     actorKey: operator.actorKey,
   });
 
-  return json({ ...result, liveProbeChallenge });
+  return Response.json({ ...result, liveProbeChallenge });
 };
 
 export const action = async ({ request }) => {
@@ -112,7 +112,7 @@ export const action = async ({ request }) => {
         },
       );
       if (!challenge.ok) {
-        return json(
+        return Response.json(
           {
             operationalAttestation: {
               ok: false,
@@ -154,7 +154,7 @@ export const action = async ({ request }) => {
       confirmedBy: operator.actorKey,
       metadataJson,
     });
-    return json(
+    return Response.json(
       { operationalAttestation: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -167,7 +167,7 @@ export const action = async ({ request }) => {
       reason: formData.get("reason"),
       changedBy: operator.actorKey,
     });
-    return json(
+    return Response.json(
       { operationalControl: result },
       { status: result.ok ? 200 : 500 },
     );
@@ -181,7 +181,7 @@ export const action = async ({ request }) => {
       changedBy: operator.actorKey,
       releaseEvidenceReference: formData.get("releaseEvidenceReference"),
     });
-    return json(
+    return Response.json(
       { operationalControl: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -200,7 +200,7 @@ export const action = async ({ request }) => {
       changedBy: operator.actorKey,
       releaseEvidenceReference: formData.get("releaseEvidenceReference"),
     });
-    return json(
+    return Response.json(
       { automatedEmailControl: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -223,7 +223,7 @@ export const action = async ({ request }) => {
         shopDomain: session.shop,
       },
     );
-    return json(
+    return Response.json(
       { legalEmailControl: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -235,7 +235,7 @@ export const action = async ({ request }) => {
     const result = await prepareKomojuLimitedLaunchBaseline({
       shopDomain: session.shop,
     });
-    return json(
+    return Response.json(
       { komojuLimitedLaunchBaseline: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -246,7 +246,7 @@ export const action = async ({ request }) => {
       await import("../services/platformDirectCheckoutMode.server.js");
     const mode = inspectPlatformDirectCheckoutMode();
     if (!mode.standardDirectReady) {
-      return json(
+      return Response.json(
         {
           checkoutValidation: {
             ok: false,
@@ -261,7 +261,7 @@ export const action = async ({ request }) => {
     const result = await ensureMarketplaceCheckoutValidation(session.shop, {
       enabled: false,
     });
-    return json(
+    return Response.json(
       { checkoutValidation: result },
       { status: result.ok ? 200 : 400 },
     );
@@ -279,7 +279,7 @@ export const action = async ({ request }) => {
       });
       const result = await activateMarketplaceCheckoutGate(session.shop);
 
-      return json({
+      return Response.json({
         checkoutGate: {
           ok: true,
           catalog,
@@ -288,7 +288,7 @@ export const action = async ({ request }) => {
       });
     } catch (error) {
       console.error("Marketplace checkout gate activation failed:", error);
-      return json(
+      return Response.json(
         {
           checkoutGate: {
             ok: false,
@@ -325,18 +325,18 @@ export const action = async ({ request }) => {
         session.shop,
       );
       if (!inspection.ok) {
-        return json({ checkoutValidation: inspection }, { status: 400 });
+        return Response.json({ checkoutValidation: inspection }, { status: 400 });
       }
       if (!inspection.exists) {
         const staged = await stageMarketplaceCheckoutValidation(session.shop);
         if (!staged.ok || staged.validation?.enabled !== false) {
-          return json({ checkoutValidation: staged }, { status: 400 });
+          return Response.json({ checkoutValidation: staged }, { status: 400 });
         }
       }
 
       const backfill = await backfillMarketplaceCheckoutPolicies(session.shop);
       if (!backfill.ok) {
-        return json(
+        return Response.json(
           {
             checkoutValidation: {
               ok: false,
@@ -358,7 +358,7 @@ export const action = async ({ request }) => {
             : "ALLOWED",
       });
       if (!shopControl.ok) {
-        return json(
+        return Response.json(
           {
             checkoutValidation: {
               ok: false,
@@ -374,7 +374,7 @@ export const action = async ({ request }) => {
         const stagedInspection = await inspectMarketplaceCheckoutValidation(
           session.shop,
         );
-        return json(
+        return Response.json(
           {
             checkoutValidation: {
               ...stagedInspection,
@@ -399,7 +399,7 @@ export const action = async ({ request }) => {
       const activationEvidence =
         inspectCheckoutValidationActivationEvidence(operationalReadiness);
       if (!activationEvidence.ok) {
-        return json(
+        return Response.json(
           {
             checkoutValidation: {
               ok: false,
@@ -414,7 +414,7 @@ export const action = async ({ request }) => {
         );
       }
       const result = await ensureMarketplaceCheckoutValidation(session.shop);
-      return json(
+      return Response.json(
         {
           checkoutValidation: {
             ...result,
@@ -429,7 +429,7 @@ export const action = async ({ request }) => {
         "Marketplace checkout validation activation failed:",
         error,
       );
-      return json(
+      return Response.json(
         {
           checkoutValidation: {
             ok: false,
@@ -450,7 +450,7 @@ export const action = async ({ request }) => {
   const appUrl = process.env.APP_URL;
 
   if (!appUrl) {
-    return json(
+    return Response.json(
       {
         carrierService: {
           ok: false,
@@ -466,7 +466,7 @@ export const action = async ({ request }) => {
     appUrl,
   });
 
-  return json({
+  return Response.json({
     carrierService: {
       ok: true,
       shopDomain: session.shop,

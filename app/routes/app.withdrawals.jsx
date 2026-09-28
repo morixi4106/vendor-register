@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
 import { getWithdrawalStatusLabel } from "../utils/withdrawalStatus.js";
@@ -171,7 +171,7 @@ export const loader = async ({
       }
     })]);
     const serializedRequests = requests.map(serializeWithdrawalRequest).sort(sortWithdrawalRequestsForOperations);
-    return json({
+    return Response.json({
       available: true,
       status,
       eligibilityStatus,
@@ -204,7 +204,7 @@ export const loader = async ({
     });
   } catch (error) {
     console.error("withdrawals list load error:", error);
-    return json({
+    return Response.json({
       available: false,
       status,
       eligibilityStatus,
@@ -242,7 +242,7 @@ export const action = async ({
   const intent = String(formData.get("intent") || "");
   const withdrawalRequestId = String(formData.get("withdrawalRequestId") || "").trim();
   if (!withdrawalRequestId) {
-    return json({
+    return Response.json({
       ok: false,
       message: "撤回申請IDが見つかりません。"
     }, {
@@ -257,7 +257,7 @@ export const action = async ({
     prismaClient: prisma,
     emailServices
   });
-  return json({
+  return Response.json({
     ok: result.ok,
     message: result.message
   }, {

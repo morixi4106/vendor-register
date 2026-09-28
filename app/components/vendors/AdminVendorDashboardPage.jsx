@@ -1,4 +1,4 @@
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import { useMemo, useState } from "react";
 function badgeClass(text) {
   if (text === "対応要" || text === "在庫切れ" || text === "却下" || text === "保留") {

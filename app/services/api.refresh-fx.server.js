@@ -1,4 +1,4 @@
-import { json } from '@remix-run/node';
+
 import prisma from '../db.server.js';
 import { upsertFxRate } from '../utils/fxRates.server.js';
 import { applyProductPrice } from '../utils/applyProductPrice.server.js';
@@ -15,7 +15,7 @@ function normalizeBooleanFlag(value) {
 }
 
 function createErrorResponse(error, status = 500) {
-  return json(
+  return Response.json(
     {
       ok: false,
       error,
@@ -259,7 +259,7 @@ export function createRefreshFxAction({
       const requestUrl = new URL(request.url);
       const autoApplyPrices = normalizeBooleanFlag(requestUrl.searchParams.get('autoApplyPrices'));
 
-      return json(await resolvedRunRefreshFxImpl({ autoApplyPrices }));
+      return Response.json(await resolvedRunRefreshFxImpl({ autoApplyPrices }));
     } catch (error) {
       return createErrorResponse(
         error instanceof Error ? error.message : 'Unknown error while refreshing FX rates',
@@ -286,7 +286,7 @@ export function createRefreshFxCronHandler({
 
   return async function handler() {
     try {
-      return json(await resolvedRunRefreshFxImpl({ autoApplyPrices: true }));
+      return Response.json(await resolvedRunRefreshFxImpl({ autoApplyPrices: true }));
     } catch (error) {
       return createErrorResponse(
         error instanceof Error ? error.message : 'Unknown error while refreshing FX rates',

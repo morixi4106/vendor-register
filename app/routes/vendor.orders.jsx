@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState } from "react";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
@@ -98,7 +92,7 @@ export const loader = async ({ request }) => {
     vendorHandle: vendor.handle,
   });
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     ordersAccess: {
       status: accessState.status,
@@ -118,7 +112,7 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent !== "register-shipment") {
-    return json(
+    return Response.json(
       {
         shipmentResult: {
           ok: false,
@@ -132,7 +126,7 @@ export const action = async ({ request }) => {
   const shipment = parseShipmentRegistrationInput(formData);
 
   if (!shipment.ok) {
-    return json(
+    return Response.json(
       {
         shipmentResult: {
           ok: false,
@@ -149,7 +143,7 @@ export const action = async ({ request }) => {
     shipment,
   });
 
-  return json(
+  return Response.json(
     {
       shipmentResult: result.ok
         ? {

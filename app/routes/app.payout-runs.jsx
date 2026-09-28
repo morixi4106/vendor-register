@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import {
   Form,
   Link,
@@ -7,7 +7,7 @@ import {
   useLoaderData,
   useLocation,
   useNavigation,
-} from "@remix-run/react";
+} from "react-router";
 
 import {
   MARKETPLACE_OPERATOR_ROLES,
@@ -52,7 +52,7 @@ export const loader = async ({ request }) => {
       })),
   );
 
-  return json({
+  return Response.json({
     sellers,
     payoutRuns,
     repairCandidates,
@@ -72,7 +72,7 @@ export const action = async ({ request }) => {
   if (intent === "repair_negative_balance") {
     const confirm = String(formData.get("confirm") || "");
     if (confirm !== "repair_negative_balance") {
-      return json(
+      return Response.json(
         {
           ok: false,
           intent,
@@ -97,7 +97,7 @@ export const action = async ({ request }) => {
     });
 
     if (!result.ok) {
-      return json(
+      return Response.json(
         {
           ok: false,
           intent,
@@ -108,7 +108,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    return json({
+    return Response.json({
       ok: true,
       intent,
       repaired: result.repaired,
@@ -130,7 +130,7 @@ export const action = async ({ request }) => {
   });
 
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         intent,

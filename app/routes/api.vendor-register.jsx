@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 
 import prisma from "../db.server.js";
 import { vendorRegistrationTargetCookie } from "../services/vendorManagement.server.js";
@@ -59,7 +59,7 @@ async function registrationSuccessResponse(vendorId) {
     );
   }
 
-  return json({ ok: true, vendorId: normalizedVendorId || null }, { headers });
+  return Response.json({ ok: true, vendorId: normalizedVendorId || null }, { headers });
 }
 
 export const loader = async () => {
@@ -92,7 +92,7 @@ export const action = async ({ request }) => {
     !category ||
     !ageCheck
   ) {
-    return json(
+    return Response.json(
       {
         ok: false,
         errors: [{ message: "必須項目が不足しています。" }],

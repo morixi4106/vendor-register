@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+
 import {
   Form,
   Link,
@@ -7,7 +7,7 @@ import {
   useLoaderData,
   useLocation,
   useNavigation,
-} from "@remix-run/react";
+} from "react-router";
 
 import { authenticate } from "../shopify.server";
 
@@ -16,7 +16,7 @@ export const loader = async ({ request }) => {
   const { listAdminSellerRows } =
     await import("../services/sellerPayments.server.js");
 
-  return json({
+  return Response.json({
     sellers: await listAdminSellerRows(),
   });
 };
@@ -31,7 +31,7 @@ export const action = async ({ request }) => {
   const vendorId = String(formData.get("vendorId") || "");
 
   if (intent !== "initialize_seller" || !vendorId) {
-    return json(
+    return Response.json(
       {
         ok: false,
         message: "不正なリクエストです。",
@@ -47,7 +47,7 @@ export const action = async ({ request }) => {
       reason: "admin_initialize",
     });
 
-    return json({
+    return Response.json({
       ok: true,
       message: result.created
         ? "出店者決済レコードを作成しました。"
@@ -55,7 +55,7 @@ export const action = async ({ request }) => {
     });
   } catch (error) {
     console.error("seller initialize error:", error);
-    return json(
+    return Response.json(
       {
         ok: false,
         message: "出店者決済レコードの作成に失敗しました。",

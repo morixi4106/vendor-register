@@ -1,10 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import isoCountries from "i18n-iso-countries";
 import jaLocale from "i18n-iso-countries/langs/ja.json";
 import { useEffect, useMemo, useState } from "react";
@@ -81,7 +76,7 @@ export const loader = async ({ request }) => {
   const { vendor, store } = await requireVendorContext(request);
   const addressState = await getVendorReturnAddressState(store.id);
 
-  return json({
+  return Response.json({
     ...getVendorPublicContext(vendor, store),
     addressState,
   });
@@ -105,7 +100,7 @@ export const action = async ({ request }) => {
       values: returnAddressFromFormData(formData),
       changedBy: `vendor:${vendor.id}`,
     });
-    return json(result, { status: result.status || (result.ok ? 200 : 400) });
+    return Response.json(result, { status: result.status || (result.ok ? 200 : 400) });
   }
 
   if (intent === "activate") {
@@ -114,10 +109,10 @@ export const action = async ({ request }) => {
       draftId: formData.get("draftId"),
       changedBy: `vendor:${vendor.id}`,
     });
-    return json(result, { status: result.status || (result.ok ? 200 : 400) });
+    return Response.json(result, { status: result.status || (result.ok ? 200 : 400) });
   }
 
-  return json({ ok: false, error: "unsupported_intent" }, { status: 400 });
+  return Response.json({ ok: false, error: "unsupported_intent" }, { status: 400 });
 };
 
 function initialValues(address) {

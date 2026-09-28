@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import prisma from "../db.server.js";
 import { authenticate } from "../shopify.server";
 import WithdrawalDetailPage from "../components/withdrawals/WithdrawalDetailPage.jsx";
@@ -52,7 +52,7 @@ export const loader = async ({ request, params }) => {
       ? await getWithdrawalV2Detail(withdrawalRequest.id)
       : null;
 
-  return json({
+  return Response.json({
     withdrawalRequest: serializeWithdrawalRequest(withdrawalRequest),
     directReturnDetail,
     liveShopifyOrderStatus,
@@ -74,7 +74,7 @@ export const action = async ({ request, params }) => {
       withdrawalRequestId: params.id,
       changedBy: "admin",
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -100,7 +100,7 @@ export const action = async ({ request, params }) => {
       lineSelections,
       changedBy: "admin",
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -121,7 +121,7 @@ export const action = async ({ request, params }) => {
       request,
       sendEmailImpl: sendWithdrawalEmail,
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -148,7 +148,7 @@ export const action = async ({ request, params }) => {
       changedBy: "admin",
       values: { ...Object.fromEntries(formData), lineReviews },
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -167,7 +167,7 @@ export const action = async ({ request, params }) => {
       reason: formData.get("initialShippingRefundReason"),
       changedBy: "admin",
     });
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -183,7 +183,7 @@ export const action = async ({ request, params }) => {
       withdrawalRequestId: params.id,
     });
 
-    return json({
+    return Response.json({
       ok: result.ok,
       message: result.ok
         ? "受付確認メールを再送しました。"
@@ -196,7 +196,7 @@ export const action = async ({ request, params }) => {
       withdrawalRequestId: params.id,
     });
 
-    return json({
+    return Response.json({
       ok: result.ok,
       message: result.ok
         ? "状況通知メールを送信しました。"
@@ -209,7 +209,7 @@ export const action = async ({ request, params }) => {
       withdrawalRequestId: params.id,
     });
 
-    return json({
+    return Response.json({
       ok: result.ok,
       message: result.ok
         ? result.skipped
@@ -227,7 +227,7 @@ export const action = async ({ request, params }) => {
       request,
     });
 
-    return json({
+    return Response.json({
       ok: result.ok,
       message: result.ok
         ? "返送案内メールを送信しました。"
@@ -252,7 +252,7 @@ export const action = async ({ request, params }) => {
       changedBy: "admin",
     });
 
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -270,7 +270,7 @@ export const action = async ({ request, params }) => {
       changedBy: "admin",
     });
 
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -290,7 +290,7 @@ export const action = async ({ request, params }) => {
     });
 
     if (!current) {
-      return json(
+      return Response.json(
         { ok: false, message: "撤回申請が見つかりません。" },
         { status: 404 },
       );
@@ -300,7 +300,7 @@ export const action = async ({ request, params }) => {
       completionStatus !== "UNDECIDED" &&
       formData.get("confirmManualCompletion") !== "1"
     ) {
-      return json(
+      return Response.json(
         {
           ok: false,
           message:
@@ -312,7 +312,7 @@ export const action = async ({ request, params }) => {
 
     const blockers = getCompletionRecordBlockers(current, completionStatus);
     if (blockers.length > 0) {
-      return json(
+      return Response.json(
         {
           ok: false,
           message: `完了記録を保存できません。${blockers.join(" ")}`,
@@ -327,7 +327,7 @@ export const action = async ({ request, params }) => {
       changedBy: "admin",
     });
 
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -343,7 +343,7 @@ export const action = async ({ request, params }) => {
       withdrawalRequestId: params.id,
     });
 
-    return json(
+    return Response.json(
       {
         ok: result.ok,
         message: result.ok
@@ -359,7 +359,7 @@ export const action = async ({ request, params }) => {
     const transition = getQuickTransitionConfig(actionKey);
 
     if (!transition) {
-      return json(
+      return Response.json(
         { ok: false, message: "実行できない操作です。" },
         { status: 400 },
       );
@@ -373,7 +373,7 @@ export const action = async ({ request, params }) => {
       });
 
       if (!returnResult.ok) {
-        return json(
+        return Response.json(
           {
             ok: false,
             message: `返送情報を更新できませんでした: ${
@@ -396,7 +396,7 @@ export const action = async ({ request, params }) => {
       },
     });
 
-    return json(
+    return Response.json(
       {
         ok: statusResult.ok,
         message: statusResult.ok
@@ -430,7 +430,7 @@ export const action = async ({ request, params }) => {
         withdrawalRequestId: params.id,
       });
 
-      return json({
+      return Response.json({
         ok: emailResult.ok,
         message: emailResult.ok
           ? "ステータスを更新し、状況メールを送信しました。"
@@ -440,7 +440,7 @@ export const action = async ({ request, params }) => {
       });
     }
 
-    return json({
+    return Response.json({
       ok: result.ok,
       message: result.ok
         ? "ステータスを更新しました。"
@@ -457,21 +457,21 @@ export const action = async ({ request, params }) => {
         .toLowerCase()
         .trim() !== "true"
     ) {
-      return json({
+      return Response.json({
         ok: false,
         message:
           "Shopify書き込み処理は無効です。必要な確認後に WITHDRAWAL_ENABLE_SHOPIFY_WRITE_ACTIONS=true を設定してください。",
       });
     }
 
-    return json({
+    return Response.json({
       ok: false,
       message:
         "Shopifyキャンセル/返金の自動実行はまだ保護中です。手動処理後にステータスと完了記録を更新してください。",
     });
   }
 
-  return json({ ok: false, message: "不明な操作です。" }, { status: 400 });
+  return Response.json({ ok: false, message: "不明な操作です。" }, { status: 400 });
 };
 
 export default WithdrawalDetailPage;

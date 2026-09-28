@@ -1,11 +1,5 @@
-import { json } from "@remix-run/node";
-import {
-  Form,
-  Link,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import { authenticate } from "../shopify.server";
 
@@ -22,7 +16,7 @@ export const loader = async ({ request, params }) => {
     throw new Response("見つかりません", { status: 404 });
   }
 
-  return json(detail);
+  return Response.json(detail);
 };
 
 export const action = async ({ request, params }) => {
@@ -49,7 +43,7 @@ export const action = async ({ request, params }) => {
     });
 
     if (!result.ok) {
-      return json(
+      return Response.json(
         {
           ok: false,
           reason: result.reason,
@@ -59,7 +53,7 @@ export const action = async ({ request, params }) => {
       );
     }
 
-    return json({
+    return Response.json({
       ok: true,
       message: "Wise受取先を保存しました。",
     });
@@ -80,7 +74,7 @@ export const action = async ({ request, params }) => {
     });
 
     if (!result.ok) {
-      return json(
+      return Response.json(
         {
           ok: false,
           reason: result.reason,
@@ -90,14 +84,14 @@ export const action = async ({ request, params }) => {
       );
     }
 
-    return json({
+    return Response.json({
       ok: true,
       message: "初回精算前確認を保存しました。",
     });
   }
 
   if (intent !== "update_status") {
-    return json(
+    return Response.json(
       {
         ok: false,
         message: "不正なリクエストです。",
@@ -116,7 +110,7 @@ export const action = async ({ request, params }) => {
   });
 
   if (!result.ok) {
-    return json(
+    return Response.json(
       {
         ok: false,
         message: "決済状態の更新に失敗しました。",
@@ -125,7 +119,7 @@ export const action = async ({ request, params }) => {
     );
   }
 
-  return json({
+  return Response.json({
     ok: true,
     message: result.changed
       ? "決済状態を更新しました。"

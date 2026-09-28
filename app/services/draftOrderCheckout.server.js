@@ -1,4 +1,4 @@
-import { json } from '@remix-run/node';
+
 
 import {
   normalizeShopDomain,
@@ -161,7 +161,7 @@ function clonePlainObject(value) {
 }
 
 function createMethodNotAllowedResponse() {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: 'method_not_allowed',
@@ -177,7 +177,7 @@ function createMethodNotAllowedResponse() {
 }
 
 function createInvalidPayloadResponse(errors) {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: 'invalid_payload',
@@ -188,7 +188,7 @@ function createInvalidPayloadResponse(errors) {
 }
 
 function createInternalErrorResponse() {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: 'internal_error',
@@ -225,7 +225,7 @@ function isCheckoutProcessError(error) {
 }
 
 function createCheckoutProcessErrorResponse(error) {
-  return json(
+  return Response.json(
     {
       ok: false,
       reason: error.reason,
@@ -909,7 +909,7 @@ export function createDraftOrderCheckoutAction({
     }
 
     try {
-      return json(await draftOrderCheckoutImpl(body));
+      return Response.json(await draftOrderCheckoutImpl(body));
     } catch (error) {
       if (isInvalidPayloadError(error)) {
         return createInvalidPayloadResponse(error.errors);

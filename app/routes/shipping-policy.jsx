@@ -1,5 +1,5 @@
-import { json } from '@remix-run/node';
-import { useLoaderData } from '@remix-run/react';
+
+import { useLoaderData } from 'react-router';
 
 import { buildShippingRatePolicyData } from '../services/shippingRatePolicy.server.js';
 
@@ -142,7 +142,7 @@ export const meta = () => [
 ];
 
 export const loader = async () => {
-  return json({
+  return Response.json({
     policy: buildShippingRatePolicyData(),
   });
 };

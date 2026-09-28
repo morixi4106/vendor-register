@@ -1,11 +1,11 @@
-import { json } from "@remix-run/node";
+
 import prisma from "../db.server";
 import { requireShopifyAdmin } from "../utils/routeSecurity.server.js";
 
 export const action = async ({ request }) => {
   await requireShopifyAdmin(request);
   if (request.method !== "POST") {
-    return json({ ok: false, error: "Method not allowed" }, { status: 405 });
+    return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
   }
 
   try {
@@ -13,7 +13,7 @@ export const action = async ({ request }) => {
     const candidateId = String(body?.candidateId || "").trim();
 
     if (!candidateId) {
-      return json({ ok: false, error: "candidateId is required" }, { status: 400 });
+      return Response.json({ ok: false, error: "candidateId is required" }, { status: 400 });
     }
 
     const candidate = await prisma.fixedReplyCandidate.findUnique({
@@ -21,7 +21,7 @@ export const action = async ({ request }) => {
     });
 
     if (!candidate) {
-      return json({ ok: false, error: "Candidate not found" }, { status: 404 });
+      return Response.json({ ok: false, error: "Candidate not found" }, { status: 404 });
     }
 
     await prisma.fixedReplyRule.create({
@@ -32,9 +32,9 @@ export const action = async ({ request }) => {
       },
     });
 
-    return json({ ok: true });
+    return Response.json({ ok: true });
   } catch (error) {
     console.error("adopt fixed rule error:", error);
-    return json({ ok: false, error: "Internal server error" }, { status: 500 });
+    return Response.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 };
