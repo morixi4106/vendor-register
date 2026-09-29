@@ -2,13 +2,18 @@ import { getShopifyMarketplacePaymentsApproval, isCrossBorderSellerSettlementEna
 import { getProductionProbeSigningSecret } from ".././productionRelease.server.js";
 import { createCheck, normalizeText } from "./common.js";
 import { isDomesticMarketplacePilotEnabled } from "../domesticMarketplacePilot.server.js";
+import {
+  inspectDomesticAutonomousLaunchAuthorization,
+  isDomesticAutonomousLaunchRiskAcceptedCheck,
+} from "../domesticAutonomousLaunchAuthorization.js";
 function isThirdPartySettlementDisabled(env) {
   return !isMarketplaceSettlementActionsEnabled(env) && !isDomesticSellerSettlementEnabled(env) && !isCrossBorderSellerSettlementEnabled(env);
 }
 export function applyReleaseDisposition(check, {
   env,
   operationEnv,
-  directReturns
+  directReturns,
+  now = new Date(),
 } = {}) {
   if (check.status === "pass") {
     return {
@@ -23,6 +28,16 @@ export function applyReleaseDisposition(check, {
       releaseBlocking: true,
       releaseDisposition: "required"
     };
+  }
+  const launchAuthorization =
+    inspectDomesticAutonomousLaunchAuthorization(env, now);
+  if (
+    check.releaseDisposition === "owner_risk_accepted" &&
+    check.releaseBlocking === false &&
+    launchAuthorization.active &&
+    isDomesticAutonomousLaunchRiskAcceptedCheck(check.id)
+  ) {
+    return check;
   }
   const scopeExclusions = [{
     applies: check.category === "stripe" && operationEnv?.stripeConnectProductionEnabled !== true,

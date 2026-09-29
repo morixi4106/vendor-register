@@ -1,3 +1,8 @@
+import {
+  canRiskAcceptOperationalReadinessRow,
+  inspectDomesticAutonomousLaunchAuthorization,
+} from "./domesticAutonomousLaunchAuthorization.js";
+
 const LIVE_ORDER_REFUND_E2E_CHECK_KEY = "LIVE_ORDER_REFUND_E2E_COMPLETED";
 const PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY =
   "PLATFORM_DIRECT_PAYMENT_FLOW_VERIFIED";
@@ -8,18 +13,32 @@ function upper(value) {
     .toUpperCase();
 }
 
-export function buildOperationalReadinessChecks({ inspection, control } = {}) {
+export function buildOperationalReadinessChecks({
+  inspection,
+  control,
+  env = process.env,
+  now = new Date(),
+} = {}) {
+  const launchAuthorization =
+    inspectDomesticAutonomousLaunchAuthorization(env, now);
   const checks = (inspection?.rows || [])
     .filter((row) => row.definition.supplemental !== true)
     .map((row) => {
       const evidence = row.effectiveAttestation || row.attestation;
+      const ownerRiskAccepted = Boolean(
+        !row.ready &&
+          launchAuthorization.active &&
+          canRiskAcceptOperationalReadinessRow(row),
+      );
       return {
         id: `operational_attestation_${row.definition.key.toLowerCase()}`,
         category: "operations",
-        status: row.ready ? "pass" : "fail",
+        status: row.ready ? "pass" : ownerRiskAccepted ? "warning" : "fail",
         title: row.definition.label,
         detail: row.ready
           ? `${row.evidenceLabel || "証跡"} ${evidence.evidenceReference} / 有効期限 ${evidence.expiresAt.toISOString()}`
+          : ownerRiskAccepted
+            ? `未確認事項です。国内運営直販だけを対象とする期限付きの責任者リスク受容により、${launchAuthorization.expiresAt.toISOString()}まで公開判断から除外します。確認済みとは扱いません。`
           : row.reason === "expired"
             ? "確認証跡の有効期限が切れています。"
             : row.reason === "release_mismatch"
@@ -29,11 +48,21 @@ export function buildOperationalReadinessChecks({ inspection, control } = {}) {
                 : "有効な確認証跡が登録されていません。",
         action: row.ready
           ? ""
+          : ownerRiskAccepted
+            ? "公開後も確認を継続し、証跡が得られた項目から通常の確認済み状態へ置き換えてください。"
           : row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
             ? "本番注文・返金 E2E確認画面で、実注文と全額返金を自動照合してください。"
             : row.definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
               ? "本番決済1件の照合画面で、KOMOJU売上と注文・台帳の一致を確認してください。"
               : "本番確認画面で実際の確認を行い、証跡参照と確認者を記録してください。",
+        ...(ownerRiskAccepted
+          ? {
+              releaseBlocking: false,
+              releaseDisposition: "owner_risk_accepted",
+              releaseDispositionReason:
+                "2026-09-29の責任者指示に基づく、国内運営直販限定の期限付きリスク受容です。",
+            }
+          : {}),
       };
     });
 

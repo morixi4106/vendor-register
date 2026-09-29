@@ -76,6 +76,8 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
 
 const LEGACY_PRODUCTION_TRANSACTION_TARGET_VERSION = 1;
 const PRODUCTION_TRANSACTION_TARGET_VERSION = 2;
+const AUTODETECT_PRODUCTION_TRANSACTION_TARGET_VERSION = 3;
+const AUTODETECT_TARGET_VALUE = "AUTODETECT";
 const DEFAULT_PRODUCTION_TRANSACTION_TARGET = Object.freeze({
   version: PRODUCTION_TRANSACTION_TARGET_VERSION,
   provider: PAYMENT_PROVIDER.SHOPIFY_PAYMENTS,
@@ -87,6 +89,12 @@ const KOMOJU_CARD_TRANSACTION_TARGET = Object.freeze({
   provider: PAYMENT_PROVIDER.KOMOJU,
   paymentMethod: PAYMENT_METHOD.CARD,
   refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
+});
+export const PRODUCTION_TRANSACTION_AUTODETECT = Object.freeze({
+  version: AUTODETECT_PRODUCTION_TRANSACTION_TARGET_VERSION,
+  provider: AUTODETECT_TARGET_VALUE,
+  paymentMethod: AUTODETECT_TARGET_VALUE,
+  refundMode: PAYMENT_REFUND_MODE.REVIEW_REQUIRED,
 });
 
 export const KOMOJU_PAYOUT_EVIDENCE_STRATEGY = Object.freeze({
@@ -287,6 +295,12 @@ function normalizeProductionTransactionTarget({
   const normalizedProvider = clean(provider).toUpperCase();
   const normalizedMethod = clean(paymentMethod).toUpperCase();
   if (
+    normalizedProvider === AUTODETECT_TARGET_VALUE &&
+    normalizedMethod === AUTODETECT_TARGET_VALUE
+  ) {
+    return PRODUCTION_TRANSACTION_AUTODETECT;
+  }
+  if (
     ![PAYMENT_PROVIDER.SHOPIFY_PAYMENTS, PAYMENT_PROVIDER.KOMOJU].includes(
       normalizedProvider,
     ) ||
@@ -304,6 +318,13 @@ function normalizeProductionTransactionTarget({
     paymentMethod: normalizedMethod,
     refundMode: PAYMENT_REFUND_MODE.SHOPIFY_LINKED,
   };
+}
+
+function isAutodetectTransactionTarget(target) {
+  return (
+    target?.provider === AUTODETECT_TARGET_VALUE &&
+    target?.paymentMethod === AUTODETECT_TARGET_VALUE
+  );
 }
 
 export function getProductionTransactionProbeTarget(probe) {
@@ -341,6 +362,18 @@ function parseProviderConfig(value) {
       .map((entry) => entry.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+function configuredProductionProviders(env) {
+  const configured = parseProviderConfig(
+    env.PAYMENT_PROVIDERS || env.PAYMENT_PROVIDER,
+  );
+  return [
+    configured.has("shopify_payments")
+      ? PAYMENT_PROVIDER.SHOPIFY_PAYMENTS
+      : null,
+    configured.has("komoju") ? PAYMENT_PROVIDER.KOMOJU : null,
+  ].filter(Boolean);
 }
 
 function preflightCheck(id, passed, detail) {
@@ -726,13 +759,14 @@ export async function inspectProductionTransactionProbePreflight(
       : Promise.resolve(null),
   ]);
 
-  const configuredProviders = parseProviderConfig(
-    env.PAYMENT_PROVIDERS || env.PAYMENT_PROVIDER,
-  );
-  const providerConfigured = configuredProviders.has(
-    target.provider === PAYMENT_PROVIDER.KOMOJU ? "komoju" : "shopify_payments",
-  );
-  const komojuTarget = target.provider === PAYMENT_PROVIDER.KOMOJU;
+  const allowedProviders = configuredProductionProviders(env);
+  const autodetectTarget = isAutodetectTransactionTarget(target);
+  const providerConfigured = autodetectTarget
+    ? allowedProviders.length > 0
+    : allowedProviders.includes(target.provider);
+  const komojuTarget = autodetectTarget
+    ? allowedProviders.includes(PAYMENT_PROVIDER.KOMOJU)
+    : target.provider === PAYMENT_PROVIDER.KOMOJU;
   const standardDirect = isShopifyStandardDirectCheckoutMode(env);
   const paymentOperationsClean = Boolean(
     paymentOperations.available === true &&
@@ -861,6 +895,7 @@ export async function inspectProductionTransactionProbePreflight(
       existingReconciledPayoutDepositedAt:
         existingReconciledPayout?.bankDepositedAt || null,
     },
+    allowedProviders,
     checkoutMode: standardDirect
       ? PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
       : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND,
@@ -918,14 +953,18 @@ export async function createProductionTransactionProbe(
   if (!shop || !actor || !release.configured || !target) {
     return { ok: false, reason: "production_transaction_probe_input_invalid" };
   }
+  if (isAutodetectTransactionTarget(target) && !standardDirect) {
+    return { ok: false, reason: "production_transaction_autodetect_not_allowed" };
+  }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
+    !standardDirect &&
     (komojuCardOnlyConfirmed !== true ||
       komojuLiveConfirmed !== true ||
       singleCardIntegrationConfirmed !== true ||
       automaticCaptureConfirmed !== true ||
-      (!standardDirect && untestedAsyncMethodsDisabledConfirmed !== true) ||
-      (!standardDirect && releaseFreezeConfirmed !== true))
+      untestedAsyncMethodsDisabledConfirmed !== true ||
+      releaseFreezeConfirmed !== true)
   ) {
     return { ok: false, reason: "komoju_scope_confirmation_required" };
   }
@@ -950,6 +989,17 @@ export async function createProductionTransactionProbe(
   const expectedDepositAt = parseDate(expectedBankDepositAt);
   const minimumPayoutAmount = toNonNegativeInteger(komojuMinimumPayoutAmount);
   const estimatedFeeAmount = toNonNegativeInteger(estimatedProcessingFeeAmount);
+  const allowedProviders = configuredProductionProviders(env);
+  if (
+    standardDirect &&
+    isAutodetectTransactionTarget(target) &&
+    allowedProviders.length === 0
+  ) {
+    return { ok: false, reason: "production_payment_provider_not_configured" };
+  }
+  if (standardDirect && maximumCharge <= 0) {
+    return { ok: false, reason: "production_charge_plan_required" };
+  }
   if (
     target.provider === PAYMENT_PROVIDER.KOMOJU &&
     !standardDirect &&
@@ -1033,11 +1083,14 @@ export async function createProductionTransactionProbe(
   }
   const externalReadiness = standardDirect
     ? {
-        version: 3,
+        version: 5,
         flow,
-        komojuLiveConfirmed: komojuLiveConfirmed === true,
-        singleCardIntegrationConfirmed: singleCardIntegrationConfirmed === true,
-        automaticCaptureConfirmed: automaticCaptureConfirmed === true,
+        maximumPlannedChargeAmount: maximumCharge,
+        verificationBasis: "FIRST_PRODUCTION_TRANSACTION",
+        externalSettingsPreAttested: false,
+        allowedProviders: isAutodetectTransactionTarget(target)
+          ? allowedProviders
+          : [target.provider],
         confirmedAt: now.toISOString(),
         confirmedBy: actor,
       }
@@ -1330,8 +1383,8 @@ export async function attachOrderToProductionTransactionProbe(
     externalReadiness.maximumPlannedChargeAmount,
   );
   if (
-    getProductionTransactionProbeTarget(probe).provider ===
-      PAYMENT_PROVIDER.KOMOJU &&
+    getProductionTransactionProbeFlow(probe) ===
+      PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY &&
     (maximumPlannedChargeAmount <= 0 ||
       snapshot.commercialEvidence.totalAmount > maximumPlannedChargeAmount)
   ) {
@@ -1526,6 +1579,37 @@ function classifyProbeTransaction(transaction) {
   );
 }
 
+function resolveInspectionPaymentTarget({
+  configuredTarget,
+  transaction,
+  allowedProviders,
+}) {
+  if (!isAutodetectTransactionTarget(configuredTarget)) {
+    return configuredTarget;
+  }
+  if (!transaction || transaction.manualPaymentGateway === true) return null;
+
+  const classification = classifyProbeTransaction(transaction);
+  const providerAllowed = new Set(allowedProviders || []).has(
+    classification.provider,
+  );
+  const methodRecognized =
+    classification.paymentMethod !== PAYMENT_METHOD.OTHER &&
+    (classification.provider === PAYMENT_PROVIDER.KOMOJU ||
+      (classification.provider === PAYMENT_PROVIDER.SHOPIFY_PAYMENTS &&
+        classification.paymentMethod === PAYMENT_METHOD.CARD));
+  if (!providerAllowed || !methodRecognized) return null;
+
+  return {
+    version: AUTODETECT_PRODUCTION_TRANSACTION_TARGET_VERSION,
+    provider: classification.provider,
+    paymentMethod: classification.paymentMethod,
+    refundMode: classification.refundMode,
+    autodetected: true,
+    allowWallet: classification.paymentMethod === PAYMENT_METHOD.CARD,
+  };
+}
+
 function requiresStructuredCardEvidence(target) {
   return (
     Number(target?.version) >= PRODUCTION_TRANSACTION_TARGET_VERSION &&
@@ -1545,7 +1629,7 @@ function transactionMatchesMethod(transaction, target) {
     return (
       transaction?.manualPaymentGateway !== true &&
       transaction?.paymentDetailsType === "CardPaymentDetails" &&
-      !clean(transaction?.paymentWallet)
+      (target?.allowWallet === true || !clean(transaction?.paymentWallet))
     );
   }
   return (
@@ -1586,7 +1670,7 @@ function getRefundTransactions(snapshot) {
 }
 
 function buildPaidInspection({ probe, snapshot, local }) {
-  const target = getProductionTransactionProbeTarget(probe);
+  const configuredTarget = getProductionTransactionProbeTarget(probe);
   const marketplaceOrder = local.marketplaceOrder;
   const sellerOrders = marketplaceOrder?.sellerOrders || [];
   const sellerOrderLines = sellerOrders.flatMap(
@@ -1624,6 +1708,19 @@ function buildPaidInspection({ probe, snapshot, local }) {
   );
   const currencyCode = snapshot.commercialEvidence.currencyCode.toLowerCase();
   const paymentTransactions = getSuccessfulPaymentTransactions(snapshot);
+  const externalReadiness = asObject(
+    asObject(probe.orderEvidenceJson).externalReadiness,
+  );
+  const target = resolveInspectionPaymentTarget({
+    configuredTarget,
+    transaction:
+      paymentTransactions.length === 1 ? paymentTransactions[0] : null,
+    allowedProviders: Array.isArray(externalReadiness.allowedProviders)
+      ? externalReadiness.allowedProviders
+      : [],
+  });
+  const paymentTargetRecognized = Boolean(target);
+  const inspectionTarget = target || configuredTarget;
   const paymentTransactionAmount = paymentTransactions.reduce(
     (sum, transaction) => sum + transaction.amount,
     0,
@@ -1636,16 +1733,19 @@ function buildPaidInspection({ probe, snapshot, local }) {
   const matchingPaymentAttempts = (local.paymentAttempts || []).filter(
     (attempt) => {
       const metadata = asObject(attempt.metadataJson);
-      const structuredCardMatches = requiresStructuredCardEvidence(target)
+      const structuredCardMatches = requiresStructuredCardEvidence(
+        inspectionTarget,
+      )
         ? metadata.paymentDetailsType === "CardPaymentDetails" &&
-          !clean(metadata.paymentWallet)
+          (inspectionTarget.allowWallet === true ||
+            !clean(metadata.paymentWallet))
         : true;
       return (
         attempt.status === "CAPTURED" &&
         attempt.test !== true &&
         attempt.requiresReview !== true &&
-        attempt.provider === target.provider &&
-        attempt.paymentMethod === target.paymentMethod &&
+        attempt.provider === inspectionTarget.provider &&
+        attempt.paymentMethod === inspectionTarget.paymentMethod &&
         paymentTransactionIdSet.has(attempt.shopifyTransactionId) &&
         attempt.amount === snapshot.commercialEvidence.totalAmount &&
         normalizeCurrency(attempt.currencyCode) ===
@@ -1655,6 +1755,15 @@ function buildPaidInspection({ probe, snapshot, local }) {
     },
   );
   const checks = [
+    check(
+      "payment_target_recognized",
+      paymentTargetRecognized,
+      "payment_target_unrecognized",
+      {
+        configuredProvider: configuredTarget.provider,
+        configuredPaymentMethod: configuredTarget.paymentMethod,
+      },
+    ),
     check(
       "payment_transaction_present",
       paymentTransactions.length > 0,
@@ -1680,19 +1789,19 @@ function buildPaidInspection({ probe, snapshot, local }) {
       "payment_transaction_provider",
       paymentTransactions.length > 0 &&
         paymentTransactions.every((transaction) =>
-          transactionMatchesProvider(transaction, target),
+          transactionMatchesProvider(transaction, inspectionTarget),
         ),
       "payment_transaction_provider_mismatch",
-      { expectedProvider: target.provider },
+      { expectedProvider: inspectionTarget.provider },
     ),
     check(
       "payment_transaction_method",
       paymentTransactions.length > 0 &&
         paymentTransactions.every((transaction) =>
-          transactionMatchesMethod(transaction, target),
+          transactionMatchesMethod(transaction, inspectionTarget),
         ),
       "payment_transaction_method_mismatch",
-      { expectedPaymentMethod: target.paymentMethod },
+      { expectedPaymentMethod: inspectionTarget.paymentMethod },
     ),
     check(
       "payment_transaction_live",
@@ -1825,7 +1934,8 @@ function buildPaidInspection({ probe, snapshot, local }) {
     paymentAttemptIds: matchingPaymentAttempts
       .map((attempt) => attempt.id)
       .sort(),
-    paymentTarget: target,
+    paymentTarget: target || configuredTarget,
+    configuredPaymentTarget: configuredTarget,
   };
 }
 
@@ -2806,8 +2916,9 @@ export function buildProductionTransactionProbePage({
     ? getProductionTransactionProbeTarget(activeProbe)
     : normalizeProductionTransactionTarget(target) ||
       KOMOJU_CARD_TRANSACTION_TARGET;
-  const paymentLabel =
-    paymentTarget.provider === PAYMENT_PROVIDER.KOMOJU
+  const paymentLabel = isAutodetectTransactionTarget(paymentTarget)
+    ? "Shopify PaymentsまたはKOMOJUの本番決済"
+    : paymentTarget.provider === PAYMENT_PROVIDER.KOMOJU
       ? "KOMOJUクレジットカード"
       : "Shopify Payments";
   const status =

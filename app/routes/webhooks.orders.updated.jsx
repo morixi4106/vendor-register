@@ -5,6 +5,7 @@ import { reconcileShopifyOrderIntegrity } from "../services/shopifyOrderIntegrit
 import { syncShopifyOrderPaymentAttempts } from "../services/paymentOperations.server.js";
 import { POST_ORDER_ELIGIBILITY_TRIGGER } from "../services/saleEligibility.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
+import { runDomesticAutonomousLaunchGuard } from "../services/domesticAutonomousLaunchGuard.server.js";
 
 function getOrderId(payload) {
   return (
@@ -39,7 +40,19 @@ export const action = async ({ request }) => {
         shopifyOrderId: getOrderId(payload),
         triggerType: POST_ORDER_ELIGIBILITY_TRIGGER.ORDERS_UPDATED,
       });
-      return { ...integrity, paymentTracking };
+      const autonomousLaunchGuard = await runDomesticAutonomousLaunchGuard({
+        shopDomain: shop,
+        testOrder: payload?.test === true,
+      });
+      if (
+        autonomousLaunchGuard?.ok === false &&
+        autonomousLaunchGuard?.secured !== true
+      ) {
+        throw new Error(
+          `domestic_autonomous_launch_guard_failed:${autonomousLaunchGuard.reason}`,
+        );
+      }
+      return { ...integrity, paymentTracking, autonomousLaunchGuard };
     },
   });
 
@@ -61,6 +74,23 @@ export const action = async ({ request }) => {
                 multipleAttempts: Boolean(
                   delivery.result.paymentTracking.multipleAttempts,
                 ),
+              }
+            : null,
+          autonomousLaunchGuard: delivery.result.autonomousLaunchGuard
+            ? {
+                ok: Boolean(delivery.result.autonomousLaunchGuard.ok),
+                active: Boolean(delivery.result.autonomousLaunchGuard.active),
+                secured: Boolean(
+                  delivery.result.autonomousLaunchGuard.secured,
+                ),
+                pending: Boolean(
+                  delivery.result.autonomousLaunchGuard.pending,
+                ),
+                verified: Boolean(
+                  delivery.result.autonomousLaunchGuard.verified,
+                ),
+                reason:
+                  delivery.result.autonomousLaunchGuard.reason || null,
               }
             : null,
         }
