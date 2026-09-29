@@ -1310,6 +1310,9 @@ function statusLabel(status) {
 }
 
 function paymentTargetLabel(target) {
+  if (target?.provider === "AUTODETECT") {
+    return "Shopify PaymentsまたはKOMOJUの本番決済（自動判定）";
+  }
   if (target?.provider === "KOMOJU" && target?.paymentMethod === "CARD") {
     return "KOMOJUクレジットカード";
   }
@@ -1347,6 +1350,8 @@ function reasonLabel(reason) {
         "別の更新と競合しました。画面を更新して状態を確認してください。",
       production_transaction_preflight_failed:
         "決済前の自動確認に未合格の項目があります。実決済の前に解消してください。",
+      production_payment_provider_not_configured:
+        "本番で許可する決済プロバイダーをPAYMENT_PROVIDERSへ明示してください。",
       komoju_scope_confirmation_required:
         "KOMOJUカードだけを確認することと、未検証の決済方法を無効にしたことを確認してください。",
       komoju_external_readiness_missing:
@@ -1439,6 +1444,8 @@ function reasonLabel(reason) {
         "Shopify Paymentsの返金額と注文合計が一致しません。",
       shopify_refund_transaction_currency_mismatch:
         "Shopify Paymentsの返金通貨と注文通貨が一致しません。",
+      payment_target_unrecognized:
+        "成功した本番決済を安全に分類できません。未知の決済、手動入金、または許可されていないプロバイダーです。",
       payment_transaction_missing: "対象決済の売上取引がまだ確認できません。",
       payment_transaction_not_captured:
         "対象決済の売上取引が成功状態ではありません。",

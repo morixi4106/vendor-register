@@ -11,6 +11,7 @@ import {
   getProductionTransactionProbeTarget,
   inspectProductionTransactionProbePreflight,
   KOMOJU_PAYOUT_EVIDENCE_STRATEGY,
+  PRODUCTION_TRANSACTION_AUTODETECT,
   refreshProductionTransactionProbe,
 } from "../../app/services/productionTransactionProbe.server.js";
 import {
@@ -40,6 +41,7 @@ const SHOPIFY_CARD_TARGET = Object.freeze({
   paymentMethod: "CARD",
   refundMode: "SHOPIFY_LINKED",
 });
+const AUTODETECT_TARGET = PRODUCTION_TRANSACTION_AUTODETECT;
 const RELEASE_ENV = {
   RENDER_GIT_COMMIT: "a".repeat(40),
   SHOPIFY_APP_VERSION: "app-version-1",
@@ -232,7 +234,14 @@ function probeRecord({
   };
 }
 
-function paymentAttempt({ target = SHOPIFY_CARD_TARGET, test = false } = {}) {
+function paymentAttempt({
+  target = SHOPIFY_CARD_TARGET,
+  test = false,
+  paymentMethod = target.paymentMethod,
+  paymentDetailsType = "CardPaymentDetails",
+  paymentMethodName = "Visa",
+  paymentWallet = null,
+} = {}) {
   return {
     id: "payment_attempt_1",
     marketplaceOrderId: "marketplace_order_1",
@@ -240,7 +249,7 @@ function paymentAttempt({ target = SHOPIFY_CARD_TARGET, test = false } = {}) {
     shopifyOrderId: ORDER_ID,
     shopifyTransactionId: PAYMENT_TRANSACTION_ID,
     provider: target.provider,
-    paymentMethod: "CARD",
+    paymentMethod,
     status: "CAPTURED",
     amount: 1114,
     currencyCode: "jpy",
@@ -249,9 +258,9 @@ function paymentAttempt({ target = SHOPIFY_CARD_TARGET, test = false } = {}) {
     processedAt: new Date("2026-07-29T01:01:30.000Z"),
     capturedAt: new Date("2026-07-29T01:01:30.000Z"),
     metadataJson: {
-      paymentDetailsType: "CardPaymentDetails",
-      paymentMethodName: "Visa",
-      paymentWallet: null,
+      paymentDetailsType,
+      paymentMethodName,
+      paymentWallet,
     },
     settlementLine: null,
   };
@@ -1002,6 +1011,33 @@ test("standard direct preflight requires an inactive marketplace validation", as
   assert.equal(ready.canStart, true);
   assert.equal(ready.checkoutMode, "PLATFORM_DIRECT_PAID_ONLY");
 
+  const autodetectReady = await inspectProductionTransactionProbePreflight(
+    {
+      shopDomain: SHOP,
+      releaseExpectation: release,
+      checkoutValidation: {
+        ok: true,
+        exists: true,
+        prepared: true,
+        active: false,
+      },
+      targetProvider: AUTODETECT_TARGET.provider,
+      targetPaymentMethod: AUTODETECT_TARGET.paymentMethod,
+    },
+    {
+      ...options,
+      env: {
+        ...options.env,
+        PAYMENT_PROVIDERS: "shopify_payments,komoju",
+      },
+    },
+  );
+  assert.equal(autodetectReady.canStart, true);
+  assert.deepEqual(autodetectReady.allowedProviders, [
+    "SHOPIFY_PAYMENTS",
+    "KOMOJU",
+  ]);
+
   const blocked = await inspectProductionTransactionProbePreflight(
     {
       shopDomain: SHOP,
@@ -1026,7 +1062,7 @@ test("standard direct preflight requires an inactive marketplace validation", as
   );
 });
 
-test("standard direct probe starts without payout or refund evidence", async () => {
+test("standard direct probe requires and stores the planned charge ceiling", async () => {
   let createdData = null;
   const prismaClient = {
     productionTransactionProbe: {
@@ -1047,10 +1083,7 @@ test("standard direct probe starts without payout or refund evidence", async () 
       releaseExpectation: releaseExpectation(),
       targetProvider: "KOMOJU",
       targetPaymentMethod: "CARD",
-      komojuCardOnlyConfirmed: true,
-      komojuLiveConfirmed: true,
-      singleCardIntegrationConfirmed: true,
-      automaticCaptureConfirmed: true,
+      maximumPlannedChargeAmount: 20_000,
     },
     {
       prismaClient,
@@ -1064,6 +1097,19 @@ test("standard direct probe starts without payout or refund evidence", async () 
     "PLATFORM_DIRECT_PAID_ONLY",
   );
   assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.verificationBasis,
+    "FIRST_PRODUCTION_TRANSACTION",
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.externalSettingsPreAttested,
+    false,
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness
+      .maximumPlannedChargeAmount,
+    20_000,
+  );
+  assert.equal(
     createdData.orderEvidenceJson.externalReadiness.evidenceHash,
     undefined,
   );
@@ -1072,6 +1118,133 @@ test("standard direct probe starts without payout or refund evidence", async () 
       .untestedAsyncMethodsDisabledConfirmed,
     undefined,
   );
+});
+
+test("standard direct autodetect stores only configured production providers", async () => {
+  let createdData = null;
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: AUTODETECT_TARGET.provider,
+      targetPaymentMethod: AUTODETECT_TARGET.paymentMethod,
+      maximumPlannedChargeAmount: 50_000,
+    },
+    {
+      prismaClient: {
+        productionTransactionProbe: {
+          async findUnique() {
+            return null;
+          },
+          async create({ data }) {
+            createdData = data;
+            return { id: "probe_auto", ...data };
+          },
+        },
+      },
+      env: {
+        PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+        PAYMENT_PROVIDERS: "shopify_payments,komoju,unsupported",
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdData.orderEvidenceJson.probeConfig, AUTODETECT_TARGET);
+  assert.deepEqual(
+    createdData.orderEvidenceJson.externalReadiness.allowedProviders,
+    ["SHOPIFY_PAYMENTS", "KOMOJU"],
+  );
+  assert.equal(
+    createdData.orderEvidenceJson.externalReadiness.maximumPlannedChargeAmount,
+    50_000,
+  );
+});
+
+test("standard direct autodetect requires an explicitly supported provider", async () => {
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: AUTODETECT_TARGET.provider,
+      targetPaymentMethod: AUTODETECT_TARGET.paymentMethod,
+      maximumPlannedChargeAmount: 50_000,
+    },
+    {
+      prismaClient: {
+        productionTransactionProbe: {
+          async findUnique() {
+            assert.fail("provider validation must run before persistence");
+          },
+        },
+      },
+      env: {
+        PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+        PAYMENT_PROVIDERS: "unsupported",
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "production_payment_provider_not_configured",
+  });
+});
+
+test("autodetect cannot be used by the strict refund flow", async () => {
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: AUTODETECT_TARGET.provider,
+      targetPaymentMethod: AUTODETECT_TARGET.paymentMethod,
+      maximumPlannedChargeAmount: 50_000,
+    },
+    {
+      prismaClient: {
+        productionTransactionProbe: {
+          async findUnique() {
+            assert.fail("strict autodetect validation must run before lookup");
+          },
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "production_transaction_autodetect_not_allowed",
+  });
+});
+
+test("standard direct probe rejects a missing planned charge ceiling", async () => {
+  const result = await createProductionTransactionProbe(
+    {
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    },
+    {
+      prismaClient: {
+        productionTransactionProbe: {
+          async findUnique() {
+            assert.fail("validation must run before persistence");
+          },
+        },
+      },
+      env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "production_charge_plan_required",
+  });
 });
 
 test("attaching an order rejects test orders before persisting evidence", async () => {
@@ -1528,6 +1701,187 @@ test("standard direct flow completes after the paid order and ledger agree", asy
     /^[a-f0-9]{64}$/,
   );
   assert.equal(state.probe.finalEvidenceJson.refundInspection, undefined);
+});
+
+test("autodetect completes a Shopify Payments wallet order from live evidence", async () => {
+  const probe = probeRecord({
+    target: AUTODETECT_TARGET,
+    externalReadiness: {
+      version: 5,
+      flow: "PLATFORM_DIRECT_PAID_ONLY",
+      maximumPlannedChargeAmount: 50_000,
+      verificationBasis: "FIRST_PRODUCTION_TRANSACTION",
+      allowedProviders: ["SHOPIFY_PAYMENTS", "KOMOJU"],
+    },
+  });
+  const { prismaClient, state } = refreshPrisma({
+    probe,
+    paymentAttempts: [
+      paymentAttempt({
+        target: SHOPIFY_CARD_TARGET,
+        paymentWallet: "Apple Pay",
+      }),
+    ],
+  });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentDetails: {
+            __typename: "CardPaymentDetails",
+            paymentMethodName: "Visa",
+            wallet: "Apple Pay",
+          },
+        }),
+      ),
+      now: new Date("2026-07-29T01:06:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stage, "complete");
+  assert.equal(state.probe.status, "PASSED");
+  assert.deepEqual(state.probe.finalEvidenceJson.paymentTarget, {
+    version: 3,
+    provider: "SHOPIFY_PAYMENTS",
+    paymentMethod: "CARD",
+    refundMode: "SHOPIFY_LINKED",
+    autodetected: true,
+    allowWallet: true,
+  });
+});
+
+test("autodetect completes a paid KOMOJU convenience-store order", async () => {
+  const probe = probeRecord({
+    target: AUTODETECT_TARGET,
+    externalReadiness: {
+      version: 5,
+      flow: "PLATFORM_DIRECT_PAID_ONLY",
+      maximumPlannedChargeAmount: 50_000,
+      verificationBasis: "FIRST_PRODUCTION_TRANSACTION",
+      allowedProviders: ["SHOPIFY_PAYMENTS", "KOMOJU"],
+    },
+  });
+  const komojuConvenienceTarget = {
+    provider: "KOMOJU",
+    paymentMethod: "CONVENIENCE_STORE",
+  };
+  const { prismaClient, state } = refreshPrisma({
+    probe,
+    paymentAttempts: [
+      paymentAttempt({
+        target: komojuConvenienceTarget,
+        paymentMethod: "CONVENIENCE_STORE",
+        paymentDetailsType: "BasePaymentDetails",
+        paymentMethodName: "Convenience Store",
+      }),
+    ],
+  });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentGateway: "komoju_convenience_store",
+          paymentFormattedGateway: "KOMOJU - Convenience Store",
+          paymentDetails: {
+            __typename: "BasePaymentDetails",
+            paymentMethodName: "Convenience Store",
+          },
+        }),
+      ),
+      now: new Date("2026-07-29T01:06:00.000Z"),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stage, "complete");
+  assert.equal(state.probe.status, "PASSED");
+  assert.equal(
+    state.probe.finalEvidenceJson.paymentTarget.paymentMethod,
+    "CONVENIENCE_STORE",
+  );
+});
+
+test("autodetect rejects an unknown payment transaction", async () => {
+  const probe = probeRecord({
+    target: AUTODETECT_TARGET,
+    externalReadiness: {
+      version: 5,
+      flow: "PLATFORM_DIRECT_PAID_ONLY",
+      maximumPlannedChargeAmount: 50_000,
+      allowedProviders: ["SHOPIFY_PAYMENTS", "KOMOJU"],
+    },
+  });
+  const { prismaClient, state } = refreshPrisma({ probe, paymentAttempts: [] });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentGateway: "manual_unknown",
+          paymentFormattedGateway: "Unknown payment",
+          paymentDetails: {
+            __typename: "BasePaymentDetails",
+            paymentMethodName: "Other",
+          },
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(state.probe.lastErrorCode, "payment_target_unrecognized");
+});
+
+test("autodetect rejects a recognized provider outside the launch allowlist", async () => {
+  const probe = probeRecord({
+    target: AUTODETECT_TARGET,
+    externalReadiness: {
+      version: 5,
+      flow: "PLATFORM_DIRECT_PAID_ONLY",
+      maximumPlannedChargeAmount: 50_000,
+      allowedProviders: ["SHOPIFY_PAYMENTS"],
+    },
+  });
+  const { prismaClient, state } = refreshPrisma({ probe, paymentAttempts: [] });
+  const result = await refreshProductionTransactionProbe(
+    {
+      probeId: probe.id,
+      actorKey: "domestic-autonomous-launch-guard",
+      releaseExpectation: releaseExpectation(),
+    },
+    {
+      prismaClient,
+      graphQL: graphQLFor(
+        shopifyOrder({
+          paymentGateway: "komoju_credit_card",
+          paymentFormattedGateway: "KOMOJU - Credit Card",
+        }),
+      ),
+    },
+  );
+
+  assert.equal(result.pending, true);
+  assert.equal(result.stage, "settlement");
+  assert.equal(state.probe.lastErrorCode, "payment_target_unrecognized");
 });
 
 test("current KOMOJU payment waits for its directly linked bank deposit before refund", async () => {

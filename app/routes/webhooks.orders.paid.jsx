@@ -7,6 +7,14 @@ import { refreshKomojuLimitedLaunchControl } from "../services/komojuLimitedLaun
 import { isShopifyStandardDirectCheckoutMode } from "../services/platformDirectCheckoutMode.server.js";
 import { withShopifyWebhookReceipt } from "../services/shopifyWebhookInbox.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
+import { runDomesticAutonomousLaunchGuard } from "../services/domesticAutonomousLaunchGuard.server.js";
+
+function getOrderId(payload) {
+  return (
+    payload?.admin_graphql_api_id ||
+    (payload?.id ? `gid://shopify/Order/${payload.id}` : null)
+  );
+}
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
@@ -49,7 +57,25 @@ export const action = async ({ request }) => {
           `komoju_limited_launch_refresh_failed:${limitedLaunchControl.reason}`,
         );
       }
-      return { ...settlement, paymentTracking, limitedLaunchControl };
+      const autonomousLaunchGuard = await runDomesticAutonomousLaunchGuard({
+        shopDomain: shop,
+        orderReference: getOrderId(payload),
+        testOrder: payload?.test === true,
+      });
+      if (
+        autonomousLaunchGuard?.ok === false &&
+        autonomousLaunchGuard?.secured !== true
+      ) {
+        throw new Error(
+          `domestic_autonomous_launch_guard_failed:${autonomousLaunchGuard.reason}`,
+        );
+      }
+      return {
+        ...settlement,
+        paymentTracking,
+        limitedLaunchControl,
+        autonomousLaunchGuard,
+      };
     },
   });
   const result = delivery.result || {
@@ -83,6 +109,16 @@ export const action = async ({ request }) => {
             tracked: Boolean(result.paymentTracking.tracked),
             attemptCount: Number(result.paymentTracking.attemptCount || 0),
             multipleAttempts: Boolean(result.paymentTracking.multipleAttempts),
+          }
+        : null,
+      autonomousLaunchGuard: result.autonomousLaunchGuard
+        ? {
+            ok: Boolean(result.autonomousLaunchGuard.ok),
+            active: Boolean(result.autonomousLaunchGuard.active),
+            secured: Boolean(result.autonomousLaunchGuard.secured),
+            pending: Boolean(result.autonomousLaunchGuard.pending),
+            verified: Boolean(result.autonomousLaunchGuard.verified),
+            reason: result.autonomousLaunchGuard.reason || null,
           }
         : null,
     },

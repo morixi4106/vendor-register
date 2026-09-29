@@ -43,6 +43,7 @@ import {
   getDomesticMarketplacePilotDashboard,
   isDomesticMarketplacePilotEnabled,
 } from "./domesticMarketplacePilot.server.js";
+import { runDomesticAutonomousLaunchGuard } from "./domesticAutonomousLaunchGuard.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -300,6 +301,9 @@ export async function collectLaunchMonitorReport({
   const getDomesticMarketplacePilotDashboardImpl =
     dependencies.getDomesticMarketplacePilotDashboard ||
     getDomesticMarketplacePilotDashboard;
+  const runDomesticAutonomousLaunchGuardImpl =
+    dependencies.runDomesticAutonomousLaunchGuard ||
+    runDomesticAutonomousLaunchGuard;
   let domesticMarketplacePilot = null;
   if (isDomesticMarketplacePilotEnabled(env)) {
     try {
@@ -328,11 +332,53 @@ export async function collectLaunchMonitorReport({
     new Date(now.getTime() - 12 * 60 * 1000);
   let heavyCheckCompleted = runHeavyChecks ? false : null;
   let heavyChecks = [];
+  const shopDomain = String(
+    env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
+  ).trim();
 
   try {
-    const shopDomain = String(
-      env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
-    ).trim();
+    const guard = await runDomesticAutonomousLaunchGuardImpl(
+      { shopDomain },
+      { prismaClient, env, now },
+    );
+    if (guard.active || guard.secured) {
+      checks.push(
+        guard.ok && !guard.pending
+          ? okCheck(
+              "domestic_autonomous_launch_guard",
+              guard.verified
+                ? "最初の本番注文と売上台帳の自動照合は完了しています。"
+                : "最初の本番注文を照合するプローブは準備済みです。",
+            )
+          : guard.ok && guard.pending
+            ? issueCheck(
+                "domestic_autonomous_launch_guard",
+                WARNING_SEVERITY,
+                "最初の本番注文の売上・台帳反映を自動照合しています。",
+                guard.reason || "first_order_verification_pending",
+              )
+            : issueCheck(
+                "domestic_autonomous_launch_guard",
+                CRITICAL_SEVERITY,
+                guard.secured
+                  ? "最初の本番注文を安全に検証できなかったため、購入を自動停止しました。"
+                  : "国内直販の自動公開ガードを実行できませんでした。",
+                guard.reason || "domestic_autonomous_launch_guard_failed",
+              ),
+      );
+    }
+  } catch (error) {
+    checks.push(
+      issueCheck(
+        "domestic_autonomous_launch_guard",
+        CRITICAL_SEVERITY,
+        "国内直販の自動公開ガードを実行できませんでした。",
+        safeErrorCode(error),
+      ),
+    );
+  }
+
+  try {
     if (shopDomain && isShopifyStandardDirectCheckoutMode(env)) {
       checks.push(
         okCheck(
@@ -632,6 +678,8 @@ export async function collectLaunchMonitorReport({
       const operationalChecks = buildOperationalReadinessChecks({
         inspection: operationalReadiness,
         control: platformOperationalControl,
+        env,
+        now,
       })
         .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
         .map(readinessCheckToMonitorCheck);

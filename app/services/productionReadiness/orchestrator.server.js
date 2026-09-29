@@ -265,6 +265,8 @@ export async function getProductionReadiness({
     ...buildOperationalReadinessChecks({
       inspection: operationalReadiness,
       control: platformOperationalControl,
+      env,
+      now,
     }),
     ...buildReleaseMonitoringChecks(releaseMonitoring, { env }),
     ...buildShopifyChecks({
@@ -287,6 +289,7 @@ export async function getProductionReadiness({
         env,
         operationEnv,
         directReturns,
+        now,
       }),
     ),
   );

@@ -25,7 +25,7 @@ Shopify is the source of truth for:
 - order financial status and the original transaction relationship used by a
   later refund.
 
-KOMOJU is the source of truth for:
+KOMOJU is the source of truth when the purchaser selects a KOMOJU method for:
 
 - card authorization and capture;
 - provider settlement and refund processing;
@@ -42,9 +42,11 @@ This application is responsible for:
 
 ## Domestic launch gate
 
-The domestic platform-direct launch requires one new production KOMOJU card
-payment after the verification probe starts. The probe passes only when it can
-match the same Shopify order and successful transaction to:
+The domestic platform-direct launch requires one new production payment after
+the verification probe starts. The application detects the actual Shopify
+Payments or KOMOJU method from the single successful Shopify transaction. The
+probe passes only when that provider is explicitly configured and the same
+Shopify order and transaction match:
 
 - one production `PaymentAttempt`;
 - the expected platform-direct `MarketplaceOrder` and `SellerOrder`;
@@ -62,6 +64,14 @@ password is removed, a fresh full run may satisfy this gate only when the
 storefront password page is its sole non-healthy result. A normal healthy or
 recovered full run is required immediately after opening.
 
+When the owner cannot perform the remaining manual smoke tests, the explicitly
+authorized domestic autonomous launch path documented in
+`docs/operations/domestic-autonomous-launch-authorization-2026-09-29.md` may
+convert only its fixed allowlist of missing attestations to visible,
+non-blocking warnings. It never converts a failed attestation to a pass. The
+path requires continuous monitoring and automatically verifies the first paid
+production order or applies the strong purchase hold.
+
 The independent marketplace sale-eligibility watchdog and the Render/DB-down
 publication-removal drill are supplemental in this mode. Standard Shopify
 checkout does not depend on the Render application being reachable, and only
@@ -73,17 +83,17 @@ or cross-border seller flow is enabled.
 
 Use identifiers and statuses, not assumptions, to locate a failure:
 
-1. No Shopify order or successful Shopify transaction: inspect the Shopify
-   checkout and KOMOJU gateway boundary.
+1. No Shopify order or successful Shopify transaction: inspect Shopify
+   checkout and the selected Shopify Payments or KOMOJU gateway boundary.
 2. Shopify reports a successful transaction but no `PaymentAttempt` exists:
    inspect webhook delivery and application projection; the probe retries the
    single-order projection idempotently.
 3. `PaymentAttempt` exists but SellerOrder, Shadow, or ledger differs: the
    application projection is at fault and launch remains blocked.
 4. Every application projection matches but a later provider refund or payout
-   fails: inspect the Shopify/KOMOJU operation using the recorded transaction
-   identifiers, while keeping the application ledger unreconciled until
-   provider confirmation arrives.
+   fails: inspect Shopify and the selected payment provider using the recorded
+   transaction identifiers, while keeping the application ledger unreconciled
+   until provider confirmation arrives.
 
 This separation does not prove that an external provider is faultless. It
 provides enough evidence to identify the system boundary where investigation
