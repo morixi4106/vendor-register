@@ -77,14 +77,12 @@ test("launch monitor dry-run neither requires the internal token nor sends fallb
   assert.match(source, /if \(dryRun\) \{/);
 });
 
-test("prelaunch full monitor accepts only the exact first password-page alert", async () => {
+test("prelaunch full monitor delegates the bounded password-page policy", async () => {
   const source = await readFile(launchAgentUrl, "utf8");
 
   assert.match(source, /--expect-password-critical/);
-  assert.match(source, /payload\?\.notificationKind !== "alert"/);
-  assert.match(source, /issues\.length === 1/);
-  assert.match(source, /issues\[0\]\?\.id === "official_storefront"/);
-  assert.match(source, /issues\[0\]\?\.code === "password_page"/);
+  assert.match(source, /launch-monitor-response-policy\.mjs/);
+  assert.match(source, /isExpectedPasswordCriticalPayload\(payload\)/);
   assert.match(source, /if \(dryRun && expectPasswordCritical\)/);
 });
 

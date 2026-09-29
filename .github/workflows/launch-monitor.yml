@@ -11,7 +11,7 @@ on:
         type: boolean
         default: true
       expect_password_critical:
-        description: "Prelaunch only: require the full run to report exactly one password_page Critical and send its first alert"
+        description: "Prelaunch only: require one password_page Critical, only bounded owner-risk warnings, and the first alert"
         required: true
         type: boolean
         default: false

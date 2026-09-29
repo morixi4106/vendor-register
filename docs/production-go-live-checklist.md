@@ -333,8 +333,10 @@ Before removing storefront password protection:
 3. Manually run **Production integrity monitor** with `dry_run=false` and
    `expect_password_critical=true`.
 4. The run passes only when the full authenticated report contains exactly one
-   non-healthy check: `official_storefront/password_page`, and the first
-   Critical alert was sent. Any other warning or Critical fails the run.
+   Critical check, `official_storefront/password_page`, and the first Critical
+   alert was sent. The only permitted warnings are the nine explicitly bounded
+   domestic-direct owner-risk attestations. Any other warning or Critical fails
+   the run.
 5. Confirm the Critical email was received and the release-readiness page
    records the prelaunch password probe. While that probe remains fresh, it
    satisfies the monitor portion of the prelaunch gate; it does not replace

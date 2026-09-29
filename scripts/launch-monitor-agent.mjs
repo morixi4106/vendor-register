@@ -1,3 +1,5 @@
+import { isExpectedPasswordCriticalPayload } from "./launch-monitor-response-policy.mjs";
+
 const DRY_RUN = process.argv.includes("--dry-run");
 const EXPECT_PASSWORD_CRITICAL = process.argv.includes(
   "--expect-password-critical",
@@ -183,23 +185,6 @@ async function main({
   } else if (expectPasswordCritical) {
     process.exitCode = 2;
   }
-}
-
-function isExpectedPasswordCriticalPayload(payload) {
-  if (
-    payload?.status !== "critical" ||
-    payload?.notificationKind !== "alert" ||
-    !Array.isArray(payload?.checks)
-  ) {
-    return false;
-  }
-  const issues = payload.checks.filter((check) => check.status !== "healthy");
-  return (
-    issues.length === 1 &&
-    issues[0]?.id === "official_storefront" &&
-    issues[0]?.status === "critical" &&
-    issues[0]?.code === "password_page"
-  );
 }
 
 function isMonitorResponse(payload) {
