@@ -162,7 +162,7 @@ test("keeps the repository brace-expansion installation patched", () => {
   );
   assert.equal(
     CURRENT_LOCKFILE.packages["node_modules/brace-expansion"].version,
-    "2.1.4",
+    "2.1.7",
   );
 });
 

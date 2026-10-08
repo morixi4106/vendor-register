@@ -2,6 +2,19 @@
 
 ## Current status
 
+2026-10-08: the dependency refresh on `agent/shopify-centered-privacy` pins
+`proxy-addr` to `2.0.8`, `brace-expansion` to `2.1.7`, `@fastify/busboy` to
+`3.2.2`, `@graphql-tools/executor-legacy-ws` to `1.1.37`, `shell-quote` to
+`1.12.0`, and `source-map-js` to `1.2.2`.
+These are available patch/minor fixes, not new risk exceptions.
+Re-run the complete production audit before deployment; the September result
+below is historical and does not establish the current dependency safety.
+`braces` and `sprintf-js` have no newer published version at this check, and
+older GraphQL Tools utility versions remain subject to their current advisory.
+The build-tool gate must not be relaxed or given fabricated acceptance.
+
+## Previous clean audit
+
 As of 2026-09-29, the production dependency audit passes without an active
 runtime or Shopify build-tool exception:
 
