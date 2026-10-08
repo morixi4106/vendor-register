@@ -14,6 +14,7 @@ test("serializePublicStore sends platform stores to the Shopify collection", () 
       category: "Cosmetics",
       country: "Japan",
       address: "Tokyo",
+      publicAddress: "Tokyo",
       note: null,
       isPlatformStore: true,
       vendorAuth: {
@@ -34,6 +35,13 @@ test("serializePublicStore sends platform stores to the Shopify collection", () 
       note: null,
     },
   );
+});
+
+test("public stores never fall back to private address or review notes", () => {
+  const result = serializePublicStore({ id: "store", storeName: "Store", address: "Private address", note: "Confidential", vendorAuth: { handle: "store" } });
+  assert.equal(result.address, null);
+  assert.equal(result.note, null);
+  assert.ok(!JSON.stringify(result).includes("Confidential"));
 });
 
 test("buildPublicStoresWhereInput hides third-party stores while draft checkout is disabled", () => {

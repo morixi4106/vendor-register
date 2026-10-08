@@ -2,45 +2,34 @@
 import { Form, Link, useLoaderData } from "react-router";
 import { useState } from "react";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
+import { requirePrivacyOperator } from "../utils/privacyOperator.server.js";
+import { listPrivateContactInquiries } from "../services/privacyOperations.server.js";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  await requirePrivacyOperator(request);
 
   const url = new URL(request.url);
   const replyType = url.searchParams.get("replyType") || "";
   const q = url.searchParams.get("q") || "";
 
-  const where = {};
-
-  if (replyType && ["fixed", "ai", "escalation"].includes(replyType)) {
-    where.replyType = replyType;
-  }
-
-  if (q.trim()) {
-    where.OR = [
-      { name: { contains: q.trim() } },
-      { email: { contains: q.trim() } },
-      { phone: { contains: q.trim() } },
-      { message: { contains: q.trim() } },
-      { replyText: { contains: q.trim() } },
-      { matchedRuleId: { contains: q.trim() } },
-    ];
-  }
-
-  const inquiries = await prisma.contactInquiry.findMany({
-    where,
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 100,
-  });
+  const inquiries = await listPrivateContactInquiries({ replyType, query: q });
 
   return Response.json({
     inquiries,
     replyType,
     q,
-  });
+  }, { headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" } });
+};
+
+export const action = async ({ request }) => {
+  await requirePrivacyOperator(request);
+  const form = await request.formData();
+  const intent = String(form.get("intent") || "");
+  const id = String(form.get("id") || "");
+  if (!id || !["resolve", "reopen", "hold", "release-hold"].includes(intent)) return Response.json({ ok: false }, { status: 400 });
+  await prisma.contactInquiry.update({ where: { id }, data: intent === "resolve" ? { status: "RESOLVED", resolvedAt: new Date() } : intent === "reopen" ? { status: "OPEN", resolvedAt: null } : { retentionHold: intent === "hold" } });
+  return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
 };
 
 function FilterLink({ q, value, label, currentReplyType }) {
@@ -201,6 +190,7 @@ export default function ContactInquiriesPage() {
 
       <div style={{ marginBottom: "20px", color: "#666" }}>
         件数: {inquiries.length}
+        {q ? " / 検索対象: 最新1,000件" : ""}
         {q ? ` / 検索語: ${q}` : ""}
         {replyType ? ` / 種別: ${replyType}` : ""}
       </div>
@@ -258,6 +248,11 @@ export default function ContactInquiriesPage() {
 
                 {isOpen ? (
                   <div style={{ marginTop: "16px" }}>
+                    <Form method="post" style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                      <input type="hidden" name="id" value={item.id} />
+                      <button name="intent" value={item.status === "RESOLVED" ? "reopen" : "resolve"}>{item.status === "RESOLVED" ? "対応中に戻す" : "解決済みにする"}</button>
+                      <button name="intent" value={item.retentionHold ? "release-hold" : "hold"}>{item.retentionHold ? "保存保留を解除" : "保存を保留"}</button>
+                    </Form>
                     <div style={{ marginBottom: "8px" }}>
                       <strong>名前:</strong> {item.name}
                     </div>

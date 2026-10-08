@@ -5,7 +5,7 @@ import {
   DeliveryMethod,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
-import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import { EncryptedPrismaSessionStorage } from "./utils/encryptedSessionStorage.server.js";
 import prisma from "./db.server";
 
 const shopify = shopifyApp({
@@ -15,7 +15,7 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || process.env.APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new PrismaSessionStorage(prisma),
+  sessionStorage: new EncryptedPrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   webhooks: {
     PRODUCTS_UPDATE: {

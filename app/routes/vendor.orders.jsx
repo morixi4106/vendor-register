@@ -1,6 +1,7 @@
 
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
+import { Form, Link, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
 import { useState } from "react";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import {
   appendVendorIdToPath,
@@ -166,6 +167,7 @@ export default function VendorOrdersPage() {
   const vendorId = useVendorIdFromMatches();
   const ordersActionPath = useVendorScopedPath("/vendor/orders");
   const [selectedAddressOrder, setSelectedAddressOrder] = useState(null);
+  const addressFetcher = useFetcher();
   const pageContent = createOrdersPageContent(ordersAccess, orders.length);
   const isReady = ordersAccess.status === "ready";
   const isSubmitting = navigation.state !== "idle";
@@ -235,7 +237,6 @@ export default function VendorOrdersPage() {
                 <tr>
                   <th>注文日</th>
                   <th>注文番号</th>
-                  <th>顧客名</th>
                   <th>配送先</th>
                   <th>合計金額</th>
                   <th>支払い状態</th>
@@ -255,12 +256,14 @@ export default function VendorOrdersPage() {
                     <tr key={order.id}>
                       <td>{order.createdAtLabel}</td>
                       <td className="vendor-table__name">{order.shopifyOrderNumber}</td>
-                      <td>{order.customerName}</td>
                       <td className="vendor-orders__address-cell">
                         <button
                           type="button"
                           className="vendor-orders__address-button"
-                          onClick={() => setSelectedAddressOrder(order)}
+                          onClick={() => {
+                            setSelectedAddressOrder(order);
+                            addressFetcher.load(appendVendorIdToPath(`/vendor/orders/address?orderId=${encodeURIComponent(order.orderId)}`, vendorId));
+                          }}
                         >
                           配送先を見る
                         </button>
@@ -322,7 +325,7 @@ export default function VendorOrdersPage() {
 
       {selectedAddressOrder ? (
         <AddressModal
-          order={selectedAddressOrder}
+          order={{ ...selectedAddressOrder, ...(addressFetcher.state === "idle" && addressFetcher.data?.orderId === selectedAddressOrder.orderId ? addressFetcher.data : {}), shippingAddressSummary: addressFetcher.state !== "idle" ? "読み込み中..." : addressFetcher.data?.ok ? "" : "配送先を取得できませんでした。" }}
           onClose={() => setSelectedAddressOrder(null)}
         />
       ) : null}

@@ -8,6 +8,7 @@ import { buildWithdrawalSubmissionIdempotencyKey, hashWithdrawalValue, resolveWi
 import { buildWithdrawalAcknowledgementSnapshot } from "../withdrawalEmailTemplates.js";
 import { buildWithdrawalOutboxRecord, processWithdrawalEmailOutbox } from "../withdrawalEmailOutbox.server.js";
 import { hashPrivateIdentifier } from "../../utils/privacyHash.server.js";
+import { omitContactCopies } from "../../utils/privateData.server.js";
 import { evaluateWithdrawalEligibility, findOrderForWithdrawal, getClientIp, isFutureDate, isWithdrawalIdentityReviewStatus, normalizeEmail, normalizeOrderNumber, normalizeText, parseDateInput, sendWithdrawalAcknowledgementEmail, sendWithdrawalVendorNotificationEmails } from "./common.js";
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const RECEIPT_TOKEN_BYTES = 32;
@@ -256,8 +257,8 @@ export async function createWithdrawalRequestFromForm({
         deadlineAt: eligibility.deadlineAt,
         deadlineSource: eligibility.deadlineSource,
         selectedLineItemsJson,
-        submittedPayloadJson,
-        orderSnapshotJson: orderLookup.orderSnapshot,
+        submittedPayloadJson: omitContactCopies(submittedPayloadJson),
+        orderSnapshotJson: omitContactCopies(orderLookup.orderSnapshot),
         eligibilityJson: serializeEligibilityForJson(eligibility),
         submittedAt,
         submittedViewLocale: localeResolution.locale,
@@ -303,7 +304,7 @@ export async function createWithdrawalRequestFromForm({
           type: "WITHDRAWAL_SUBMITTED",
           occurredAt: submittedAt,
           actorType: "BUYER",
-          actorId: values.customerEmail,
+          actorId: "customer",
           payloadJson: {
             schemaVersion: WITHDRAWAL_PAYLOAD_SCHEMA_VERSION,
             submittedPayloadHash,

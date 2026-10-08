@@ -4,8 +4,19 @@ import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { privateErrorCode } from "./utils/privateData.server.js";
+import { applyPrivateResponseHeaders } from "./utils/privateHeaders.js";
 
 export const streamTimeout = 5000;
+
+export function handleError(error, { request }) {
+  if (!request.signal.aborted) console.error("application request failed", { code: privateErrorCode(error) });
+}
+
+export function handleDataRequest(response, { request }) {
+  applyPrivateResponseHeaders(response.headers, request.url);
+  return response;
+}
 
 export default async function handleRequest(
   request,
@@ -14,8 +25,9 @@ export default async function handleRequest(
   remixContext,
 ) {
   addDocumentResponseHeaders(request, responseHeaders);
+  applyPrivateResponseHeaders(responseHeaders, request.url);
   responseHeaders.set("X-Content-Type-Options", "nosniff");
-  responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (!responseHeaders.has("Referrer-Policy")) responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
   responseHeaders.set(
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=()",
@@ -45,7 +57,7 @@ export default async function handleRequest(
         },
         onError(error) {
           responseStatusCode = 500;
-          console.error(error);
+          console.error("page rendering failed", { code: privateErrorCode(error) });
         },
       },
     );

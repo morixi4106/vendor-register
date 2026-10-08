@@ -22,6 +22,7 @@ const EXPECTED_EXPORTS = [
   "getVendorMonthlyReport",
   "getVendorOrdersAccessState",
   "getVendorOrdersPageData",
+  "getVendorOrderShippingAddress",
   "getVendorPublicContext",
   "getVendorReturnTo",
   "getVendorVerifyRedirectPath",

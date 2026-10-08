@@ -24,8 +24,8 @@ export const loader = async () => {
       storeName: true,
       category: true,
       country: true,
-      address: true,
-      note: true,
+      publicAddress: true,
+      publicDescription: true,
       createdAt: true,
       isPlatformStore: true,
       vendorAuth: {

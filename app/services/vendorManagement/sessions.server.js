@@ -1,5 +1,5 @@
 import { createCookie, redirect } from "react-router";
-import prisma from "../../db.server.js";
+import { findVendorAdminSession } from "../vendorAuthentication.server.js";
 export const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
   sameSite: "lax",
@@ -29,6 +29,8 @@ export function sanitizeVendorReturnTo(value, fallback = "/vendor/dashboard") {
   if (!returnTo.startsWith("/")) {
     return fallback;
   }
+  try { if (new URL(returnTo, "https://vendor.local").origin !== "https://vendor.local") return fallback; }
+  catch { return fallback; }
   if (returnTo.startsWith("/vendor/verify") || returnTo.startsWith("/apps/vendors/verify")) {
     return fallback;
   }
@@ -121,10 +123,7 @@ export async function requireVendorSession(request, {
   if (!sessionToken) {
     throw redirect(getVendorVerifyRedirectPath(request));
   }
-  const vendorSession = await prisma.vendorAdminSession.findUnique({
-    where: {
-      sessionToken
-    },
+  const vendorSession = await findVendorAdminSession(sessionToken, {
     include: {
       vendor: {
         include: {
@@ -163,6 +162,9 @@ export async function requireVendorContext(request, options = {}) {
     throw new Response("店舗情報が見つかりません。", {
       status: 404
     });
+  }
+  if (vendor.status !== "active") {
+    throw new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
   }
   return {
     vendorSession,

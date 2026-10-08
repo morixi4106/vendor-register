@@ -697,6 +697,24 @@ async function collectReport({
   });
 }
 
+test("privacy requests past their deadline make the production monitor critical", async () => {
+  const prismaClient = basePrisma();
+  prismaClient.privacyRightsRequest = { count: async ({ where }) => {
+    assert.equal(where.status, "RECEIVED");
+    assert.equal(where.deadlineAt.lt, NOW);
+    return 1;
+  } };
+  const report = await collectReport({ prismaClient });
+  assert.equal(report.checks.find((check) => check.id === "privacy_rights_deadline").severity, "critical");
+});
+
+test("privacy deadline inspection failure is not a healthy result", async () => {
+  const prismaClient = basePrisma();
+  prismaClient.privacyRightsRequest = { count: async () => { throw new Error("database unavailable"); } };
+  const report = await collectReport({ prismaClient });
+  assert.equal(report.checks.find((check) => check.id === "privacy_rights_deadline").severity, "critical");
+});
+
 function healthyProductShippingProfiles(overrides = {}) {
   return {
     available: true,

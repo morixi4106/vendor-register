@@ -46,7 +46,7 @@ export function serializePublicStore(store) {
     storeName: store.storeName,
     category: store.category,
     country: store.country,
-    address: store.address,
-    note: store.note,
+    address: store.publicAddress || null,
+    note: store.publicDescription || null,
   };
 }

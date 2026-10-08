@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { redirect } from "react-router";
 
 import prisma from "../db.server.js";
+import { privateErrorCode } from "../utils/privateData.server.js";
+import { findVendorAdminSession } from "./vendorAuthentication.server.js";
 import { draftOrderCheckout } from "./draftOrderCheckout.server.js";
 import {
   authorizeSalesCreditOffset,
@@ -805,8 +807,8 @@ async function getAuthenticatedSalesCreditSeller({
     return null;
   }
 
-  const vendorSession = await prismaClient.vendorAdminSession.findUnique({
-    where: { sessionToken },
+  const vendorSession = await findVendorAdminSession(sessionToken, {
+    prismaClient,
     include: {
       vendor: {
         include: {
@@ -937,7 +939,6 @@ async function prepareCheckoutSalesCredit({
         checkoutLockMinutes: 30,
         currencyCode,
         itemSubtotalAmount: subtotal,
-        buyerEmail: submission.customer.email,
         targetSellerId,
         targetVendorHandle: vendorContext.vendor.handle,
         targetVendorStoreName: vendorContext.vendor.storeName,
@@ -997,7 +998,7 @@ async function releaseCheckoutSalesCreditOffset({
       { prismaClient },
     );
   } catch (error) {
-    console.error("sales credit offset release failed:", error);
+    console.error("sales credit offset release failed", { code: privateErrorCode(error) });
     return null;
   }
 }
@@ -1022,7 +1023,7 @@ async function markCheckoutSalesCreditOffsetCreated({
       { prismaClient },
     );
   } catch (error) {
-    console.error("sales credit offset checkout mark failed:", error);
+    console.error("sales credit offset checkout mark failed", { code: privateErrorCode(error) });
     return null;
   }
 }
@@ -1071,7 +1072,7 @@ export async function recordBuyerWarningAcceptance({
       },
     });
   } catch (error) {
-    console.error("buyer warning acceptance record failed:", error);
+    console.error("buyer warning acceptance record failed", { code: privateErrorCode(error) });
     if (throwOnFailure) throw error;
     return null;
   }
@@ -1195,10 +1196,10 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
         select: {
           id: true,
           storeName: true,
-          ownerName: true,
+          publicAddress: true,
           country: true,
           category: true,
-          note: true,
+          publicDescription: true,
           isTestStore: true,
           isPlatformStore: true,
         },
@@ -1226,17 +1227,16 @@ async function getActiveVendorContextByHandle(handle, prismaClient = prisma) {
       id: vendor.id,
       handle: vendor.handle,
       storeName: vendor.storeName,
-      managementEmail: vendor.managementEmail || null,
       sellerId: vendor.seller?.id || null,
       euSellerStatus: vendor.seller?.euSellerStatus || "DISABLED",
     },
     store: {
       id: vendor.vendorStore.id,
       storeName: vendor.vendorStore.storeName,
-      ownerName: vendor.vendorStore.ownerName,
+      ownerName: null,
       country: vendor.vendorStore.country,
       category: vendor.vendorStore.category,
-      note: vendor.vendorStore.note || null,
+      note: vendor.vendorStore.publicDescription || null,
       isTestStore: vendor.vendorStore.isTestStore,
       isPlatformStore: vendor.vendorStore.isPlatformStore,
     },
@@ -1273,17 +1273,16 @@ function buildVendorContextForCheckoutProduct(product, fallbackVendorContext) {
       id: vendor.id,
       handle: vendor.handle,
       storeName: vendor.storeName,
-      managementEmail: vendor.managementEmail || null,
       sellerId: seller?.id || null,
       euSellerStatus: seller?.euSellerStatus || "DISABLED",
     },
     store: {
       id: store.id,
       storeName: store.storeName,
-      ownerName: store.ownerName || null,
+      ownerName: null,
       country: store.country,
       category: store.category,
-      note: store.note || null,
+      note: store.publicDescription || null,
       isTestStore: Boolean(store.isTestStore),
       isPlatformStore: Boolean(store.isPlatformStore),
     },
@@ -1806,10 +1805,10 @@ async function buildServerTrustedCheckoutPayload({
         select: {
           id: true,
           storeName: true,
-          ownerName: true,
+          publicAddress: true,
           country: true,
           category: true,
-          note: true,
+          publicDescription: true,
           isTestStore: true,
           isPlatformStore: true,
           returnAddresses: true,
@@ -2170,7 +2169,7 @@ async function buildServerTrustedCheckoutPayload({
         { prismaClient },
       );
     } catch (error) {
-      console.error("marketplace checkout evidence write failed:", error);
+      console.error("marketplace checkout evidence write failed", { code: privateErrorCode(error) });
       return {
         ok: false,
         error: CHECKOUT_UNAVAILABLE_MESSAGE,
@@ -2377,7 +2376,7 @@ export function createVendorStorefrontAction({
         consumeRateLimitImpl: consumePublicEndpointRateLimitImpl,
       });
     } catch (error) {
-      console.error("vendor storefront checkout rate limit failed:", error);
+      console.error("vendor storefront checkout rate limit failed", { code: privateErrorCode(error) });
       return new Response("Service Unavailable", {
         status: 503,
         headers: { "Cache-Control": "no-store" },
@@ -2488,7 +2487,7 @@ export function createVendorStorefrontAction({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,
       });
-      console.error("vendor storefront checkout error:", error);
+      console.error("vendor storefront checkout error", { code: privateErrorCode(error) });
       return buildPublicCheckoutErrorResponse(error);
     }
   };
@@ -2529,7 +2528,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
         consumeRateLimitImpl: consumePublicEndpointRateLimitImpl,
       });
     } catch (error) {
-      console.error("public vendor checkout rate limit failed:", error);
+      console.error("public vendor checkout rate limit failed", { code: privateErrorCode(error) });
       return Response.json(
         { ok: false, reason: "temporarily_unavailable" },
         {
@@ -2653,7 +2652,7 @@ export function createPublicVendorDraftOrderCheckoutAction({
         salesCreditOffset: checkoutInput.salesCreditOffset,
         prismaClient,
       });
-      console.error("public vendor checkout api error:", error);
+      console.error("public vendor checkout api error", { code: privateErrorCode(error) });
       return buildPublicApiCheckoutErrorResponse(error);
     }
   };

@@ -1,5 +1,6 @@
 
 import crypto from "node:crypto";
+import { protectLegacyVendorContacts, runPrivacyMaintenance } from "../services/privacyOperations.server.js";
 
 import { reconcileShopifyProductCatalog } from "../services/shopifyProductSync.server.js";
 import {
@@ -26,6 +27,14 @@ export async function action({ request }) {
   }
 
   const formData = await request.formData().catch(() => new FormData());
+  try {
+    await runPrivacyMaintenance();
+    if (/^[a-f0-9]{64}$/i.test(String(process.env.PRIVACY_ENCRYPTION_KEY || ""))) await protectLegacyVendorContacts();
+  }
+  catch {
+    console.error("privacy maintenance failed", { code: "privacy_maintenance_failed" });
+    await recordOperationalHeartbeatSafely({ key: "privacy_maintenance", status: "failed", errorCode: "privacy_maintenance_failed" });
+  }
   const requestedLimit = Number(formData.get("limit") || 10000);
   const limit = Math.max(
     1,

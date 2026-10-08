@@ -7,6 +7,7 @@ export {
   buildVendorDraftOrdersSearchQuery,
   getVendorOrdersAccessState,
   getVendorOrdersPageData,
+  getVendorOrderShippingAddress,
   listVendorDraftOrderOrders,
   listVendorShopifyOrderLedgerReferences,
   listVendorShopifyOrderSellerOrderReferences,

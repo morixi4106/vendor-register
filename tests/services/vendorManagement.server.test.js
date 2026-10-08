@@ -635,27 +635,15 @@ test("getVendorOrdersPageData returns mapped orders from seller ledger order ids
   assert.equal(result.orders.length, 1);
   assert.equal(result.orders[0].id, "gid://shopify/Order/1001");
   assert.equal(result.orders[0].shopifyOrderNumber, "#1001");
-  assert.equal(result.orders[0].customerName, "Taro Yamada");
+  assert.equal(result.orders[0].customerName, "非表示");
   assert.equal(result.orders[0].totalAmount, 8400);
   assert.equal(result.orders[0].financialStatus, "PAID");
   assert.equal(result.orders[0].fulfillmentStatus, "UNFULFILLED");
   assert.equal(result.orders[0].shippingCountryCode, "JP");
-  assert.equal(result.orders[0].shippingAddressSummary, "東京都千代田区");
-  assert.deepEqual(result.orders[0].shippingAddressLines, [
-    "〒100-0001",
-    "東京都千代田区",
-    "千代田 1-1-1",
-    "Taro Yamada 様",
-  ]);
-  assert.deepEqual(result.orders[0].shippingAddressRows, [
-    { label: "宛名", value: "Taro Yamada 様" },
-    { label: "郵便番号", value: "100-0001" },
-    { label: "国/地域", value: "日本" },
-    { label: "都道府県", value: "東京都" },
-    { label: "市区町村", value: "千代田区" },
-    { label: "住所1", value: "千代田" },
-    { label: "住所2", value: "1-1-1" },
-  ]);
+  assert.equal(result.orders[0].shippingAddressSummary, "非表示");
+  assert.deepEqual(result.orders[0].shippingAddressLines, []);
+  assert.deepEqual(result.orders[0].shippingAddressRows, []);
+  assert.doesNotMatch(JSON.stringify(result), /taro@example\.com|Taro Yamada|100-0001/);
   assert.equal(result.orders[0].canRegisterShipment, true);
 });
 

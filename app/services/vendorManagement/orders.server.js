@@ -1,4 +1,5 @@
 import prisma from "../../db.server.js";
+import { privateErrorCode } from "../../utils/privateData.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../../utils/shopifyAdmin.server.js";
 import { SHOPIFY_API_VERSION } from "../../utils/shopifyApiVersion.js";
 import { createOrderSettlementSummary, createSellerOrderSettlementSummary, createVendorWithdrawalSummary, formatDateTime, formatMoney, formatPublicResourceId, getLedgerMetadata, isReconnectableShopifyError, listGrantedAppAccessScopes, listVendorStoreShopDomains, listVendorWithdrawalRequestsForSellerOrders } from "./common.js";
@@ -62,7 +63,7 @@ export async function getVendorOrdersAccessState({
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("vendor orders access state error:", error);
+    console.error("vendor orders access state error", { code: privateErrorCode(error) });
     if (isReconnectableShopifyError(message)) {
       return {
         status: "missing_connection",
@@ -93,20 +94,9 @@ const VENDOR_DRAFT_ORDERS_QUERY = `
           id
           name
           createdAt
-          email
           displayFinancialStatus
           displayFulfillmentStatus
-          customer {
-            displayName
-          }
           shippingAddress {
-            name
-            address1
-            address2
-            city
-            province
-            zip
-            country
             countryCodeV2
           }
           currentTotalPriceSet {
@@ -134,20 +124,9 @@ const VENDOR_LEDGER_ORDERS_QUERY = `
         id
         name
         createdAt
-        email
         displayFinancialStatus
         displayFulfillmentStatus
-        customer {
-          displayName
-        }
         shippingAddress {
-          name
-          address1
-          address2
-          city
-          province
-          zip
-          country
           countryCodeV2
         }
         currentTotalPriceSet {
@@ -250,10 +229,6 @@ function mapDisplayFulfillmentStatusTone(value) {
       return "neutral";
   }
 }
-function formatShippingAddress(address) {
-  const parts = formatShippingAddressLines(address);
-  return parts.length > 0 ? parts.join(" ") : "未設定";
-}
 const JAPAN_PROVINCE_LABELS = new Map([["hokkaido", "北海道"], ["aomori", "青森県"], ["iwate", "岩手県"], ["miyagi", "宮城県"], ["akita", "秋田県"], ["yamagata", "山形県"], ["fukushima", "福島県"], ["ibaraki", "茨城県"], ["tochigi", "栃木県"], ["gunma", "群馬県"], ["saitama", "埼玉県"], ["chiba", "千葉県"], ["tokyo", "東京都"], ["tōkyō", "東京都"], ["kanagawa", "神奈川県"], ["niigata", "新潟県"], ["toyama", "富山県"], ["ishikawa", "石川県"], ["fukui", "福井県"], ["yamanashi", "山梨県"], ["nagano", "長野県"], ["gifu", "岐阜県"], ["shizuoka", "静岡県"], ["aichi", "愛知県"], ["mie", "三重県"], ["shiga", "滋賀県"], ["kyoto", "京都府"], ["ōsaka", "大阪府"], ["osaka", "大阪府"], ["hyogo", "兵庫県"], ["hyōgo", "兵庫県"], ["nara", "奈良県"], ["wakayama", "和歌山県"], ["tottori", "鳥取県"], ["shimane", "島根県"], ["okayama", "岡山県"], ["hiroshima", "広島県"], ["yamaguchi", "山口県"], ["tokushima", "徳島県"], ["kagawa", "香川県"], ["ehime", "愛媛県"], ["kochi", "高知県"], ["kōchi", "高知県"], ["fukuoka", "福岡県"], ["saga", "佐賀県"], ["nagasaki", "長崎県"], ["kumamoto", "熊本県"], ["oita", "大分県"], ["ōita", "大分県"], ["miyazaki", "宮崎県"], ["kagoshima", "鹿児島県"], ["okinawa", "沖縄県"]].flatMap(([key, label]) => [[key, label], [label.toLowerCase(), label]]));
 function compactSpaces(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -292,15 +267,6 @@ function formatShippingAddressLines(address) {
     return [zip ? `〒${zip}` : "", [province, city].filter(Boolean).join(""), [address1, address2].filter(Boolean).join(" "), recipientName].filter(Boolean);
   }
   return [recipientName, [address1, address2].filter(Boolean).join(" "), [city, province, zip].filter(Boolean).join(" "), country].filter(Boolean);
-}
-function formatShippingAddressSummary(address) {
-  if (!address) return "未設定";
-  const cityParts = [getShippingProvinceLabel(address), address.city].map(compactSpaces).filter(Boolean);
-  if (cityParts.length > 0) {
-    return getShippingCountryLabel(address) === "日本" ? cityParts.join("") : cityParts.join(" ");
-  }
-  const fallback = getShippingCountryLabel(address);
-  return fallback || "未設定";
 }
 function formatShippingAddressRows(address) {
   if (!address) return [];
@@ -444,12 +410,12 @@ function serializeVendorOrderRow(orderRecord) {
     shopifyOrderNumber: order.name,
     createdAt: createdAt || null,
     createdAtLabel: formatDateTime(createdAt),
-    customerName: order?.customer?.displayName || "未設定",
-    email: order?.email || "未設定",
-    shippingAddressLabel: formatShippingAddress(order?.shippingAddress),
-    shippingAddressLines: formatShippingAddressLines(order?.shippingAddress),
-    shippingAddressRows: formatShippingAddressRows(order?.shippingAddress),
-    shippingAddressSummary: formatShippingAddressSummary(order?.shippingAddress),
+    customerName: "非表示",
+    email: "非表示",
+    shippingAddressLabel: "非表示",
+    shippingAddressLines: [],
+    shippingAddressRows: [],
+    shippingAddressSummary: "非表示",
     shippingCountryCode: order?.shippingAddress?.countryCodeV2 || null,
     totalAmount: Number(shopMoney?.amount || 0),
     totalCurrencyCode: currencyCode,
@@ -761,6 +727,19 @@ export async function listVendorShopifyOrdersFromSellerOrders({
     orders
   };
 }
+export async function getVendorOrderShippingAddress({ storeId, orderId, shopDomain }, { prismaClient = prisma, shopifyGraphQLWithOfflineSessionImpl = shopifyGraphQLWithOfflineSession } = {}) {
+  if (!storeId || !shopDomain || !/^gid:\/\/shopify\/Order\/\d+$/.test(String(orderId))) return { ok: false, status: 400 };
+  const sellerOrder = await prismaClient.sellerOrder.findFirst({ where: { vendorStoreId: storeId, shopifyOrderId: orderId, marketplaceOrder: { is: { shopDomain } } } });
+  const legacy = sellerOrder ? null : await prismaClient.ledgerEntry.findFirst({ where: { entryType: "shopify_order_paid", seller: { is: { vendorStoreId: storeId } }, AND: [{ metadataJson: { path: ["shopifyOrderId"], equals: orderId } }, { metadataJson: { path: ["shopDomain"], equals: shopDomain } }] } });
+  if (!sellerOrder && !legacy) return { ok: false, status: 404 };
+  if (sellerOrder && ["refunded", "cancelled"].includes(sellerOrder.paymentStatus)) return { ok: false, status: 409 };
+  const response = await shopifyGraphQLWithOfflineSessionImpl({ shopDomain, apiVersion: SHOPIFY_API_VERSION, query: `query VendorShippingAddress($id: ID!) { order(id: $id) { id cancelledAt displayFinancialStatus shippingAddress { name address1 address2 city province zip country countryCodeV2 } } }`, variables: { id: orderId } });
+  const order = response?.data?.order;
+  if (response?.errors?.length || !order || order.id !== orderId) return { ok: false, status: 503 };
+  if (order.cancelledAt || !["PAID", "PARTIALLY_REFUNDED"].includes(order.displayFinancialStatus)) return { ok: false, status: 409 };
+  return { ok: true, orderId, shippingAddressLines: formatShippingAddressLines(order.shippingAddress), shippingAddressRows: formatShippingAddressRows(order.shippingAddress) };
+}
+
 export async function getVendorOrdersPageData({
   storeId
 }, {
@@ -800,7 +779,7 @@ export async function getVendorOrdersPageData({
         pageSize: VENDOR_DRAFT_ORDERS_PAGE_SIZE
       };
     } catch (error) {
-      console.error("vendor seller orders list error:", error);
+      console.error("vendor seller orders list error", { code: privateErrorCode(error) });
     }
   }
   try {
@@ -819,7 +798,7 @@ export async function getVendorOrdersPageData({
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("vendor orders list error:", error);
+    console.error("vendor orders list error", { code: privateErrorCode(error) });
     return {
       accessState: {
         ...accessState,

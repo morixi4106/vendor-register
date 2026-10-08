@@ -28,20 +28,23 @@ model Session {
 }
 
 model VendorStore {
-  id              String   @id @default(cuid())
-  ownerName       String
-  storeName       String
-  email           String
-  phone           String
-  address         String
-  country         String
-  category        String
-  note            String?
-  ageCheck        String
-  isTestStore     Boolean  @default(false)
-  isPlatformStore Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default(cuid())
+  ownerName         String
+  storeName         String
+  email             String
+  phone             String
+  address           String
+  country           String
+  category          String
+  note              String?
+  ageCheck          String
+  emailLookupHash   String?
+  publicAddress     String?
+  publicDescription String?
+  isTestStore       Boolean  @default(false)
+  isPlatformStore   Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   vendorAuth               Vendor?
   seller                   Seller?
@@ -51,6 +54,8 @@ model VendorStore {
   withdrawalReturnGroups   WithdrawalReturnGroup[]
   governanceCases          MarketplaceOperationalCase[]
   domesticMarketplacePilot DomesticMarketplacePilot?
+
+  @@index([emailLookupHash])
 }
 
 model Product {
@@ -215,19 +220,22 @@ model ProductPriceApplyLog {
 }
 
 model Vendor {
-  id              String   @id @default(cuid())
-  vendorStoreId   String   @unique
-  storeName       String
-  handle          String   @unique
-  managementEmail String
-  status          String   @default("active")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                        String   @id @default(cuid())
+  vendorStoreId             String   @unique
+  storeName                 String
+  handle                    String   @unique
+  managementEmail           String
+  managementEmailLookupHash String?
+  status                    String   @default("active")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 
   vendorStore   VendorStore          @relation(fields: [vendorStoreId], references: [id], onDelete: Cascade)
   seller        Seller?
   loginCodes    VendorLoginCode[]
   adminSessions VendorAdminSession[]
+
+  @@index([managementEmailLookupHash])
 }
 
 model Seller {
@@ -2369,6 +2377,7 @@ model VendorLoginCode {
   vendorId  String
   email     String
   code      String
+  attempts  Int       @default(0)
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
@@ -2394,17 +2403,44 @@ model VendorAdminSession {
 }
 
 model ContactInquiry {
-  id            String   @id @default(cuid())
-  name          String
-  email         String
-  phone         String?
-  message       String
-  replyText     String
-  replyType     String
-  matchedRuleId String?
-  createdAt     DateTime @default(now())
+  id              String    @id @default(cuid())
+  name            String
+  email           String
+  phone           String?
+  message         String
+  replyText       String
+  replyType       String
+  matchedRuleId   String?
+  status          String    @default("OPEN")
+  resolvedAt      DateTime?
+  retentionHold   Boolean   @default(false)
+  emailLookupHash String?
+  createdAt       DateTime  @default(now())
 
   @@index([createdAt])
+  @@index([status, resolvedAt])
+  @@index([emailLookupHash])
+}
+
+model PrivacyRightsRequest {
+  id                String    @id @default(cuid())
+  shopDomain        String
+  requestKey        String    @unique
+  topic             String
+  customerEmailHash String?
+  shopifyCustomerId String?
+  externalRequestId String?
+  orderIdsJson      Json
+  status            String    @default("RECEIVED")
+  deadlineAt        DateTime
+  evidenceReference String?
+  evidenceHash      String?
+  resolvedBy        String?
+  resolvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([shopDomain, status, deadlineAt])
+  @@map("privacy_rights_requests")
 }
 
 model PublicEndpointRateLimit {

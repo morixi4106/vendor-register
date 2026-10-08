@@ -439,6 +439,17 @@ export async function collectLaunchMonitorReport({
     );
   }
 
+  if (prismaClient.privacyRightsRequest?.count) {
+    try {
+      const overdue = await prismaClient.privacyRightsRequest.count({ where: { shopDomain, status: "RECEIVED", deadlineAt: { lt: now } } });
+      checks.push(overdue > 0
+        ? issueCheck("privacy_rights_deadline", CRITICAL_SEVERITY, "開示・削除の未処理依頼が対応期限を超過しています。", "privacy_rights_overdue")
+        : okCheck("privacy_rights_deadline", "開示・削除の依頼に期限超過はありません。"));
+    } catch (error) {
+      checks.push(issueCheck("privacy_rights_deadline", CRITICAL_SEVERITY, "開示・削除依頼の期限を確認できません。", safeErrorCode(error)));
+    }
+  }
+
   try {
     const withdrawalOperations = await inspectWithdrawalOperationsImpl({
       prismaClient,

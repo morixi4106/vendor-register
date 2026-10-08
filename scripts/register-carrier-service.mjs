@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { PrismaClient } from '@prisma/client';
+import { decryptPrivateValue } from '../app/utils/privateData.server.js';
 
 const DEFAULT_API_VERSION = '2025-01';
 const CARRIER_SERVICE_NAME = 'Shipping V2';
@@ -193,6 +194,7 @@ async function main() {
       ],
     });
     const offlineSession = sessions.find((session) => session.isOnline === false && session.accessToken);
+    if (offlineSession) offlineSession.accessToken = decryptPrivateValue(offlineSession.accessToken);
 
     console.log(JSON.stringify({
       step: 'session_lookup',

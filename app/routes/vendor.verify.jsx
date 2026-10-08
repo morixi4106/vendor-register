@@ -1,8 +1,17 @@
 import { redirect } from "react-router";
 import { useActionData, useLoaderData, useNavigation } from "react-router";
-import { randomBytes, randomInt } from "crypto";
 import { Resend } from "resend";
 import prisma from "../db.server";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
+import {
+  consumeVendorLoginCode,
+  enforceVendorAuthenticationRateLimit,
+  findVendorAdminSession,
+  findVendorForAuthentication,
+  issueVendorLoginCode,
+} from "../services/vendorAuthentication.server.js";
+import { privateErrorCode } from "../utils/privateData.server.js";
+import { readBoundedFormData } from "../utils/requestBody.server.js";
 import {
   appendVendorIdToPath,
   createVendorAdminSessionCookieHeaders,
@@ -33,10 +42,7 @@ export const loader = async ({ request }) => {
     : currentSessionToken;
 
   if (sessionToken && !forceVerify) {
-    const session = await prisma.vendorAdminSession.findUnique({
-      where: { sessionToken },
-      include: { vendor: true },
-    });
+    const session = await findVendorAdminSession(sessionToken, { include: { vendor: true } });
 
     if (
       session &&
@@ -50,10 +56,22 @@ export const loader = async ({ request }) => {
   return Response.json({ returnTo, targetVendorId });
 };
 
-export const action = async ({ request }) => {
-  const formData = await request.formData();
+export const action = async (args) => {
+  try { return await handleAction(args); }
+  catch (error) {
+    if (error instanceof Response) return error;
+    console.error("vendor authentication failed", { code: privateErrorCode(error) });
+    return Response.json({ ok: false, step: "email", error: "時間を置いて再度お試しください。" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+};
+
+async function handleAction({ request }) {
+  const formData = await readBoundedFormData(request, 8000);
   const intent = String(formData.get("intent") || "");
   const formVendorId = String(formData.get("vendorId") || "").trim();
+  if (["send-code", "verify-code"].includes(intent)) {
+    await enforceVendorAuthenticationRateLimit({ request, email: String(formData.get("email") || "").trim(), intent });
+  }
   const returnTo = appendVendorIdToPath(
     sanitizeVendorReturnTo(
     formData.get("returnTo") || new URL(request.url).searchParams.get("returnTo"),
@@ -86,18 +104,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    const vendor = await prisma.vendor.findFirst({
-      where: isAdminEmail
-        ? {
-            id: targetVendorId,
-            status: "active",
-          }
-        : {
-            ...(targetVendorId ? { id: targetVendorId } : {}),
-            managementEmail: email,
-            status: "active",
-          },
-    });
+    const vendor = await findVendorForAuthentication({ email, vendorId: targetVendorId, isAdmin: isAdminEmail });
 
     if (!vendor) {
       return Response.json(
@@ -113,17 +120,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    const code = String(randomInt(100000, 999999));
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    await prisma.vendorLoginCode.create({
-      data: {
-        vendorId: vendor.id,
-        email,
-        code,
-        expiresAt,
-      },
-    });
+    const { code, id: challengeId } = await issueVendorLoginCode({ vendorId: vendor.id, email });
 
     try {
       const { error } = await resend.emails.send({
@@ -138,7 +135,8 @@ export const action = async ({ request }) => {
       });
 
       if (error) {
-        console.error("❌ resend error:", error);
+        console.error("vendor verification email failed", { code: "mail_send_failed" });
+        await prisma.vendorLoginCode.update({ where: { id: challengeId }, data: { usedAt: new Date() } });
 
         return Response.json(
           {
@@ -151,7 +149,8 @@ export const action = async ({ request }) => {
         );
       }
     } catch (e) {
-      console.error("❌ verify mail error:", e);
+      console.error("vendor verification email failed", { code: privateErrorCode(e) });
+      await prisma.vendorLoginCode.update({ where: { id: challengeId }, data: { usedAt: new Date() } });
 
       return Response.json(
         {
@@ -194,9 +193,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    const vendor = await prisma.vendor.findUnique({
-      where: { id: vendorId },
-    });
+    const vendor = await findVendorForAuthentication({ email, vendorId, isAdmin: isAdminEmail });
 
     if (
       !vendor ||
@@ -216,18 +213,9 @@ export const action = async ({ request }) => {
       );
     }
 
-    const loginCode = await prisma.vendorLoginCode.findFirst({
-      where: {
-        vendorId,
-        email,
-        code,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const verified = await consumeVendorLoginCode({ vendorId, email, code });
 
-    if (!loginCode) {
+    if (!verified) {
       return Response.json(
         {
           ok: false,
@@ -241,26 +229,10 @@ export const action = async ({ request }) => {
       );
     }
 
-    await prisma.vendorLoginCode.update({
-      where: { id: loginCode.id },
-      data: { usedAt: new Date() },
-    });
-
-    const sessionToken = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-
-    await prisma.vendorAdminSession.create({
-      data: {
-        vendorId,
-        sessionToken,
-        expiresAt,
-      },
-    });
-
     return redirect(returnTo, {
       headers: await createVendorAdminSessionCookieHeaders(request, {
         vendorId,
-        sessionToken,
+        sessionToken: verified.sessionToken,
       }),
     });
   }
@@ -269,7 +241,7 @@ export const action = async ({ request }) => {
     { ok: false, step: "email", error: "不正な操作です。", returnTo },
     { status: 400 }
   );
-};
+}
 
 export default function VendorVerifyPage() {
   const loaderData = useLoaderData();

@@ -23,7 +23,6 @@ const ORDER_INTEGRITY_QUERY = `#graphql
       currencyCode
       displayFinancialStatus
       displayFulfillmentStatus
-      email
       customAttributes {
         key
         value
@@ -175,7 +174,6 @@ export function shopifyOrderToIntegrityPayload(order) {
     fulfillment_status: normalizeText(
       order.displayFulfillmentStatus,
     ).toLowerCase(),
-    email: order.email || null,
     note_attributes: Array.isArray(order.customAttributes)
       ? order.customAttributes.map((attribute) => ({
           name: attribute?.key || "",

@@ -4,12 +4,14 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useState } from "react";
 
 import prisma from "../db.server.js";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
+import { readVendorContacts } from "../utils/privateData.server.js";
 import {
   getActiveDomesticMarketplacePilot,
   isDomesticMarketplacePilotEnabled,
 } from "../services/domesticMarketplacePilot.server.js";
 import { isPublicDraftOrderCheckoutEnabled } from "../services/vendorStorefront.server.js";
-import { authenticate } from "../shopify.server";
+import { requirePrivacyOperator } from "../utils/privacyOperator.server.js";
 import { getVendorStorePublicationState } from "../utils/vendorStoreAdminState.js";
 
 const READ_DRAFT_ORDERS_SCOPE = "read_draft_orders";
@@ -43,7 +45,7 @@ function emptyDraftOrdersScopeState() {
 }
 
 export const loader = async ({ request }) => {
-  const { scopes } = await authenticate.admin(request);
+  const { scopes } = await requirePrivacyOperator(request);
   const draftOrderCheckoutEnabled = isPublicDraftOrderCheckoutEnabled(
     process.env,
   );
@@ -69,7 +71,7 @@ export const loader = async ({ request }) => {
   ]);
 
   return Response.json({
-    stores,
+    stores: readVendorContacts(stores),
     draftOrdersScope,
     publicationContext: {
       draftOrderCheckoutEnabled,
@@ -92,7 +94,7 @@ async function loadStoreForProtectedAction(id) {
 }
 
 export const action = async ({ request }) => {
-  await authenticate.admin(request);
+  await requirePrivacyOperator(request);
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");

@@ -1,5 +1,6 @@
 import { redirect } from "react-router";
 import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import { useVendorScopedPath } from "../components/vendor/vendorNavigation";
 
@@ -40,7 +41,7 @@ export const loader = async ({ request }) => {
   });
 
   return Response.json({
-    ...getVendorPublicContext(vendor, store),
+    ...getVendorPublicContext(vendor, store, { includePrivateContact: true }),
     saved: url.searchParams.get("saved") === "1",
     governance,
   });

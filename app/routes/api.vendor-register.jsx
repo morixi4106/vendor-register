@@ -3,6 +3,8 @@
 import prisma from "../db.server.js";
 import { vendorRegistrationTargetCookie } from "../services/vendorManagement.server.js";
 import { ensureSellerForVendor } from "../services/sellerPayments.server.js";
+import { protectVendorManagementEmail, protectVendorStoreContact, readVendorContacts, vendorEmailLookupWhere } from "../utils/privateData.server.js";
+import { readBoundedFormData } from "../utils/requestBody.server.js";
 
 const RESERVED_VENDOR_HANDLES = new Set([
   "dashboard",
@@ -70,7 +72,7 @@ export const loader = async () => {
 };
 
 export const action = async ({ request }) => {
-  const formData = await request.formData();
+  const formData = await readBoundedFormData(request);
 
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const phone = String(formData.get("phone") || "").trim();
@@ -101,10 +103,10 @@ export const action = async ({ request }) => {
     );
   }
 
-  const existingStore = await prisma.vendorStore.findFirst({
-    where: { email },
+  const existingStore = readVendorContacts(await prisma.vendorStore.findFirst({
+    where: vendorEmailLookupWhere(email),
     include: { vendorAuth: true },
-  });
+  }));
 
   if (existingStore) {
     let vendorId = existingStore.vendorAuth?.id || null;
@@ -117,7 +119,7 @@ export const action = async ({ request }) => {
           vendorStoreId: existingStore.id,
           storeName: existingStore.storeName,
           handle,
-          managementEmail: existingStore.email.toLowerCase(),
+          ...protectVendorManagementEmail(existingStore.email),
           status: "active",
         },
       });
@@ -147,7 +149,7 @@ export const action = async ({ request }) => {
 
   await prisma.$transaction(async (tx) => {
     const vendorStore = await tx.vendorStore.create({
-      data: {
+      data: protectVendorStoreContact({
         email,
         phone,
         ownerName,
@@ -157,7 +159,7 @@ export const action = async ({ request }) => {
         category,
         note: note || null,
         ageCheck,
-      },
+      }),
     });
 
     const vendor = await tx.vendor.create({
@@ -165,7 +167,7 @@ export const action = async ({ request }) => {
         vendorStoreId: vendorStore.id,
         storeName,
         handle,
-        managementEmail: email,
+        ...protectVendorManagementEmail(email),
         status: "active",
       },
     });

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { readVendorContacts } from "../utils/privateData.server.js";
 
 import prisma from "../db.server.js";
 import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
@@ -736,7 +737,7 @@ export async function getVendorGovernanceSettings(
   const agreementVersion = getCurrentSellerAgreementVersion(env);
   const configuration = getMarketplaceGovernanceConfiguration(env);
   return {
-    seller,
+    seller: readVendorContacts(seller, { env }),
     agreementVersion,
     agreementUrl: configuration.sellerAgreementUrl,
     agreementDocumentHashConfigured: Boolean(
@@ -1284,14 +1285,14 @@ export async function getMarketplaceGovernanceDashboard({
   ]);
 
   const sellerRows = sellers.map((seller) => ({
-    seller,
+    seller: readVendorContacts(seller, { env }),
     readiness: evaluateSellerGovernanceReadiness(
       seller,
       getSellerAgreementReadinessOptions(env),
     ),
   }));
   const productRows = products.map((product) => ({
-    product,
+    product: readVendorContacts(product, { env }),
     readiness: evaluateProductGovernanceReadiness(product),
   }));
   const productionProductReadiness = productReadinessCandidates
@@ -1313,7 +1314,7 @@ export async function getMarketplaceGovernanceDashboard({
     sellers: sellerRows,
     products: productRows,
     internationalRequirements,
-    cases,
+    cases: cases.map((row) => ({ ...row, seller: readVendorContacts(row.seller, { env }), responsibilitySeller: readVendorContacts(row.responsibilitySeller, { env }) })),
     inspection: {
       productionProductCount: productionProductReadiness.length,
       blockedProductionProductCount,

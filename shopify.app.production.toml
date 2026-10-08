@@ -12,6 +12,10 @@ automatically_update_urls_on_dev = true
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "/webhooks/privacy"
+
+  [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
@@ -34,10 +38,12 @@ api_version = "2026-04"
   [[webhooks.subscriptions]]
   topics = [ "orders/create" ]
   uri = "/webhooks/orders/create"
+  include_fields = [ "id", "admin_graphql_api_id", "name", "order_number", "created_at", "updated_at", "processed_at", "cancelled_at", "currency", "presentment_currency", "financial_status", "fulfillment_status", "source_name", "test", "total_price", "total_price_set", "subtotal_price", "subtotal_price_set", "current_total_price", "total_tax", "total_tax_set", "total_discounts", "total_discounts_set", "total_shipping_price_set", "line_items", "shipping_lines", "note_attributes", "payment_gateway_names", "gateway", "transactions", "shipping_address.country_code", "billing_address.country_code" ]
 
   [[webhooks.subscriptions]]
   topics = [ "orders/paid" ]
   uri = "/webhooks/orders/paid"
+  include_fields = [ "id", "admin_graphql_api_id", "name", "order_number", "created_at", "updated_at", "processed_at", "cancelled_at", "currency", "presentment_currency", "financial_status", "fulfillment_status", "source_name", "test", "total_price", "total_price_set", "subtotal_price", "subtotal_price_set", "current_total_price", "total_tax", "total_tax_set", "total_discounts", "total_discounts_set", "total_shipping_price_set", "line_items", "shipping_lines", "note_attributes", "payment_gateway_names", "gateway", "transactions", "shipping_address.country_code", "billing_address.country_code" ]
 
   [[webhooks.subscriptions]]
   topics = [ "orders/edited" ]
@@ -46,6 +52,7 @@ api_version = "2026-04"
   [[webhooks.subscriptions]]
   topics = [ "orders/updated" ]
   uri = "/webhooks/orders/updated"
+  include_fields = [ "id", "admin_graphql_api_id", "name", "order_number", "created_at", "updated_at", "processed_at", "cancelled_at", "currency", "presentment_currency", "financial_status", "fulfillment_status", "source_name", "test", "total_price", "total_price_set", "subtotal_price", "subtotal_price_set", "current_total_price", "total_tax", "total_tax_set", "total_discounts", "total_discounts_set", "total_shipping_price_set", "line_items", "shipping_lines", "note_attributes", "payment_gateway_names", "gateway", "transactions", "shipping_address.country_code", "billing_address.country_code" ]
 
   [[webhooks.subscriptions]]
   topics = [ "orders/cancelled" ]
@@ -65,7 +72,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_customers,read_customers,write_app_proxy,read_products,write_products,read_orders,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_shopify_payments_payouts,read_publications,write_publications,read_validations,write_validations"
+scopes = "write_app_proxy,read_products,write_products,read_orders,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_inventory,write_inventory,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shopify_payments_disputes,read_shopify_payments_payouts,read_publications,write_publications,read_validations,write_validations"
 
 [product.metafields.app.marketplace_checkout_policy]
 type = "single_line_text_field"

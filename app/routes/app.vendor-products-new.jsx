@@ -1,6 +1,6 @@
 import { createCookie, redirect } from "react-router";
 import { Form, useActionData, useNavigation } from "react-router";
-import prisma from "../db.server";
+import { findVendorAdminSession } from "../services/vendorAuthentication.server.js";
 
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
@@ -17,8 +17,7 @@ async function getVendorFromSession(request) {
     throw redirect("/apps/vendors/verify");
   }
 
-  const vendorSession = await prisma.vendorAdminSession.findUnique({
-    where: { sessionToken },
+  const vendorSession = await findVendorAdminSession(sessionToken, {
     include: {
       vendor: {
         include: {
