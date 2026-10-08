@@ -252,6 +252,51 @@ export function evaluateToolchainAudit({
     };
   }
 
+  const leaves = new Map(
+    candidates.map(([packageName]) => [
+      packageName,
+      collectLeafAdvisories(report, packageName),
+    ]),
+  );
+  const exceptionRequested = [...leaves.values()].some((leaf) =>
+    leaf.advisories.some(
+      (advisory) =>
+        NEVER_ALLOW_SEVERITIES.has(advisory.severity) &&
+        advisory.name === risk?.packageName &&
+        advisory.advisoryId === risk?.advisoryId,
+    ),
+  );
+
+  // An archived exception cannot govern a different, unapproved advisory.
+  if (!exceptionRequested) {
+    for (const [packageName, vulnerability] of candidates) {
+      blocking.push({
+        code:
+          leaves.get(packageName).errors.length > 0
+            ? "advisory_chain_unresolved"
+            : "unexpected_high_or_critical",
+        packageName,
+        severity: vulnerability.severity,
+      });
+    }
+    if (!artifactReport?.ok || artifactReport.targetMatches?.length > 0) {
+      blocking.push({
+        code: artifactReport?.ok
+          ? "target_found_in_artifact"
+          : "artifact_verification_failed",
+        packageName: null,
+        severity: "critical",
+      });
+    }
+    return {
+      accepted: [],
+      blocking,
+      ok: false,
+      riskValidation: { ok: true, errors: [], applicable: false },
+      warnings,
+    };
+  }
+
   const riskValidation = validateToolchainRiskDefinition(risk, {
     now,
     platform,
@@ -267,7 +312,7 @@ export function evaluateToolchainAudit({
   }
 
   for (const [packageName, vulnerability] of candidates) {
-    const leaf = collectLeafAdvisories(report, packageName);
+    const leaf = leaves.get(packageName);
     if (leaf.errors.length > 0) {
       blocking.push({
         code: "advisory_chain_unresolved",

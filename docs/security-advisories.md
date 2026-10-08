@@ -9,9 +9,35 @@
 These are available patch/minor fixes, not new risk exceptions.
 Re-run the complete production audit before deployment; the September result
 below is historical and does not establish the current dependency safety.
-`braces` and `sprintf-js` have no newer published version at this check, and
-older GraphQL Tools utility versions remain subject to their current advisory.
+`braces` and `sprintf-js` have no newer published version at this check. The
+first refresh still included older GraphQL Tools utility versions; the
+follow-up below removes them.
 The build-tool gate must not be relaxed or given fabricated acceptance.
+
+The follow-up pins **all** GraphQL Tools utility instances to official
+`12.0.3` and moves `@shopify/shopify_function@2.0.1` from the Function's
+runtime dependency list to the root development tools. This keeps the Shopify
+compiler unchanged while applying the root security override to its pinned
+code-generation dependencies. Fresh-install regression tests verify every
+physical utility version and the Function compiler's resolution path, and
+exercise prototype-pollution protection in the actual patched merger.
+Artifact scanning now explicitly rejects `braces`, `micromatch`, `fast-glob`
+and `@graphql-tools/utils` in application imports and deployable artifacts,
+with regression tests for accidental runtime inclusion.
+
+The audit now applies an archived exception only if its exact package and
+advisory are requested. A different or unresolved High/Critical remains
+blocked, including when the historical record has expired. This removes
+irrelevant expiry/version errors; it does not accept new vulnerabilities.
+
+The remaining High leaf is `braces@3.0.3`
+([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)).
+The published advisory lists no patched version, and the upstream
+[issue #70](https://github.com/micromatch/braces/issues/70) remains open.
+Do not relabel, rename or silently accept this dependency to pass CI.
+`sprintf-js@1.1.3` remains a reported Moderate build-tool advisory, not a
+claim of zero vulnerabilities. No new exception or production switch is
+approved by these dependency changes.
 
 ## Previous clean audit
 

@@ -200,6 +200,88 @@ test("requires no toolchain exception when the advisory disappears", () => {
   assert.deepEqual(result.accepted, []);
 });
 
+test("an unrelated new advisory is blocked without applying the archived exception", () => {
+  const report = braceAuditReport();
+  report.vulnerabilities["braces"] = {
+    severity: "high",
+    via: [
+      {
+        name: "braces",
+        severity: "high",
+        url: "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      },
+    ],
+    nodes: ["node_modules/braces"],
+  };
+  delete report.vulnerabilities["brace-expansion"];
+  delete report.vulnerabilities.minimatch;
+  const result = evaluateToolchain({
+    report,
+    lockfile: CURRENT_LOCKFILE,
+    now: new Date("2026-10-08T00:00:00Z"),
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.accepted, []);
+  assert.equal(result.riskValidation.applicable, false);
+  assert.deepEqual(
+    result.blocking.map((item) => item.code),
+    ["unexpected_high_or_critical"],
+  );
+  assert.equal(result.blocking[0].packageName, "braces");
+});
+
+test("unapproved advisories remain blocked with absent exception metadata and bad artifacts", () => {
+  const report = {
+    vulnerabilities: {
+      other: {
+        severity: "critical",
+        via: [
+          {
+            name: "other",
+            severity: "critical",
+            url: "https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+          },
+        ],
+      },
+    },
+  };
+  for (const artifacts of [
+    artifactReport({ ok: false }),
+    artifactReport({ targetMatches: ["unexpected-package"] }),
+  ]) {
+    const result = evaluateToolchain({ report, risk: null, artifacts });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.accepted, []);
+    assert.ok(
+      result.blocking.some(
+        (item) => item.code === "unexpected_high_or_critical",
+      ),
+    );
+    assert.ok(
+      result.blocking.some(
+        (item) => item.severity === "critical" && item.packageName === null,
+      ),
+    );
+  }
+});
+
+test("an unresolved unapproved advisory chain cannot inherit an archived acceptance", () => {
+  const result = evaluateToolchain({
+    report: {
+      vulnerabilities: {
+        unknown: { severity: "high", via: ["missing-advisory"] },
+      },
+    },
+    risk: null,
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.accepted, []);
+  assert.deepEqual(
+    result.blocking.map((item) => item.code),
+    ["advisory_chain_unresolved"],
+  );
+});
+
 test("accepts a propagated high whose only high leaf is the exact risk", () => {
   const report = braceAuditReport();
   report.vulnerabilities["build-parent"] = {
@@ -432,10 +514,7 @@ test("checks artifact evidence before upstream reporting and acceptance", () => 
       upstreamUrls: [],
     },
   });
-  for (const code of [
-    "risk_not_accepted",
-    "upstream_urls_invalid",
-  ]) {
+  for (const code of ["risk_not_accepted", "upstream_urls_invalid"]) {
     assert.ok(
       result.blocking.some((item) => item.code === code),
       code,

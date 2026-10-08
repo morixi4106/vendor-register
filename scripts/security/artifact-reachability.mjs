@@ -5,6 +5,10 @@ import path from "node:path";
 export const TOOLCHAIN_TARGETS = [
   "minimatch",
   "brace-expansion",
+  "braces",
+  "micromatch",
+  "fast-glob",
+  "@graphql-tools/utils",
   "graphql-config",
   "ts-morph",
   "@ts-morph/common",
