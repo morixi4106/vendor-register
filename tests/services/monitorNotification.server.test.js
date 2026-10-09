@@ -98,6 +98,42 @@ test("send acceptance and provider delivery are not human receipt proof", async 
     assert.ok(!stored.includes(value));
 });
 
+test("first receipt inspection with no history fails closed without creating data", async () => {
+  const f = fixture();
+  const status = await getMonitorReceiptStatus(f.options);
+  assert.equal(status.ready, false);
+  assert.equal(status.status, "UNCONFIGURED");
+  assert.equal(status.providerEvent, "unchecked");
+  assert.equal(status.sentAt, null);
+  assert.equal(f.rows.size, 0);
+});
+
+test("missing latest-mail metadata cannot crash inspection or prove delivery", async () => {
+  for (const metadataJson of [undefined, null, {}]) {
+    const f = fixture();
+    f.rows.set(MONITOR_MAIL_KEY, { key: MONITOR_MAIL_KEY, metadataJson });
+    const status = await getMonitorReceiptStatus(f.options);
+    assert.equal(status.ready, false);
+    assert.equal(status.providerEvent, "unchecked");
+  }
+});
+
+test("an unbound latest delivery cannot replace an uninitialized receipt", async () => {
+  const f = fixture();
+  f.rows.set(MONITOR_MAIL_KEY, {
+    key: MONITOR_MAIL_KEY,
+    metadataJson: {
+      providerEvent: "delivered",
+      sentAt: NOW.toISOString(),
+      lastDeliveredAt: NOW.toISOString(),
+    },
+  });
+  const status = await getMonitorReceiptStatus(f.options);
+  assert.equal(status.ready, false);
+  assert.equal(status.providerEvent, "unchecked");
+  assert.equal(status.humanVerifiedAt, null);
+});
+
 test("old delivered messages cannot masquerade as fresh delivery; a new proof can replace a failed route", async () => {
   const f = fixture();
   await sendMonitorReceiptTest(f.options);

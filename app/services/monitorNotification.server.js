@@ -297,10 +297,12 @@ export async function getMonitorReceiptStatus({
   const latest = await prismaClient.operationalHeartbeat.findUnique({
     where: { key: MONITOR_MAIL_KEY },
   });
+  const latestMetadata = latest?.metadataJson;
   const transport =
-    latest?.metadataJson?.routingFingerprint === m.routingFingerprint &&
-    new Date(latest.metadataJson.sentAt) > new Date(m.sentAt)
-      ? latest.metadataJson
+    latestMetadata?.routingFingerprint &&
+    latestMetadata.routingFingerprint === m.routingFingerprint &&
+    new Date(latestMetadata.sentAt) > new Date(m.sentAt)
+      ? latestMetadata
       : m;
   const age =
     now - new Date(transport.lastDeliveredAt || transport.sentAt || 0);
