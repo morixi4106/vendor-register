@@ -1,4 +1,6 @@
 import { collectLeafAdvisories, extractAdvisoryId } from "./audit-report.mjs";
+import crypto from "node:crypto";
+import { isBracesRisk, validateBracesRiskDefinition } from "./toolchain-risk-scope.mjs";
 import {
   enumerateDependencyPaths,
   hashDependencyPathLines,
@@ -115,6 +117,7 @@ export function validateToolchainRiskDefinition(
   risk,
   { now = new Date(), platform = process.platform } = {},
 ) {
+  if (isBracesRisk(risk)) return validateBracesRiskDefinition(risk, { now, platform });
   const errors = [];
   if (!risk || typeof risk !== "object") {
     return { ok: false, errors: ["risk_definition_missing"] };
@@ -344,6 +347,12 @@ export function evaluateToolchainAudit({
     lockfile,
     risk?.packageName || "",
   );
+  if (isBracesRisk(risk)) {
+    const lockHash = crypto.createHash("sha256").update(JSON.stringify(lockfile)).digest("hex").toUpperCase();
+    if (risk.lockfileSha256 !== lockHash || installedLocations.some((location) => lockfile.packages[location]?.integrity !== risk.packageIntegrity)) {
+      blocking.push({ code: "reviewed_dependency_integrity_changed", packageName: "braces", severity: "high" });
+    }
+  }
   if (installedLocations.length !== 1) {
     blocking.push({
       code: "installed_package_count_changed",
@@ -497,7 +506,8 @@ export function evaluateToolchainAudit({
     String(risk.artifactEvidenceSha256ByPlatform[platform]) !==
       String(artifactReport.artifactSetSha256 || "")
   ) {
-    warnings.push({
+    const destination = isBracesRisk(risk) ? blocking : warnings;
+    destination.push({
       code: "artifact_set_changed_since_review",
       packageName: risk?.packageName || null,
       reviewedArtifactSetSha256:

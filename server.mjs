@@ -8,8 +8,10 @@ import express from "express";
 import { createRequestHandler } from "@react-router/express";
 
 import { createSafeRequestLogger } from "./app/utils/requestLog.server.js";
+import { assertRuntimeToolchain } from "./scripts/security/runtime-toolchain.mjs";
 
 process.env.NODE_ENV ||= "production";
+assertRuntimeToolchain(process.cwd());
 
 const port = Number.parseInt(process.env.PORT || "3000", 10);
 const buildPath = path.resolve("./build/server/index.js");

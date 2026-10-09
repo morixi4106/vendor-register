@@ -3,10 +3,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  BRACES_RISK_RELATIVE_PATH,
+  LEGACY_RISK_RELATIVE_PATH,
+  riskRelativePath,
+} from "./toolchain-risk-scope.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..", "..");
-const RISK_RELATIVE_PATH = "security/risk-decisions/GHSA-mh99-v99m-4gvg.json";
+const RISK_RELATIVE_PATH = BRACES_RISK_RELATIVE_PATH;
 const RISK_PATH = path.join(REPOSITORY_ROOT, RISK_RELATIVE_PATH);
 const PACKAGE_LOCK_PATH = path.join(REPOSITORY_ROOT, "package-lock.json");
 const REVIEW_EVIDENCE_PATH = path.join(
@@ -199,6 +204,12 @@ export function validateAcceptedRiskProvenance({
 } = {}) {
   const errors = [];
   const changedPaths = uniqueSorted(current?.changedPaths || []);
+  let expectedRiskPath = null;
+  try {
+    expectedRiskPath = riskRelativePath(risk);
+  } catch {
+    /* Unsupported identities cannot become an accepted exception. */
+  }
   const acceptedAt = validTimestamp(risk?.acceptedAt);
   const commentCreatedAt = validTimestamp(acceptanceComment?.created_at);
   const runCompletedAt = validTimestamp(
@@ -226,7 +237,7 @@ export function validateAcceptedRiskProvenance({
   }
   if (
     current?.enforceAcceptanceOnlyDiff === true &&
-    (changedPaths.length !== 1 || changedPaths[0] !== RISK_RELATIVE_PATH)
+    (changedPaths.length !== 1 || changedPaths[0] !== expectedRiskPath)
   ) {
     errors.push("acceptance_diff_not_metadata_only");
   }
@@ -354,7 +365,16 @@ export function collectGitEvidence(reviewedCommitSha, currentHeadSha) {
   };
 }
 
-export function collectRiskStatusAtCommit(commitSha) {
+export function collectRiskStatusAtCommit(
+  commitSha,
+  relativePath = LEGACY_RISK_RELATIVE_PATH,
+) {
+  if (
+    ![BRACES_RISK_RELATIVE_PATH, LEGACY_RISK_RELATIVE_PATH].includes(
+      relativePath,
+    )
+  )
+    throw new Error("Unsupported risk definition path.");
   if (!GIT_COMMIT_SHA_PATTERN.test(String(commitSha || ""))) {
     throw new Error("Current pull request base SHA is invalid.");
   }
@@ -371,7 +391,7 @@ export function collectRiskStatusAtCommit(commitSha) {
     "--full-tree",
     commitSha,
     "--",
-    RISK_RELATIVE_PATH,
+    relativePath,
   ]);
   if (listing.error || listing.status !== 0) {
     throw new Error("Git could not inspect the base risk definition.");
@@ -380,12 +400,12 @@ export function collectRiskStatusAtCommit(commitSha) {
   if (listedPaths.length === 0) return "absent";
   if (
     listedPaths.length !== 1 ||
-    listedPaths[0].replaceAll("\\", "/") !== RISK_RELATIVE_PATH
+    listedPaths[0].replaceAll("\\", "/") !== relativePath
   ) {
     throw new Error("Git returned an unexpected base risk definition path.");
   }
 
-  const shown = runGit(["show", `${commitSha}:${RISK_RELATIVE_PATH}`]);
+  const shown = runGit(["show", `${commitSha}:${relativePath}`]);
   if (
     shown.error ||
     shown.status !== 0 ||
@@ -460,7 +480,7 @@ export async function verifyAcceptedRiskProvenance({
 
   const git = collectGit(risk.reviewedCommitSha, currentHeadSha);
   const baseRiskStatus = isPullRequest
-    ? collectRiskStatus(currentBaseSha)
+    ? collectRiskStatus(currentBaseSha, riskRelativePath(risk))
     : null;
   const [reviewRun, acceptanceComment] = await Promise.all([
     fetchGitHubJson(

@@ -25,12 +25,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
+
+      - name: Require trusted review source
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') { console.error('Untrusted fork must be reviewed in a trusted branch before builds or acceptance.'); process.exit(1); }"
 
       - name: Read risk acceptance workflow inputs
         id: risk-acceptance
@@ -90,19 +96,18 @@ jobs:
 
       - name: Test checkout validation function
         run: |
-          npm --workspace marketplace-purchase-control run typegen
+          npm run build:function:types
           git diff --exit-code -- extensions/marketplace-purchase-control/generated/api.ts
           npm run test:checkout-function
 
       - name: Build Shopify extensions for artifact verification
-        run: >-
-          npm exec --offline -- shopify app build
-          --config production
-          --no-color
-          --skip-dependencies-installation
+        run: npm run build:extensions
 
       - name: Build React Router app for artifact verification
         run: npm run build
+
+      - name: Verify isolated production runtime package
+        run: npm run runtime:check
 
       - name: Remove generated Shopify manifests
         run: node scripts/security/clean-audit-artifacts.mjs --apply

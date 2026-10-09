@@ -53,25 +53,19 @@ function readLockfile(lockfilePath) {
 
 export function generateRiskPathSnapshot({
   repositoryRoot = REPOSITORY_ROOT,
-  decisionsDirectory = path.join(
-    repositoryRoot,
-    "security",
-    "risk-decisions",
-  ),
+  decisionsDirectory = path.join(repositoryRoot, "security", "risk-decisions"),
   lockfilePath = path.join(repositoryRoot, "package-lock.json"),
-  outputPath =
-    repositoryRoot === REPOSITORY_ROOT
-      ? DEFAULT_OUTPUT
-      : path.join(
-          decisionsDirectory,
-          "GHSA-mh99-v99m-4gvg.approved-paths.txt",
-        ),
+  outputPath = repositoryRoot === REPOSITORY_ROOT
+    ? DEFAULT_OUTPUT
+    : path.join(decisionsDirectory, "GHSA-mh99-v99m-4gvg.approved-paths.txt"),
+  targetName = "brace-expansion",
+  targetVersion = "2.1.2",
 } = {}) {
   assertOutputPath(outputPath, decisionsDirectory);
   const lockfile = readLockfile(lockfilePath);
   const report = enumerateDependencyPaths(lockfile, {
-    targetName: "brace-expansion",
-    targetVersion: "2.1.2",
+    targetName,
+    targetVersion,
   });
 
   if (report.unresolvedRequiredEdges.length > 0) {

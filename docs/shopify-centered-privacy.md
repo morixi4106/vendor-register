@@ -38,6 +38,8 @@
 
 ## 本番反映順序
 
+ビルド限定例外と実行用依存の隔離を追加しています。[braces-build-safety.md](braces-build-safety.md)の承認・Build command・実体確認を先に完了してください。通常のmainマージだけで本番反映しないでください。
+
 1. PRのQuality checksを通し、ストアが非公開、実決済・返金・進行中テストなしであることを確認する。
 2. Renderに`PRIVACY_ENCRYPTION_KEY`を安全に設定する。値は暗号学的乱数32byteの64桁hex。平文をチャット・Git・ログへ出さない。既に設定された鍵を上書きしない。
 3. 既存`PRIVACY_HASH_SECRET`を維持する。暗号化済みデータを扱う全プロセスで同じ暗号鍵を使う。鍵を作り直すと既存データは読めなくなる。
