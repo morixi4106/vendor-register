@@ -44,6 +44,12 @@ import {
   isDomesticMarketplacePilotEnabled,
 } from "./domesticMarketplacePilot.server.js";
 import { runDomesticAutonomousLaunchGuard } from "./domesticAutonomousLaunchGuard.server.js";
+import {
+  getMonitorAcknowledgement,
+  getMonitorReceiptStatus,
+  recordMonitorMailAccepted,
+  refreshMonitorReceipt,
+} from "./monitorNotification.server.js";
 
 export const LAUNCH_MONITOR_HEARTBEAT_KEY = "production_integrity_monitor";
 export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
@@ -151,6 +157,23 @@ export async function runLaunchMonitor({
   const previousFingerprint = String(
     previousMetadata.lastIncidentFingerprint || "",
   );
+  const incidentStartedAt =
+    report.overallStatus === HEALTHY_STATUS
+      ? null
+      : previousStatus === HEALTHY_STATUS ||
+          incidentFingerprint !== previousFingerprint
+        ? now.toISOString()
+        : previousMetadata.firstDetectedAt || now.toISOString();
+  const acknowledgement = isEnabled(
+    env.AUTONOMOUS_MAINTENANCE_NOTIFICATIONS_ENABLED,
+  )
+    ? await getMonitorAcknowledgement({
+        incidentKey: incidentFingerprint,
+        incidentStartedAt,
+        prismaClient,
+        now,
+      })
+    : null;
   const notificationKind = resolveNotificationKind({
     report,
     previousStatus,
@@ -158,6 +181,7 @@ export async function runLaunchMonitor({
     currentFingerprint: incidentFingerprint,
     lastNotifiedAt: previousMetadata.lastNotifiedAt,
     now,
+    acknowledged: acknowledgement?.acknowledged,
   });
 
   if (notificationKind) {
@@ -168,6 +192,19 @@ export async function runLaunchMonitor({
       env,
     });
   }
+  const weeklyDue =
+    isEnabled(env.AUTONOMOUS_MAINTENANCE_NOTIFICATIONS_ENABLED) &&
+    report.overallStatus === HEALTHY_STATUS &&
+    !notificationKind &&
+    now - new Date(previousMetadata.lastWeeklySummaryAt || startedAt) >=
+      7 * 86400_000;
+  if (weeklyDue)
+    await sendEmailImpl({
+      kind: "weekly",
+      report,
+      state: { startedAt, endsAt, now },
+      env,
+    });
 
   const runCount = Number(previousMetadata.runCount || 0) + 1;
   const metadataJson = {
@@ -183,6 +220,13 @@ export async function runLaunchMonitor({
       : null,
     completionSentAt: completionSentAt?.toISOString() || null,
     lastCheckedAt: now.toISOString(),
+    lastExternalCheckedAt:
+      renderSnapshot.monitorExecutionSource === "github"
+        ? now.toISOString()
+        : previousMetadata.lastExternalCheckedAt || null,
+    lastWeeklySummaryAt: weeklyDue
+      ? now.toISOString()
+      : previousMetadata.lastWeeklySummaryAt || null,
     lastHeavyCheckedAt:
       runHeavyChecks && report.heavyCheckCompleted
         ? now.toISOString()
@@ -192,16 +236,13 @@ export async function runLaunchMonitor({
       : asCheckArray(previousMetadata.lastHeavyChecks),
     lastOverallStatus: report.overallStatus,
     lastIncidentFingerprint: incidentFingerprint,
+    incidentAcknowledgedAt: acknowledgement?.acknowledgedAt || null,
+    incidentResponseDueAt: acknowledgement?.responseDueAt || null,
+    incidentResponseOverdue: acknowledgement?.overdue === true,
     currentStatus: report.overallStatus,
     incidentKey:
       report.overallStatus === HEALTHY_STATUS ? null : incidentFingerprint,
-    firstDetectedAt:
-      report.overallStatus === HEALTHY_STATUS
-        ? null
-        : previousStatus === HEALTHY_STATUS ||
-            incidentFingerprint !== previousFingerprint
-          ? now.toISOString()
-          : previousMetadata.firstDetectedAt || now.toISOString(),
+    firstDetectedAt: incidentStartedAt,
     lastDetectedAt:
       report.overallStatus === HEALTHY_STATUS ? null : now.toISOString(),
     lastNotifiedAt:
@@ -327,6 +368,53 @@ export async function collectLaunchMonitorReport({
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
     buildPublicDraftOrderCheckoutSafetyCheck(env, domesticMarketplacePilot),
   ];
+  if (isEnabled(env.MAINTENANCE_BACKUP_CHECK_ENABLED)) {
+    const backup = renderSnapshot.backupRecovery;
+    checks.push(
+      backup?.enabled === true &&
+        backup.ok === true &&
+        Number.isFinite(backup.windowHours) &&
+        backup.windowHours >= 24
+        ? okCheck(
+            "render_backup_recovery",
+            "Renderの復旧可能期間を確認しました。復元試験の証拠とは別です。",
+          )
+        : issueCheck(
+            "render_backup_recovery",
+            CRITICAL_SEVERITY,
+            "バックアップの復旧可能期間を確認できません。",
+            "backup_recovery_unverified",
+          ),
+    );
+  }
+  if (isEnabled(env.LAUNCH_MONITOR_DELIVERY_PROOF_REQUIRED)) {
+    try {
+      await refreshMonitorReceipt({ prismaClient, env, now });
+      const receipt = await getMonitorReceiptStatus({ prismaClient, env, now });
+      checks.push(
+        receipt.ready
+          ? okCheck(
+              "launch_monitor_notification_delivery",
+              "通知の受信確認と配信状態を確認しました。",
+            )
+          : issueCheck(
+              "launch_monitor_notification_delivery",
+              CRITICAL_SEVERITY,
+              "通知の受信確認または配信状態を確認できません。",
+              "notification_delivery_unverified",
+            ),
+      );
+    } catch {
+      checks.push(
+        issueCheck(
+          "launch_monitor_notification_delivery",
+          CRITICAL_SEVERITY,
+          "通知経路を確認できません。",
+          "notification_delivery_unavailable",
+        ),
+      );
+    }
+  }
   const windowStartedAt =
     parseDate(renderSnapshot.windowStartedAt) ||
     new Date(now.getTime() - 12 * 60 * 1000);
@@ -441,12 +529,31 @@ export async function collectLaunchMonitorReport({
 
   if (prismaClient.privacyRightsRequest?.count) {
     try {
-      const overdue = await prismaClient.privacyRightsRequest.count({ where: { shopDomain, status: "RECEIVED", deadlineAt: { lt: now } } });
-      checks.push(overdue > 0
-        ? issueCheck("privacy_rights_deadline", CRITICAL_SEVERITY, "開示・削除の未処理依頼が対応期限を超過しています。", "privacy_rights_overdue")
-        : okCheck("privacy_rights_deadline", "開示・削除の依頼に期限超過はありません。"));
+      const overdue = await prismaClient.privacyRightsRequest.count({
+        where: { shopDomain, status: "RECEIVED", deadlineAt: { lt: now } },
+      });
+      checks.push(
+        overdue > 0
+          ? issueCheck(
+              "privacy_rights_deadline",
+              CRITICAL_SEVERITY,
+              "開示・削除の未処理依頼が対応期限を超過しています。",
+              "privacy_rights_overdue",
+            )
+          : okCheck(
+              "privacy_rights_deadline",
+              "開示・削除の依頼に期限超過はありません。",
+            ),
+      );
     } catch (error) {
-      checks.push(issueCheck("privacy_rights_deadline", CRITICAL_SEVERITY, "開示・削除依頼の期限を確認できません。", safeErrorCode(error)));
+      checks.push(
+        issueCheck(
+          "privacy_rights_deadline",
+          CRITICAL_SEVERITY,
+          "開示・削除依頼の期限を確認できません。",
+          safeErrorCode(error),
+        ),
+      );
     }
   }
 
@@ -885,9 +992,7 @@ export function buildPublicDraftOrderCheckoutSafetyCheck(
   env = {},
   pilotDashboard = null,
 ) {
-  const draftOrderEnabled = isEnabled(
-    env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED,
-  );
+  const draftOrderEnabled = isEnabled(env.PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED);
   const pilotEnabled = isDomesticMarketplacePilotEnabled(env);
 
   if (!draftOrderEnabled && !pilotEnabled) {
@@ -1083,6 +1188,7 @@ export function resolveNotificationKind({
   currentFingerprint = "",
   lastNotifiedAt = null,
   now = new Date(),
+  acknowledged = false,
 }) {
   const status = String(report?.overallStatus || HEALTHY_STATUS);
   if (!previousStatus) {
@@ -1098,8 +1204,9 @@ export function resolveNotificationKind({
   if (changed || previousStatus === HEALTHY_STATUS || escalated) return "alert";
 
   const last = parseDate(lastNotifiedAt);
-  const reminderMinutes =
-    status === CRITICAL_SEVERITY
+  const reminderMinutes = acknowledged
+    ? 24 * 60
+    : status === CRITICAL_SEVERITY
       ? CRITICAL_REMINDER_MINUTES
       : WARNING_REMINDER_MINUTES;
   if (!last || now.getTime() - last.getTime() >= reminderMinutes * 60 * 1000) {
@@ -1140,12 +1247,17 @@ export function sanitizeLaunchMonitorResult(
 
 export async function readLaunchMonitorDeadmanState({
   prismaClient = prisma,
+  env = process.env,
   now = new Date(),
   staleMinutes = 15,
 } = {}) {
   const row = await readMonitorHeartbeat(prismaClient);
   const metadata = asObject(row?.metadataJson);
-  const lastCheckedAt = parseDate(metadata.lastCheckedAt);
+  const lastCheckedAt = parseDate(
+    env.MAINTENANCE_SCHEDULER === "render"
+      ? metadata.lastExternalCheckedAt
+      : metadata.lastCheckedAt,
+  );
   const ageMinutes = lastCheckedAt
     ? Math.max(0, Math.floor((now.getTime() - lastCheckedAt.getTime()) / 60000))
     : null;
@@ -1168,8 +1280,15 @@ export async function acquireLaunchMonitorRunLock({
   prismaClient = prisma,
   now = new Date(),
   ttlMinutes = 4,
+  key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`,
 } = {}) {
-  const key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`;
+  if (
+    ![
+      `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`,
+      "shopify_catalog_sync_lock",
+    ].includes(key)
+  )
+    throw new Error("operational_lock_key_invalid");
   const owner = crypto.randomUUID();
   const releasedAt = new Date(0);
   await prismaClient.operationalHeartbeat.upsert({
@@ -1206,10 +1325,17 @@ export async function releaseLaunchMonitorRunLock({
   prismaClient = prisma,
   now = new Date(),
   owner,
+  key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`,
 } = {}) {
   const normalizedOwner = String(owner || "").trim();
   if (!normalizedOwner) return false;
-  const key = `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`;
+  if (
+    ![
+      `${LAUNCH_MONITOR_HEARTBEAT_KEY}_lock`,
+      "shopify_catalog_sync_lock",
+    ].includes(key)
+  )
+    throw new Error("operational_lock_key_invalid");
   const result = await prismaClient.operationalHeartbeat.updateMany({
     where: {
       key,
@@ -1243,20 +1369,22 @@ export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
   }
 
   const title =
-    kind === "completed"
-      ? "公開後72時間監視が完了しました"
-      : kind === "started"
-        ? "公開後72時間監視を開始しました"
-        : kind === "recovered"
-          ? "公開監視: 復旧を確認しました"
-          : report.overallStatus === CRITICAL_SEVERITY
-            ? "公開監視: 重大な異常を検出しました"
-            : "公開監視: 注意が必要です";
+    kind === "weekly"
+      ? "公開監視: 週間報告"
+      : kind === "completed"
+        ? "公開監視: 集中監視期間が終了しました"
+        : kind === "started"
+          ? "公開後72時間監視を開始しました"
+          : kind === "recovered"
+            ? "公開監視: 復旧を確認しました"
+            : report.overallStatus === CRITICAL_SEVERITY
+              ? "公開監視: 重大な異常を検出しました"
+              : "公開監視: 注意が必要です";
   const lines = [
     title,
     "",
     `監視開始: ${formatJst(state.startedAt)}`,
-    `監視終了予定: ${formatJst(state.endsAt)}`,
+    `集中監視終了予定: ${formatJst(state.endsAt)}`,
     `確認時刻: ${formatJst(state.now)}`,
     `状態: ${report.overallStatus || "completed"}`,
     "",
@@ -1269,7 +1397,12 @@ export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
   } else {
     lines.push("検出内容:");
     for (const issue of issues) {
-      lines.push(`- [${issue.severity}] ${issue.detail}`);
+      const id = /^[a-z0-9_-]{1,100}$/i.test(String(issue.id || ""))
+        ? issue.id
+        : "monitor_check";
+      lines.push(
+        `- [${issue.severity === CRITICAL_SEVERITY ? "critical" : "warning"}] ${id}: ${boundedCount(issue.count)}`,
+      );
     }
   }
   lines.push("", "確認先: Shopify管理画面 > アプリ > 本番確認 / 公開監視");
@@ -1284,8 +1417,14 @@ export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
     { idempotencyKey },
   );
   if (response?.error) {
-    throw new Error(response.error.message || "launch_monitor_email_failed");
+    throw new Error("launch_monitor_email_failed");
   }
+  if (isEnabled(env.LAUNCH_MONITOR_DELIVERY_PROOF_REQUIRED))
+    await recordMonitorMailAccepted({
+      messageId: response?.data?.id,
+      env,
+      now: state.now,
+    });
   return { ok: true, providerMessageId: response?.data?.id || null };
 }
 

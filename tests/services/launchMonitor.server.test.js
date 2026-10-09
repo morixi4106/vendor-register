@@ -41,20 +41,14 @@ test("evaluateRenderSnapshot applies warning and critical thresholds", () => {
   const view = evaluateRenderSnapshot({
     requests: { unauthorized: 12, forbidden: 8, rateLimited: 5 },
   });
-  assert.equal(
-    find(view, "render_auth_rejections").severity,
-    "warning",
-  );
+  assert.equal(find(view, "render_auth_rejections").severity, "warning");
   assert.equal(find(view, "render_rate_limits").severity, "warning");
 
   {
     const view = evaluateRenderSnapshot({
       requests: { unauthorized: 100, forbidden: 0, rateLimited: 25 },
     });
-    assert.equal(
-      find(view, "render_auth_rejections").severity,
-      "critical",
-    );
+    assert.equal(find(view, "render_auth_rejections").severity, "critical");
     assert.equal(find(view, "render_rate_limits").severity, "critical");
   }
 });
@@ -86,22 +80,18 @@ test("publication boundary monitor fails closed for exposed or unchecked product
   assert.equal(exposed.severity, "critical");
   assert.equal(exposed.errorCode, "governed_product_exposed");
 
-  const unconfigured =
-    buildMarketplaceCheckoutPublicationBoundaryMonitorCheck({
-      active: false,
-      publicationConfigurationReady: false,
-      exposedProductCount: 0,
-      failedProductCount: 0,
-    });
+  const unconfigured = buildMarketplaceCheckoutPublicationBoundaryMonitorCheck({
+    active: false,
+    publicationConfigurationReady: false,
+    exposedProductCount: 0,
+    failedProductCount: 0,
+  });
   assert.equal(unconfigured.severity, "critical");
   assert.equal(unconfigured.errorCode, "publication_configuration_missing");
 });
 
 test("public Draft Order checkout is critical unless it remains disabled", () => {
-  assert.equal(
-    buildPublicDraftOrderCheckoutSafetyCheck({}).severity,
-    "ok",
-  );
+  assert.equal(buildPublicDraftOrderCheckoutSafetyCheck({}).severity, "ok");
   assert.equal(
     buildPublicDraftOrderCheckoutSafetyCheck({
       PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
@@ -391,7 +381,10 @@ test("failed heavy checks remain critical and are safe to reuse until retry", as
     },
   });
   assert.equal(report.heavyCheckCompleted, false);
-  assert.equal(find(report.heavyChecks, "launch_integrity").severity, "critical");
+  assert.equal(
+    find(report.heavyChecks, "launch_integrity").severity,
+    "critical",
+  );
 
   const light = await collectReport({
     runHeavyChecks: false,
@@ -426,15 +419,11 @@ test("standard direct mode treats a prepared disabled marketplace validation as 
 test("incident identity ignores count changes while result hash records them", () => {
   const first = buildReport({
     now: NOW,
-    checks: [
-      { id: "contact_inquiry_spike", severity: "warning", count: 10 },
-    ],
+    checks: [{ id: "contact_inquiry_spike", severity: "warning", count: 10 }],
   });
   const second = buildReport({
     now: NOW,
-    checks: [
-      { id: "contact_inquiry_spike", severity: "warning", count: 11 },
-    ],
+    checks: [{ id: "contact_inquiry_spike", severity: "warning", count: 11 }],
   });
   assert.equal(fingerprintReport(first), fingerprintReport(second));
   assert.notEqual(hashReportResult(first), hashReportResult(second));
@@ -614,7 +603,10 @@ test("monitor run lock rejects concurrent runs and can be released", async () =>
   };
   const owner = await acquireLaunchMonitorRunLock({ prismaClient, now: NOW });
   assert.equal(typeof owner, "string");
-  assert.equal(await acquireLaunchMonitorRunLock({ prismaClient, now: NOW }), null);
+  assert.equal(
+    await acquireLaunchMonitorRunLock({ prismaClient, now: NOW }),
+    null,
+  );
   assert.equal(
     await releaseLaunchMonitorRunLock({
       prismaClient,
@@ -699,20 +691,34 @@ async function collectReport({
 
 test("privacy requests past their deadline make the production monitor critical", async () => {
   const prismaClient = basePrisma();
-  prismaClient.privacyRightsRequest = { count: async ({ where }) => {
-    assert.equal(where.status, "RECEIVED");
-    assert.equal(where.deadlineAt.lt, NOW);
-    return 1;
-  } };
+  prismaClient.privacyRightsRequest = {
+    count: async ({ where }) => {
+      assert.equal(where.status, "RECEIVED");
+      assert.equal(where.deadlineAt.lt, NOW);
+      return 1;
+    },
+  };
   const report = await collectReport({ prismaClient });
-  assert.equal(report.checks.find((check) => check.id === "privacy_rights_deadline").severity, "critical");
+  assert.equal(
+    report.checks.find((check) => check.id === "privacy_rights_deadline")
+      .severity,
+    "critical",
+  );
 });
 
 test("privacy deadline inspection failure is not a healthy result", async () => {
   const prismaClient = basePrisma();
-  prismaClient.privacyRightsRequest = { count: async () => { throw new Error("database unavailable"); } };
+  prismaClient.privacyRightsRequest = {
+    count: async () => {
+      throw new Error("database unavailable");
+    },
+  };
   const report = await collectReport({ prismaClient });
-  assert.equal(report.checks.find((check) => check.id === "privacy_rights_deadline").severity, "critical");
+  assert.equal(
+    report.checks.find((check) => check.id === "privacy_rights_deadline")
+      .severity,
+    "critical",
+  );
 });
 
 function healthyProductShippingProfiles(overrides = {}) {
@@ -840,3 +846,50 @@ function find(checks, id) {
   assert.ok(check, `missing check: ${id}`);
   return check;
 }
+
+test("Render monitoring cannot refresh the external GitHub heartbeat", async () => {
+  const prismaClient = {
+    operationalHeartbeat: {
+      findUnique: async () => ({
+        metadataJson: { lastCheckedAt: NOW.toISOString() },
+      }),
+    },
+  };
+  const missing = await readLaunchMonitorDeadmanState({
+    prismaClient,
+    now: NOW,
+    env: { MAINTENANCE_SCHEDULER: "render" },
+  });
+  assert.equal(missing.status, "not_started");
+  prismaClient.operationalHeartbeat.findUnique = async () => ({
+    metadataJson: {
+      lastCheckedAt: NOW.toISOString(),
+      lastExternalCheckedAt: NOW.toISOString(),
+    },
+  });
+  assert.equal(
+    (
+      await readLaunchMonitorDeadmanState({
+        prismaClient,
+        now: NOW,
+        env: { MAINTENANCE_SCHEDULER: "render" },
+      })
+    ).status,
+    "healthy",
+  );
+  await assert.rejects(
+    acquireLaunchMonitorRunLock({
+      prismaClient,
+      key: "unrelated_business_record",
+    }),
+    /key_invalid/,
+  );
+  await assert.rejects(
+    releaseLaunchMonitorRunLock({
+      prismaClient,
+      key: "unrelated_business_record",
+      owner: "owner",
+    }),
+    /key_invalid/,
+  );
+});

@@ -1,0 +1,44 @@
+{
+  "status": "proposed",
+  "advisoryId": "GHSA-VFJ7-8CJW-P6XM",
+  "packageName": "braces",
+  "allowedVersions": [
+    "3.0.3"
+  ],
+  "packageIntegrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+  "requiredParent": {
+    "packageName": "micromatch",
+    "allowedVersions": [
+      "4.0.8"
+    ],
+    "expectedPhysicalInstallCount": 1
+  },
+  "approvedPathsFile": "security/risk-decisions/GHSA-vfj7-8cjw-p6xm.condition-bound.approved-paths.txt",
+  "approvedPathCount": 18,
+  "approvedPathSetSha256": "D4F9DCE9B31ADEC99487A2136E00F786EAD2FC45200CA34F04C0FA4EF7F94E47",
+  "lockfileSha256": "EFEB9BB3372A070C44CB3DFA2DCFD6B8BD271561849000286B143189873E7BCA",
+  "proposedAt": "2026-10-09T16:47:33.065Z",
+  "policy": "condition-bound-build-only-v1",
+  "conditions": {
+    "guardedBuild": true,
+    "noProductionSecrets": true,
+    "fixedDependencyPaths": true,
+    "cleanRuntime": true,
+    "freshArtifactEvidence": true,
+    "stopOnNewHighOrCritical": true,
+    "ownerResponseDays": 7,
+    "advisoryVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+  },
+  "buildControlSha256": "8A4805BF6C3438D8561695621270569DE5CB7285737A9951BE00A623E3ABF3EE",
+  "runtimeManifestSha256": "18C6C8389DA9F548D14F20A705AAF37CD067009774050145D69375552F540CE9",
+  "runtimeLockfileSha256": "FB4F7092F7E321A9968E2B326006E0CE39CB0B1B3597A92D39EDF57346E519C2",
+  "artifactEvidenceSha256ByPlatform": {
+    "linux": null,
+    "win32": "D0C01B4AB95BC43686AA72C0948660F87F9372375CDC7D56AA407BE81467C746"
+  },
+  "upstreamUrls": [
+    "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+    "https://github.com/micromatch/braces/issues/70"
+  ],
+  "rationale": "Proposal only: condition-bound acceptance of this exact build-only advisory, package, parents, paths, isolation and runtime baseline. Fresh proof is mandatory on every build. New advisories, runtime changes and control changes are not accepted. Owner approval is required; existing dated exceptions are preserved."
+}

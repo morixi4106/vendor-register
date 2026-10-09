@@ -1,6 +1,10 @@
 import { collectLeafAdvisories, extractAdvisoryId } from "./audit-report.mjs";
 import crypto from "node:crypto";
-import { isBracesRisk, validateBracesRiskDefinition } from "./toolchain-risk-scope.mjs";
+import {
+  isBracesRisk,
+  isConditionBoundRisk,
+  validateBracesRiskDefinition,
+} from "./toolchain-risk-scope.mjs";
 import {
   enumerateDependencyPaths,
   hashDependencyPathLines,
@@ -117,7 +121,8 @@ export function validateToolchainRiskDefinition(
   risk,
   { now = new Date(), platform = process.platform } = {},
 ) {
-  if (isBracesRisk(risk)) return validateBracesRiskDefinition(risk, { now, platform });
+  if (isBracesRisk(risk))
+    return validateBracesRiskDefinition(risk, { now, platform });
   const errors = [];
   if (!risk || typeof risk !== "object") {
     return { ok: false, errors: ["risk_definition_missing"] };
@@ -314,6 +319,26 @@ export function evaluateToolchainAudit({
     }
   }
 
+  if (isConditionBoundRisk(risk)) {
+    const via = report?.vulnerabilities?.braces?.via;
+    const advisory = Array.isArray(via)
+      ? via.find(
+          (item) =>
+            item?.name === "braces" &&
+            extractAdvisoryId(item.url) === risk.advisoryId,
+        )
+      : null;
+    if (
+      advisory?.severity !== "high" ||
+      advisory?.cvss?.vectorString !== risk.conditions?.advisoryVector
+    )
+      blocking.push({
+        code: "accepted_advisory_changed",
+        packageName: "braces",
+        severity: "high",
+      });
+  }
+
   for (const [packageName, vulnerability] of candidates) {
     const leaf = leaves.get(packageName);
     if (leaf.errors.length > 0) {
@@ -348,9 +373,23 @@ export function evaluateToolchainAudit({
     risk?.packageName || "",
   );
   if (isBracesRisk(risk)) {
-    const lockHash = crypto.createHash("sha256").update(JSON.stringify(lockfile)).digest("hex").toUpperCase();
-    if (risk.lockfileSha256 !== lockHash || installedLocations.some((location) => lockfile.packages[location]?.integrity !== risk.packageIntegrity)) {
-      blocking.push({ code: "reviewed_dependency_integrity_changed", packageName: "braces", severity: "high" });
+    const lockHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(lockfile))
+      .digest("hex")
+      .toUpperCase();
+    if (
+      (!isConditionBoundRisk(risk) && risk.lockfileSha256 !== lockHash) ||
+      installedLocations.some(
+        (location) =>
+          lockfile.packages[location]?.integrity !== risk.packageIntegrity,
+      )
+    ) {
+      blocking.push({
+        code: "reviewed_dependency_integrity_changed",
+        packageName: "braces",
+        severity: "high",
+      });
     }
   }
   if (installedLocations.length !== 1) {
@@ -504,7 +543,8 @@ export function evaluateToolchainAudit({
       String(risk?.artifactEvidenceSha256ByPlatform?.[platform] || ""),
     ) &&
     String(risk.artifactEvidenceSha256ByPlatform[platform]) !==
-      String(artifactReport.artifactSetSha256 || "")
+      String(artifactReport.artifactSetSha256 || "") &&
+    !isConditionBoundRisk(risk)
   ) {
     const destination = isBracesRisk(risk) ? blocking : warnings;
     destination.push({

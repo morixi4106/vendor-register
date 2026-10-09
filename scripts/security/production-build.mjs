@@ -6,6 +6,7 @@ import { validateToolchainRiskDefinition } from "./audit-policy.mjs";
 import { loadRiskDefinition } from "../audit-production-dependencies.mjs";
 import { buildControlFingerprint } from "./build-control-evidence.mjs";
 import { readRuntimePlan, prepareRuntimePackage } from "./runtime-package.mjs";
+import { isConditionBoundRisk } from "./toolchain-risk-scope.mjs";
 import {
   assertBuildInputs,
   buildCommand,
@@ -26,14 +27,15 @@ export function assertProductionBuildAdmission(root = ROOT, now = new Date()) {
   const plan = readRuntimePlan(root);
   if (
     braces?.version !== "3.0.3" ||
-    crypto
-      .createHash("sha256")
-      .update(JSON.stringify(lockfile))
-      .digest("hex")
-      .toUpperCase() !== risk.lockfileSha256 ||
+    (!isConditionBoundRisk(risk) &&
+      crypto
+        .createHash("sha256")
+        .update(JSON.stringify(lockfile))
+        .digest("hex")
+        .toUpperCase() !== risk.lockfileSha256) ||
     braces.integrity !== risk.packageIntegrity ||
     parent?.version !== "4.0.8" ||
-    buildControlFingerprint(root) !== risk.buildControlSha256 ||
+    buildControlFingerprint(root, risk) !== risk.buildControlSha256 ||
     plan.manifestSha256 !== risk.runtimeManifestSha256 ||
     plan.lockfileSha256 !== risk.runtimeLockfileSha256
   )

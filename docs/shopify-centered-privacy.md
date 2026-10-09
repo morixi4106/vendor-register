@@ -44,7 +44,7 @@
 2. Renderに`PRIVACY_ENCRYPTION_KEY`を安全に設定する。値は暗号学的乱数32byteの64桁hex。平文をチャット・Git・ログへ出さない。既に設定された鍵を上書きしない。
 3. 既存`PRIVACY_HASH_SECRET`を維持する。暗号化済みデータを扱う全プロセスで同じ暗号鍵を使う。鍵を作り直すと既存データは読めなくなる。
 4. PR経由でmainへ反映し、Renderの既存preDeployで`20261008090000_minimize_personal_data`を適用する。破壊的カラム削除はない。起動・Shopify API・未適用migration・500を確認する。
-5. 個人情報管理画面の旧データ件数を確認し、各バッチの暗号化と読取りを確認する。SQLや画面で平文を出力しない。サイトの公開・商品公開・決済操作はしない。
+5. 個人情報管理画面の旧データ件数を確認し、承認済みの各バッチの暗号化と読取りを確認する。定期同期による一括暗号化は`PRIVACY_LEGACY_ENCRYPTION_ENABLED=true`を明示承認後に設定した場合だけ実行する。SQLや画面で平文を出力しない。サイトの公開・商品公開・決済操作はしない。
 6. Shopify App Versionは未release候補を作成し、scope追加0、extension削除0、Function内容不変を確認してから反映する。現行versionをロールバック候補として保存する。
 7. Renderの`SCOPES`と`SHOPIFY_APP_VERSION`を、実際にreleaseした設定へ揃える。既存SCOPES内の顧客masterの2scopeだけを除き、ほかの必要権限は落とさない。
 8. Shopify Inboxの受信、お問い合わせページ、Shopify顧客アカウント・MFA・スタッフ権限は人間が確認する。問い合わせ経路の切り替えはこの確認後。

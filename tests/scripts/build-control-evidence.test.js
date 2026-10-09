@@ -10,6 +10,10 @@ import {
 } from "../../scripts/security/build-control-evidence.mjs";
 import { readRuntimePlan } from "../../scripts/security/runtime-package.mjs";
 import { assertProductionBuildAdmission } from "../../scripts/security/production-build.mjs";
+import {
+  BRACES_ADVISORY_ID,
+  BRACES_CONDITION_POLICY,
+} from "../../scripts/security/toolchain-risk-scope.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "build-evidence-test-"));
@@ -83,6 +87,30 @@ test("runtime evidence must match current controls, runtime manifests and actual
     assert.equal(verifyBuildControlEvidence(root, risk).ok, false);
     fs.unlinkSync(file);
     assert.equal(verifyBuildControlEvidence(root, risk).ok, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("condition-bound control fingerprints exempt only the five approved development version fields", () => {
+  const { root } = fixture();
+  const risk = {
+    advisoryId: BRACES_ADVISORY_ID,
+    packageName: "braces",
+    policy: BRACES_CONDITION_POLICY,
+  };
+  try {
+    const file = path.join(root, "package.json");
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+    manifest.devDependencies = { prettier: "3.8.0", protected: "1.0.0" };
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    const original = buildControlFingerprint(root, risk);
+    manifest.devDependencies.prettier = "3.8.1";
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    assert.equal(buildControlFingerprint(root, risk), original);
+    manifest.devDependencies.protected = "1.0.1";
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    assert.notEqual(buildControlFingerprint(root, risk), original);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

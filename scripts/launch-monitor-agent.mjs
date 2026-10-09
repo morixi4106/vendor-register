@@ -1,4 +1,5 @@
 import { isExpectedPasswordCriticalPayload } from "./launch-monitor-response-policy.mjs";
+import { inspectBackupAvailability } from "./maintenance-backup.mjs";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const EXPECT_PASSWORD_CRITICAL = process.argv.includes(
@@ -16,10 +17,7 @@ await main({
   process.exitCode = 1;
 });
 
-async function main({
-  dryRun = false,
-  expectPasswordCritical = false,
-} = {}) {
+async function main({ dryRun = false, expectPasswordCritical = false } = {}) {
   if (dryRun && expectPasswordCritical) {
     throw new Error("incompatible_monitor_modes");
   }
@@ -102,6 +100,7 @@ async function main({
   }
 
   snapshot.publicEndpoints = await probePublicEndpoints();
+  snapshot.backupRecovery = await inspectBackupAvailability();
 
   if (dryRun) {
     const expectedPasswordProtection =
@@ -155,8 +154,7 @@ async function main({
     JSON.stringify({
       ok:
         payload.status !== "critical" ||
-        (expectPasswordCritical &&
-          isExpectedPasswordCriticalPayload(payload)),
+        (expectPasswordCritical && isExpectedPasswordCriticalPayload(payload)),
       active: payload.active,
       completed: payload.completed || false,
       status: payload.status,
@@ -170,8 +168,7 @@ async function main({
         .map(({ id, status, code, count }) => ({ id, status, code, count })),
       notificationKind: payload.notificationKind || null,
       expectedPasswordCritical:
-        expectPasswordCritical &&
-        isExpectedPasswordCriticalPayload(payload),
+        expectPasswordCritical && isExpectedPasswordCriticalPayload(payload),
     }),
   );
 

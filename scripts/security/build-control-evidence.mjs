@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { readRuntimePlan } from "./runtime-package.mjs";
+import { isConditionBoundRisk } from "./toolchain-risk-scope.mjs";
 
 export const BUILD_CONTROL_FILES = Object.freeze([
   ".github/workflows/quality.yml",
@@ -18,9 +19,12 @@ export const BUILD_CONTROL_FILES = Object.freeze([
   "scripts/security/toolchain-risk-scope.mjs",
   "scripts/security/risk-acceptance-provenance.mjs",
   "scripts/security/audit-policy.mjs",
+  "scripts/security/maintenance-candidate.mjs",
+  "scripts/maintenance-promotion.mjs",
+  ".github/workflows/maintenance-promotion.yml",
 ]);
 
-export function buildControlFingerprint(root) {
+export function buildControlFingerprint(root, risk) {
   const hash = crypto.createHash("sha256");
   for (const filename of BUILD_CONTROL_FILES) {
     const location = path.join(root, filename);
@@ -28,7 +32,22 @@ export function buildControlFingerprint(root) {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024)
       throw new Error("unsafe_build_control_source");
     hash.update(filename + "\n");
-    hash.update(fs.readFileSync(location, "utf8").replaceAll("\r\n", "\n"));
+    let source = fs.readFileSync(location, "utf8").replaceAll("\r\n", "\n");
+    if (filename === "package.json" && isConditionBoundRisk(risk)) {
+      const manifest = JSON.parse(source);
+      for (const name of [
+        "prettier",
+        "@types/eslint",
+        "@types/node",
+        "@types/react",
+        "@types/react-dom",
+      ]) {
+        if (Object.hasOwn(manifest.devDependencies || {}, name))
+          manifest.devDependencies[name] = "reviewed-maintenance-patch";
+      }
+      source = JSON.stringify(manifest);
+    }
+    hash.update(source);
     hash.update("\n");
   }
   return hash.digest("hex").toUpperCase();
@@ -36,7 +55,7 @@ export function buildControlFingerprint(root) {
 
 export function verifyBuildControlEvidence(root, risk) {
   try {
-    if (buildControlFingerprint(root) !== risk.buildControlSha256)
+    if (buildControlFingerprint(root, risk) !== risk.buildControlSha256)
       return { ok: false, reason: "build_controls_changed" };
     const filename = path.join(root, ".audit/runtime-package-evidence.json");
     const stats = fs.lstatSync(filename);

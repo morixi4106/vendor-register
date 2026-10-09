@@ -4,6 +4,14 @@
 新しい判断記録は`security/risk-decisions/GHSA-vfj7-8cjw-p6xm.json`に`proposed`として保存します。
 旧`brace-expansion`の記録・期限・承認者は変更しません。
 
+この文書の14日期限は旧提案の条件です。通常保守向けには、別ファイル
+`security/risk-decisions/GHSA-vfj7-8cjw-p6xm.condition-bound.json`で条件付き許可を
+提案しています。こちらも未承認です。対象部品・親・依存経路・制御コード・
+実行用構成・既知のCVSS vectorを限定し、毎回の新しい検証を要求します。
+旧提案の期限を書き換えて延長するものではありません。
+本番設定・初期公開許可・実取引証拠は別の承認対象です。
+詳細は[自動保守と販売release](operations/automated-maintenance.md)を参照してください。
+
 ## 固定範囲
 
 - 対象は`braces@3.0.3`と`GHSA-VFJ7-8CJW-P6XM`だけ。配布物integrity、`micromatch@4.0.8`、lockfile、依存経路、制御コードを固定します。

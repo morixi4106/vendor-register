@@ -6,6 +6,9 @@ import {
   BRACES_RISK_RELATIVE_PATH,
   BRACES_ADVISORY_ID,
   BRACES_MAX_DURATION_MS,
+  BRACES_CONDITION_POLICY,
+  BRACES_CONDITION_RISK_PATH,
+  BRACES_CONDITIONS,
 } from "./toolchain-risk-scope.mjs";
 import { generateRiskPathSnapshot } from "./generate-risk-path-snapshot.mjs";
 import { verifyBuildArtifacts } from "./artifact-reachability.mjs";
@@ -16,8 +19,15 @@ import {
 import { readRuntimePlan } from "./runtime-package.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-export function proposeBracesRisk(root = ROOT, now = new Date()) {
-  const output = path.join(root, BRACES_RISK_RELATIVE_PATH);
+export function proposeBracesRisk(
+  root = ROOT,
+  now = new Date(),
+  { conditionBound = false } = {},
+) {
+  const output = path.join(
+    root,
+    conditionBound ? BRACES_CONDITION_RISK_PATH : BRACES_RISK_RELATIVE_PATH,
+  );
   if (
     fs.existsSync(output) &&
     (!fs.lstatSync(output).isFile() || fs.lstatSync(output).isSymbolicLink())
@@ -68,10 +78,23 @@ export function proposeBracesRisk(root = ROOT, now = new Date()) {
       .digest("hex")
       .toUpperCase(),
     proposedAt: previous?.proposedAt || now.toISOString(),
-    expiresAt:
-      previous?.expiresAt ||
-      new Date(now.getTime() + BRACES_MAX_DURATION_MS).toISOString(),
-    buildControlSha256: buildControlFingerprint(root),
+    ...(conditionBound
+      ? { policy: BRACES_CONDITION_POLICY, conditions: BRACES_CONDITIONS }
+      : {
+          expiresAt:
+            previous?.expiresAt ||
+            new Date(now.getTime() + BRACES_MAX_DURATION_MS).toISOString(),
+        }),
+    buildControlSha256: buildControlFingerprint(
+      root,
+      conditionBound
+        ? {
+            advisoryId: BRACES_ADVISORY_ID,
+            packageName: "braces",
+            policy: BRACES_CONDITION_POLICY,
+          }
+        : undefined,
+    ),
     runtimeManifestSha256: plan.manifestSha256,
     runtimeLockfileSha256: plan.lockfileSha256,
     artifactEvidenceSha256ByPlatform: evidence,
@@ -79,8 +102,9 @@ export function proposeBracesRisk(root = ROOT, now = new Date()) {
       "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
       "https://github.com/micromatch/braces/issues/70",
     ],
-    rationale:
-      "Proposal only: exact reviewed build-tool dependency, guarded inputs and isolated credentials, bounded build resources, clean audited runtime installation, and no application or artifact reachability. Explicit owner acceptance is required and expiry cannot extend automatically.",
+    rationale: conditionBound
+      ? "Proposal only: condition-bound acceptance of this exact build-only advisory, package, parents, paths, isolation and runtime baseline. Fresh proof is mandatory on every build. New advisories, runtime changes and control changes are not accepted. Owner approval is required; existing dated exceptions are preserved."
+      : "Proposal only: exact reviewed build-tool dependency, guarded inputs and isolated credentials, bounded build resources, clean audited runtime installation, and no application or artifact reachability. Explicit owner acceptance is required and expiry cannot extend automatically.",
   };
   if (!verifyBuildControlEvidence(root, proposed).ok)
     throw new Error("proposal_runtime_evidence_missing");
@@ -97,7 +121,15 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    console.log(JSON.stringify(proposeBracesRisk()));
+    if (process.argv.slice(2).some((arg) => arg !== "--condition-bound"))
+      throw new Error("unsupported_proposal_argument");
+    console.log(
+      JSON.stringify(
+        proposeBracesRisk(ROOT, new Date(), {
+          conditionBound: process.argv.includes("--condition-bound"),
+        }),
+      ),
+    );
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

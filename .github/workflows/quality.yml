@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   actions: read
@@ -40,12 +41,15 @@ jobs:
 
       - name: Read risk acceptance workflow inputs
         id: risk-acceptance
+        env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
+          RISK_CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: >-
           node scripts/security/risk-acceptance-provenance.mjs
           emit-workflow-outputs
 
       - name: Download reviewed production audit evidence
-        if: steps.risk-acceptance.outputs.accepted == 'true'
+        if: steps.risk-acceptance.outputs.download_reviewed == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ steps.risk-acceptance.outputs.reviewed_artifact_name }}
@@ -57,6 +61,7 @@ jobs:
       - name: Verify accepted risk provenance
         if: steps.risk-acceptance.outputs.accepted == 'true'
         env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
           GITHUB_TOKEN: ${{ github.token }}
           RISK_CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
           RISK_CURRENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -119,6 +124,7 @@ jobs:
 
       - name: Audit production dependencies
         env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
           PRODUCTION_AUDIT_WRITE_REVIEW_EVIDENCE: "true"
           RISK_REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RISK_REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}

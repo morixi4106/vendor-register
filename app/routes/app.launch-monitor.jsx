@@ -1,13 +1,29 @@
-
-import { Link, useLoaderData } from "react-router";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
+import { Icon } from "@shopify/polaris";
+import { CheckIcon, EmailIcon, RefreshIcon } from "@shopify/polaris-icons";
 
 import prisma from "../db.server.js";
 import { buildLaunchMonitorGuide } from "../services/launchMonitorGuide.js";
 import { LAUNCH_MONITOR_HEARTBEAT_KEY } from "../services/launchMonitor.server.js";
-import { authenticate } from "../shopify.server.js";
+import { requirePrivacyOperator } from "../utils/privacyOperator.server.js";
+import { readBoundedFormData } from "../utils/requestBody.server.js";
+import {
+  acknowledgeMonitorIncident,
+  confirmMonitorReceipt,
+  getMonitorAcknowledgement,
+  getMonitorReceiptStatus,
+  refreshMonitorReceipt,
+  sendMonitorReceiptTest,
+} from "../services/monitorNotification.server.js";
 
 export async function loader({ request }) {
-  await authenticate.admin(request);
+  await requirePrivacyOperator(request);
   const heartbeat = await prisma.operationalHeartbeat.findUnique({
     where: { key: LAUNCH_MONITOR_HEARTBEAT_KEY },
   });
@@ -17,13 +33,53 @@ export async function loader({ request }) {
     metadata: heartbeat?.metadataJson || {},
   });
   return Response.json(
-    { heartbeat, guide },
+    {
+      heartbeat,
+      guide,
+      notification: await getMonitorReceiptStatus(),
+      acknowledgement: await getMonitorAcknowledgement({
+        incidentKey: heartbeat?.metadataJson?.incidentKey,
+      }),
+    },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }
 
+export async function action({ request }) {
+  const { actorKey } = await requirePrivacyOperator(request);
+  const form = await readBoundedFormData(request, 8000);
+  try {
+    const intent = form.get("intent");
+    if (intent === "send-receipt-test") await sendMonitorReceiptTest();
+    else if (intent === "confirm-receipt")
+      await confirmMonitorReceipt({ code: form.get("code"), actor: actorKey });
+    else if (intent === "refresh-delivery") await refreshMonitorReceipt();
+    else if (intent === "ack-incident")
+      await acknowledgeMonitorIncident({
+        incidentKey: form.get("incidentKey"),
+        actor: actorKey,
+      });
+    else
+      return Response.json(
+        { ok: false, error: "invalid_action" },
+        { status: 400 },
+      );
+    return Response.json(
+      { ok: true },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch {
+    return Response.json(
+      { ok: false, error: "notification_check_failed" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+}
+
 export default function LaunchMonitorPage() {
-  const { heartbeat, guide } = useLoaderData();
+  const { heartbeat, guide, notification, acknowledgement } = useLoaderData();
+  const actionData = useActionData();
+  const busy = useNavigation().state !== "idle";
   const metadata = heartbeat?.metadataJson || {};
   const report = metadata.lastReport || {};
   const checks = Array.isArray(report.checks) ? report.checks : [];
@@ -41,7 +97,7 @@ export default function LaunchMonitorPage() {
 
       <section style={styles.grid}>
         <Metric label="監視開始" value={formatDate(metadata.startedAt)} />
-        <Metric label="終了予定" value={formatDate(metadata.endsAt)} />
+        <Metric label="集中監視終了予定" value={formatDate(metadata.endsAt)} />
         <Metric label="最終確認" value={formatDate(metadata.lastCheckedAt)} />
         <Metric label="実行回数" value={String(metadata.runCount || 0)} />
       </section>
@@ -50,7 +106,9 @@ export default function LaunchMonitorPage() {
         <div style={styles.guideHeader}>
           <div>
             <h2 style={styles.sectionTitle}>運用ガイド</h2>
-            <p style={styles.muted}>現在の監視結果から、次に確認する項目を順番に表示します。</p>
+            <p style={styles.muted}>
+              現在の監視結果から、次に確認する項目を順番に表示します。
+            </p>
           </div>
           <StatusBadge status={guide.tone} compact />
         </div>
@@ -77,8 +135,96 @@ export default function LaunchMonitorPage() {
             ))}
           </ol>
         ) : (
-          <p style={styles.noAction}>作業は不要です。次回の自動確認を待ちます。</p>
+          <p style={styles.noAction}>
+            作業は不要です。次回の自動確認を待ちます。
+          </p>
         )}
+      </section>
+
+      <section style={styles.panel}>
+        <h2 style={styles.sectionTitle}>通知の受信確認</h2>
+        <strong>
+          {notification.ready ? "受信確認済み" : "受信確認が必要"}
+        </strong>
+        <span>配信状態: {notification.providerEvent}</span>
+        {actionData ? (
+          <p role="status">
+            {actionData.ok
+              ? "処理を完了しました。"
+              : "確認できませんでした。設定と確認コードを確認してください。"}
+          </p>
+        ) : null}
+        <div style={styles.guideRowInner}>
+          <Form method="post">
+            <button
+              style={styles.command}
+              title="通知テストを送信"
+              name="intent"
+              value="send-receipt-test"
+              disabled={busy}
+            >
+              <Icon source={EmailIcon} tone="inherit" />
+              通知テストを送信
+            </button>
+          </Form>
+          <Form method="post">
+            <button
+              style={styles.command}
+              title="配信状態を確認"
+              name="intent"
+              value="refresh-delivery"
+              disabled={busy}
+            >
+              <Icon source={RefreshIcon} tone="inherit" />
+              配信状態を確認
+            </button>
+          </Form>
+          <Form method="post" style={styles.guideRowInner}>
+            <input
+              style={styles.codeInput}
+              name="code"
+              aria-label="受信確認コード"
+              placeholder="受信確認コード"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              disabled={busy}
+            />
+            <button
+              style={styles.command}
+              title="受信を確認"
+              name="intent"
+              value="confirm-receipt"
+              disabled={busy}
+            >
+              <Icon source={CheckIcon} tone="inherit" />
+              受信を確認
+            </button>
+          </Form>
+        </div>
+        {metadata.incidentKey ? (
+          <Form method="post">
+            <input
+              type="hidden"
+              name="incidentKey"
+              value={metadata.incidentKey}
+            />
+            <button
+              name="intent"
+              value="ack-incident"
+              disabled={busy || acknowledgement.acknowledged}
+            >
+              異常を確認しました
+            </button>
+            {acknowledgement.acknowledged ? (
+              <p>
+                対応期限: {formatDate(acknowledgement.responseDueAt)}
+                {acknowledgement.overdue ? "（期限超過）" : ""}
+              </p>
+            ) : null}
+          </Form>
+        ) : null}
       </section>
 
       <section style={styles.panel}>
@@ -162,6 +308,8 @@ function checkLabel(id) {
     render_auth_rejections: "認証拒否",
     render_rate_limits: "アクセス制限",
     render_log_collection: "Renderログ取得",
+    render_backup_recovery: "バックアップ復旧可能期間",
+    launch_monitor_notification_delivery: "通知の受信・配信確認",
     withdrawal_operations_available: "撤回運用データ",
     withdrawal_email_failures: "撤回メール失敗",
     withdrawal_email_outbox: "撤回メールキュー",
@@ -181,11 +329,36 @@ function checkLabel(id) {
 
 function isEnabled(value) {
   return ["1", "true", "yes", "on"].includes(
-    String(value || "").trim().toLowerCase(),
+    String(value || "")
+      .trim()
+      .toLowerCase(),
   );
 }
 
 const styles = {
+  command: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 40,
+    padding: "8px 16px",
+    border: "1px solid #101828",
+    borderRadius: 6,
+    background: "#101828",
+    color: "#fff",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  codeInput: {
+    width: 180,
+    maxWidth: "100%",
+    minHeight: 40,
+    boxSizing: "border-box",
+    padding: "8px 12px",
+    border: "1px solid #cbd5e1",
+    borderRadius: 6,
+    fontSize: 16,
+  },
   page: {
     display: "grid",
     gap: 24,

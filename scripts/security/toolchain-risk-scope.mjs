@@ -6,6 +6,32 @@ export const BRACES_RISK_RELATIVE_PATH =
 export const LEGACY_RISK_RELATIVE_PATH =
   "security/risk-decisions/GHSA-mh99-v99m-4gvg.json";
 export const BRACES_MAX_DURATION_MS = 14 * 86400_000;
+export const BRACES_CONDITION_POLICY = "condition-bound-build-only-v1";
+export const BRACES_CONDITION_RISK_PATH =
+  "security/risk-decisions/GHSA-vfj7-8cjw-p6xm.condition-bound.json";
+export const BRACES_CONDITIONS = Object.freeze({
+  guardedBuild: true,
+  noProductionSecrets: true,
+  fixedDependencyPaths: true,
+  cleanRuntime: true,
+  freshArtifactEvidence: true,
+  stopOnNewHighOrCritical: true,
+  ownerResponseDays: 7,
+  advisoryVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+});
+export function isConditionBoundRisk(risk) {
+  return isBracesRisk(risk) && risk.policy === BRACES_CONDITION_POLICY;
+}
+export function activeRiskRelativePath(env = process.env) {
+  if (
+    env.BUILD_TOOLCHAIN_RISK_POLICY &&
+    env.BUILD_TOOLCHAIN_RISK_POLICY !== BRACES_CONDITION_POLICY
+  )
+    throw new Error("unsupported_build_risk_policy");
+  return env.BUILD_TOOLCHAIN_RISK_POLICY === BRACES_CONDITION_POLICY
+    ? BRACES_CONDITION_RISK_PATH
+    : BRACES_RISK_RELATIVE_PATH;
+}
 const SHA = /^[A-F0-9]{64}$/;
 const INTEGRITY =
   "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==";
@@ -16,7 +42,10 @@ export function isBracesRisk(risk) {
   );
 }
 export function riskRelativePath(risk) {
-  if (isBracesRisk(risk)) return BRACES_RISK_RELATIVE_PATH;
+  if (isBracesRisk(risk))
+    return isConditionBoundRisk(risk)
+      ? BRACES_CONDITION_RISK_PATH
+      : BRACES_RISK_RELATIVE_PATH;
   if (
     risk?.advisoryId === "GHSA-MH99-V99M-4GVG" &&
     risk.packageName === "brace-expansion"
@@ -59,7 +88,19 @@ export function validateBracesRiskDefinition(
   const proposed = utc(risk.proposedAt);
   const expires = utc(risk.expiresAt);
   if (!proposed || proposed > now) errors.push("risk_proposal_time_invalid");
-  if (
+  if (risk.policy && !isConditionBoundRisk(risk))
+    errors.push("unsupported_build_risk_policy");
+  if (isConditionBoundRisk(risk)) {
+    if (
+      Object.hasOwn(risk, "expiresAt") ||
+      Object.keys(risk.conditions || {}).length !==
+        Object.keys(BRACES_CONDITIONS).length ||
+      Object.entries(BRACES_CONDITIONS).some(
+        ([key, value]) => risk.conditions?.[key] !== value,
+      )
+    )
+      errors.push("risk_conditions_invalid");
+  } else if (
     !proposed ||
     !expires ||
     expires <= proposed ||

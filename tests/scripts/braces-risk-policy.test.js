@@ -11,6 +11,10 @@ import {
   BRACES_ADVISORY_ID,
   validateBracesRiskDefinition,
   riskRelativePath,
+  activeRiskRelativePath,
+  BRACES_CONDITIONS,
+  BRACES_CONDITION_POLICY,
+  BRACES_CONDITION_RISK_PATH,
 } from "../../scripts/security/toolchain-risk-scope.mjs";
 import { enumerateDependencyPaths } from "../../scripts/security/package-lock-graph.mjs";
 import {
@@ -27,6 +31,76 @@ const lock = JSON.parse(
 const paths = enumerateDependencyPaths(lock, {
   targetName: "braces",
   targetVersion: "3.0.3",
+});
+
+test("condition-bound acceptance is a distinct proposal, not an extension of the dated exception", () => {
+  const conditional = risk({
+    policy: BRACES_CONDITION_POLICY,
+    conditions: BRACES_CONDITIONS,
+  });
+  delete conditional.expiresAt;
+  assert.equal(riskRelativePath(conditional), BRACES_CONDITION_RISK_PATH);
+  assert.equal(
+    activeRiskRelativePath({
+      BUILD_TOOLCHAIN_RISK_POLICY: BRACES_CONDITION_POLICY,
+    }),
+    BRACES_CONDITION_RISK_PATH,
+  );
+  assert.throws(
+    () => activeRiskRelativePath({ BUILD_TOOLCHAIN_RISK_POLICY: "unknown" }),
+    /unsupported/,
+  );
+  assert.equal(
+    validateBracesRiskDefinition(conditional, {
+      now: new Date("2027-01-01T00:00:00.000Z"),
+    }).ok,
+    true,
+  );
+  const proposed = validateBracesRiskDefinition(
+    { ...conditional, status: "proposed" },
+    { now: NOW },
+  );
+  assert.deepEqual(proposed.errors, ["risk_not_accepted"]);
+  for (const change of [
+    { expiresAt: "2027-01-01T00:00:00.000Z" },
+    { conditions: {} },
+    { conditions: { ...BRACES_CONDITIONS, ownerResponseDays: 30 } },
+    { policy: "unknown" },
+  ])
+    assert.equal(
+      validateBracesRiskDefinition({ ...conditional, ...change }, { now: NOW })
+        .ok,
+      false,
+    );
+  const updatedReport = structuredClone(report);
+  updatedReport.vulnerabilities.braces.via[0].cvss = {
+    vectorString: BRACES_CONDITIONS.advisoryVector,
+  };
+  const updatedLock = structuredClone(lock);
+  updatedLock.packages[""].version = "unrelated-metadata";
+  assert.equal(
+    evaluate(conditional, updatedLock, {
+      report: updatedReport,
+      artifactReport: {
+        ok: true,
+        targetMatches: [],
+        artifactSetSha256: "F".repeat(64),
+      },
+    }).ok,
+    true,
+  );
+  updatedReport.vulnerabilities.braces.via[0].cvss.vectorString =
+    "CVSS:3.1/C:H/I:H/A:H";
+  assert.equal(
+    evaluate(conditional, updatedLock, { report: updatedReport }).ok,
+    false,
+  );
+  assert.equal(evaluate(conditional, updatedLock).ok, false);
+  updatedLock.packages["node_modules/braces"].integrity = "tampered";
+  assert.equal(
+    evaluate(conditional, updatedLock, { report: updatedReport }).ok,
+    false,
+  );
 });
 const NOW = new Date("2026-10-10T00:00:00.000Z");
 function risk(overrides = {}) {
