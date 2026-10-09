@@ -8,7 +8,13 @@ export const MONITOR_ACK_KEY = "launch_monitor_incident_acknowledgement";
 export const MONITOR_MAIL_KEY = "launch_monitor_latest_mail";
 const WEEK = 7 * 86400_000;
 const COOLDOWN = 30 * 60_000;
-const FAILED_EVENTS = new Set(["bounced", "complained", "failed", "canceled"]);
+const FAILED_EVENTS = new Set([
+  "bounced",
+  "complained",
+  "failed",
+  "canceled",
+  "suppressed",
+]);
 
 function routing(env) {
   const key = String(env.PRIVACY_HASH_SECRET || "");
@@ -130,6 +136,18 @@ export async function refreshMonitorReceipt({
   const metadata = row.metadataJson;
   if (!metadata.messageId || metadata.routingFingerprint !== config.fingerprint)
     return { ok: false, reason: "notification_test_required" };
+  if (env.RESEND_MONITOR_WEBHOOK_SECRET) {
+    const providerEvent =
+      metadata.providerSource === "signed_resend_webhook"
+        ? metadata.providerEvent
+        : "unknown";
+    return {
+      ok:
+        ["sent", "delivered", "opened", "clicked"].includes(providerEvent) &&
+        metadata.deliveryFailed !== true,
+      providerEvent,
+    };
+  }
   let providerEvent = "unknown";
   try {
     const result = await getEmailImpl(metadata.messageId);
@@ -156,6 +174,72 @@ export async function refreshMonitorReceipt({
       : metadata.lastDeliveredAt || null,
   });
   return { ok: providerEvent !== "unknown" && !deliveryFailed, providerEvent };
+}
+
+export async function recordVerifiedMonitorDelivery({
+  messageId,
+  providerEvent,
+  webhookId,
+  prismaClient = prisma,
+  env = process.env,
+  now = new Date(),
+} = {}) {
+  const ranks = { sent: 1, delivered: 2, opened: 3, clicked: 4 };
+  if (
+    !/^[A-Za-z0-9-]{1,128}$/.test(messageId || "") ||
+    !/^[A-Za-z0-9_.-]{1,128}$/.test(webhookId || "") ||
+    (!Object.hasOwn(ranks, providerEvent) && !FAILED_EVENTS.has(providerEvent))
+  )
+    throw new Error("notification_delivery_event_invalid");
+  const config = routing(env);
+  let sending = false;
+  for (const key of [MONITOR_NOTIFICATION_KEY, MONITOR_MAIL_KEY]) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await prismaClient.operationalHeartbeat.findUnique({
+        where: { key },
+      });
+      const m = row?.metadataJson;
+      const age = now - new Date(m?.sentAt || 0);
+      if (m?.status === "SENDING" && age >= 0 && age < 120_000) sending = true;
+      if (
+        !m ||
+        m.messageId !== messageId ||
+        m.routingFingerprint !== config.fingerprint
+      )
+        break;
+      if (
+        m.providerWebhookId === webhookId ||
+        (m.deliveryFailed && !FAILED_EVENTS.has(providerEvent)) ||
+        (m.providerSource === "signed_resend_webhook" &&
+          !FAILED_EVENTS.has(providerEvent) &&
+          (ranks[m.providerEvent] || 0) >= ranks[providerEvent])
+      )
+        return { applied: false, ignored: true };
+      try {
+        await replaceReceipt(prismaClient, row, {
+          ...m,
+          providerEvent,
+          providerSource: "signed_resend_webhook",
+          providerWebhookId: webhookId,
+          providerCheckedAt: now.toISOString(),
+          deliveryFailed:
+            m.deliveryFailed === true || FAILED_EVENTS.has(providerEvent),
+          lastDeliveredAt: ["delivered", "opened", "clicked"].includes(
+            providerEvent,
+          )
+            ? m.sentAt
+            : m.lastDeliveredAt || null,
+        });
+        return { applied: true };
+      } catch (error) {
+        if (error.message !== "notification_receipt_changed") throw error;
+        if (attempt === 2) throw error;
+      }
+    }
+  }
+  return sending
+    ? { applied: false, retry: true }
+    : { applied: false, ignored: true };
 }
 
 export async function confirmMonitorReceipt({

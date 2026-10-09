@@ -39,6 +39,29 @@ needed after correcting the route. Message bodies and contacts are not copied
 into heartbeat records. Routine messages are provider-checked to keep the
 delivery proof fresh without asking for a new human code every week.
 
+Sending-only Resend keys cannot retrieve sent email status. Keep their permission
+unchanged. The delivery webhook candidate at `/webhooks/monitor-delivery` uses the
+existing Resend SDK to verify the raw payload and signing timestamp. Configure
+`RESEND_MONITOR_WEBHOOK_SECRET` only after approving deployment and creating the
+endpoint in Resend. Subscribe to `email.sent`, `email.delivered`, `email.opened`,
+`email.clicked`, `email.bounced`, `email.complained`, `email.failed` and
+`email.suppressed`. Do not paste the secret into chat or Git.
+
+Only current monitor message IDs and the current routing fingerprint can update
+receipt metadata. Bodies, addresses, subjects and customer mail records are not
+stored. Delivery failures stay blocked, delayed success events cannot erase a
+failure, replays do not renew freshness, and human code confirmation remains
+mandatory. Unknown messages are ignored; a challenge being sent returns a bounded
+retry response to avoid losing a delivery event before the message ID is saved.
+Without the webhook secret, the existing provider-read path is unchanged; a
+restricted sending key cannot satisfy its delivery gate. Registration and live
+webhook receipt remain separate from unit tests.
+
+The fallback workflow also has a main-only `TEST_NOTIFICATION` manual action.
+It sends one bounded GitHub Issue notification from `github-actions[bot]` without
+enabling routine alerts or maintenance. A self-authored Issue is not email receipt
+proof. The bot test is separate from the scoped Render token transport test.
+
 The secondary route is a GitHub Issue, independent of Resend. The trusted
 fallback workflow reads no customer logs. Render's native runner can also create
 the Issue if GitHub schedules stop. A scoped fine-grained token needs only
