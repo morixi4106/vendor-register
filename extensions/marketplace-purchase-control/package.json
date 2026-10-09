@@ -25,9 +25,6 @@
       "omitOperationSuffix": true
     }
   },
-  "dependencies": {
-    "@shopify/shopify_function": "^2.0.1"
-  },
   "devDependencies": {
     "@shopify/shopify-function-test-helpers": "^1.0.0",
     "vitest": "^4.1.11"

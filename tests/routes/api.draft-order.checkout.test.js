@@ -263,7 +263,7 @@ function createVerifiedSeller(overrides = {}) {
 function createFakePrisma({
   products = createProducts(),
   seller = null,
-  sessionToken = 'seller-session',
+  sessionToken = 'a'.repeat(64),
   sessionVendor = null,
   sellers = [],
   ledgerEntries = [],
@@ -746,7 +746,7 @@ test('api.draft-order.checkout applies authenticated seller sales credit as a se
       };
     },
   });
-  const cookie = await vendorAdminSessionCookie.serialize('seller-session');
+  const cookie = await vendorAdminSessionCookie.serialize('a'.repeat(64));
   const request = new Request('http://localhost/api/draft-order/checkout', {
     method: 'POST',
     body: JSON.stringify(

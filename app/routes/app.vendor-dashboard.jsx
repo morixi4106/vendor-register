@@ -1,6 +1,7 @@
 import { createCookie, redirect } from "react-router";
-import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
+import { findVendorAdminSession } from "../services/vendorAuthentication.server.js";
+import { privateErrorCode } from "../utils/privateData.server.js";
 const vendorAdminSessionCookie = createCookie("vendor_admin_session", {
   httpOnly: true,
   sameSite: "lax",
@@ -60,18 +61,12 @@ export const loader = async ({
       admin,
       session
     } = await authenticate.admin(request);
-    console.log("=== vendor-dashboard loader start ===");
-    console.log("session shop:", session?.shop);
-    console.log("request url:", request.url);
     const cookieHeader = request.headers.get("Cookie");
     const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
     if (!sessionToken) {
       throw redirect("/apps/vendors/verify");
     }
-    const vendorSession = await prisma.vendorAdminSession.findUnique({
-      where: {
-        sessionToken
-      },
+    const vendorSession = await findVendorAdminSession(sessionToken, {
       include: {
         vendor: {
           include: {
@@ -145,9 +140,6 @@ export const loader = async ({
                 currencyCode
               }
             }
-            customer {
-              displayName
-            }
             lineItems(first: 20) {
               nodes {
                 name
@@ -177,16 +169,7 @@ export const loader = async ({
     })]);
     const productsJson = await productsRes.json();
     const ordersJson = await ordersRes.json();
-    console.log("vendorName:", vendorName);
-    console.log("productsQueryString:", productsQueryString);
-    console.log("ordersQueryString:", ordersQueryString);
-    console.log("productsJson:", JSON.stringify(productsJson, null, 2));
-    console.log("ordersJson:", JSON.stringify(ordersJson, null, 2));
     if (productsJson.errors || ordersJson.errors) {
-      console.error("products errors raw:", JSON.stringify(productsJson.errors, null, 2));
-      console.error("orders errors raw:", JSON.stringify(ordersJson.errors, null, 2));
-      console.error("products full raw:", JSON.stringify(productsJson, null, 2));
-      console.error("orders full raw:", JSON.stringify(ordersJson, null, 2));
       throw new Error("GraphQL errors detected");
     }
     const rawProducts = productsJson?.data?.products?.nodes || [];
@@ -249,7 +232,7 @@ export const loader = async ({
       }
       return {
         id: order.name,
-        customer: order?.customer?.displayName || "購入者なし",
+        customer: "非表示",
         product: firstLine?.name || "商品なし",
         quantity: firstLine?.quantity || 0,
         total: formatMoney(order?.currentTotalPriceSet?.shopMoney?.amount || 0, order?.currentTotalPriceSet?.shopMoney?.currencyCode || "JPY"),
@@ -322,16 +305,7 @@ export const loader = async ({
       chartData
     });
   } catch (error) {
-    console.error("vendor-dashboard loader error full:", error);
-    if (error?.body) {
-      console.error("error.body:", JSON.stringify(error.body, null, 2));
-    }
-    if (error?.graphQLErrors) {
-      console.error("error.graphQLErrors:", JSON.stringify(error.graphQLErrors, null, 2));
-    }
-    if (error?.response) {
-      console.error("error.response:", JSON.stringify(error.response, null, 2));
-    }
+    if (!(error instanceof Response)) console.error("vendor dashboard failed", { code: privateErrorCode(error) });
     throw error;
   }
 };

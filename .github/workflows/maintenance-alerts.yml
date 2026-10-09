@@ -1,0 +1,54 @@
+name: Maintenance alert fallback
+
+on:
+  workflow_run:
+    workflows:
+      [
+        Production integrity monitor,
+        Shopify product catalog sync,
+        Independent sale eligibility watchdog,
+        Quality checks,
+        Daily maintenance checks,
+        Routine maintenance promotion,
+      ]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: maintenance-alert-fallback
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: ${{ vars.MAINTENANCE_ALERTS_ENABLED == 'true' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Publish bounded fallback alert without reading customer logs
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const names = new Set(['Production integrity monitor', 'Shopify product catalog sync', 'Independent sale eligibility watchdog', 'Quality checks', 'Daily maintenance checks', 'Routine maintenance promotion']);
+            if (!names.has(run.name) || !['failure', 'timed_out', 'cancelled'].includes(run.conclusion)) return;
+            const { owner, repo } = context.repo;
+            const marker = `<!-- maintenance-alert:${run.name} -->`;
+            const url = `https://github.com/${owner}/${repo}/actions/runs/${run.id}`;
+            const body = `${marker}\n@${owner}\n\nWorkflow: ${run.name}\nResult: ${run.conclusion}\nEvidence: ${url}\n\nThis alert does not repair data, release versions, or restore sales. After reading, comment /ack-maintenance. Response target: seven days after acknowledgement. Urgent containment does not wait for that response.`;
+            const issues = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 100 });
+            const existing = issues.data.find(i => !i.pull_request && i.body?.startsWith(marker));
+            if (!existing) {
+              await github.rest.issues.create({ owner, repo, title: `[Maintenance] ${run.name}`, body });
+              return;
+            }
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: existing.number, per_page: 100 });
+            const ack = comments.data.filter(c => c.body?.trim() === '/ack-maintenance' && ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.author_association)).at(-1);
+            const last = new Date(existing.updated_at);
+            const waitMs = ack ? 7 * 86400000 : 86400000;
+            const anchor = ack ? new Date(ack.created_at) : last;
+            if (Date.now() - anchor < waitMs || Date.now() - last < 86400000) return;
+            await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });

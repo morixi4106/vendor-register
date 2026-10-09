@@ -27,7 +27,7 @@ function fixture() {
       "node_modules/brace-expansion": {
         dependencies: {},
         name: "brace-expansion",
-        version: "2.1.4",
+        version: "2.1.7",
       },
       "node_modules/minimatch": {
         dependencies: {
@@ -46,7 +46,7 @@ function fixture() {
       location: "node_modules/brace-expansion",
       name: "brace-expansion",
       to: [],
-      version: "2.1.4",
+      version: "2.1.7",
     },
   ];
   const queryMinimatch = [
@@ -69,7 +69,7 @@ function fixture() {
             minimatch: {
               dependencies: {
                 "brace-expansion": {
-                  version: "2.1.4",
+                  version: "2.1.7",
                 },
               },
               version: "9.0.9",
@@ -152,7 +152,7 @@ test("reports lockfile, query, relationship, runtime, and scoped SBOM mismatches
     },
     {
       name: "brace-expansion",
-      version: "2.1.4",
+      version: "2.1.7",
     },
   ];
 

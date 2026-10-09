@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { decryptPrivateValue } from "../../utils/privateData.server.js";
 import prisma from "../../db.server.js";
 import { addDays, addressSnapshot, hashToken, jsonArray, jsonObject, recomputeWithdrawalV2State, text } from "./common.js";
 const TOKEN_BYTES = 32;
@@ -188,7 +189,7 @@ export async function createReturnInstruction({
       }
     });
     await recomputeWithdrawalV2State(group.withdrawalRequestId, prismaClient);
-    const storeEmail = text(group.vendorStore?.vendorAuth?.managementEmail || group.vendorStore?.email);
+    const storeEmail = text(decryptPrivateValue(group.vendorStore?.vendorAuth?.managementEmail || group.vendorStore?.email));
     let storeEmailResult = null;
     if (storeEmail) {
       const storeMessage = buildDirectReturnStoreNotificationEmail({

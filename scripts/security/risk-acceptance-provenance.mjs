@@ -3,10 +3,18 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  BRACES_RISK_RELATIVE_PATH,
+  BRACES_CONDITION_RISK_PATH,
+  activeRiskRelativePath,
+  isConditionBoundRisk,
+  LEGACY_RISK_RELATIVE_PATH,
+  riskRelativePath,
+} from "./toolchain-risk-scope.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..", "..");
-const RISK_RELATIVE_PATH = "security/risk-decisions/GHSA-mh99-v99m-4gvg.json";
+const RISK_RELATIVE_PATH = activeRiskRelativePath();
 const RISK_PATH = path.join(REPOSITORY_ROOT, RISK_RELATIVE_PATH);
 const PACKAGE_LOCK_PATH = path.join(REPOSITORY_ROOT, "package-lock.json");
 const REVIEW_EVIDENCE_PATH = path.join(
@@ -29,6 +37,8 @@ const ACCEPTANCE_FIELDS = new Set([
   "reviewedPullRequest",
   "reviewedRepository",
   "status",
+  "reviewedAuditEvidence",
+  "reviewedAuditEvidenceSha256",
 ]);
 const APPROVER_ASSOCIATIONS = new Set(["COLLABORATOR", "MEMBER", "OWNER"]);
 
@@ -59,6 +69,18 @@ export function riskCore(risk) {
 
 export function riskCoreSha256(risk) {
   return sha256(canonicalize(riskCore(risk)));
+}
+
+export function reviewEvidenceSha256(evidence) {
+  return sha256(canonicalize(evidence));
+}
+function durableEvidenceIsValid(risk) {
+  return (
+    risk?.reviewedAuditEvidence &&
+    /^[A-F0-9]{64}$/.test(risk.reviewedAuditEvidenceSha256 || "") &&
+    reviewEvidenceSha256(risk.reviewedAuditEvidence) ===
+      risk.reviewedAuditEvidenceSha256
+  );
 }
 
 function positiveInteger(value) {
@@ -164,7 +186,9 @@ export function expectedAcceptanceComment(risk) {
     `pull-request: #${risk.reviewedPullRequest}`,
     `reviewed-commit: ${risk.reviewedCommitSha}`,
     `reviewed-ci-run: ${risk.reviewedCiRunId}`,
-    `expires-at: ${risk.expiresAt}`,
+    isConditionBoundRisk(risk)
+      ? `policy: ${risk.policy}\nconditions-sha256: ${riskCoreSha256(risk)}\nreviewed-evidence-sha256: ${risk.reviewedAuditEvidenceSha256}`
+      : `expires-at: ${risk.expiresAt}`,
   ].join("\n");
 }
 
@@ -198,7 +222,20 @@ export function validateAcceptedRiskProvenance({
   risk,
 } = {}) {
   const errors = [];
+  if (
+    isConditionBoundRisk(risk) &&
+    (!durableEvidenceIsValid(risk) ||
+      !evidence ||
+      reviewEvidenceSha256(evidence) !== risk.reviewedAuditEvidenceSha256)
+  )
+    errors.push("durable_review_evidence_invalid");
   const changedPaths = uniqueSorted(current?.changedPaths || []);
+  let expectedRiskPath = null;
+  try {
+    expectedRiskPath = riskRelativePath(risk);
+  } catch {
+    /* Unsupported identities cannot become an accepted exception. */
+  }
   const acceptedAt = validTimestamp(risk?.acceptedAt);
   const commentCreatedAt = validTimestamp(acceptanceComment?.created_at);
   const runCompletedAt = validTimestamp(
@@ -226,7 +263,7 @@ export function validateAcceptedRiskProvenance({
   }
   if (
     current?.enforceAcceptanceOnlyDiff === true &&
-    (changedPaths.length !== 1 || changedPaths[0] !== RISK_RELATIVE_PATH)
+    (changedPaths.length !== 1 || changedPaths[0] !== expectedRiskPath)
   ) {
     errors.push("acceptance_diff_not_metadata_only");
   }
@@ -354,7 +391,18 @@ export function collectGitEvidence(reviewedCommitSha, currentHeadSha) {
   };
 }
 
-export function collectRiskStatusAtCommit(commitSha) {
+export function collectRiskStatusAtCommit(
+  commitSha,
+  relativePath = LEGACY_RISK_RELATIVE_PATH,
+) {
+  if (
+    ![
+      BRACES_RISK_RELATIVE_PATH,
+      BRACES_CONDITION_RISK_PATH,
+      LEGACY_RISK_RELATIVE_PATH,
+    ].includes(relativePath)
+  )
+    throw new Error("Unsupported risk definition path.");
   if (!GIT_COMMIT_SHA_PATTERN.test(String(commitSha || ""))) {
     throw new Error("Current pull request base SHA is invalid.");
   }
@@ -371,7 +419,7 @@ export function collectRiskStatusAtCommit(commitSha) {
     "--full-tree",
     commitSha,
     "--",
-    RISK_RELATIVE_PATH,
+    relativePath,
   ]);
   if (listing.error || listing.status !== 0) {
     throw new Error("Git could not inspect the base risk definition.");
@@ -380,12 +428,12 @@ export function collectRiskStatusAtCommit(commitSha) {
   if (listedPaths.length === 0) return "absent";
   if (
     listedPaths.length !== 1 ||
-    listedPaths[0].replaceAll("\\", "/") !== RISK_RELATIVE_PATH
+    listedPaths[0].replaceAll("\\", "/") !== relativePath
   ) {
     throw new Error("Git returned an unexpected base risk definition path.");
   }
 
-  const shown = runGit(["show", `${commitSha}:${RISK_RELATIVE_PATH}`]);
+  const shown = runGit(["show", `${commitSha}:${relativePath}`]);
   if (
     shown.error ||
     shown.status !== 0 ||
@@ -460,7 +508,7 @@ export async function verifyAcceptedRiskProvenance({
 
   const git = collectGit(risk.reviewedCommitSha, currentHeadSha);
   const baseRiskStatus = isPullRequest
-    ? collectRiskStatus(currentBaseSha)
+    ? collectRiskStatus(currentBaseSha, riskRelativePath(risk))
     : null;
   const [reviewRun, acceptanceComment] = await Promise.all([
     fetchGitHubJson(
@@ -474,10 +522,14 @@ export async function verifyAcceptedRiskProvenance({
       fetchImpl,
     ),
   ]);
-  const evidence = readBoundedJson(
-    evidencePath,
-    "Reviewed production audit evidence",
-  );
+  const durable =
+    isConditionBoundRisk(risk) &&
+    (!isPullRequest || baseRiskStatus === "accepted");
+  if (durable && !durableEvidenceIsValid(risk))
+    throw new Error("Durable review evidence is invalid.");
+  const evidence = durable
+    ? risk.reviewedAuditEvidence
+    : readBoundedJson(evidencePath, "Reviewed production audit evidence");
   const result = validateAcceptedRiskProvenance({
     acceptanceComment,
     current: {
@@ -528,6 +580,22 @@ export function emitWorkflowOutputs({
     throw new Error("reviewed pull request number is invalid");
   }
   appendWorkflowOutput("accepted", accepted ? "true" : "false", env);
+  let downloadReviewed = accepted;
+  if (accepted && isConditionBoundRisk(risk)) {
+    if (!durableEvidenceIsValid(risk))
+      throw new Error("Durable review evidence is invalid.");
+    downloadReviewed =
+      env.GITHUB_EVENT_NAME === "pull_request" &&
+      collectRiskStatusAtCommit(
+        env.RISK_CURRENT_BASE_SHA,
+        riskRelativePath(risk),
+      ) !== "accepted";
+  }
+  appendWorkflowOutput(
+    "download_reviewed",
+    downloadReviewed ? "true" : "false",
+    env,
+  );
   if (accepted) {
     appendWorkflowOutput("reviewed_run_id", risk.reviewedCiRunId, env);
     appendWorkflowOutput(

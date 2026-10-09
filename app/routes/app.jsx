@@ -38,6 +38,7 @@ export default function App() {
         <Link to="/app/withdrawal-settings">撤回運用設定</Link>
         <Link to="/app/carrier-service">配送サービス</Link>
         <Link to="/app/contact-inquiries">問い合わせ一覧</Link>
+        <Link to="/app/privacy">個人情報管理</Link>
         <Link to="/app/fixed-candidates">固定文候補一覧</Link>
         <Link to="/app/additional">追加設定</Link>
       </NavMenu>

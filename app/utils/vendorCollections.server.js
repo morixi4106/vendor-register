@@ -193,7 +193,7 @@ function buildCollectionDescription(store) {
   const parts = [
     store?.category ? `カテゴリ: ${store.category}` : null,
     store?.country ? `国: ${store.country}` : null,
-    store?.note || null,
+    store?.publicDescription || null,
   ].filter(Boolean);
 
   return parts.join("\n");
@@ -205,8 +205,8 @@ function buildCollectionMetafields({ collectionId, vendor, store }) {
     ["vendor_store_name", store.storeName || vendor.storeName || vendor.handle],
     ["vendor_category", store.category],
     ["vendor_country", store.country],
-    ["vendor_address", store.address],
-    ["vendor_note", store.note],
+    ["vendor_address", store.publicAddress],
+    ["vendor_note", store.publicDescription],
   ];
 
   return fields.flatMap(([key, value]) => {

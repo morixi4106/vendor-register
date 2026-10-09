@@ -197,6 +197,28 @@ test("detects a target package imported by the server bundle", () => {
   }
 });
 
+for (const target of [
+  "braces",
+  "micromatch",
+  "fast-glob",
+  "@graphql-tools/utils",
+]) {
+  test(`blocks ${target} when it appears in deployable server code`, () => {
+    const fixture = createFixture();
+    try {
+      fs.writeFileSync(
+        path.join(fixture.rootDirectory, "build/server/index.js"),
+        `import tool from '${target}';\nexport default tool;\n`,
+      );
+      const result = verifyBuildArtifacts(fixture);
+      assert.equal(result.ok, false);
+      assert.ok(result.targetMatches.some((match) => match.target === target));
+    } finally {
+      removeFixture(fixture);
+    }
+  });
+}
+
 test("detects a direct toolchain import in application source", () => {
   const fixture = createFixture();
   try {

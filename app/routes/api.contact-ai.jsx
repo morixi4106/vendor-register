@@ -4,8 +4,10 @@ import crypto from "node:crypto";
 import { Resend } from "resend";
 
 import prisma from "../db.server.js";
+import { privateErrorCode, protectContactInquiry } from "../utils/privateData.server.js";
+import { getPrivacyContactChannel } from "../services/privacyOperations.server.js";
+import { readBoundedRequestBody } from "../utils/requestBody.server.js";
 import {
-  buildAdminContactNotification,
   buildContactAcknowledgement,
 } from "../services/contactInquiry.server.js";
 import { isAutomatedEmailHoldActive } from "../services/operationalReadiness.server.js";
@@ -33,6 +35,10 @@ export const action = async ({ request }) => {
   const origin = getAllowedOrigin(request);
   if (!origin) return Response.json({ ok: false, error: "origin_not_allowed" }, { status: 403 });
   const headers = corsHeaders(origin);
+  const channel = await getPrivacyContactChannel();
+  if (channel === "SHOPIFY_INBOX") {
+    return Response.json({ ok: false, error: "contact_channel_moved", contactUrl: "https://oja-immanuel-bacchus.com/pages/contact" }, { status: 410, headers });
+  }
 
   if (request.method !== "POST") {
     return Response.json(
@@ -49,7 +55,9 @@ export const action = async ({ request }) => {
   }
 
   try {
-    const body = await request.json();
+    let body;
+    try { body = JSON.parse((await readBoundedRequestBody(request, MAX_BODY_BYTES)).toString("utf8")); }
+    catch (error) { return Response.json({ ok: false, error: error instanceof Response ? "request_too_large" : "invalid_json" }, { status: error instanceof Response ? error.status : 400, headers }); }
     if (String(body?.website || body?.company || "").trim()) {
       return Response.json({ ok: true, accepted: true }, { headers });
     }
@@ -149,7 +157,7 @@ export const action = async ({ request }) => {
     const replyText = buildContactAcknowledgement({ name });
 
     await prisma.contactInquiry.create({
-      data: {
+      data: protectContactInquiry({
         name,
         email,
         phone: phone || null,
@@ -157,7 +165,7 @@ export const action = async ({ request }) => {
         replyText,
         replyType,
         matchedRuleId: null,
-      },
+      }),
     });
     if (await isAutomatedEmailHoldActive()) {
       return Response.json(
@@ -188,13 +196,7 @@ export const action = async ({ request }) => {
         from: process.env.MAIL_FROM,
         to: process.env.ADMIN_EMAIL,
         subject: "新しいお問い合わせ",
-        text: buildAdminContactNotification({
-          name,
-          email,
-          phone,
-          message,
-          replyText,
-        }),
+        text: "新しいお問い合わせがあります。Shopify管理画面のvendor-register → 問い合わせ一覧で確認してください。",
       },
       { idempotencyKey: `contact-admin-${submissionKey}` },
     );
@@ -205,7 +207,7 @@ export const action = async ({ request }) => {
       { headers },
     );
   } catch (error) {
-    console.error("api.contact-ai error:", error);
+    console.error("contact inquiry failed", { code: privateErrorCode(error) });
     return Response.json({ ok: false, error: "internal_server_error" }, { status: 500, headers });
   }
 };

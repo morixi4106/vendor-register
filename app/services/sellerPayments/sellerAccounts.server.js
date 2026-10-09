@@ -1,5 +1,6 @@
 import isoCountries from "i18n-iso-countries";
 import prisma from "../../db.server.js";
+import { decryptPrivateValue, readVendorContacts } from "../../utils/privateData.server.js";
 import { isMarketplaceSeller } from "../../utils/sellerRoles.js";
 import { DEFAULT_ORDER_CURRENCY, DOCUMENT_VERIFICATION_STATUSES, SELLER_STATUSES } from "./constants.js";
 import { isPlainObject, normalizeBooleanInput, normalizeLowercase, normalizeText, normalizeUppercase } from "./values.js";
@@ -33,6 +34,7 @@ function createSellerStatusLabel(status) {
   }
 }
 function serializeSellerSummary(vendor) {
+  vendor = readVendorContacts(vendor);
   const seller = vendor?.seller;
   const stripeAccount = seller?.stripeAccount;
   const payoutRecipient = seller?.payoutRecipient;
@@ -154,7 +156,7 @@ export async function listAdminSellerRows({
 export async function getAdminSellerDetail(sellerId, {
   prismaClient = prisma
 } = {}) {
-  const seller = await prismaClient.seller.findUnique({
+  const sellerRecord = await prismaClient.seller.findUnique({
     where: {
       id: sellerId
     },
@@ -207,6 +209,7 @@ export async function getAdminSellerDetail(sellerId, {
       }
     }
   });
+  const seller = readVendorContacts(sellerRecord);
   if (!seller?.vendor?.vendorStore) {
     return null;
   }
@@ -671,7 +674,7 @@ function buildStripeConnectedAccountCreateParams(seller) {
   const countryCode = toIsoCountryCode(seller?.vendor?.vendorStore?.country);
   return {
     country: countryCode,
-    email: seller.vendor.managementEmail,
+    email: decryptPrivateValue(seller.vendor.managementEmail),
     business_profile: {
       name: seller.vendor.storeName
     },
@@ -869,7 +872,7 @@ export async function getSellerPaymentsPageData({
       id: vendor.id,
       handle: vendor.handle,
       storeName: vendor.storeName,
-      managementEmail: vendor.managementEmail
+      managementEmail: decryptPrivateValue(vendor.managementEmail)
     },
     store: {
       id: vendor.vendorStore.id,

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   actions: read
@@ -25,6 +26,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -32,14 +34,22 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Require trusted review source
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') { console.error('Untrusted fork must be reviewed in a trusted branch before builds or acceptance.'); process.exit(1); }"
+
       - name: Read risk acceptance workflow inputs
         id: risk-acceptance
+        env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
+          RISK_CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: >-
           node scripts/security/risk-acceptance-provenance.mjs
           emit-workflow-outputs
 
       - name: Download reviewed production audit evidence
-        if: steps.risk-acceptance.outputs.accepted == 'true'
+        if: steps.risk-acceptance.outputs.download_reviewed == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ steps.risk-acceptance.outputs.reviewed_artifact_name }}
@@ -51,6 +61,7 @@ jobs:
       - name: Verify accepted risk provenance
         if: steps.risk-acceptance.outputs.accepted == 'true'
         env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
           GITHUB_TOKEN: ${{ github.token }}
           RISK_CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
           RISK_CURRENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -90,19 +101,18 @@ jobs:
 
       - name: Test checkout validation function
         run: |
-          npm --workspace marketplace-purchase-control run typegen
+          npm run build:function:types
           git diff --exit-code -- extensions/marketplace-purchase-control/generated/api.ts
           npm run test:checkout-function
 
       - name: Build Shopify extensions for artifact verification
-        run: >-
-          npm exec --offline -- shopify app build
-          --config production
-          --no-color
-          --skip-dependencies-installation
+        run: npm run build:extensions
 
       - name: Build React Router app for artifact verification
         run: npm run build
+
+      - name: Verify isolated production runtime package
+        run: npm run runtime:check
 
       - name: Remove generated Shopify manifests
         run: node scripts/security/clean-audit-artifacts.mjs --apply
@@ -114,6 +124,7 @@ jobs:
 
       - name: Audit production dependencies
         env:
+          BUILD_TOOLCHAIN_RISK_POLICY: condition-bound-build-only-v1
           PRODUCTION_AUDIT_WRITE_REVIEW_EVIDENCE: "true"
           RISK_REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RISK_REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}

@@ -12,6 +12,11 @@ import { verifyBuildArtifacts } from "./security/artifact-reachability.mjs";
 import { collectReachableLocations } from "./security/package-lock-graph.mjs";
 import { collectNpmTreeEvidence } from "./security/npm-tree-verification.mjs";
 import {
+  activeRiskRelativePath,
+  isBracesRisk,
+} from "./security/toolchain-risk-scope.mjs";
+import { verifyBuildControlEvidence } from "./security/build-control-evidence.mjs";
+import {
   buildRiskReviewEvidence,
   writeRiskReviewEvidence,
 } from "./security/risk-acceptance-provenance.mjs";
@@ -19,12 +24,6 @@ import {
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const LOCKFILE_PATH = path.join(REPOSITORY_ROOT, "package-lock.json");
-const TOOLCHAIN_RISK_PATH = path.join(
-  REPOSITORY_ROOT,
-  "security",
-  "risk-decisions",
-  "GHSA-mh99-v99m-4gvg.json",
-);
 const MAX_LOCKFILE_BYTES = 20 * 1024 * 1024;
 const MAX_RISK_FILE_BYTES = 1024 * 1024;
 const MAX_PATH_SNAPSHOT_BYTES = 2 * 1024 * 1024;
@@ -52,9 +51,10 @@ export function readJson(filePath, description, { maxBytes }) {
 }
 
 export function loadRiskDefinition(
-  riskPath = TOOLCHAIN_RISK_PATH,
+  riskPath = null,
   repositoryRoot = REPOSITORY_ROOT,
 ) {
+  riskPath ||= path.join(repositoryRoot, activeRiskRelativePath());
   const risk = readJson(riskPath, "Toolchain risk definition", {
     maxBytes: MAX_RISK_FILE_BYTES,
   });
@@ -135,7 +135,14 @@ function runNpmAudit() {
 
 export function evaluateProductionAuditReport(
   report,
-  { artifactReport, lockfile, now = new Date(), npmTreeReport, risk },
+  {
+    artifactReport,
+    lockfile,
+    now = new Date(),
+    npmTreeReport,
+    risk,
+    buildControlEvidence,
+  },
 ) {
   const runtimeGraph = collectReachableLocations(lockfile, {
     scopes: new Set(["root-production"]),
@@ -166,6 +173,15 @@ export function evaluateProductionAuditReport(
     report,
     risk,
   });
+  if (isBracesRisk(risk) && !buildControlEvidence?.ok) {
+    toolchain.ok = false;
+    toolchain.accepted = [];
+    toolchain.blocking.push({
+      code: "build_control_evidence_failed",
+      packageName: "braces",
+      severity: "critical",
+    });
+  }
   if (npmTreeReport && !npmTreeReport.ok) {
     toolchain.ok = false;
     toolchain.blocking.push({
@@ -209,6 +225,13 @@ export function evaluateProductionAuditReport(
       }),
     );
   const checks = {
+    ...(isBracesRisk(risk)
+      ? {
+          buildIsolationAndRuntimePackage: status(
+            buildControlEvidence?.ok === true,
+          ),
+        }
+      : {}),
     artifactReachability: status(Boolean(artifactReport?.ok)),
     directSourceImports: status(
       !targetMatches.some((match) =>
@@ -374,6 +397,9 @@ export function main() {
     lockfile,
     npmTreeReport,
     risk,
+    buildControlEvidence: isBracesRisk(risk)
+      ? verifyBuildControlEvidence(REPOSITORY_ROOT, risk)
+      : undefined,
   });
   if (process.env.PRODUCTION_AUDIT_WRITE_REVIEW_EVIDENCE === "true") {
     try {

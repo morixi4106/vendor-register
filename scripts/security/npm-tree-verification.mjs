@@ -14,7 +14,7 @@ export const DEFAULT_NPM_TREE_LIMITS = Object.freeze({
 });
 
 const TARGETS = Object.freeze({
-  "brace-expansion": "2.1.4",
+  "brace-expansion": "2.1.7",
   minimatch: "9.0.9",
 });
 

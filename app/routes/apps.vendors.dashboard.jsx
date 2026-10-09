@@ -3,6 +3,8 @@ import { useEffect } from "react";
 import { useLoaderData } from "react-router";
 
 import prisma from "../db.server.js";
+import { findVendorAdminSession } from "../services/vendorAuthentication.server.js";
+import { readVendorContacts, vendorEmailLookupWhere } from "../utils/privateData.server.js";
 import {
   vendorAdminSessionCookie,
   vendorRegistrationTargetCookie,
@@ -38,15 +40,12 @@ export const loader = async ({ request }) => {
   const sessionToken = await vendorAdminSessionCookie.parse(cookieHeader);
 
   if (sessionToken) {
-    const session = await prisma.vendorAdminSession.findUnique({
-      where: { sessionToken },
-      include: { vendor: true },
-    });
+    const session = await findVendorAdminSession(sessionToken, { include: { vendor: true } });
 
     if (session?.vendor && session.expiresAt > new Date()) {
       const vendors = await prisma.vendor.findMany({
         where: {
-          managementEmail: session.vendor.managementEmail,
+          ...vendorEmailLookupWhere(session.vendor.managementEmail, { management: true }),
           status: "active",
         },
         include: { vendorStore: true },
@@ -57,7 +56,7 @@ export const loader = async ({ request }) => {
         appBaseUrl,
         mode: "select",
         currentVendorId: session.vendorId,
-        vendors: vendors.map((vendor) => ({
+        vendors: readVendorContacts(vendors).map((vendor) => ({
           id: vendor.id,
           storeName: vendor.storeName || vendor.vendorStore?.storeName || "店舗",
           email: vendor.managementEmail,

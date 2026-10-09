@@ -1,0 +1,34 @@
+{
+  "status": "proposed",
+  "advisoryId": "GHSA-VFJ7-8CJW-P6XM",
+  "packageName": "braces",
+  "allowedVersions": [
+    "3.0.3"
+  ],
+  "packageIntegrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+  "requiredParent": {
+    "packageName": "micromatch",
+    "allowedVersions": [
+      "4.0.8"
+    ],
+    "expectedPhysicalInstallCount": 1
+  },
+  "approvedPathsFile": "security/risk-decisions/GHSA-vfj7-8cjw-p6xm.approved-paths.txt",
+  "approvedPathCount": 18,
+  "approvedPathSetSha256": "D4F9DCE9B31ADEC99487A2136E00F786EAD2FC45200CA34F04C0FA4EF7F94E47",
+  "lockfileSha256": "EFEB9BB3372A070C44CB3DFA2DCFD6B8BD271561849000286B143189873E7BCA",
+  "proposedAt": "2026-10-09T11:55:18.227Z",
+  "expiresAt": "2026-10-23T11:55:18.227Z",
+  "buildControlSha256": "4562DDE9D83DE982A0F16D50008CEA1E81AA5C7AF5BBA749229EF083FED9F40B",
+  "runtimeManifestSha256": "18C6C8389DA9F548D14F20A705AAF37CD067009774050145D69375552F540CE9",
+  "runtimeLockfileSha256": "FB4F7092F7E321A9968E2B326006E0CE39CB0B1B3597A92D39EDF57346E519C2",
+  "artifactEvidenceSha256ByPlatform": {
+    "linux": "FDC052480DC541E488FCFF089AD9D01EF1E52B7C197F514BB84AD02C68B0792A",
+    "win32": "9DC472F1C593F59F32F58BCAF19992F33998AAD0E98BFABB62C307BFAE520520"
+  },
+  "upstreamUrls": [
+    "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+    "https://github.com/micromatch/braces/issues/70"
+  ],
+  "rationale": "Proposal only: exact reviewed build-tool dependency, guarded inputs and isolated credentials, bounded build resources, clean audited runtime installation, and no application or artifact reachability. Explicit owner acceptance is required and expiry cannot extend automatically."
+}

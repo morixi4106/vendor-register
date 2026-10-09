@@ -2,13 +2,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const TOOLCHAIN_TARGETS = [
-  "minimatch",
-  "brace-expansion",
-  "graphql-config",
-  "ts-morph",
-  "@ts-morph/common",
-];
+import { TOOLCHAIN_TARGETS } from "./toolchain-targets.mjs";
+export { TOOLCHAIN_TARGETS };
 
 export const REQUIRED_SECURITY_ARTIFACTS = [
   "server.mjs",

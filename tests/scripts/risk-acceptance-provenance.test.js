@@ -15,10 +15,15 @@ import {
   reviewArtifactName,
   riskCore,
   riskCoreSha256,
+  reviewEvidenceSha256,
   validateAcceptedRiskProvenance,
   verifyAcceptedRiskProvenance,
   writeRiskReviewEvidence,
 } from "../../scripts/security/risk-acceptance-provenance.mjs";
+import {
+  BRACES_CONDITION_POLICY,
+  BRACES_CONDITION_RISK_PATH,
+} from "../../scripts/security/toolchain-risk-scope.mjs";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const REVIEWED_SHA = "a".repeat(40);
@@ -250,6 +255,94 @@ test("formats artifact names and explicit acceptance comments", () => {
     /^\/accept-toolchain-risk GHSA-MH99-V99M-4GVG\n/,
   );
   assert.match(expectedAcceptanceComment(risk), /reviewed-commit: a{40}/);
+});
+
+test("condition-bound approvals bind durable review evidence to the real owner comment", async () => {
+  const risk = acceptedRisk({
+    advisoryId: "GHSA-VFJ7-8CJW-P6XM",
+    packageName: "braces",
+    allowedVersions: ["3.0.3"],
+    policy: BRACES_CONDITION_POLICY,
+  });
+  delete risk.expiresAt;
+  const evidence = reviewEvidence(risk);
+  risk.reviewedAuditEvidence = evidence;
+  risk.reviewedAuditEvidenceSha256 = reviewEvidenceSha256(evidence);
+  const options = {
+    risk,
+    evidence,
+    acceptanceComment: approvalComment(risk),
+    reviewRun: reviewRun(risk),
+    current: currentContext({ changedPaths: [BRACES_CONDITION_RISK_PATH] }),
+    isReviewedCommitAncestor: true,
+  };
+  assert.equal(validateAcceptedRiskProvenance(options).ok, true);
+  assert.equal(
+    validateAcceptedRiskProvenance({
+      ...options,
+      evidence: { ...evidence, artifactCount: 1 },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    validateAcceptedRiskProvenance({
+      ...options,
+      risk: { ...risk, reviewedAuditEvidenceSha256: "tampered" },
+    }).ok,
+    false,
+  );
+  const temp = writeTemporaryJson(risk);
+  const outputPath = path.join(temp.directory, "outputs");
+  try {
+    const env = {
+      GITHUB_REPOSITORY: risk.reviewedRepository,
+      GITHUB_TOKEN: "fake-token-".repeat(4),
+      RISK_CURRENT_HEAD_SHA: CURRENT_SHA,
+      RISK_CURRENT_PR_NUMBER: "2",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_OUTPUT: outputPath,
+    };
+    emitWorkflowOutputs({
+      env,
+      risk,
+      lockfile: { packages: { "node_modules/braces": { version: "3.0.3" } } },
+    });
+    assert.match(
+      fs.readFileSync(outputPath, "utf8"),
+      /download_reviewed=false/,
+    );
+    const result = await verifyAcceptedRiskProvenance({
+      env,
+      riskPath: temp.filePath,
+      evidencePath: path.join(
+        temp.directory,
+        "expired-artifact-not-present.json",
+      ),
+      now: currentContext().now,
+      collectGit: () => ({ changedPaths: [], isReviewedCommitAncestor: true }),
+      fetchImpl: async (url) => ({
+        ok: true,
+        json: async () =>
+          url.includes("/issues/comments/")
+            ? approvalComment(risk)
+            : reviewRun(risk),
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.throws(
+      () =>
+        emitWorkflowOutputs({
+          env,
+          risk: { ...risk, reviewedAuditEvidence: {} },
+          lockfile: {
+            packages: { "node_modules/braces": { version: "3.0.3" } },
+          },
+        }),
+      /Durable/,
+    );
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
 });
 
 test("accepts a complete immutable review provenance chain", () => {
@@ -596,7 +689,10 @@ test("emits safe workflow outputs for proposed and accepted risks", () => {
       lockfile: { packages: {} },
       risk: { status: "proposed" },
     });
-    assert.equal(fs.readFileSync(outputPath, "utf8"), "accepted=false\n");
+    assert.equal(
+      fs.readFileSync(outputPath, "utf8"),
+      "accepted=false\ndownload_reviewed=false\n",
+    );
 
     fs.writeFileSync(outputPath, "");
     emitWorkflowOutputs({
@@ -678,11 +774,14 @@ test("requests accepted provenance only while its exact target is installed", ()
     false,
   );
   assert.equal(
-    acceptedRiskTargetIsInstalled({ ...risk, status: "proposed" }, {
-      packages: {
-        "node_modules/brace-expansion": { version: "2.1.2" },
+    acceptedRiskTargetIsInstalled(
+      { ...risk, status: "proposed" },
+      {
+        packages: {
+          "node_modules/brace-expansion": { version: "2.1.2" },
+        },
       },
-    }),
+    ),
     false,
   );
   assert.throws(

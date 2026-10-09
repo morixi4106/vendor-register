@@ -1,4 +1,5 @@
 import prisma from "../../db.server.js";
+import { privateErrorCode, protectVendorManagementEmail } from "../../utils/privateData.server.js";
 export async function updateVendorSettings({
   vendorId,
   storeId,
@@ -16,7 +17,7 @@ export async function updateVendorSettings({
         },
         data: {
           storeName: normalizedStoreName,
-          managementEmail: normalizedManagementEmail
+          ...protectVendorManagementEmail(normalizedManagementEmail)
         }
       });
       if (vendorResult.count !== 1) {
@@ -45,7 +46,7 @@ export async function updateVendorSettings({
         publicError: "店舗情報が見つかりません。"
       };
     }
-    console.error("vendor settings update error:", error);
+    console.error("vendor settings update error", { code: privateErrorCode(error) });
     return {
       ok: false,
       status: 500,

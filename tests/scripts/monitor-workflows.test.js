@@ -20,10 +20,7 @@ test("production monitor is disabled by default and manual runs default to dry-r
 
   assert.match(workflow, /workflow_dispatch:\s*\n\s+inputs:/);
   assert.match(workflow, /dry_run:[\s\S]*?default:\s+true/);
-  assert.match(
-    workflow,
-    /expect_password_critical:[\s\S]*?default:\s+false/,
-  );
+  assert.match(workflow, /expect_password_critical:[\s\S]*?default:\s+false/);
   assert.match(
     workflow,
     /vars\.PRODUCTION_INTEGRITY_MONITOR_ENABLED == 'true'/,
@@ -94,4 +91,34 @@ test("launch monitor logs only sanitized issue fields", async () => {
     /\.map\(\(\{ id, status, code, count \}\) => \(\{ id, status, code, count \}\)\)/,
   );
   assert.doesNotMatch(source, /issues:[\s\S]*?detail/);
+});
+
+test("maintenance writers are opt-in and promotion never checks out PR code", async () => {
+  const promotion = await readFile(
+    new URL(
+      "../../.github/workflows/maintenance-promotion.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(promotion, /vars\.AUTO_MAINTENANCE_MERGE_ENABLED == 'true'/);
+  assert.match(promotion, /head_repository\.full_name == github\.repository/);
+  assert.match(promotion, /ref: main/);
+  assert.match(promotion, /persist-credentials: false/);
+  assert.match(promotion, /npm ci --ignore-scripts/);
+  const fallback = await readFile(
+    new URL("../../.github/workflows/maintenance-alerts.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(fallback, /vars\.MAINTENANCE_ALERTS_ENABLED == 'true'/);
+  assert.doesNotMatch(fallback, /actions\/checkout|download-artifact/);
+  const daily = await readFile(
+    new URL(
+      "../../.github/workflows/maintenance-security.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(daily, /MAINTENANCE_SECURITY_CHECKS_ENABLED == 'true'/);
+  assert.match(daily, /uses: \.\/\.github\/workflows\/quality.yml/);
 });

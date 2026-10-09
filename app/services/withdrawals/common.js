@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Resend } from "resend";
+import { decryptPrivateValue } from "../../utils/privateData.server.js";
 import prisma from "../../db.server.js";
 import { isEuCountry, normalizeCountryCode } from "../../utils/deliveryEligibility.js";
 import { normalizeShopDomain, shopifyGraphQLWithOfflineSession } from "../../utils/shopifyAdmin.server.js";
@@ -136,7 +137,7 @@ export async function findOrderForWithdrawal({
       createdAt: "desc"
     }
   });
-  if (!marketplaceOrder && normalizedShopDomain) {
+  if ((!marketplaceOrder || !marketplaceOrder.buyerEmail) && normalizedShopDomain) {
     const shopifyOrderSnapshot = await findShopifyOrderSnapshotForWithdrawal({
       shopDomain: normalizedShopDomain,
       orderNumber: normalizedOrderNumber,
@@ -145,15 +146,15 @@ export async function findOrderForWithdrawal({
     });
     if (shopifyOrderSnapshot) {
       return {
-        marketplaceOrder: null,
-        orderSnapshot: shopifyOrderSnapshot,
+        marketplaceOrder,
+        orderSnapshot: { ...shopifyOrderSnapshot, marketplaceOrderId: marketplaceOrder?.id || null },
         source: "shopify_admin"
       };
     }
   }
   return {
     marketplaceOrder,
-    orderSnapshot: marketplaceOrder ? serializeMarketplaceOrder(marketplaceOrder) : null,
+    orderSnapshot: marketplaceOrder ? { ...serializeMarketplaceOrder(marketplaceOrder), identityVerificationUnavailable: !marketplaceOrder.buyerEmail } : null,
     source: marketplaceOrder ? "marketplace_order" : "not_found"
   };
 }
@@ -211,7 +212,7 @@ export function evaluateWithdrawalEligibilityV3({
   const warnings = [];
   let status = WITHDRAWAL_ELIGIBILITY_STATUSES.PENDING_REVIEW;
   const orderStateReview = getOrderStateReview(orderSnapshot);
-  if (!orderSnapshot) {
+  if (!orderSnapshot || orderSnapshot.identityVerificationUnavailable) {
     status = WITHDRAWAL_ELIGIBILITY_STATUSES.ORDER_NOT_FOUND_REVIEW;
     warnings.push("注文を自動照合できませんでした。管理画面で確認してください。");
   } else if (values?.customerEmail && orderSnapshot.buyerEmail && normalizeEmail(values.customerEmail) !== normalizeEmail(orderSnapshot.buyerEmail)) {
@@ -249,7 +250,7 @@ export function evaluateWithdrawalEligibilityV3({
     deadlineAt,
     deadlineSource,
     orderFound: Boolean(orderSnapshot),
-    orderEmailMatched: !orderSnapshot?.buyerEmail || normalizeEmail(values?.customerEmail) === normalizeEmail(orderSnapshot.buyerEmail),
+    orderEmailMatched: !orderSnapshot?.identityVerificationUnavailable && (!orderSnapshot?.buyerEmail || normalizeEmail(values?.customerEmail) === normalizeEmail(orderSnapshot.buyerEmail)),
     warnings,
     evaluatedAt: new Date().toISOString()
   };
@@ -581,8 +582,8 @@ export function serializeMarketplaceOrder(order) {
     shopifyOrderId: order.shopifyOrderId,
     shopifyOrderName: order.shopifyOrderName,
     shopifyOrderNumber: order.shopifyOrderNumber,
-    buyerEmail: order.buyerEmail,
-    buyerName: order.buyerName,
+    buyerEmail: decryptPrivateValue(order.buyerEmail),
+    buyerName: decryptPrivateValue(order.buyerName),
     totalAmount: order.totalAmount,
     subtotalAmount: order.subtotalAmount,
     shippingAmount: order.shippingAmount,
@@ -792,7 +793,7 @@ export async function resolveWithdrawalVendorNotificationRecipients({
   const groupedByEmail = new Map();
   for (const sellerOrder of affectedSellerOrders) {
     const seller = sellerById.get(normalizeText(sellerOrder.sellerId)) || sellerByVendorStoreId.get(normalizeText(sellerOrder.vendorStoreId));
-    const email = normalizeEmail(seller?.vendor?.managementEmail || seller?.vendorStore?.email);
+    const email = normalizeEmail(decryptPrivateValue(seller?.vendor?.managementEmail || seller?.vendorStore?.email));
     if (!email) {
       continue;
     }

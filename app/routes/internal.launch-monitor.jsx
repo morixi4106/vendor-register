@@ -1,5 +1,4 @@
-
-
+import crypto from "node:crypto";
 import {
   acquireLaunchMonitorRunLock,
   releaseLaunchMonitorRunLock,
@@ -25,16 +24,43 @@ export const loader = () =>
 export async function action({ request }) {
   const startedAt = Date.now();
   requirePostRequest(request);
-  requireBearerToken(request, process.env.LAUNCH_MONITOR_TOKEN, {
-    missingConfiguration: "launch_monitor_token_not_configured",
-  });
+  const renderToken = process.env.LAUNCH_MONITOR_RENDER_TOKEN;
+  const provided = String(request.headers.get("authorization") || "").replace(
+    /^Bearer\s+/i,
+    "",
+  );
+  const renderCaller = Boolean(
+    renderToken &&
+    crypto.timingSafeEqual(
+      crypto.createHash("sha256").update(provided).digest(),
+      crypto.createHash("sha256").update(renderToken).digest(),
+    ),
+  );
+  if (renderToken && renderToken === process.env.LAUNCH_MONITOR_TOKEN)
+    return Response.json(
+      { ok: false, error: "monitor_credentials_not_separated" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  requireBearerToken(
+    request,
+    renderCaller ? renderToken : process.env.LAUNCH_MONITOR_TOKEN,
+    {
+      missingConfiguration: "launch_monitor_token_not_configured",
+    },
+  );
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (contentLength > MAX_BODY_BYTES) {
-    return Response.json({ ok: false, error: "request_too_large" }, { status: 413 });
+    return Response.json(
+      { ok: false, error: "request_too_large" },
+      { status: 413 },
+    );
   }
   const rawBody = await request.text();
   if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
-    return Response.json({ ok: false, error: "request_too_large" }, { status: 413 });
+    return Response.json(
+      { ok: false, error: "request_too_large" },
+      { status: 413 },
+    );
   }
   let renderSnapshot = {};
   try {
@@ -45,6 +71,20 @@ export async function action({ request }) {
       { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
+  if (
+    !renderSnapshot ||
+    typeof renderSnapshot !== "object" ||
+    Array.isArray(renderSnapshot)
+  )
+    return Response.json(
+      { ok: false, error: "invalid_json" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  renderSnapshot.monitorExecutionSource = renderCaller
+    ? "render"
+    : renderSnapshot.agent?.source === "github_actions"
+      ? "github"
+      : "local";
 
   const lockOwner = await acquireLaunchMonitorRunLock();
   if (!lockOwner) {

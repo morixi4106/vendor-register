@@ -1,7 +1,9 @@
 
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
-import { authenticate } from "../shopify.server";
+import { requirePrivacyOperator } from "../utils/privacyOperator.server.js";
 import prisma from "../db.server";
+export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
+import { readVendorContacts } from "../utils/privateData.server.js";
 import { formatMoney } from "../utils/money";
 import {
   buildVendorCollectionUrl,
@@ -10,7 +12,7 @@ import {
 import { syncVendorCollectionByStoreId } from "../utils/vendorCollections.server";
 
 export const loader = async ({ request, params }) => {
-  await authenticate.admin(request);
+  await requirePrivacyOperator(request);
 
   const store = await prisma.vendorStore.findUnique({
     where: { id: params.id },
@@ -31,14 +33,21 @@ export const loader = async ({ request, params }) => {
     throw new Response("Not Found", { status: 404 });
   }
 
-  return Response.json({ store });
+  return Response.json({ store: readVendorContacts(store) }, { headers: { "Cache-Control": "private, no-store" } });
 };
 
 export const action = async ({ request, params }) => {
-  await authenticate.admin(request);
+  await requirePrivacyOperator(request);
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+
+  if (intent === "save-public-profile") {
+    const publicAddress = String(formData.get("publicAddress") || "").trim().slice(0, 500);
+    const publicDescription = String(formData.get("publicDescription") || "").trim().slice(0, 2000);
+    await prisma.vendorStore.update({ where: { id: params.id }, data: { publicAddress: publicAddress || null, publicDescription: publicDescription || null } });
+    return Response.json({ ok: true });
+  }
 
   if (intent !== "sync-collection") {
     return Response.json({ ok: false, error: "Unknown action" }, { status: 400 });
@@ -117,6 +126,12 @@ export default function VendorDetailPage() {
           padding: "20px",
         }}
       >
+        <Form method="post" style={{ display: "grid", gap: "12px", marginBottom: "24px" }}>
+          <input type="hidden" name="intent" value="save-public-profile" />
+          <label>公開用住所<input name="publicAddress" defaultValue={store.publicAddress || ""} maxLength={500} style={{ display: "block", width: "100%" }} /></label>
+          <label>公開用紹介文<textarea name="publicDescription" defaultValue={store.publicDescription || ""} maxLength={2000} rows={3} style={{ display: "block", width: "100%" }} /></label>
+          <button type="submit" disabled={navigation.state === "submitting"}>公開情報を保存</button>
+        </Form>
         <h2 style={{ margin: "0 0 8px" }}>Shopify Collection同期</h2>
         <p style={{ margin: "0 0 14px", color: "#4b5563" }}>
           この店舗の商品を対応Collectionに同期します。Shopify商品IDがある承認済み商品のみ対象です。

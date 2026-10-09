@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import prisma from "../../db.server.js";
+import { privateErrorCode } from "../../utils/privateData.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../../utils/shopifyAdmin.server.js";
 import { summarizeVendorDeliveryPolicy } from "../../utils/productCountryPolicy.js";
 import { getProductShippingMethodLabel } from "../../utils/productShippingProfile.js";
@@ -237,7 +238,7 @@ export function serializeVendorProduct(product) {
     updatedAtLabel: formatDateTime(product.updatedAt)
   };
 }
-export function getVendorPublicContext(vendor, store) {
+export function getVendorPublicContext(vendor, store, { includePrivateContact = false } = {}) {
   return {
     vendor: {
       id: vendor.id,
@@ -250,12 +251,9 @@ export function getVendorPublicContext(vendor, store) {
     store: {
       id: store.id,
       storeName: store.storeName,
-      ownerName: store.ownerName,
-      email: store.email,
-      phone: store.phone,
-      address: store.address,
       country: store.country,
       category: store.category
+      ,...(includePrivateContact ? { ownerName: store.ownerName, email: store.email, phone: store.phone, address: store.address } : {})
     }
   };
 }
@@ -505,7 +503,7 @@ export async function updateVendorProductInventory({
       });
     } catch (error) {
       const publicError = toPublicInventorySyncError(error);
-      console.error("vendor inventory sync error:", error);
+      console.error("vendor inventory sync error", { code: privateErrorCode(error) });
       updatedProduct = await prismaClient.product.update({
         where: {
           id: updatedProduct.id
@@ -618,7 +616,7 @@ export async function deleteVendorProductForStore({
     }
     const shopifyDelete = await deleteShopifyProduct(product.shopDomain, product.shopifyProductId);
     if (!shopifyDelete.ok) {
-      console.error("vendor product delete error:", shopifyDelete.error);
+      console.error("vendor product delete error", { code: privateErrorCode(shopifyDelete.error) });
       return {
         ok: false,
         status: 500,

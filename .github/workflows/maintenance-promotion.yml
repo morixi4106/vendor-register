@@ -1,0 +1,44 @@
+name: Routine maintenance promotion
+
+on:
+  workflow_run:
+    workflows: [Quality checks]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: routine-maintenance-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: ${{ vars.AUTO_MAINTENANCE_MERGE_ENABLED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: maintenance
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Check out protected main only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Install trusted classifier dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Merge allowlisted development patches without changing the sales release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AUTO_MAINTENANCE_MERGE_ENABLED: ${{ vars.AUTO_MAINTENANCE_MERGE_ENABLED }}
+          LAUNCH_MONITOR_URL: ${{ vars.LAUNCH_MONITOR_URL }}
+          MAINTENANCE_GATE_TOKEN: ${{ secrets.MAINTENANCE_GATE_TOKEN }}
+          MAINTENANCE_SECONDARY_RECEIPT_ISSUE: ${{ vars.MAINTENANCE_SECONDARY_RECEIPT_ISSUE }}
+        run: node scripts/maintenance-promotion.mjs

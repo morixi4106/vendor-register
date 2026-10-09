@@ -1,4 +1,10 @@
 import { collectLeafAdvisories, extractAdvisoryId } from "./audit-report.mjs";
+import crypto from "node:crypto";
+import {
+  isBracesRisk,
+  isConditionBoundRisk,
+  validateBracesRiskDefinition,
+} from "./toolchain-risk-scope.mjs";
 import {
   enumerateDependencyPaths,
   hashDependencyPathLines,
@@ -115,6 +121,8 @@ export function validateToolchainRiskDefinition(
   risk,
   { now = new Date(), platform = process.platform } = {},
 ) {
+  if (isBracesRisk(risk))
+    return validateBracesRiskDefinition(risk, { now, platform });
   const errors = [];
   if (!risk || typeof risk !== "object") {
     return { ok: false, errors: ["risk_definition_missing"] };
@@ -252,6 +260,51 @@ export function evaluateToolchainAudit({
     };
   }
 
+  const leaves = new Map(
+    candidates.map(([packageName]) => [
+      packageName,
+      collectLeafAdvisories(report, packageName),
+    ]),
+  );
+  const exceptionRequested = [...leaves.values()].some((leaf) =>
+    leaf.advisories.some(
+      (advisory) =>
+        NEVER_ALLOW_SEVERITIES.has(advisory.severity) &&
+        advisory.name === risk?.packageName &&
+        advisory.advisoryId === risk?.advisoryId,
+    ),
+  );
+
+  // An archived exception cannot govern a different, unapproved advisory.
+  if (!exceptionRequested) {
+    for (const [packageName, vulnerability] of candidates) {
+      blocking.push({
+        code:
+          leaves.get(packageName).errors.length > 0
+            ? "advisory_chain_unresolved"
+            : "unexpected_high_or_critical",
+        packageName,
+        severity: vulnerability.severity,
+      });
+    }
+    if (!artifactReport?.ok || artifactReport.targetMatches?.length > 0) {
+      blocking.push({
+        code: artifactReport?.ok
+          ? "target_found_in_artifact"
+          : "artifact_verification_failed",
+        packageName: null,
+        severity: "critical",
+      });
+    }
+    return {
+      accepted: [],
+      blocking,
+      ok: false,
+      riskValidation: { ok: true, errors: [], applicable: false },
+      warnings,
+    };
+  }
+
   const riskValidation = validateToolchainRiskDefinition(risk, {
     now,
     platform,
@@ -266,8 +319,28 @@ export function evaluateToolchainAudit({
     }
   }
 
+  if (isConditionBoundRisk(risk)) {
+    const via = report?.vulnerabilities?.braces?.via;
+    const advisory = Array.isArray(via)
+      ? via.find(
+          (item) =>
+            item?.name === "braces" &&
+            extractAdvisoryId(item.url) === risk.advisoryId,
+        )
+      : null;
+    if (
+      advisory?.severity !== "high" ||
+      advisory?.cvss?.vectorString !== risk.conditions?.advisoryVector
+    )
+      blocking.push({
+        code: "accepted_advisory_changed",
+        packageName: "braces",
+        severity: "high",
+      });
+  }
+
   for (const [packageName, vulnerability] of candidates) {
-    const leaf = collectLeafAdvisories(report, packageName);
+    const leaf = leaves.get(packageName);
     if (leaf.errors.length > 0) {
       blocking.push({
         code: "advisory_chain_unresolved",
@@ -299,6 +372,26 @@ export function evaluateToolchainAudit({
     lockfile,
     risk?.packageName || "",
   );
+  if (isBracesRisk(risk)) {
+    const lockHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(lockfile))
+      .digest("hex")
+      .toUpperCase();
+    if (
+      (!isConditionBoundRisk(risk) && risk.lockfileSha256 !== lockHash) ||
+      installedLocations.some(
+        (location) =>
+          lockfile.packages[location]?.integrity !== risk.packageIntegrity,
+      )
+    ) {
+      blocking.push({
+        code: "reviewed_dependency_integrity_changed",
+        packageName: "braces",
+        severity: "high",
+      });
+    }
+  }
   if (installedLocations.length !== 1) {
     blocking.push({
       code: "installed_package_count_changed",
@@ -450,9 +543,11 @@ export function evaluateToolchainAudit({
       String(risk?.artifactEvidenceSha256ByPlatform?.[platform] || ""),
     ) &&
     String(risk.artifactEvidenceSha256ByPlatform[platform]) !==
-      String(artifactReport.artifactSetSha256 || "")
+      String(artifactReport.artifactSetSha256 || "") &&
+    !isConditionBoundRisk(risk)
   ) {
-    warnings.push({
+    const destination = isBracesRisk(risk) ? blocking : warnings;
+    destination.push({
       code: "artifact_set_changed_since_review",
       packageName: risk?.packageName || null,
       reviewedArtifactSetSha256:
