@@ -1,6 +1,12 @@
 name: Maintenance alert fallback
 
 on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type TEST_NOTIFICATION to send one GitHub notification test
+        required: true
+        type: string
   workflow_run:
     workflows:
       [
@@ -24,7 +30,7 @@ concurrency:
 
 jobs:
   notify:
-    if: ${{ vars.MAINTENANCE_ALERTS_ENABLED == 'true' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirmation == 'TEST_NOTIFICATION') || (vars.MAINTENANCE_ALERTS_ENABLED == 'true' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -32,10 +38,24 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
+            const { owner, repo } = context.repo;
+            if (context.eventName === 'workflow_dispatch') {
+              if (context.ref !== 'refs/heads/main' || context.payload.inputs?.confirmation !== 'TEST_NOTIFICATION') throw new Error('Notification test not authorized');
+              const marker = '<!-- maintenance-github-receipt-test -->';
+              const issues = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 100 });
+              const body = `${marker}\n@${owner}\n\nGitHub notification receipt test. This message was sent by the workflow bot, not by the recipient account. After actually receiving and reading the notification, comment /ack-maintenance. Do not acknowledge on the operator's behalf.\n\nThis test does not prove Render token delivery and does not change sales, orders, payments, refunds or maintenance authorization.`;
+              const existing = issues.data.find(i => !i.pull_request && i.body?.startsWith(marker));
+              if (existing) {
+                if (Date.now() - new Date(existing.updated_at) < 86400000) return;
+                await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
+              } else {
+                await github.rest.issues.create({ owner, repo, title: '[Maintenance] GitHub notification receipt test', body });
+              }
+              return;
+            }
             const run = context.payload.workflow_run;
             const names = new Set(['Production integrity monitor', 'Shopify product catalog sync', 'Independent sale eligibility watchdog', 'Quality checks', 'Daily maintenance checks', 'Routine maintenance promotion']);
             if (!names.has(run.name) || !['failure', 'timed_out', 'cancelled'].includes(run.conclusion)) return;
-            const { owner, repo } = context.repo;
             const marker = `<!-- maintenance-alert:${run.name} -->`;
             const url = `https://github.com/${owner}/${repo}/actions/runs/${run.id}`;
             const body = `${marker}\n@${owner}\n\nWorkflow: ${run.name}\nResult: ${run.conclusion}\nEvidence: ${url}\n\nThis alert does not repair data, release versions, or restore sales. After reading, comment /ack-maintenance. Response target: seven days after acknowledgement. Urgent containment does not wait for that response.`;

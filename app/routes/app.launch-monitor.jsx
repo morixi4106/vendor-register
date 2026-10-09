@@ -46,18 +46,21 @@ export async function loader({ request }) {
 }
 
 export async function action({ request }) {
-  const { actorKey } = await requirePrivacyOperator(request);
+  const { operator } = await requirePrivacyOperator(request);
   const form = await readBoundedFormData(request, 8000);
   try {
     const intent = form.get("intent");
     if (intent === "send-receipt-test") await sendMonitorReceiptTest();
     else if (intent === "confirm-receipt")
-      await confirmMonitorReceipt({ code: form.get("code"), actor: actorKey });
+      await confirmMonitorReceipt({
+        code: form.get("code"),
+        actor: operator.actorKey,
+      });
     else if (intent === "refresh-delivery") await refreshMonitorReceipt();
     else if (intent === "ack-incident")
       await acknowledgeMonitorIncident({
         incidentKey: form.get("incidentKey"),
-        actor: actorKey,
+        actor: operator.actorKey,
       });
     else
       return Response.json(
