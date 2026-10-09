@@ -126,27 +126,36 @@ export function activateRuntimeDependencies(root, stage) {
     if (path.dirname(location) !== auditDirectory || fs.existsSync(location))
       throw new Error("unsafe_runtime_activation");
   }
-  fs.cpSync(prepared, replacement, {
-    recursive: true,
-    dereference: false,
-    verbatimSymlinks: true,
-  });
   let backedUp = false;
   let installed = false;
+  let completed = false;
   try {
+    fs.cpSync(prepared, replacement, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
     if (fs.existsSync(target)) {
       fs.renameSync(target, backup);
       backedUp = true;
     }
     fs.renameSync(replacement, target);
     installed = true;
-    return assertRuntimeToolchain(resolvedRoot);
+    const inspection = assertRuntimeToolchain(resolvedRoot);
+    completed = true;
+    return inspection;
   } catch (error) {
     if (installed) fs.rmSync(target, { recursive: true, force: true });
-    if (backedUp) fs.renameSync(backup, target);
+    if (backedUp) {
+      fs.renameSync(backup, target);
+      backedUp = false;
+    }
     throw error;
   } finally {
-    for (const location of [replacement, backup]) {
+    for (const location of [
+      replacement,
+      ...(!backedUp || completed ? [backup] : []),
+    ]) {
       if (fs.existsSync(location)) {
         if (
           fs.lstatSync(location).isSymbolicLink() ||

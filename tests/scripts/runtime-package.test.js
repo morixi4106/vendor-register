@@ -143,6 +143,74 @@ test("runtime startup rejects outside module lookup paths", () => {
   }
 });
 
+test("partial copy failure cleans staged modules without removing original modules", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "runtime-check-test-"),
+  );
+  const originalCopy = fs.cpSync;
+  try {
+    const root = path.join(directory, "root"),
+      stage = path.join(directory, "stage");
+    fs.mkdirSync(root);
+    fs.mkdirSync(stage);
+    pkg(root, "original", "original");
+    pkg(stage, "safe", "safe");
+    fs.mkdirSync(path.join(stage, "node_modules/.prisma/client"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(stage, "node_modules/.prisma/client/index.js"),
+      "export {};",
+    );
+    fs.cpSync = (_source, destination) => {
+      fs.mkdirSync(destination);
+      fs.writeFileSync(path.join(destination, "partial"), "partial");
+      throw new Error("copy failed");
+    };
+    assert.throws(
+      () => activateRuntimeDependencies(root, stage),
+      /copy failed/,
+    );
+    assert.ok(fs.existsSync(path.join(root, "node_modules/original")));
+    assert.deepEqual(fs.readdirSync(path.join(root, ".audit")), []);
+  } finally {
+    fs.cpSync = originalCopy;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a failed final runtime check restores the original modules", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "runtime-check-test-"),
+  );
+  try {
+    const parent = path.join(directory, "parent"),
+      root = path.join(parent, "root"),
+      stage = path.join(directory, "stage");
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(stage);
+    pkg(root, "original", "original");
+    pkg(parent, "braces", "braces", "3.0.3");
+    pkg(stage, "safe", "safe");
+    fs.mkdirSync(path.join(stage, "node_modules/.prisma/client"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(stage, "node_modules/.prisma/client/index.js"),
+      "export {};",
+    );
+    assert.throws(
+      () => activateRuntimeDependencies(root, stage),
+      /runtime_toolchain_not_clean/,
+    );
+    assert.ok(fs.existsSync(path.join(root, "node_modules/original")));
+    assert.equal(fs.existsSync(path.join(root, "node_modules/safe")), false);
+    assert.deepEqual(fs.readdirSync(path.join(root, ".audit")), []);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   "runtime activation preserves relative executable links",
   { skip: process.platform === "win32" },
