@@ -58,3 +58,23 @@ test("fallback alerts are opt-in, contain no raw logs and are deduplicated", asy
     /request_failed/,
   );
 });
+
+test("the caller's overall alert deadline also aborts each provider request", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    sendMaintenanceFallback({
+      env: {
+        MAINTENANCE_ALERTS_ENABLED: "true",
+        GITHUB_REPOSITORY: "owner/repo",
+        MAINTENANCE_GITHUB_ALERT_TOKEN: "test-token-".repeat(4),
+      },
+      signal: controller.signal,
+      fetchImpl: async (url, options) => {
+        assert.equal(options.signal.aborted, true);
+        options.signal.throwIfAborted();
+      },
+    }),
+    (error) => error.name === "AbortError",
+  );
+});

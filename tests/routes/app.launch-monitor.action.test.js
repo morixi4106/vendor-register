@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Icon } from "@shopify/polaris";
 import { CheckIcon, EmailIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { buildLaunchMonitorGuide } from "../../app/services/launchMonitorGuide.js";
+import { inspectLaunchMonitorStatus } from "../../app/services/launchMonitorStatus.server.js";
 import {
   getMonitorAcknowledgement,
   getMonitorReceiptStatus,
@@ -137,6 +138,8 @@ async function firstVisit() {
       LAUNCH_MONITOR_HEARTBEAT_KEY: "production_integrity_monitor",
       buildLaunchMonitorGuide,
       getMonitorReceiptStatus: () => getMonitorReceiptStatus(options),
+      inspectLaunchMonitorStatus: (input) =>
+        inspectLaunchMonitorStatus({ ...options, ...input }),
       getMonitorAcknowledgement: (input) =>
         getMonitorAcknowledgement({ ...options, ...input }),
       process: { env: { LAUNCH_MONITOR_ENABLED: "true" } },
@@ -157,6 +160,8 @@ test("the real loader with no monitor or receipt history returns unverified data
   assert.equal(data.notification.ready, false);
   assert.equal(data.notification.providerEvent, "unchecked");
   assert.equal(data.acknowledgement.acknowledged, false);
+  assert.equal(data.status.notification.ready, false);
+  assert.equal(data.status.publication.status, "waiting");
 });
 
 test("the initial monitor page actually server-renders its receipt controls", async () => {
@@ -195,4 +200,8 @@ test("the initial monitor page actually server-renders its receipt controls", as
   assert.ok(html.includes('value="confirm-receipt"'));
   assert.ok(html.includes('name="code"'));
   assert.ok(html.includes("<svg"));
+  assert.ok(html.includes('aria-label="確認状況"'));
+  assert.ok(html.includes("同期の最終成功"));
+  assert.ok(html.includes("重大な未解決項目"));
+  assert.ok(!html.includes("公開可能"));
 });

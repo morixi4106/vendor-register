@@ -1,4 +1,5 @@
 import { inspectMaintenanceReadiness } from "../services/maintenanceReadiness.server.js";
+import { inspectLaunchMonitorStatus } from "../services/launchMonitorStatus.server.js";
 import {
   requireBearerToken,
   requirePostRequest,
@@ -14,7 +15,15 @@ export async function action({ request }) {
   requireBearerToken(request, process.env.MAINTENANCE_GATE_TOKEN, {
     missingConfiguration: "maintenance_gate_not_configured",
   });
-  return Response.json(await inspectMaintenanceReadiness(), {
-    headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
-  });
+  const readiness = await inspectMaintenanceReadiness();
+  const diagnostics = await inspectLaunchMonitorStatus();
+  return Response.json(
+    { ...readiness, diagnostics },
+    {
+      headers: {
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+      },
+    },
+  );
 }

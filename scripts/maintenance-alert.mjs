@@ -6,6 +6,7 @@ export async function sendMaintenanceFallback({
   notificationTest = false,
   fetchImpl = fetch,
   now = new Date(),
+  signal,
 } = {}) {
   if (env.MAINTENANCE_ALERTS_ENABLED !== "true")
     return { sent: false, reason: "disabled" };
@@ -34,7 +35,9 @@ export async function sendMaintenanceFallback({
           Accept: "application/vnd.github+json",
           "Content-Type": "application/json",
         },
-        signal: AbortSignal.timeout(15_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+          : AbortSignal.timeout(15_000),
         redirect: "error",
       },
     );

@@ -57,6 +57,15 @@ Without the webhook secret, the existing provider-read path is unchanged; a
 restricted sending key cannot satisfy its delivery gate. Registration and live
 webhook receipt remain separate from unit tests.
 
+The monitor page separates receipt proof, catalog sync, current/heavy/external
+monitor freshness and unresolved report counts. It distinguishes configuration
+from successful execution. Missing, invalid, future or expired timestamps cannot
+appear fresh. The authenticated, non-cacheable maintenance-readiness endpoint
+also returns these read-only diagnostics without changing its existing gate
+result. Diagnostics omit receipt codes, message bodies, contacts and secrets.
+A clear monitor report is not a `canGoLive` decision; publication still uses the
+existing production-readiness checks.
+
 The fallback workflow also has a main-only `TEST_NOTIFICATION` manual action.
 It sends one bounded GitHub Issue notification from `github-actions[bot]` without
 enabling routine alerts or maintenance. A self-authored Issue is not email receipt
@@ -89,8 +98,13 @@ Schedule: */10 * * * *
 
 The agents use native Node APIs; this Cron does not need the app's build-tool
 dependencies. The fixed runner serially performs catalog sync, order integrity,
-full monitoring and deadman checks, with a three-minute per-process limit. A
-failed task does not prevent subsequent checks or the independent fallback.
+full monitoring and deadman checks with respective process limits of 90, 120,
+150 and 45 seconds. The task deadline is seven minutes and reserves time for
+later checks; the fallback transport has a separate 45-second deadline. Timed-out
+child processes use SIGKILL. A failed or unstartable task does not prevent
+subsequent checks or the independent fallback. A stopped caller does not prove
+that server-side work stopped; existing server locks still prevent overlapping
+syncs. Keep the Cron suspended until its configuration and cost are approved.
 An existing shared server lock rejects concurrent catalog runs. Verify Render
 execution duration and heartbeat freshness before removing the GitHub catalog
 schedule; the two writers must not be enabled as independent primary schedulers.

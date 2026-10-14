@@ -10,6 +10,7 @@ import { CheckIcon, EmailIcon, RefreshIcon } from "@shopify/polaris-icons";
 
 import prisma from "../db.server.js";
 import { buildLaunchMonitorGuide } from "../services/launchMonitorGuide.js";
+import { inspectLaunchMonitorStatus } from "../services/launchMonitorStatus.server.js";
 import { LAUNCH_MONITOR_HEARTBEAT_KEY } from "../services/launchMonitor.server.js";
 import { requirePrivacyOperator } from "../utils/privacyOperator.server.js";
 import { readBoundedFormData } from "../utils/requestBody.server.js";
@@ -28,15 +29,22 @@ export async function loader({ request }) {
     where: { key: LAUNCH_MONITOR_HEARTBEAT_KEY },
   });
   const monitorEnabled = isEnabled(process.env.LAUNCH_MONITOR_ENABLED);
+  const notification = await getMonitorReceiptStatus();
+  const status = await inspectLaunchMonitorStatus({
+    monitorHeartbeat: heartbeat,
+    notification,
+  });
   const guide = buildLaunchMonitorGuide({
     enabled: monitorEnabled,
     metadata: heartbeat?.metadataJson || {},
+    status,
   });
   return Response.json(
     {
       heartbeat,
       guide,
-      notification: await getMonitorReceiptStatus(),
+      notification,
+      status,
       acknowledgement: await getMonitorAcknowledgement({
         incidentKey: heartbeat?.metadataJson?.incidentKey,
       }),
@@ -80,7 +88,8 @@ export async function action({ request }) {
 }
 
 export default function LaunchMonitorPage() {
-  const { heartbeat, guide, notification, acknowledgement } = useLoaderData();
+  const { heartbeat, guide, notification, acknowledgement, status } =
+    useLoaderData();
   const actionData = useActionData();
   const busy = useNavigation().state !== "idle";
   const metadata = heartbeat?.metadataJson || {};
@@ -91,11 +100,84 @@ export default function LaunchMonitorPage() {
       <section style={styles.header}>
         <div>
           <h1 style={styles.title}>公開監視</h1>
-          <p style={styles.muted}>
-            公開後72時間を5分ごとに自動確認し、重い整合性検査は15分ごとに実行します。
-          </p>
         </div>
-        <StatusBadge status={metadata.lastOverallStatus || "waiting"} />
+        <StatusBadge status={status.publication.status} />
+      </section>
+
+      <section style={styles.statusSection} aria-label="確認状況">
+        <h2 style={styles.sectionTitle}>確認状況</h2>
+        <div style={styles.statusGrid}>
+          <section style={styles.statusGroup}>
+            <h3 style={styles.statusTitle}>通知</h3>
+            <StatusBadge status={status.notification.status} compact />
+            <strong>{statusLabel(status.notification.code)}</strong>
+            <StatusFacts
+              rows={[
+                ["配信結果", eventLabel(status.notification.providerEvent)],
+                ["本人確認", formatDate(status.notification.humanVerifiedAt)],
+                ["テスト送信", formatDate(status.notification.sentAt)],
+              ]}
+            />
+          </section>
+          <section style={styles.statusGroup}>
+            <h3 style={styles.statusTitle}>同期・監視</h3>
+            <StatusBadge status={status.catalog.status} compact />
+            <strong>{statusLabel(status.catalog.code)}</strong>
+            <StatusFacts
+              rows={[
+                ["同期の最終成功", formatDate(status.catalog.lastSucceededAt)],
+                [
+                  "成功からの経過",
+                  status.catalog.ageMinutes === null
+                    ? "-"
+                    : `${status.catalog.ageMinutes}分`,
+                ],
+                [
+                  "同期の主担当設定",
+                  status.configuration.scheduler === "render"
+                    ? "Render"
+                    : status.configuration.scheduler === "github"
+                      ? "GitHub"
+                      : "不明",
+                ],
+              ]}
+            />
+            <div style={styles.monitorRows}>
+              {[
+                ["通常監視", status.monitoring.current],
+                ["整合性検査", status.monitoring.heavy],
+                ["外部監視", status.monitoring.external],
+              ].map(([label, check]) => (
+                <div key={label} style={styles.monitorRow}>
+                  <span>{label}</span>
+                  <StatusBadge status={check.status} compact />
+                  <span>
+                    {statusLabel(check.code)} / {formatDate(check.checkedAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section style={styles.statusGroup}>
+            <h3 style={styles.statusTitle}>公開条件</h3>
+            <StatusBadge status={status.publication.status} compact />
+            <strong>{statusLabel(status.publication.code)}</strong>
+            <StatusFacts
+              rows={[
+                ["重大な未解決項目", status.publication.criticalCount],
+                ["注意項目", status.publication.warningCount],
+                ["監視結果の日時", formatDate(status.publication.checkedAt)],
+                [
+                  "自動更新の許可設定",
+                  status.configuration.maintenanceAuthorized ? "あり" : "なし",
+                ],
+              ]}
+            />
+            <Link to="/app/production-readiness" style={styles.guideLink}>
+              本番確認
+            </Link>
+          </section>
+        </div>
       </section>
 
       <section style={styles.grid}>
@@ -252,6 +334,19 @@ export default function LaunchMonitorPage() {
   );
 }
 
+function StatusFacts({ rows }) {
+  return (
+    <dl style={styles.statusFacts}>
+      {rows.map(([label, value]) => (
+        <div key={label} style={styles.factRow}>
+          <dt>{label}</dt>
+          <dd style={styles.factValue}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function Metric({ label, value }) {
   return (
     <div style={styles.metric}>
@@ -303,6 +398,46 @@ function formatDate(value) {
   }).format(date);
 }
 
+function statusLabel(code) {
+  const labels = {
+    verified: "受信・配信確認済み",
+    unavailable: "状態を取得できません",
+    unconfigured: "通知設定または受信確認が未完了",
+    delivery_failed: "通知の送信・配信に失敗",
+    human_confirmation_required: "本人の受信確認待ち",
+    delivery_confirmation_required: "有効な配信証拠が必要",
+    timing_invalid: "同期の時間設定が不正",
+    success_missing_or_invalid: "同期の成功記録を確認できません",
+    latest_run_failed: "同期の直近実行が失敗",
+    critical_stale: "同期の成功記録が期限切れ",
+    warning_stale: "同期の成功から時間が経過",
+    fresh: "成功記録は有効",
+    disabled: "設定上は無効",
+    missing_or_invalid: "有効な実行記録がありません",
+    stale: "実行記録が期限切れ",
+    report_missing_or_invalid: "監視結果を確認できません",
+    report_stale: "新しい監視結果が必要",
+    issues_pending: "監視上の未解決項目あり",
+    monitor_issues_clear: "監視上の未解決項目なし",
+  };
+  return labels[code] || "未確認";
+}
+
+function eventLabel(event) {
+  const labels = {
+    pending: "配信結果待ち",
+    sent: "送信済み",
+    delivered: "配信済み",
+    opened: "開封通知あり",
+    clicked: "クリック通知あり",
+    bounced: "バウンス",
+    complained: "苦情通知あり",
+    failed: "失敗",
+    suppressed: "配信抑止",
+  };
+  return labels[event] || "未確認";
+}
+
 function checkLabel(id) {
   const labels = {
     database_connection: "データベース",
@@ -324,6 +459,22 @@ function checkLabel(id) {
     contact_inquiry_spike: "問い合わせ件数",
     public_root_redirect: "公開ルート",
     official_storefront: "正式ストア",
+    shopify_product_catalog_sync_freshness: "商品カタログ同期",
+    operational_attestation_legal_disclosures_reviewed:
+      "法定表示・利用規約の確認",
+    operational_attestation_checkout_final_screen_reviewed:
+      "購入直前画面の表示確認",
+    operational_attestation_unsupported_sales_surfaces_disabled:
+      "未対応販売経路の無効化",
+    operational_attestation_emergency_stop_drill_completed:
+      "販売緊急停止の実地訓練",
+    operational_attestation_refund_liquidity_confirmed: "返金原資の確認",
+    operational_attestation_admin_mfa_access_reviewed: "管理者権限・MFAの確認",
+    operational_attestation_privacy_incident_runbook_confirmed:
+      "個人情報事故対応手順",
+    operational_attestation_email_delivery_confirmed: "業務メールの実受信確認",
+    operational_attestation_platform_direct_payment_flow_verified:
+      "KOMOJU決済・注文・台帳照合",
     heavy_checks_not_initialized: "重い整合性検査",
     launch_integrity: "業務データ整合性",
   };
@@ -339,6 +490,37 @@ function isEnabled(value) {
 }
 
 const styles = {
+  statusSection: { display: "grid", gap: 18, minWidth: 0 },
+  statusGrid: {
+    display: "grid",
+    gap: 24,
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+  },
+  statusGroup: {
+    display: "grid",
+    gap: 12,
+    alignContent: "start",
+    justifyItems: "start",
+    minWidth: 0,
+    padding: "16px 0",
+    borderTop: "1px solid #dfe3e8",
+    overflowWrap: "anywhere",
+  },
+  statusTitle: { margin: 0, fontSize: 18 },
+  statusFacts: { display: "grid", gap: 8, margin: 0, width: "100%" },
+  factRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: 12,
+  },
+  factValue: { margin: 0, minWidth: 0 },
+  monitorRows: { display: "grid", gap: 12 },
+  monitorRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+  },
   command: {
     display: "inline-flex",
     alignItems: "center",
@@ -365,9 +547,11 @@ const styles = {
   page: {
     display: "grid",
     gap: 24,
-    padding: 24,
+    padding: "24px 16px",
     maxWidth: 1400,
     margin: "0 auto",
+    minWidth: 0,
+    overflowWrap: "anywhere",
   },
   header: {
     display: "flex",
@@ -402,6 +586,7 @@ const styles = {
     border: "1px solid #dfe3e8",
     background: "#fff",
     borderRadius: 8,
+    minWidth: 0,
   },
   guideHeader: {
     display: "flex",

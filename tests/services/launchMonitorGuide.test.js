@@ -48,3 +48,17 @@ test("healthy and completed campaigns do not invent repair work", () => {
   assert.equal(completed.tone, "healthy");
   assert.equal(completed.steps[0].href, "/app/production-readiness");
 });
+
+test("stale current diagnostics override old completed or healthy monitor guidance", () => {
+  const guide = buildLaunchMonitorGuide({
+    enabled: true,
+    metadata: {
+      completedAt: "2026-07-21T00:00:00Z",
+      lastCheckedAt: "2026-07-21T00:00:00Z",
+      lastReport: { checks: [{ id: "database_connection", severity: "ok" }] },
+    },
+    status: { publication: { code: "report_stale" } },
+  });
+  assert.equal(guide.tone, "waiting");
+  assert.equal(guide.steps[0].href, "/app/production-readiness");
+});
