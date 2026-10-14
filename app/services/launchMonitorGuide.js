@@ -1,17 +1,20 @@
 const CHECK_ACTIONS = {
   database_connection: {
     title: "Renderとデータベースを確認",
-    detail: "WebサービスとPostgreSQLの稼働状態、接続設定、直近のデプロイログを確認します。",
+    detail:
+      "WebサービスとPostgreSQLの稼働状態、接続設定、直近のデプロイログを確認します。",
     href: "/app/production-readiness",
   },
   render_http_5xx: {
     title: "Renderのエラーログを確認",
-    detail: "発生時刻付近の5xxと例外を確認し、決済・返金・撤回処理への影響を切り分けます。",
+    detail:
+      "発生時刻付近の5xxと例外を確認し、決済・返金・撤回処理への影響を切り分けます。",
     href: "/app/production-readiness",
   },
   render_app_errors: {
     title: "アプリ例外を確認",
-    detail: "Renderのアプリログで最初の例外を確認し、同じ操作を繰り返す前に原因を特定します。",
+    detail:
+      "Renderのアプリログで最初の例外を確認し、同じ操作を繰り返す前に原因を特定します。",
     href: "/app/production-readiness",
   },
   render_log_collection: {
@@ -31,32 +34,38 @@ const CHECK_ACTIONS = {
   },
   withdrawal_operations_available: {
     title: "撤回運用データを確認",
-    detail: "撤回申請一覧が開けるか確認し、データベースやmigrationの状態を調べます。",
+    detail:
+      "撤回申請一覧が開けるか確認し、データベースやmigrationの状態を調べます。",
     href: "/app/withdrawals",
   },
   withdrawal_email_outbox: {
     title: "撤回メールキューを確認",
-    detail: "失敗・滞留メールの理由を確認します。監視画面から業務メールを自動再送はしません。",
+    detail:
+      "失敗・滞留メールの理由を確認します。監視画面から業務メールを自動再送はしません。",
     href: "/app/withdrawals",
   },
   withdrawal_email_worker_heartbeat: {
     title: "撤回メールワーカーを確認",
-    detail: "Renderの定期実行とワーカートークンを確認し、最後の成功時刻を照合します。",
+    detail:
+      "Renderの定期実行とワーカートークンを確認し、最後の成功時刻を照合します。",
     href: "/app/production-readiness",
   },
   withdrawal_processing_integrity: {
     title: "撤回申請の処理漏れを確認",
-    detail: "返送案内、店舗通知、返金判断、完了通知の不足項目を申請ごとに確認します。",
+    detail:
+      "返送案内、店舗通知、返金判断、完了通知の不足項目を申請ごとに確認します。",
     href: "/app/withdrawals",
   },
   seller_order_unresolved_shadow_checks: {
     title: "SellerOrder差分を確認",
-    detail: "既存台帳と出店者別注文の差分を確認し、原因が分かるまで読替え範囲を広げません。",
+    detail:
+      "既存台帳と出店者別注文の差分を確認し、原因が分かるまで読替え範囲を広げません。",
     href: "/app/seller-order-shadow",
   },
   seller_ledger_repair_candidates: {
     title: "売上台帳の補正候補を確認",
-    detail: "注文・返金・補正履歴を照合してから、管理画面の補正機能を使用します。",
+    detail:
+      "注文・返金・補正履歴を照合してから、管理画面の補正機能を使用します。",
     href: "/app/sellers",
   },
   test_store_pending_payout_runs: {
@@ -76,30 +85,48 @@ const CHECK_ACTIONS = {
   },
   official_storefront: {
     title: "正式ストアの公開状態を確認",
-    detail: "パスワードページへ戻っていないか、ブランド表示と購入導線が開いているか確認します。",
+    detail:
+      "パスワードページへ戻っていないか、ブランド表示と購入導線が開いているか確認します。",
     href: "/app/production-readiness",
   },
   heavy_checks_not_initialized: {
     title: "重い整合性検査の初回実行を待つ",
-    detail: "次の実行で台帳とSellerOrderを検査します。15分以上続く場合は監視実行履歴を確認します。",
+    detail:
+      "次の実行で台帳とSellerOrderを検査します。15分以上続く場合は監視実行履歴を確認します。",
     href: "/app/production-readiness",
   },
   launch_integrity: {
     title: "業務データ整合性検査を確認",
-    detail: "検査自体が失敗しています。RenderログとDB接続を確認し、次の5分後の再試行結果を待ちます。",
+    detail:
+      "検査自体が失敗しています。RenderログとDB接続を確認し、次の5分後の再試行結果を待ちます。",
     href: "/app/production-readiness",
   },
 };
 
-export function buildLaunchMonitorGuide({ enabled = false, metadata = {} } = {}) {
+export function buildLaunchMonitorGuide({
+  enabled = false,
+  metadata = {},
+  status,
+} = {}) {
   const report = asObject(metadata.lastReport);
   const checks = Array.isArray(report.checks) ? report.checks : [];
+
+  if (enabled && status?.publication?.code === "report_stale") {
+    return {
+      tone: "waiting",
+      title: "最新の監視結果が必要です",
+      description:
+        "通常監視、整合性検査または外部監視の有効な実行記録が不足しています。",
+      steps: [productionReadinessStep()],
+    };
+  }
 
   if (metadata.completedAt) {
     return {
       tone: "healthy",
       title: "72時間の監視は完了しています",
-      description: "重大な未解決項目がないことを本番確認で最終確認してください。",
+      description:
+        "重大な未解決項目がないことを本番確認で最終確認してください。",
       steps: [productionReadinessStep()],
     };
   }
@@ -108,18 +135,21 @@ export function buildLaunchMonitorGuide({ enabled = false, metadata = {} } = {})
     return {
       tone: "waiting",
       title: "監視はまだ開始していません",
-      description: "公開準備を終えてから監視を有効にします。現在は業務データを変更しません。",
+      description:
+        "公開準備を終えてから監視を有効にします。現在は業務データを変更しません。",
       steps: [
         productionReadinessStep(),
         {
           id: "open-storefront",
           title: "ストアのパスワードを解除して表示を確認",
-          detail: "シークレットウィンドウとスマートフォンで商品、カート、決済入口を確認します。",
+          detail:
+            "シークレットウィンドウとスマートフォンで商品、カート、決済入口を確認します。",
         },
         {
           id: "activate-monitor",
           title: "公開直後に監視を開始",
-          detail: "パスワード解除後にCodexへ監視開始を依頼してください。開始時刻を更新して72時間を新規に計測します。",
+          detail:
+            "パスワード解除後にCodexへ監視開始を依頼してください。開始時刻を更新して72時間を新規に計測します。",
         },
       ],
     };
@@ -129,20 +159,27 @@ export function buildLaunchMonitorGuide({ enabled = false, metadata = {} } = {})
     return {
       tone: "waiting",
       title: "初回の監視結果を待っています",
-      description: "5分以上結果が出ない場合はGitHub ActionsとRender Cronの実行状態を確認します。",
+      description:
+        "5分以上結果が出ない場合はGitHub ActionsとRender Cronの実行状態を確認します。",
       steps: [productionReadinessStep()],
     };
   }
 
   const issues = checks
-    .filter((check) => check.severity === "critical" || check.severity === "warning")
-    .sort((left, right) => severityRank(right.severity) - severityRank(left.severity));
+    .filter(
+      (check) => check.severity === "critical" || check.severity === "warning",
+    )
+    .sort(
+      (left, right) =>
+        severityRank(right.severity) - severityRank(left.severity),
+    );
 
   if (issues.length === 0) {
     return {
       tone: "healthy",
       title: "現在、対応が必要な項目はありません",
-      description: "監視を継続します。決済・返金・出金に違和感があれば本番確認と各管理画面を確認してください。",
+      description:
+        "監視を継続します。決済・返金・出金に違和感があれば本番確認と各管理画面を確認してください。",
       steps: [],
     };
   }
@@ -154,7 +191,8 @@ export function buildLaunchMonitorGuide({ enabled = false, metadata = {} } = {})
     title: issues.some((check) => check.severity === "critical")
       ? "重大な異常を先に確認してください"
       : "注意項目を順に確認してください",
-    description: "監視は原因候補と確認先を示すだけで、返金・出金・台帳補正を自動実行しません。",
+    description:
+      "監視は原因候補と確認先を示すだけで、返金・出金・台帳補正を自動実行しません。",
     steps: uniqueIssueSteps(issues),
   };
 }
@@ -183,5 +221,7 @@ function severityRank(value) {
 }
 
 function asObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
 }

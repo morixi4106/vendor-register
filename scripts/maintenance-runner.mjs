@@ -4,36 +4,96 @@ import { fileURLToPath } from "node:url";
 import { sendMaintenanceFallback } from "./maintenance-alert.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
+export const MAINTENANCE_TASK_BUDGET_MS = 420_000;
+export const MAINTENANCE_FALLBACK_BUDGET_MS = 45_000;
 const TASKS = Object.freeze([
-  "shopify-product-catalog-sync-agent.mjs",
-  "shopify-order-integrity-agent.mjs",
-  "launch-monitor-agent.mjs",
-  "launch-monitor-deadman.mjs",
+  { file: "shopify-product-catalog-sync-agent.mjs", timeout: 90_000 },
+  { file: "shopify-order-integrity-agent.mjs", timeout: 120_000 },
+  { file: "launch-monitor-agent.mjs", timeout: 150_000 },
+  { file: "launch-monitor-deadman.mjs", timeout: 45_000 },
 ]);
 
 export function runMaintenance({
   env = process.env,
   runImpl = spawnSync,
+  clock = () => performance.now(),
 } = {}) {
   if (env.MAINTENANCE_RUNNER_ENABLED !== "true")
     return { ok: true, enabled: false };
   if (env.MAINTENANCE_SCHEDULER !== "render")
     throw new Error("maintenance_scheduler_not_authorized");
-  const results = TASKS.map((task) => {
-    const result = runImpl(
-      process.execPath,
-      [path.join(ROOT, "scripts", task)],
-      {
-        cwd: ROOT,
-        env: { ...env, LAUNCH_MONITOR_SOURCE: "render" },
-        timeout: 180_000,
-        stdio: "inherit",
-        windowsHide: true,
-      },
+  const startedAt = clock();
+  const results = TASKS.map(({ file: task, timeout: taskTimeout }, index) => {
+    // Reserve time for later integrity and deadman checks even after a slow sync.
+    const reserved = TASKS.slice(index + 1).reduce(
+      (sum, next) => sum + next.timeout,
+      0,
     );
-    return { task, ok: !result.error && result.status === 0 };
+    const remaining = MAINTENANCE_TASK_BUDGET_MS - (clock() - startedAt);
+    const timeout = Math.floor(Math.min(taskTimeout, remaining - reserved));
+    if (!(timeout > 0))
+      return { task, ok: false, reason: "run_budget_exhausted", durationMs: 0 };
+    const taskStartedAt = clock();
+    try {
+      const result = runImpl(
+        process.execPath,
+        [path.join(ROOT, "scripts", task)],
+        {
+          cwd: ROOT,
+          env: { ...env, LAUNCH_MONITOR_SOURCE: "render" },
+          timeout,
+          killSignal: "SIGKILL",
+          stdio: "inherit",
+          windowsHide: true,
+        },
+      );
+      const ok = !result.error && result.status === 0;
+      return {
+        task,
+        ok,
+        reason: ok
+          ? null
+          : result.error?.code === "ETIMEDOUT"
+            ? "task_timeout"
+            : "task_failed",
+        durationMs: Math.max(0, Math.floor(clock() - taskStartedAt)),
+      };
+    } catch {
+      return {
+        task,
+        ok: false,
+        reason: "task_spawn_failed",
+        durationMs: Math.max(0, Math.floor(clock() - taskStartedAt)),
+      };
+    }
   });
-  return { ok: results.every((r) => r.ok), enabled: true, results };
+  return {
+    ok: results.every((r) => r.ok),
+    enabled: true,
+    results,
+    durationMs: Math.max(0, Math.floor(clock() - startedAt)),
+  };
+}
+
+export async function runMaintenanceCycle({
+  env = process.env,
+  runImpl = spawnSync,
+  clock = () => performance.now(),
+  fallbackImpl = sendMaintenanceFallback,
+} = {}) {
+  const result = runMaintenance({ env, runImpl, clock });
+  if (!result.ok) {
+    try {
+      result.fallback = await fallbackImpl({
+        env,
+        tasks: result.results.filter((r) => !r.ok).map((r) => r.task),
+        signal: AbortSignal.timeout(MAINTENANCE_FALLBACK_BUDGET_MS),
+      });
+    } catch {
+      result.fallback = { sent: false, reason: "fallback_failed" };
+    }
+  }
+  return result;
 }
 
 if (
@@ -51,12 +111,7 @@ if (
       if (!receipt.sent) throw new Error("notification_test_not_sent");
       console.log(JSON.stringify(receipt));
     } else {
-      const result = runMaintenance();
-      if (!result.ok) {
-        result.fallback = await sendMaintenanceFallback({
-          tasks: result.results.filter((r) => !r.ok).map((r) => r.task),
-        }).catch(() => ({ sent: false, reason: "fallback_failed" }));
-      }
+      const result = await runMaintenanceCycle();
       console.log(JSON.stringify(result));
       if (!result.ok) process.exitCode = 1;
     }
