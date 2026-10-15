@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  domesticCheckoutContext,
+  domesticProbeOptions,
+} from "../fixtures/checkoutCommerceContext.js";
+import { buildCheckoutCommerceContext } from "../../app/services/checkoutCommerceContext.server.js";
+import { domesticShippingProfiles } from "../fixtures/checkoutCommerceContext.js";
 
 import { runDomesticAutonomousLaunchGuard } from "../../app/services/domesticAutonomousLaunchGuard.server.js";
 
@@ -19,11 +25,13 @@ function dependencies(overrides = {}) {
   return {
     prismaClient: {},
     env: {
+      ...domesticProbeOptions.env,
       DOMESTIC_AUTONOMOUS_LAUNCH_MAX_ORDER_AMOUNT: "50000",
       SHOPIFY_PRIMARY_SHOP_DOMAIN: SHOP,
     },
     now: NOW,
     inspectAuthorizationImpl: () => activeAuthorization(),
+    inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     inspectCheckoutValidationImpl: async () => ({
       ok: true,
       exists: true,
@@ -89,6 +97,31 @@ test("monitor run arms the first-order probe with the configured ceiling", async
   assert.equal(createInput.komojuLiveConfirmed, undefined);
   assert.equal(createInput.singleCardIntegrationConfirmed, undefined);
   assert.equal(createInput.automaticCaptureConfirmed, undefined);
+});
+
+test("domestic guard stops before reusing passed probes when scope is international or unknown", async () => {
+  for (const profile of [
+    { ...domesticShippingProfiles, airPacketCount: 1 },
+    { available: false },
+  ]) {
+    let stopped = false;
+    const result = await runDomesticAutonomousLaunchGuard(
+      { shopDomain: SHOP },
+      dependencies({
+        inspectCheckoutCommerceContextImpl: ({ env }) =>
+          buildCheckoutCommerceContext(profile, env),
+        getProbePageDataImpl: () =>
+          assert.fail("old passed probes cannot bypass scope"),
+        applyEmergencyHoldImpl: async () => {
+          stopped = true;
+          return { ok: true };
+        },
+      }),
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.secured, true);
+    assert.equal(stopped, true);
+  }
 });
 
 test("an enabled but expired authorization applies the emergency hold", async () => {

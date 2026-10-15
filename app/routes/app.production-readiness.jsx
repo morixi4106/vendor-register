@@ -254,9 +254,9 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "disable_checkout_validation_for_standard_direct") {
-    const { inspectPlatformDirectCheckoutMode } =
-      await import("../services/platformDirectCheckoutMode.server.js");
-    const mode = inspectPlatformDirectCheckoutMode();
+    const { inspectCheckoutCommerceContext } =
+      await import("../services/checkoutCommerceContext.server.js");
+    const { mode } = await inspectCheckoutCommerceContext();
     if (!mode.standardDirectReady) {
       return Response.json(
         {

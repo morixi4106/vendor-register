@@ -4,6 +4,7 @@ import {
 } from "../productionRelease.server.js";
 import { inspectPlatformDirectCheckoutMode } from "../platformDirectCheckoutMode.server.js";
 import { summarizeProductionReadinessChecks } from "./common.js";
+import { buildCheckoutCommerceScopeCheck } from "../checkoutCommerceContext.server.js";
 
 export function includeCheckoutGateInProductionReadiness(
   readiness,
@@ -51,7 +52,9 @@ export function includeCheckoutValidationInProductionReadiness(
   checkoutValidation,
   env = process.env,
 ) {
-  const checkoutMode = inspectPlatformDirectCheckoutMode(env);
+  const checkoutMode =
+    readiness?.operationalReadiness?.checkoutMode ||
+    inspectPlatformDirectCheckoutMode(env);
   const standardDirect = checkoutMode.standardDirectReady;
   const validationReady = standardDirect
     ? Boolean(
@@ -102,33 +105,35 @@ export function includeCheckoutValidationInProductionReadiness(
       ? ""
       : "SHOPIFY_APP_VERSIONを設定し、本番確認画面で必須シナリオを実行して現在のIDを記録してください。",
   };
-  const modeReady =
-    checkoutMode.standardDirectRequested === false ||
-    checkoutMode.standardDirectReady === true;
+  const modeReady = !checkoutMode.reason;
   const checkoutModeCheck = {
     id: "platform_direct_checkout_mode",
     category: "shopify",
     status: modeReady ? "pass" : "fail",
-    title: "国内運営直販の購入経路",
+    title: "運営直販の購入経路",
     detail: modeReady
       ? standardDirect
         ? "Shopify標準チェックアウトとKOMOJUを使用します。第三者販売・精算機能はすべて停止しています。"
         : "マーケットプレイス用の購入制御を使用します。"
-      : `標準直販へ切り替えられません。第三者販売フラグが有効です: ${checkoutMode.enabledThirdPartyFlags.join(", ")}`,
+      : `購入方式を確認できません: ${checkoutMode.reason}`,
     action: modeReady
       ? ""
-      : "第三者販売・精算フラグをすべて無効にしてから再確認してください。",
+      : "販売範囲と購入方式を照合してください。海外設定がある場合は検証付き経路が必要です。",
   };
   const checks = [
     ...(readiness?.checks || []).filter(
       (check) =>
         check.id !== checkoutValidationCheck.id &&
         check.id !== productionReleaseCheck.id &&
-        check.id !== checkoutModeCheck.id,
+        check.id !== checkoutModeCheck.id &&
+        check.id !== "platform_direct_checkout_scope",
     ),
     ...(standardDirect ? [] : [productionReleaseCheck]),
     checkoutModeCheck,
     checkoutValidationCheck,
+    ...(checkoutMode.scopeAvailable === undefined
+      ? []
+      : [buildCheckoutCommerceScopeCheck(checkoutMode)]),
   ];
   const releaseSummary = summarizeProductionReadinessChecks(checks);
   return {

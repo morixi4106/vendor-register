@@ -697,6 +697,30 @@ test("standard direct mode treats a prepared disabled marketplace validation as 
   );
 });
 
+test("monitor rejects disabled validation when standard direct has international configuration", async () => {
+  const report = await collectReport({
+    env: {
+      PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+      MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "false",
+    },
+    shippingProfiles: healthyProductShippingProfiles({ airPacketCount: 1 }),
+    checkoutValidation: {
+      ok: true,
+      exists: true,
+      prepared: true,
+      active: false,
+    },
+  });
+  assert.equal(
+    find(report.checks, "platform_direct_checkout_scope").severity,
+    "critical",
+  );
+  assert.equal(
+    find(report.checks, "marketplace_checkout_server_validation").severity,
+    "critical",
+  );
+});
+
 test("incident identity ignores count changes while result hash records them", () => {
   const first = buildReport({
     now: NOW,

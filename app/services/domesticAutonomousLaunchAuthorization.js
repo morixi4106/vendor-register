@@ -52,8 +52,10 @@ export function isDomesticAutonomousLaunchRiskAcceptedCheck(checkId) {
 export function inspectDomesticAutonomousLaunchAuthorization(
   env = process.env,
   now = new Date(),
+  observedCheckoutMode = null,
 ) {
-  const checkoutMode = inspectPlatformDirectCheckoutMode(env);
+  const checkoutMode =
+    observedCheckoutMode || inspectPlatformDirectCheckoutMode(env);
   const authorizedAt = parseDate(
     env.DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZED_AT,
   );

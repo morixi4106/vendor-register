@@ -1,15 +1,8 @@
 import prisma from "../../db.server.js";
 import { isMarketplaceSeller } from "../../utils/sellerRoles.js";
 import { getMarketplaceGovernanceDashboard } from ".././marketplaceGovernance.server.js";
-import {
-  buildOperationalReadinessChecks,
-  getPlatformOperationalControl,
-  inspectOperationalReadiness,
-} from ".././operationalReadiness.server.js";
-import {
-  buildReleaseMonitoringChecks,
-  inspectReleaseMonitoringReadiness,
-} from ".././releaseMonitoringReadiness.server.js";
+import { buildOperationalReadinessChecks } from ".././operationalReadiness.server.js";
+import { buildReleaseMonitoringChecks } from ".././releaseMonitoringReadiness.server.js";
 import {
   OPEN_PAYOUT_RUN_STATUSES,
   STRIPE_ACCOUNT_PROBE_LIMIT,
@@ -48,9 +41,9 @@ import {
 import {
   buildProductShippingProfileChecks,
   buildShopifyProductSyncChecks,
-  inspectProductShippingProfiles,
   inspectShopifyProductSync,
 } from "./products.server.js";
+import { inspectReadinessOperations } from "./operations.server.js";
 import {
   buildPaymentOperationChecks,
   inspectPaymentOperationReadiness,
@@ -135,22 +128,14 @@ export async function getProductionReadiness({
   const withdrawalOperations = await inspectWithdrawalOperations({
     prismaClient,
   });
-  const [operationalReadiness, platformOperationalControl, releaseMonitoring] =
-    await Promise.all([
-      inspectOperationalReadiness({
-        prismaClient,
-        now,
-        env,
-      }),
-      getPlatformOperationalControl({
-        prismaClient,
-      }),
-      inspectReleaseMonitoringReadiness({
-        prismaClient,
-        now,
-        env,
-      }),
-    ]);
+  const {
+    operationalReadiness,
+    platformOperationalControl,
+    releaseMonitoring,
+    checkoutMode,
+    checkoutScopeCheck,
+    productShippingProfiles,
+  } = await inspectReadinessOperations({ prismaClient, now, env });
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
   const directReturns = await inspectDirectReturnReadiness({
     prismaClient,
@@ -163,10 +148,6 @@ export async function getProductionReadiness({
   const shopifyProductSync = await inspectShopifyProductSync({
     prismaClient,
     shopDomain: normalizedShopDomain,
-  });
-  const productShippingProfiles = await inspectProductShippingProfiles({
-    prismaClient,
-    now,
   });
   const paymentOperations = await inspectPaymentOperationReadiness({
     prismaClient,
@@ -253,6 +234,7 @@ export async function getProductionReadiness({
       env,
     }),
     ...buildShopifyProductSyncChecks(shopifyProductSync),
+    checkoutScopeCheck,
     ...buildProductShippingProfileChecks(productShippingProfiles),
     ...buildMarketplaceGovernanceChecks({
       governance: marketplaceGovernance,
@@ -268,7 +250,7 @@ export async function getProductionReadiness({
       env,
       now,
     }),
-    ...buildReleaseMonitoringChecks(releaseMonitoring, { env }),
+    ...buildReleaseMonitoringChecks(releaseMonitoring, { env, checkoutMode }),
     ...buildShopifyChecks({
       configuredScopes,
       grantedScopes,
@@ -289,6 +271,7 @@ export async function getProductionReadiness({
         env,
         operationEnv,
         directReturns,
+        checkoutMode,
         now,
       }),
     ),

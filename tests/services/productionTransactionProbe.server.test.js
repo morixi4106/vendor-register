@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  domesticCheckoutContext,
+  domesticProbeOptions,
+} from "../fixtures/checkoutCommerceContext.js";
+import { buildCheckoutCommerceContext } from "../../app/services/checkoutCommerceContext.server.js";
+import { domesticShippingProfiles } from "../fixtures/checkoutCommerceContext.js";
 
 import {
   attachOrderToProductionTransactionProbe,
@@ -832,6 +838,69 @@ function rejectingProbePrisma() {
   };
 }
 
+test("paid-only creation rejects international and unknown scope before persistence", async () => {
+  for (const [profile, reason] of [
+    [
+      { ...domesticShippingProfiles, airPacketCount: 1 },
+      "international_sales_require_validation",
+    ],
+    [{ available: false }, "checkout_scope_unverified"],
+  ]) {
+    const result = await createProductionTransactionProbe(
+      {
+        shopDomain: SHOP,
+        startedBy: "operator",
+        releaseExpectation: releaseExpectation(),
+        targetProvider: "KOMOJU",
+        targetPaymentMethod: "CARD",
+        maximumPlannedChargeAmount: 20_000,
+      },
+      {
+        ...domesticProbeOptions,
+        prismaClient: {
+          productionTransactionProbe: {
+            findUnique: () => assert.fail("must not touch probe state"),
+          },
+        },
+        inspectCheckoutCommerceContextImpl: ({ env }) =>
+          buildCheckoutCommerceContext(profile, env),
+      },
+    );
+    assert.deepEqual(result, { ok: false, reason });
+  }
+});
+
+test("a domestic paid-only probe cannot finish after international configuration or a lost scope read", async () => {
+  for (const profile of [
+    { ...domesticShippingProfiles, airPacketCount: 1 },
+    { available: false },
+  ]) {
+    const probe = probeRecord({
+      target: KOMOJU_CARD_TARGET,
+      externalReadiness: { flow: "PLATFORM_DIRECT_PAID_ONLY" },
+    });
+    const { prismaClient, state } = refreshPrisma({ probe });
+    const result = await refreshProductionTransactionProbe(
+      {
+        probeId: probe.id,
+        actorKey: "operator",
+        releaseExpectation: releaseExpectation(),
+      },
+      {
+        ...domesticProbeOptions,
+        prismaClient,
+        inspectCheckoutCommerceContextImpl: ({ env }) =>
+          buildCheckoutCommerceContext(profile, env),
+        graphQL: () => assert.fail("must reject before external inspection"),
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.deepEqual(state.updates, []);
+    assert.equal(state.attestation, null);
+    assert.notEqual(state.probe.status, "PASSED");
+  }
+});
+
 test("zero-balance limited launch rejects a payout below the minimum", async () => {
   const result = await createProductionTransactionProbe(
     zeroBalanceLimitedLaunchInput({
@@ -888,6 +957,7 @@ test("preflight permits one KOMOJU card run only when every automatic check pass
   };
   const options = {
     prismaClient,
+    inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     env: {
       PAYMENT_PROVIDERS: "shopify_payments,komoju",
       KOMOJU_PAYMENT_OPERATIONS_ENABLED: "true",
@@ -918,6 +988,7 @@ test("preflight permits one KOMOJU card run only when every automatic check pass
     {
       shopDomain: SHOP,
       releaseExpectation: release,
+      checkoutValidation: { ok: true, active: true },
       targetProvider: "KOMOJU",
       targetPaymentMethod: "CARD",
     },
@@ -933,6 +1004,7 @@ test("preflight permits one KOMOJU card run only when every automatic check pass
     {
       shopDomain: SHOP,
       releaseExpectation: release,
+      checkoutValidation: { ok: true, active: true },
       targetProvider: "KOMOJU",
       targetPaymentMethod: "CARD",
     },
@@ -959,6 +1031,7 @@ test("preflight permits one KOMOJU card run only when every automatic check pass
 test("standard direct preflight requires an inactive marketplace validation", async () => {
   const release = releaseExpectation();
   const options = {
+    ...domesticProbeOptions,
     prismaClient: {
       product: {
         async count() {
@@ -1088,6 +1161,7 @@ test("standard direct probe requires and stores the planned charge ceiling", asy
     {
       prismaClient,
       env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+      inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     },
   );
 
@@ -1105,8 +1179,7 @@ test("standard direct probe requires and stores the planned charge ceiling", asy
     false,
   );
   assert.equal(
-    createdData.orderEvidenceJson.externalReadiness
-      .maximumPlannedChargeAmount,
+    createdData.orderEvidenceJson.externalReadiness.maximumPlannedChargeAmount,
     20_000,
   );
   assert.equal(
@@ -1147,11 +1220,15 @@ test("standard direct autodetect stores only configured production providers", a
         PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
         PAYMENT_PROVIDERS: "shopify_payments,komoju,unsupported",
       },
+      inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     },
   );
 
   assert.equal(result.ok, true);
-  assert.deepEqual(createdData.orderEvidenceJson.probeConfig, AUTODETECT_TARGET);
+  assert.deepEqual(
+    createdData.orderEvidenceJson.probeConfig,
+    AUTODETECT_TARGET,
+  );
   assert.deepEqual(
     createdData.orderEvidenceJson.externalReadiness.allowedProviders,
     ["SHOPIFY_PAYMENTS", "KOMOJU"],
@@ -1184,6 +1261,7 @@ test("standard direct autodetect requires an explicitly supported provider", asy
         PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
         PAYMENT_PROVIDERS: "unsupported",
       },
+      inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     },
   );
 
@@ -1238,6 +1316,7 @@ test("standard direct probe rejects a missing planned charge ceiling", async () 
         },
       },
       env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+      inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
     },
   );
 
@@ -1676,6 +1755,7 @@ test("standard direct flow completes after the paid order and ledger agree", asy
     },
     {
       prismaClient,
+      ...domesticProbeOptions,
       graphQL: graphQLFor(
         shopifyOrder({
           paymentGateway: "komoju_credit_card",
@@ -1731,6 +1811,7 @@ test("autodetect completes a Shopify Payments wallet order from live evidence", 
     },
     {
       prismaClient,
+      ...domesticProbeOptions,
       graphQL: graphQLFor(
         shopifyOrder({
           paymentDetails: {
@@ -1791,6 +1872,7 @@ test("autodetect completes a paid KOMOJU convenience-store order", async () => {
     },
     {
       prismaClient,
+      ...domesticProbeOptions,
       graphQL: graphQLFor(
         shopifyOrder({
           paymentGateway: "komoju_convenience_store",
@@ -1833,6 +1915,7 @@ test("autodetect rejects an unknown payment transaction", async () => {
     },
     {
       prismaClient,
+      ...domesticProbeOptions,
       graphQL: graphQLFor(
         shopifyOrder({
           paymentGateway: "manual_unknown",
@@ -1870,6 +1953,7 @@ test("autodetect rejects a recognized provider outside the launch allowlist", as
     },
     {
       prismaClient,
+      ...domesticProbeOptions,
       graphQL: graphQLFor(
         shopifyOrder({
           paymentGateway: "komoju_credit_card",

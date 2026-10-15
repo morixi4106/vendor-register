@@ -301,6 +301,13 @@ export async function inspectProductShippingProfiles({
       internationalRequirementCatalogMissing,
       euShippingBlocked,
       airPacketCount: airPacketProducts.length,
+      internationalConfigured: activeRows.length > 0 || products.some(product =>
+        product.internationalShippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET ||
+        EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus) ||
+        (Array.isArray(product.countryPolicy?.allowedCountries) && product.countryPolicy.allowedCountries.some(country =>
+          String(country || "").trim() && String(country).trim().toUpperCase() !== "JP"
+        ))
+      ),
       multiVariantAirPacket,
       weightSyncIssues,
       serviceAvailability: {

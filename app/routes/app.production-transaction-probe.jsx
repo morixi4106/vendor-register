@@ -21,7 +21,6 @@ import {
   refreshProductionTransactionProbe,
   serializeProductionTransactionProbe,
 } from "../services/productionTransactionProbe.server.js";
-import { inspectPlatformDirectCheckoutMode } from "../services/platformDirectCheckoutMode.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -77,7 +76,7 @@ export async function loader({ request }) {
         flow: preflight.checkoutMode,
       }),
       preflight,
-      checkoutMode: inspectPlatformDirectCheckoutMode(),
+      checkoutMode: preflight.checkoutPolicy,
       limitedLaunch: limitedLaunch || null,
     },
     { headers: privateHeaders() },

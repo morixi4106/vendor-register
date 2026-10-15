@@ -8,7 +8,8 @@ import {
   PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
   recordOperationalReadinessAttestation,
 } from "./operationalReadiness.server.js";
-import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { inspectPlatformDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { inspectCheckoutCommerceContext } from "./checkoutCommerceContext.server.js";
 import {
   buildProductionReleaseFingerprint,
   buildProductionReleaseExpectation,
@@ -659,6 +660,7 @@ export async function inspectProductionTransactionProbePreflight(
     inspectPaymentOperationsImpl = inspectPaymentOperations,
     getPlatformOperationalControlImpl = getPlatformOperationalControl,
     getMarketplaceCheckoutGateStatusImpl = getMarketplaceCheckoutGateStatus,
+    inspectCheckoutCommerceContextImpl = inspectCheckoutCommerceContext,
   } = {},
 ) {
   const shop = normalizeShop(shopDomain);
@@ -767,7 +769,11 @@ export async function inspectProductionTransactionProbePreflight(
   const komojuTarget = autodetectTarget
     ? allowedProviders.includes(PAYMENT_PROVIDER.KOMOJU)
     : target.provider === PAYMENT_PROVIDER.KOMOJU;
-  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
+  const checkoutContext = await inspectCheckoutCommerceContextImpl({
+    prismaClient,
+    env,
+  });
+  const standardDirect = checkoutContext.mode.standardDirectReady;
   const paymentOperationsClean = Boolean(
     paymentOperations.available === true &&
     paymentOperations.pendingExpiredCount === 0 &&
@@ -784,8 +790,18 @@ export async function inspectProductionTransactionProbePreflight(
         checkoutValidation?.prepared === true &&
         checkoutValidation?.active !== true,
       )
-    : Boolean(release.expected?.functionId && release.expected?.validationId);
+    : Boolean(
+        release.expected?.functionId &&
+        release.expected?.validationId &&
+        checkoutValidation?.ok === true &&
+        checkoutValidation?.active === true,
+      );
   const checks = [
+    preflightCheck(
+      "checkout_commerce_scope_ready",
+      !checkoutContext.mode.reason,
+      checkoutContext.mode.reason || "販売範囲と購入方式を照合しました。",
+    ),
     preflightCheck(
       "release_configured",
       release.configured,
@@ -896,6 +912,7 @@ export async function inspectProductionTransactionProbePreflight(
         existingReconciledPayout?.bankDepositedAt || null,
     },
     allowedProviders,
+    checkoutPolicy: checkoutContext.mode,
     checkoutMode: standardDirect
       ? PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
       : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND,
@@ -934,7 +951,12 @@ export async function createProductionTransactionProbe(
     estimatedProcessingFeeAmount,
     payoutNotOnHoldConfirmed = false,
   },
-  { prismaClient = prisma, now = new Date(), env = process.env } = {},
+  {
+    prismaClient = prisma,
+    now = new Date(),
+    env = process.env,
+    inspectCheckoutCommerceContextImpl = inspectCheckoutCommerceContext,
+  } = {},
 ) {
   if (!prismaClient?.productionTransactionProbe?.findUnique) {
     return { ok: false, reason: "production_transaction_probe_unavailable" };
@@ -946,7 +968,16 @@ export async function createProductionTransactionProbe(
     provider: targetProvider,
     paymentMethod: targetPaymentMethod,
   });
-  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
+  const requestedPolicy = inspectPlatformDirectCheckoutMode(env);
+  if (requestedPolicy.reason) return { ok: false, reason: requestedPolicy.reason };
+  const standardDirectRequested = requestedPolicy.standardDirectRequested;
+  const checkoutContext = standardDirectRequested
+    ? await inspectCheckoutCommerceContextImpl({ prismaClient, env, now })
+    : null;
+  if (checkoutContext?.mode.reason) {
+    return { ok: false, reason: checkoutContext.mode.reason };
+  }
+  const standardDirect = checkoutContext?.mode.standardDirectReady === true;
   const flow = standardDirect
     ? PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
     : PRODUCTION_TRANSACTION_PROBE_FLOW.STRICT_REFUND;
@@ -2540,6 +2571,8 @@ export async function refreshProductionTransactionProbe(
     graphQL = shopifyGraphQLWithOfflineSession,
     syncPaymentAttemptsImpl = syncShopifyOrderPaymentAttempts,
     now = new Date(),
+    env = process.env,
+    inspectCheckoutCommerceContextImpl = inspectCheckoutCommerceContext,
   } = {},
 ) {
   const probe = await prismaClient.productionTransactionProbe.findUnique({
@@ -2547,6 +2580,22 @@ export async function refreshProductionTransactionProbe(
   });
   if (!probe || !ACTIVE_PROBE_STATUSES.includes(probe.status)) {
     return { ok: false, reason: "active_probe_not_found" };
+  }
+  if (
+    getProductionTransactionProbeFlow(probe) ===
+    PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
+  ) {
+    const context = await inspectCheckoutCommerceContextImpl({
+      prismaClient,
+      env,
+      now,
+    });
+    if (!context.mode.standardDirectReady) {
+      return {
+        ok: false,
+        reason: context.mode.reason || "domestic_paid_only_scope_changed",
+      };
+    }
   }
   const release = buildReleaseContext(releaseExpectation);
   if (
