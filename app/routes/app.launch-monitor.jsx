@@ -113,6 +113,14 @@ export default function LaunchMonitorPage() {
             <strong>{statusLabel(status.notification.code)}</strong>
             <StatusFacts
               rows={[
+                [
+                  "自動通知",
+                  status.configuration.notificationMode === "live"
+                    ? "本番通知"
+                    : status.configuration.notificationMode === "prelaunch"
+                      ? "公開前停止"
+                      : "停止中",
+                ],
                 ["配信結果", eventLabel(status.notification.providerEvent)],
                 ["本人確認", formatDate(status.notification.humanVerifiedAt)],
                 ["テスト送信", formatDate(status.notification.sentAt)],

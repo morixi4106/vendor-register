@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isExpectedPasswordCriticalPayload } from "../../scripts/launch-monitor-response-policy.mjs";
+import {
+  hasOnlyExpectedPrelaunchFindings,
+  isExpectedPasswordCriticalPayload,
+} from "../../scripts/launch-monitor-response-policy.mjs";
+
+test("quiet prelaunch success is process-only and keeps the critical finding", () => {
+  const report = payload([passwordCritical], { notificationKind: null });
+  assert.equal(hasOnlyExpectedPrelaunchFindings(report), true);
+  assert.equal(report.status, "critical");
+  assert.equal(isExpectedPasswordCriticalPayload(report), false);
+  assert.equal(
+    hasOnlyExpectedPrelaunchFindings(
+      payload([
+        passwordCritical,
+        { id: "database", status: "critical", code: "unavailable", count: 1 },
+      ]),
+    ),
+    false,
+  );
+});
 
 const passwordCritical = {
   id: "official_storefront",

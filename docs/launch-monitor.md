@@ -64,10 +64,26 @@ GitHub Actions側とRender側の片方が停止しても検知できます。
 
 ## 通知
 
-- 重大異常: 初回即時、継続時は30分ごと
-- 注意: 初回即時、継続時は2時間ごと
-- 内容変更、重要度上昇、復旧: 即時
-- 72時間集中監視の開始時と終了時: 通知
+`LAUNCH_MONITOR_NOTIFICATION_MODE`をWeb、Render Cron、GitHub Repository
+Variablesで揃えます。未設定時は`prelaunch`、不正値は`paused`として
+自動送信しません。公開状態から自動で`live`へ切り替えることはありません。
+
+- `prelaunch`: 公開前の監視結果は保存しますが、自動メールとGitHub予備通知は送りません。
+- `paused`: 自動通知を停止します。監視の判定自体を正常にはしません。
+- `live`: 公開運用を明示承認した後だけ設定します。新しい異常は即時通知し、同じ異常は原則24時間以内に再通知しません。
+- 異常が一度消えて再発しても、直近32件・7日間の通知履歴で同じ異常の連続送信を抑えます。
+- 本人が異常を確認した後は、確認日時から7日間は同じ異常を再通知しません。
+- 復旧メールも24時間以内の繰り返しを抑えます。予備メールは同じ日・同じ内容を重複送信しません。
+- 管理画面の「通知テストを送信」は公開前でも明示操作で1通だけ送信できます。
+
+公開前のパスワード保護と既知の未確認事項だけなら、Cronは検査完了として
+終了します。ただし監視結果の`critical`、`password_page`、公開NGは残し、
+購入可能・本番正常の証拠にはしません。DB異常、5xx、未知のWarningなどは
+この扱いに含めません。GitHub監視の古さも公開前は記録のみとし、実行自体の
+HTTPエラーとは区別します。
+
+ストアが一般公開されているのに通知モードが`live`でない場合は、
+`public_store_notifications_not_live`をCriticalとして記録します。
 
 状態、通知抑制、復旧、実行ロックは既存の`OperationalHeartbeat`へ
 永続化します。業務データは変更しません。
@@ -76,6 +92,7 @@ GitHub Actions側とRender側の片方が停止しても検知できます。
 
 ```text
 LAUNCH_MONITOR_ENABLED=true
+LAUNCH_MONITOR_NOTIFICATION_MODE=prelaunch
 LAUNCH_MONITOR_TOKEN=<32文字以上の専用秘密値>
 LAUNCH_MONITOR_DEADMAN_TOKEN=<別の32文字以上の専用秘密値>
 LAUNCH_MONITOR_DURATION_HOURS=72

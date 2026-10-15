@@ -1,3 +1,5 @@
+import { automaticMonitorNotificationsEnabled } from "../app/services/monitorNotificationPolicy.js";
+
 const MARKER = "<!-- maintenance-render-runner -->";
 
 export async function sendMaintenanceFallback({
@@ -10,6 +12,8 @@ export async function sendMaintenanceFallback({
 } = {}) {
   if (env.MAINTENANCE_ALERTS_ENABLED !== "true")
     return { sent: false, reason: "disabled" };
+  if (!notificationTest && !automaticMonitorNotificationsEnabled(env))
+    return { sent: false, reason: "prelaunch_or_paused" };
   const repository = env.GITHUB_REPOSITORY;
   const token = env.MAINTENANCE_GITHUB_ALERT_TOKEN;
   if (

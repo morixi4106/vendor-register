@@ -4,6 +4,10 @@ import { Resend } from "resend";
 
 import prisma from "../db.server.js";
 import {
+  automaticMonitorNotificationsEnabled,
+  resolveMonitorNotificationMode,
+} from "./monitorNotificationPolicy.js";
+import {
   buildLaunchIntegrityChecks,
   buildWithdrawalOperationChecks,
   buildWithdrawalWorkerHeartbeatCheck,
@@ -57,8 +61,8 @@ export const LAUNCH_MONITOR_SCHEMA_VERSION = 1;
 const DEFAULT_DURATION_HOURS = 72;
 const HEAVY_CHECK_INTERVAL_MINUTES =
   OPERATIONAL_TIMING_DEFAULTS.catalogSyncIntervalMinutes;
-const CRITICAL_REMINDER_MINUTES = 30;
-const WARNING_REMINDER_MINUTES = 120;
+const CRITICAL_REMINDER_MINUTES = 24 * 60;
+const WARNING_REMINDER_MINUTES = 24 * 60;
 const CRITICAL_SEVERITY = "critical";
 const WARNING_SEVERITY = "warning";
 const HEALTHY_STATUS = "healthy";
@@ -102,10 +106,12 @@ export async function runLaunchMonitor({
   env = process.env,
   now = new Date(),
   sendEmailImpl = sendLaunchMonitorEmail,
+  collectReportImpl = collectLaunchMonitorReport,
 } = {}) {
   if (!isEnabled(env.LAUNCH_MONITOR_ENABLED)) {
     return { ok: true, active: false, reason: "launch_monitor_disabled" };
   }
+  const notificationsEnabled = automaticMonitorNotificationsEnabled(env);
 
   const previous = await readMonitorHeartbeat(prismaClient);
   const storedMetadata = asObject(previous?.metadataJson);
@@ -126,7 +132,11 @@ export async function runLaunchMonitor({
 
   const concentratedMonitoringComplete = now >= endsAt;
   let completionSentAt = parseDate(previousMetadata.completionSentAt);
-  if (concentratedMonitoringComplete && !completionSentAt) {
+  if (
+    notificationsEnabled &&
+    concentratedMonitoringComplete &&
+    !completionSentAt
+  ) {
     const previousReport = asObject(previousMetadata.lastReport);
     await sendEmailImpl({
       kind: "completed",
@@ -142,7 +152,7 @@ export async function runLaunchMonitor({
     !lastHeavyCheckedAt ||
     now.getTime() - lastHeavyCheckedAt.getTime() >=
       HEAVY_CHECK_INTERVAL_MINUTES * 60 * 1000;
-  const report = await collectLaunchMonitorReport({
+  const report = await collectReportImpl({
     renderSnapshot,
     prismaClient,
     env,
@@ -157,6 +167,22 @@ export async function runLaunchMonitor({
   const previousFingerprint = String(
     previousMetadata.lastIncidentFingerprint || "",
   );
+  // Keep cooldowns across flapping reports without unbounded incident storage.
+  const notificationHistory = (
+    Array.isArray(previousMetadata.notificationHistory)
+      ? previousMetadata.notificationHistory
+      : []
+  )
+    .filter(
+      (entry) =>
+        /^[a-f0-9]{24}$/.test(entry?.fingerprint || "") &&
+        parseDate(entry.sentAt) &&
+        now >= new Date(entry.sentAt) &&
+        now - new Date(entry.sentAt) < 7 * 86400_000,
+    )
+    .slice(-32);
+  const continuingLiveNotifications =
+    previousMetadata.notificationMode === "live";
   const incidentStartedAt =
     report.overallStatus === HEALTHY_STATUS
       ? null
@@ -175,13 +201,21 @@ export async function runLaunchMonitor({
       })
     : null;
   const notificationKind = resolveNotificationKind({
+    env,
     report,
-    previousStatus,
+    previousStatus: continuingLiveNotifications ? previousStatus : "",
     previousFingerprint,
     currentFingerprint: incidentFingerprint,
     lastNotifiedAt: previousMetadata.lastNotifiedAt,
+    lastIncidentNotifiedAt: continuingLiveNotifications
+      ? notificationHistory.find(
+          (entry) => entry.fingerprint === incidentFingerprint,
+        )?.sentAt
+      : null,
+    lastRecoveryNotifiedAt: previousMetadata.lastRecoveryNotifiedAt,
     now,
     acknowledged: acknowledgement?.acknowledged,
+    acknowledgedAt: acknowledgement?.acknowledgedAt,
   });
 
   if (notificationKind) {
@@ -193,6 +227,7 @@ export async function runLaunchMonitor({
     });
   }
   const weeklyDue =
+    notificationsEnabled &&
     isEnabled(env.AUTONOMOUS_MAINTENANCE_NOTIFICATIONS_ENABLED) &&
     report.overallStatus === HEALTHY_STATUS &&
     !notificationKind &&
@@ -210,6 +245,7 @@ export async function runLaunchMonitor({
   const metadataJson = {
     ...previousMetadata,
     schemaVersion: LAUNCH_MONITOR_SCHEMA_VERSION,
+    notificationMode: resolveMonitorNotificationMode(env),
     campaignId,
     active: true,
     concentratedMonitoringComplete,
@@ -227,6 +263,19 @@ export async function runLaunchMonitor({
     lastWeeklySummaryAt: weeklyDue
       ? now.toISOString()
       : previousMetadata.lastWeeklySummaryAt || null,
+    lastRecoveryNotifiedAt:
+      notificationKind === "recovered"
+        ? now.toISOString()
+        : previousMetadata.lastRecoveryNotifiedAt || null,
+    notificationHistory:
+      notificationKind === "alert"
+        ? [
+            ...notificationHistory.filter(
+              (entry) => entry.fingerprint !== incidentFingerprint,
+            ),
+            { fingerprint: incidentFingerprint, sentAt: now.toISOString() },
+          ].slice(-32)
+        : notificationHistory,
     lastHeavyCheckedAt:
       runHeavyChecks && report.heavyCheckCompleted
         ? now.toISOString()
@@ -368,6 +417,18 @@ export async function collectLaunchMonitorReport({
     ...evaluateExternalPublicSnapshot(renderSnapshot.publicEndpoints),
     buildPublicDraftOrderCheckoutSafetyCheck(env, domesticMarketplacePilot),
   ];
+  if (
+    renderSnapshot.publicEndpoints?.storefront?.ok === true &&
+    !automaticMonitorNotificationsEnabled(env)
+  )
+    checks.push(
+      issueCheck(
+        "launch_monitor_notification_mode",
+        CRITICAL_SEVERITY,
+        "公開ストアの自動通知が停止しています。",
+        "public_store_notifications_not_live",
+      ),
+    );
   if (isEnabled(env.MAINTENANCE_BACKUP_CHECK_ENABLED)) {
     const backup = renderSnapshot.backupRecovery;
     checks.push(
@@ -1182,21 +1243,37 @@ export function evaluateExternalPublicSnapshot(publicEndpoints = {}) {
 }
 
 export function resolveNotificationKind({
+  env = {},
   report,
   previousStatus = "",
   previousFingerprint = "",
   currentFingerprint = "",
   lastNotifiedAt = null,
+  lastIncidentNotifiedAt = null,
+  lastRecoveryNotifiedAt = null,
   now = new Date(),
   acknowledged = false,
+  acknowledgedAt = null,
 }) {
+  if (!automaticMonitorNotificationsEnabled(env)) return null;
   const status = String(report?.overallStatus || HEALTHY_STATUS);
   if (!previousStatus) {
     return status === HEALTHY_STATUS ? "started" : "alert";
   }
   if (status === HEALTHY_STATUS) {
+    const lastRecovery = parseDate(lastRecoveryNotifiedAt);
+    if (lastRecovery && now - lastRecovery < 86400_000) return null;
     return previousStatus === HEALTHY_STATUS ? null : "recovered";
   }
+
+  const acknowledgedOn = acknowledged ? parseDate(acknowledgedAt) : null;
+  if (acknowledgedOn && now - acknowledgedOn < 7 * 86400_000) return null;
+  const lastIncident = parseDate(lastIncidentNotifiedAt);
+  if (
+    lastIncident &&
+    now - lastIncident < (acknowledged && !acknowledgedOn ? 7 : 1) * 86400_000
+  )
+    return null;
 
   const changed = currentFingerprint !== previousFingerprint;
   const escalated =
@@ -1204,11 +1281,12 @@ export function resolveNotificationKind({
   if (changed || previousStatus === HEALTHY_STATUS || escalated) return "alert";
 
   const last = parseDate(lastNotifiedAt);
-  const reminderMinutes = acknowledged
-    ? 24 * 60
-    : status === CRITICAL_SEVERITY
-      ? CRITICAL_REMINDER_MINUTES
-      : WARNING_REMINDER_MINUTES;
+  const reminderMinutes =
+    acknowledged && !acknowledgedOn
+      ? 7 * 24 * 60
+      : status === CRITICAL_SEVERITY
+        ? CRITICAL_REMINDER_MINUTES
+        : WARNING_REMINDER_MINUTES;
   if (!last || now.getTime() - last.getTime() >= reminderMinutes * 60 * 1000) {
     return "alert";
   }
@@ -1354,6 +1432,12 @@ export async function releaseLaunchMonitorRunLock({
 }
 
 export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
+  if (!automaticMonitorNotificationsEnabled(env))
+    return {
+      ok: true,
+      sent: false,
+      reason: resolveMonitorNotificationMode(env),
+    };
   const apiKey = String(env.RESEND_API_KEY || "").trim();
   const from = String(
     env.LAUNCH_MONITOR_FROM_EMAIL ||

@@ -75,6 +75,16 @@ function fixture() {
   };
 }
 
+test("an explicitly requested receipt test remains available in quiet prelaunch mode", async () => {
+  const f = fixture();
+  await sendMonitorReceiptTest({
+    ...f.options,
+    env: { ...ENV, LAUNCH_MONITOR_NOTIFICATION_MODE: "prelaunch" },
+  });
+  assert.equal(f.sent.length, 1);
+  assert.equal((await getMonitorReceiptStatus(f.options)).ready, false);
+});
+
 test("send acceptance and provider delivery are not human receipt proof", async () => {
   const f = fixture();
   await sendMonitorReceiptTest(f.options);

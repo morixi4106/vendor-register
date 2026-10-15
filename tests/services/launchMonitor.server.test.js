@@ -16,12 +16,183 @@ import {
   releaseLaunchMonitorRunLock,
   resolveLaunchMonitorCampaign,
   resolveNotificationKind,
+  runLaunchMonitor,
   sanitizeLaunchMonitorResult,
   sendLaunchMonitorEmail,
 } from "../../app/services/launchMonitor.server.js";
 import { OPERATIONAL_READINESS_DEFINITIONS } from "../../app/services/operationalReadiness.server.js";
 
 const NOW = new Date("2026-07-18T00:00:00.000Z");
+
+test("automatic monitor mail requires an explicit live mode", async (t) => {
+  t.mock.method(globalThis, "fetch", () => {
+    assert.fail("a quiet monitor must never contact the mail provider");
+  });
+  for (const mode of [undefined, "prelaunch", "paused", "invalid", "LIVE"]) {
+    const input = monitorMail();
+    input.env.LAUNCH_MONITOR_NOTIFICATION_MODE = mode;
+    assert.equal((await sendLaunchMonitorEmail(input)).sent, false);
+    for (const status of ["healthy", "warning", "critical"])
+      assert.equal(
+        resolveNotificationKind({
+          env: input.env,
+          report: reportWithStatus(status),
+        }),
+        null,
+      );
+  }
+});
+
+for (const status of ["healthy", "critical"]) {
+  test(`prelaunch ${status} runs keep findings without lifecycle, incident or weekly mail`, async () => {
+    const start = "2026-07-01T00:00:00.000Z";
+    const writes = [];
+    const result = await runLaunchMonitor({
+      now: NOW,
+      env: {
+        LAUNCH_MONITOR_ENABLED: "true",
+        LAUNCH_MONITOR_NOTIFICATION_MODE: "prelaunch",
+        LAUNCH_MONITOR_STARTED_AT: start,
+        AUTONOMOUS_MAINTENANCE_NOTIFICATIONS_ENABLED: "true",
+      },
+      prismaClient: {
+        operationalHeartbeat: {
+          findUnique: async ({ where }) =>
+            where.key === "production_integrity_monitor"
+              ? {
+                  metadataJson: {
+                    startedAt: start,
+                    lastWeeklySummaryAt: start,
+                    lastOverallStatus: "critical",
+                  },
+                }
+              : null,
+          upsert: async ({ update }) => {
+            writes.push(update);
+            return update;
+          },
+        },
+      },
+      collectReportImpl: async () => ({
+        overallStatus: status,
+        checks:
+          status === "critical"
+            ? [
+                {
+                  id: "official_storefront",
+                  severity: "critical",
+                  errorCode: "password_page",
+                  count: 1,
+                },
+              ]
+            : [],
+        heavyChecks: [],
+        heavyCheckCompleted: true,
+      }),
+      sendEmailImpl: async () =>
+        assert.fail("prelaunch must not send any automatic mail"),
+    });
+    assert.equal(result.report.overallStatus, status);
+    assert.equal(result.notificationKind, null);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].metadataJson.notificationMode, "prelaunch");
+    assert.equal(writes[0].metadataJson.completionSentAt, null);
+    assert.equal(writes[0].metadataJson.lastNotifiedAt, null);
+    assert.equal(writes[0].metadataJson.lastReport.overallStatus, status);
+    assert.equal(Boolean(writes[0].lastFailedAt), status === "critical");
+  });
+}
+
+test("live repeat, flapping and acknowledgement reminders respect bounded cooldowns", () => {
+  const base = {
+    env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
+    report: reportWithStatus("critical"),
+    previousStatus: "critical",
+    previousFingerprint: "same",
+    currentFingerprint: "same",
+    now: NOW,
+  };
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      lastNotifiedAt: new Date(NOW - 23 * 3600_000),
+    }),
+    null,
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      lastNotifiedAt: new Date(NOW - 24 * 3600_000),
+    }),
+    "alert",
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      previousFingerprint: "different",
+      lastIncidentNotifiedAt: new Date(NOW - 3600_000),
+    }),
+    null,
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      acknowledged: true,
+      lastNotifiedAt: new Date(NOW - 6 * 86400_000),
+    }),
+    null,
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      acknowledged: true,
+      lastNotifiedAt: new Date(NOW - 7 * 86400_000),
+    }),
+    "alert",
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      acknowledged: true,
+      acknowledgedAt: new Date(NOW - 86400_000),
+      lastNotifiedAt: new Date(NOW - 8 * 86400_000),
+    }),
+    null,
+  );
+  assert.equal(
+    resolveNotificationKind({
+      ...base,
+      report: reportWithStatus("healthy"),
+      lastRecoveryNotifiedAt: new Date(NOW - 3600_000),
+    }),
+    null,
+  );
+});
+
+test("a public storefront cannot have a healthy notification-mode check while quiet", async () => {
+  const report = await collectReport({
+    env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "prelaunch" },
+  });
+  assert.equal(
+    find(report.checks, "launch_monitor_notification_mode").severity,
+    "critical",
+  );
+  const snapshot = healthySnapshot();
+  snapshot.publicEndpoints.storefront = { ok: false, code: "password_page" };
+  const privateReport = await collectReport({
+    env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "prelaunch" },
+    renderSnapshot: snapshot,
+  });
+  assert.equal(
+    find(privateReport.checks, "official_storefront").severity,
+    "critical",
+  );
+  assert.ok(
+    !privateReport.checks.some(
+      (check) => check.id === "launch_monitor_notification_mode",
+    ),
+  );
+});
 
 function mockIdempotentMail(testContext) {
   const requests = [];
@@ -58,6 +229,7 @@ function monitorMail(now = NOW, count = 1) {
     },
     env: {
       RESEND_API_KEY: "re_test_monitor",
+      LAUNCH_MONITOR_NOTIFICATION_MODE: "live",
       MAIL_FROM: "monitor@example.test",
       ADMIN_EMAIL: "operator@example.test",
     },
@@ -566,11 +738,17 @@ test("notification policy suppresses repeats, escalates, reminds, and recovers",
   const critical = reportWithStatus("critical");
   const healthy = reportWithStatus("healthy");
   assert.equal(
-    resolveNotificationKind({ report: healthy, previousStatus: "", now: NOW }),
+    resolveNotificationKind({
+      env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
+      report: healthy,
+      previousStatus: "",
+      now: NOW,
+    }),
     "started",
   );
   assert.equal(
     resolveNotificationKind({
+      env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
       report: warning,
       previousStatus: "warning",
       previousFingerprint: "same",
@@ -582,17 +760,19 @@ test("notification policy suppresses repeats, escalates, reminds, and recovers",
   );
   assert.equal(
     resolveNotificationKind({
+      env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
       report: warning,
       previousStatus: "warning",
       previousFingerprint: "same",
       currentFingerprint: "same",
-      lastNotifiedAt: new Date(NOW.getTime() - 121 * 60 * 1000),
+      lastNotifiedAt: new Date(NOW.getTime() - 24 * 60 * 60 * 1000),
       now: NOW,
     }),
     "alert",
   );
   assert.equal(
     resolveNotificationKind({
+      env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
       report: critical,
       previousStatus: "warning",
       previousFingerprint: "same",
@@ -604,6 +784,7 @@ test("notification policy suppresses repeats, escalates, reminds, and recovers",
   );
   assert.equal(
     resolveNotificationKind({
+      env: { LAUNCH_MONITOR_NOTIFICATION_MODE: "live" },
       report: healthy,
       previousStatus: "critical",
       now: NOW,
@@ -738,6 +919,7 @@ test("monitor run lock rejects concurrent runs and can be released", async () =>
 });
 
 async function collectReport({
+  renderSnapshot = healthySnapshot(),
   prismaClient = basePrisma(),
   withdrawal = withdrawalOperations(),
   integrity = launchIntegrity(),
@@ -755,10 +937,11 @@ async function collectReport({
   shippingProfiles = healthyProductShippingProfiles(),
 } = {}) {
   return collectLaunchMonitorReport({
-    renderSnapshot: healthySnapshot(),
+    renderSnapshot,
     prismaClient,
     env: {
       WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
+      LAUNCH_MONITOR_NOTIFICATION_MODE: "live",
       MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
       SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
       ...env,

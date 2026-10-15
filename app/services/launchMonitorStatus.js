@@ -1,4 +1,5 @@
 import { resolveOperationalTimingPolicy } from "./operationalTimingPolicy.js";
+import { resolveMonitorNotificationMode } from "./monitorNotificationPolicy.js";
 
 const EVENTS = new Set([
   "pending",
@@ -195,6 +196,7 @@ export function buildLaunchMonitorStatus({
       checkedAt: monitor.checkedAt,
     },
     configuration: {
+      notificationMode: resolveMonitorNotificationMode(env),
       scheduler:
         env.MAINTENANCE_SCHEDULER === "render"
           ? "render"
