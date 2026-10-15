@@ -36,6 +36,7 @@ test("empty history and inactive settings never look verified, fresh or publisha
   assert.equal(status.monitoring.current.code, "disabled");
   assert.equal(status.publication.status, "waiting");
   assert.equal(status.configuration.maintenanceAuthorized, false);
+  assert.equal(status.configuration.notificationMode, "prelaunch");
   assert.equal(Object.hasOwn(status.publication, "canGoLive"), false);
 });
 

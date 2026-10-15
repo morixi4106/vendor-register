@@ -2,9 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { sendMaintenanceFallback } from "../../scripts/maintenance-alert.mjs";
 
+test("prelaunch fallback is silent even if the general alert flag is enabled", async () => {
+  for (const mode of [undefined, "prelaunch", "paused", "invalid"])
+    assert.equal(
+      (
+        await sendMaintenanceFallback({
+          env: {
+            MAINTENANCE_ALERTS_ENABLED: "true",
+            LAUNCH_MONITOR_NOTIFICATION_MODE: mode,
+          },
+          fetchImpl: async () => assert.fail("quiet mode must not call GitHub"),
+        })
+      ).sent,
+      false,
+    );
+});
+
 test("fallback alerts are opt-in, contain no raw logs and are deduplicated", async () => {
   assert.equal((await sendMaintenanceFallback({ env: {} })).reason, "disabled");
   const env = {
+    LAUNCH_MONITOR_NOTIFICATION_MODE: "live",
     MAINTENANCE_ALERTS_ENABLED: "true",
     GITHUB_REPOSITORY: "owner/repo",
     MAINTENANCE_GITHUB_ALERT_TOKEN: "test-token-".repeat(4),
@@ -65,6 +82,7 @@ test("the caller's overall alert deadline also aborts each provider request", as
   await assert.rejects(
     sendMaintenanceFallback({
       env: {
+        LAUNCH_MONITOR_NOTIFICATION_MODE: "live",
         MAINTENANCE_ALERTS_ENABLED: "true",
         GITHUB_REPOSITORY: "owner/repo",
         MAINTENANCE_GITHUB_ALERT_TOKEN: "test-token-".repeat(4),

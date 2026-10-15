@@ -1,3 +1,9 @@
+import crypto from "node:crypto";
+import {
+  automaticMonitorNotificationsEnabled,
+  resolveMonitorNotificationMode,
+} from "../app/services/monitorNotificationPolicy.js";
+
 await main().catch(async (error) => {
   await sendAlert(error).catch(() => {});
   console.error(`launch monitor deadman failed: ${safeError(error)}`);
@@ -5,10 +11,7 @@ await main().catch(async (error) => {
 });
 
 async function main() {
-  for (const key of [
-    "LAUNCH_MONITOR_URL",
-    "LAUNCH_MONITOR_DEADMAN_TOKEN",
-  ]) {
+  for (const key of ["LAUNCH_MONITOR_URL", "LAUNCH_MONITOR_DEADMAN_TOKEN"]) {
     if (!String(process.env[key] || "").trim()) {
       throw new Error(`${key}_required`);
     }
@@ -32,6 +35,19 @@ async function main() {
   }
 
   if (payload.ok !== true || payload.status !== "healthy") {
+    if (resolveMonitorNotificationMode(process.env) === "prelaunch") {
+      console.log(
+        JSON.stringify({
+          ok: false,
+          status: payload.status,
+          ageMinutes: payload.ageMinutes,
+          checkCompleted: true,
+          notificationMode: "prelaunch",
+          mailSuppressed: true,
+        }),
+      );
+      return;
+    }
     throw new Error(`github_monitor_${safeStatus(payload.status)}`);
   }
   console.log(
@@ -55,28 +71,30 @@ function isDeadmanResponse(payload) {
 }
 
 async function sendAlert(error) {
+  if (!automaticMonitorNotificationsEnabled(process.env)) return;
   const apiKey = String(process.env.RESEND_API_KEY || "").trim();
   const from = String(process.env.MAIL_FROM || "").trim();
   const to = String(process.env.ADMIN_EMAIL || "").trim();
   if (!apiKey || !from || !to) return;
+  const message = {
+    from,
+    to,
+    subject: "公開監視の定期実行が停止しています",
+    text: [
+      "GitHub Actionsによる公開監視が15分以上確認できません。",
+      `検知日 (UTC): ${new Date().toISOString().slice(0, 10)}`,
+      `状態コード: ${safeError(error)}`,
+      "GitHub ActionsとRender Webサービスを確認してください。",
+    ].join("\n"),
+  };
   const response = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": `launch-monitor-deadman-${Math.floor(Date.now() / 3_600_000)}`,
+      "Idempotency-Key": `launch-monitor-deadman-${crypto.createHash("sha256").update(JSON.stringify(message)).digest("hex")}`,
     },
-    body: JSON.stringify({
-      from,
-      to,
-      subject: "公開監視の定期実行が停止しています",
-      text: [
-        "GitHub Actionsによる公開監視が15分以上確認できません。",
-        `確認時刻: ${new Date().toISOString()}`,
-        `状態コード: ${safeError(error)}`,
-        "GitHub ActionsとRender Webサービスを確認してください。",
-      ].join("\n"),
-    }),
+    body: JSON.stringify(message),
   });
   if (!response.ok) throw new Error(`deadman_email_${response.status}`);
 }

@@ -1,4 +1,12 @@
-import { isExpectedPasswordCriticalPayload } from "./launch-monitor-response-policy.mjs";
+import crypto from "node:crypto";
+import {
+  hasOnlyExpectedPrelaunchFindings,
+  isExpectedPasswordCriticalPayload,
+} from "./launch-monitor-response-policy.mjs";
+import {
+  automaticMonitorNotificationsEnabled,
+  resolveMonitorNotificationMode,
+} from "../app/services/monitorNotificationPolicy.js";
 import { inspectBackupAvailability } from "./maintenance-backup.mjs";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -149,6 +157,10 @@ async function main({ dryRun = false, expectPasswordCritical = false } = {}) {
   if (!response.ok || !isMonitorResponse(payload)) {
     throw new Error(`launch_monitor_endpoint_failed:${response.status}`);
   }
+  const expectedPrelaunchFindings =
+    !expectPasswordCritical &&
+    resolveMonitorNotificationMode(process.env) === "prelaunch" &&
+    hasOnlyExpectedPrelaunchFindings(payload);
 
   console.log(
     JSON.stringify({
@@ -167,19 +179,21 @@ async function main({ dryRun = false, expectPasswordCritical = false } = {}) {
         .filter((check) => check.status !== "healthy")
         .map(({ id, status, code, count }) => ({ id, status, code, count })),
       notificationKind: payload.notificationKind || null,
+      expectedPrelaunchFindings,
+      prelaunchOnly: expectedPrelaunchFindings,
       expectedPasswordCritical:
         expectPasswordCritical && isExpectedPasswordCriticalPayload(payload),
     }),
   );
 
-  if (payload.status === "critical") {
+  if (payload.status === "critical" && !expectedPrelaunchFindings) {
     if (
       !expectPasswordCritical ||
       !isExpectedPasswordCriticalPayload(payload)
     ) {
       process.exitCode = 2;
     }
-  } else if (expectPasswordCritical) {
+  } else if (expectPasswordCritical && !expectedPrelaunchFindings) {
     process.exitCode = 2;
   }
 }
@@ -305,28 +319,30 @@ async function listRenderLogs(
 }
 
 async function sendFallbackAlert(error) {
+  if (!automaticMonitorNotificationsEnabled(process.env)) return;
   const apiKey = String(process.env.RESEND_API_KEY || "").trim();
   const from = String(process.env.MAIL_FROM || "").trim();
   const to = String(process.env.ADMIN_EMAIL || "").trim();
   if (!apiKey || !from || !to) return;
+  const message = {
+    from,
+    to,
+    subject: "公開監視エージェント自体が停止しました",
+    text: [
+      "公開監視エージェントの実行に失敗しました。",
+      `検知日 (UTC): ${new Date().toISOString().slice(0, 10)}`,
+      `エラー: ${safeError(error)}`,
+      "RenderのCron JobとWebサービスを確認してください。",
+    ].join("\n"),
+  };
   const response = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": `launch-monitor-cron-${Math.floor(Date.now() / 3_600_000)}`,
+      "Idempotency-Key": `launch-monitor-cron-${crypto.createHash("sha256").update(JSON.stringify(message)).digest("hex")}`,
     },
-    body: JSON.stringify({
-      from,
-      to,
-      subject: "公開監視エージェント自体が停止しました",
-      text: [
-        "公開監視エージェントの実行に失敗しました。",
-        `時刻: ${new Date().toISOString()}`,
-        `エラー: ${safeError(error)}`,
-        "RenderのCron JobとWebサービスを確認してください。",
-      ].join("\n"),
-    }),
+    body: JSON.stringify(message),
   });
   if (!response.ok) throw new Error(`fallback_email_${response.status}`);
 }

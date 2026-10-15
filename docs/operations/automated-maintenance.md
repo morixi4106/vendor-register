@@ -7,6 +7,19 @@ calendar days after acknowledgement; urgent containment does not wait for it.
 
 ## Scope
 
+Before public sales, `LAUNCH_MONITOR_NOTIFICATION_MODE=prelaunch` is required on
+the Web service, Render runner and GitHub repository variables. Missing values
+also default to this quiet mode. Automatic incident, lifecycle and fallback
+notifications are suppressed; explicit receipt tests remain available. Checks
+and publication findings are still recorded. Expected password protection is a
+completed prelaunch check, not a public-sales success. Real critical findings
+and invalid transport still fail. Only explicit live-operation approval may
+change the mode to `live`; opening the storefront does not change it.
+
+Live incident repeats are bounded to once per day per retained incident, and
+acknowledgement suppresses repeats for seven days from the acknowledgement.
+Daily fallback messages use identical request bodies for identical keys.
+
 Routine dependency detection uses Dependabot. Daily verification reuses Quality
 checks. Only patch updates of `prettier`, `@types/eslint`, `@types/node`,
 `@types/react` and `@types/react-dom` can be merged automatically. Files other than

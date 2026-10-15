@@ -111,6 +111,12 @@ test("maintenance writers are opt-in and promotion never checks out PR code", as
     "utf8",
   );
   assert.match(fallback, /vars\.MAINTENANCE_ALERTS_ENABLED == 'true'/);
+  assert.match(fallback, /vars\.LAUNCH_MONITOR_NOTIFICATION_MODE == 'live'/);
+  const monitor = await readFile(launchWorkflowUrl, "utf8");
+  assert.match(
+    monitor,
+    /LAUNCH_MONITOR_NOTIFICATION_MODE:\s*\$\{\{\s*vars\.LAUNCH_MONITOR_NOTIFICATION_MODE\s*\}\}/,
+  );
   assert.doesNotMatch(fallback, /actions\/checkout|download-artifact/);
   const daily = await readFile(
     new URL(

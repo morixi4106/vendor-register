@@ -14,11 +14,14 @@ const ALLOWED_OWNER_RISK_WARNING_IDS = new Set([
 ]);
 
 export function isExpectedPasswordCriticalPayload(payload) {
-  if (
-    payload?.status !== "critical" ||
-    payload?.notificationKind !== "alert" ||
-    !Array.isArray(payload?.checks)
-  ) {
+  return (
+    payload?.notificationKind === "alert" &&
+    hasOnlyExpectedPrelaunchFindings(payload)
+  );
+}
+
+export function hasOnlyExpectedPrelaunchFindings(payload) {
+  if (payload?.status !== "critical" || !Array.isArray(payload?.checks)) {
     return false;
   }
 
