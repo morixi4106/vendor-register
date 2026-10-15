@@ -1,13 +1,17 @@
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 
 import { productionReadinessStyles } from "./ProductionReadinessPage.styles.js";
 import { KomojuLimitedLaunchBaselineControl } from "./KomojuLimitedLaunchBaselineControl.jsx";
 import { Metric, Status } from "./ProductionReadinessPrimitives.jsx";
 import { buildProductionReadinessPageState } from "./productionReadinessPageState.js";
-import {
-  CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS,
-  CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT,
-} from "../../services/checkoutValidationLiveProbe.js";
+import { operationalEvidenceAnchor } from "./launchPreparationViewModel.js";
+import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../../services/checkoutValidationLiveProbe.js";
 import {
   categoryLabel,
   heartbeatStatusLabel,
@@ -27,11 +31,9 @@ export default function ProductionReadinessPage() {
     isLimitedLaunchBaselineSubmitting,
     displaySummary,
     orderedChecks,
-    checkoutValidationPrepared,
-    checkoutValidationActive,
     standardDirect,
-    checkoutValidationUnavailable,
     checkoutReplayReady,
+    launchPreparation,
   } = buildProductionReadinessPageState(data, navigation);
   return (
     <div className="readiness-page">
@@ -46,115 +48,94 @@ export default function ProductionReadinessPage() {
             </p>
           </div>
           <span
-            className={`readiness-badge ${
-              data.canGoLive ? "readiness-badge--pass" : "readiness-badge--fail"
-            }`}
+            className={`readiness-badge ${`readiness-badge--${launchPreparation.verdict.status}`}`}
           >
-            {data.canGoLive ? "公開条件を満たしています" : "公開前の対応が必要"}
+            {launchPreparation.verdict.label}
           </span>
         </div>
       </section>
 
       <section
-        className="readiness-card readiness-next-step"
+        className="readiness-preparation"
+        aria-labelledby="readiness-preparation-title"
+      >
+        <h2
+          className="readiness-section-title"
+          id="readiness-preparation-title"
+        >
+          公開準備の状況
+        </h2>
+        <dl className="readiness-preparation-grid">
+          <div>
+            <dt>現在の購入経路</dt>
+            <dd>{launchPreparation.modeLabel}</dd>
+            <dd>
+              <span
+                className={`readiness-status readiness-status--${launchPreparation.checkout.status}`}
+              >
+                {launchPreparation.checkout.label}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>実地確認の証跡</dt>
+            <dd>
+              {launchPreparation.evidence.available
+                ? `確認済み ${launchPreparation.evidence.confirmedCount} / 対象 ${launchPreparation.evidence.requiredCount}件`
+                : "取得未確認"}
+            </dd>
+            <dd>
+              未完了 {launchPreparation.evidence.pendingCount}件 / 国内限定例外{" "}
+              {launchPreparation.evidence.acceptedCount}件
+            </dd>
+          </div>
+          <div>
+            <dt>海外販売</dt>
+            <dd>
+              <span
+                className={`readiness-status readiness-status--${launchPreparation.international.status}`}
+              >
+                {launchPreparation.international.label}
+              </span>
+            </dd>
+            <dd>{launchPreparation.international.detail}</dd>
+          </div>
+          <div>
+            <dt>自動監視通知</dt>
+            <dd>{launchPreparation.notificationLabel}</dd>
+            <dd>
+              <Link className="readiness-link" to="/app/launch-monitor">
+                通知の確認状況
+              </Link>
+            </dd>
+          </div>
+        </dl>
+        <div className="readiness-observation">
+          <span>判定取得：{launchPreparation.observedAt} JST</span>
+          <span>リリース：{launchPreparation.releaseId}</span>
+        </div>
+      </section>
+
+      <section
+        className="readiness-preparation"
         aria-labelledby="readiness-next-step-title"
       >
-        <div className="readiness-next-step__body">
-          <p className="readiness-next-step__eyebrow">次にやること</p>
-          <h2
-            className="readiness-next-step__title"
-            id="readiness-next-step-title"
-          >
-            {standardDirect
-              ? checkoutValidationActive
-                ? "マーケットプレイス用購入制御を無効化します"
-                : "標準チェックアウトの準備ができています"
-              : checkoutValidationActive
-                ? "購入制御は有効です"
-                : checkoutValidationPrepared
-                  ? checkoutReplayReady
-                    ? "購入制御を有効化できます"
-                    : "次はFunction再生確認を記録します"
-                  : checkoutValidationUnavailable
-                    ? "購入制御の状態を確認してください"
-                    : "購入制御を無効状態で準備します"}
-          </h2>
-          <p className="readiness-next-step__text">
-            {standardDirect
-              ? checkoutValidationActive
-                ? "国内運営直販ではShopify標準チェックアウトとKOMOJUを使います。第三者販売は停止済みのため、旧Validationを無効化してください。"
-                : "KOMOJU本番カード1件で、Shopify注文、Webhook、SellerOrder、売上台帳の一致を確認します。16シナリオと着金・返金は公開前の必須条件ではありません。"
-              : checkoutValidationActive
-                ? `次は実ストアで${CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIO_COUNT}個の必須シナリオを確認し、現在のリリースに証跡を記録します。`
-                : checkoutValidationPrepared
-                  ? checkoutReplayReady
-                    ? "再生確認は記録済みです。下の購入制御欄で内容を確認してから有効化します。"
-                    : "まだ購入は止まりません。開発ストアでFunctionの許可・遮断を再生確認し、その証跡を記録します。"
-                  : checkoutValidationUnavailable
-                    ? "Shopifyとの接続状態または購入制御の重複を、下の詳細欄で確認してください。"
-                    : "購入を止めない無効状態の設定だけをShopifyへ作成します。作成後もストアの購入動作は変わりません。"}
-          </p>
-        </div>
-        <div className="readiness-next-step__actions">
-          {standardDirect && checkoutValidationActive ? (
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="disable_checkout_validation_for_standard_direct"
-              />
-              <button
-                className="readiness-button"
-                type="submit"
-                disabled={isCheckoutValidationSubmitting}
-              >
-                {isCheckoutValidationSubmitting
-                  ? "無効化を確認中"
-                  : "標準チェックアウトへ切り替える"}
-              </button>
-            </Form>
-          ) : !standardDirect &&
-            !checkoutValidationPrepared &&
-            !checkoutValidationActive &&
-            !checkoutValidationUnavailable ? (
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="stage_checkout_validation"
-              />
-              <button
-                className="readiness-button"
-                type="submit"
-                disabled={isCheckoutValidationSubmitting}
-              >
-                {isCheckoutValidationSubmitting
-                  ? "準備しています"
-                  : "購入制御を無効状態で準備"}
-              </button>
-            </Form>
-          ) : null}
-          {!standardDirect ? (
-            <a
-              className="readiness-secondary-link"
-              href={
-                checkoutValidationPrepared &&
-                !checkoutValidationActive &&
-                !checkoutReplayReady
-                  ? "#checkout-validation-replay-evidence"
-                  : "#checkout-validation-control"
-              }
-            >
-              {checkoutValidationActive
-                ? "状態を確認"
-                : checkoutValidationPrepared
-                  ? checkoutReplayReady
-                    ? "確認と有効化へ"
-                    : "再生証跡を記録"
-                  : "詳しい説明を見る"}
-            </a>
-          ) : null}
-        </div>
+        <h2 className="readiness-section-title" id="readiness-next-step-title">
+          次にやること
+        </h2>
+        <ol className="readiness-next-actions">
+          {launchPreparation.nextActions.map((item) => (
+            <li key={item.id}>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+              <Link className="readiness-link" to={item.to}>
+                確認へ
+              </Link>
+            </li>
+          ))}
+        </ol>
       </section>
 
       <section className="readiness-card">
@@ -168,7 +149,8 @@ export default function ProductionReadinessPage() {
                 : "送信可能"}
             </p>
             <p className="readiness-tool__text">
-              撤回受付・返送案内・返金などの法務メールだけをHELDへ移します。ログインコードと監視通知は継続します。
+              撤回受付・返送案内・返金などの法務メールが対象です。監視通知は別設定：
+              {launchPreparation.notificationLabel}。
             </p>
           </div>
           {data.platformOperationalControl?.legalEmailHold ? (
@@ -236,7 +218,8 @@ export default function ProductionReadinessPage() {
                 : "送信可能"}
             </p>
             <p className="readiness-tool__text">
-              販促・AI・補助的な自動通知だけを停止します。ログインコード、法務通知、注文通知、監視通知は別の制御で継続します。
+              対象は販促・AI・補助的な自動通知です。ログインコード・法務・注文メールは別制御です。監視通知：
+              {launchPreparation.notificationLabel}。
             </p>
           </div>
           {data.platformOperationalControl?.automatedEmailHold ? (
@@ -295,10 +278,12 @@ export default function ProductionReadinessPage() {
         ) : null}
       </section>
 
-      <section className="readiness-card">
+      <section className="readiness-card" id="operational-evidence">
         <h2 className="readiness-section-title">実地確認の証跡</h2>
         <p className="readiness-subtitle">
-          設定値では確認できない項目を、確認者・証跡・有効期限つきで管理します。期限切れは自動的に本番ブロッカーへ戻ります。
+          未確認 {launchPreparation.evidence.pendingCount}件、うち国内限定例外{" "}
+          {launchPreparation.evidence.acceptedCount}
+          件。例外は実確認済みではなく、海外販売の確認には流用できません。
         </p>
         <div className="readiness-table-wrap">
           <table className="readiness-table">
@@ -315,12 +300,7 @@ export default function ProductionReadinessPage() {
                 .map((row) => (
                   <tr
                     key={row.definition.key}
-                    id={
-                      row.definition.key ===
-                      "CHECKOUT_VALIDATION_REPLAY_COMPLETED"
-                        ? "checkout-validation-replay-evidence"
-                        : undefined
-                    }
+                    id={operationalEvidenceAnchor(row.definition.key)}
                   >
                     <td>
                       <strong>{row.definition.label}</strong>
@@ -334,14 +314,29 @@ export default function ProductionReadinessPage() {
                       ) : null}
                     </td>
                     <td>
-                      {row.ready ? "確認済み" : "要確認"}
-                      {(row.effectiveAttestation || row.attestation)?.expiresAt
-                        ? ` / ${new Date(
-                            (row.effectiveAttestation || row.attestation)
-                              .expiresAt,
-                          ).toLocaleDateString("ja-JP")}まで`
-                        : ""}
-                      {row.substitutedBy ? " / 国内直販限定" : ""}
+                      <span
+                        className={`readiness-status readiness-status--${launchPreparation.evidenceByKey[row.definition.key]?.status || "manual"}`}
+                      >
+                        {launchPreparation.evidenceByKey[row.definition.key]
+                          ?.label || "取得未確認"}
+                      </span>
+                      <p className="readiness-evidence-reason">
+                        {
+                          launchPreparation.evidenceByKey[row.definition.key]
+                            ?.reason
+                        }
+                      </p>
+                      {launchPreparation.evidenceByKey[row.definition.key]
+                        ?.expiresAt ? (
+                        <div>
+                          期限：
+                          {
+                            launchPreparation.evidenceByKey[row.definition.key]
+                              .expiresAt
+                          }{" "}
+                          JST
+                        </div>
+                      ) : null}
                     </td>
                     <td>
                       {row.definition.key ===
@@ -615,7 +610,7 @@ export default function ProductionReadinessPage() {
             </p>
             <p className="readiness-tool__text">
               {standardDirect
-                ? "国内運営直販はShopify標準チェックアウトとKOMOJUへ任せます。第三者販売を再開するまでは、マーケットプレイス用Validationを無効にします。"
+                ? "現在は国内運営直販の標準チェックアウト設定です。海外販売は別途、販売国・配送経路と購入制御の適合確認が必要です。"
                 : "Shopify標準チェックアウト、Shop Payなどを含む購入処理をShopify Functionsで検証します。制御関数の実行失敗時も購入を拒否します。"}
             </p>
           </div>
@@ -637,7 +632,7 @@ export default function ProductionReadinessPage() {
                   </button>
                 </Form>
               ) : (
-                <strong>標準チェックアウトへ切り替え済み</strong>
+                <strong>{launchPreparation.checkout.label}</strong>
               )}
             </div>
           ) : (
@@ -883,7 +878,7 @@ export default function ProductionReadinessPage() {
         </section>
       ) : null}
 
-      <section className="readiness-card">
+      <section className="readiness-card" id="readiness-check-results">
         <h2 className="readiness-section-title">チェック結果</h2>
         <div className="readiness-table-wrap">
           <table className="readiness-table">
