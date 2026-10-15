@@ -17,10 +17,119 @@ import {
   resolveLaunchMonitorCampaign,
   resolveNotificationKind,
   sanitizeLaunchMonitorResult,
+  sendLaunchMonitorEmail,
 } from "../../app/services/launchMonitor.server.js";
 import { OPERATIONAL_READINESS_DEFINITIONS } from "../../app/services/operationalReadiness.server.js";
 
 const NOW = new Date("2026-07-18T00:00:00.000Z");
+
+function mockIdempotentMail(testContext) {
+  const requests = [];
+  const accepted = new Map();
+  testContext.mock.method(globalThis, "fetch", async (_url, options) => {
+    const key = new Headers(options.headers).get("idempotency-key");
+    const body = JSON.parse(options.body);
+    const serialized = JSON.stringify(body);
+    requests.push({ key, body });
+    const previous = accepted.get(key);
+    if (previous && previous.body !== serialized)
+      return Response.json(
+        { name: "invalid_idempotent_request", message: "Payload changed" },
+        { status: 409 },
+      );
+    if (!previous)
+      accepted.set(key, { body: serialized, id: `mail-${accepted.size + 1}` });
+    return Response.json({ id: accepted.get(key).id });
+  });
+  return { requests, accepted };
+}
+
+function monitorMail(now = NOW, count = 1) {
+  return {
+    kind: "alert",
+    report: {
+      overallStatus: "critical",
+      checks: [{ id: "render_app_errors", severity: "critical", count }],
+    },
+    state: {
+      startedAt: new Date("2026-07-17T00:00:00Z"),
+      endsAt: new Date("2026-07-20T00:00:00Z"),
+      now,
+    },
+    env: {
+      RESEND_API_KEY: "re_test_monitor",
+      MAIL_FROM: "monitor@example.test",
+      ADMIN_EMAIL: "operator@example.test",
+    },
+  };
+}
+
+test("monitor mail retries reuse a key only for an identical payload", async (t) => {
+  const transport = mockIdempotentMail(t);
+  const first = await sendLaunchMonitorEmail(monitorMail());
+  const second = await sendLaunchMonitorEmail(monitorMail());
+  assert.equal(first.providerMessageId, second.providerMessageId);
+  assert.equal(transport.accepted.size, 1);
+  assert.equal(transport.requests[0].key, transport.requests[1].key);
+});
+
+test("same-hour monitor notifications with a new timestamp do not conflict", async (t) => {
+  const transport = mockIdempotentMail(t);
+  await sendLaunchMonitorEmail(monitorMail());
+  await sendLaunchMonitorEmail(
+    monitorMail(new Date("2026-07-18T00:30:00.000Z")),
+  );
+  assert.equal(transport.accepted.size, 2);
+  assert.notEqual(transport.requests[0].key, transport.requests[1].key);
+});
+
+test("monitor mail keys distinguish changed counts and notification routes", async (t) => {
+  const transport = mockIdempotentMail(t);
+  await sendLaunchMonitorEmail(monitorMail());
+  await sendLaunchMonitorEmail(monitorMail(NOW, 2));
+  const rerouted = monitorMail();
+  rerouted.env.ADMIN_EMAIL = "backup@example.test";
+  await sendLaunchMonitorEmail(rerouted);
+  assert.equal(transport.accepted.size, 3);
+  assert.equal(new Set(transport.requests.map((r) => r.key)).size, 3);
+  assert.ok(transport.requests.every((r) => r.key.length <= 256));
+  assert.ok(transport.requests.every((r) => !r.key.includes("example")));
+});
+
+for (const name of ["invalid_idempotent_request", "rate_limit_exceeded"]) {
+  test(`monitor mail exposes only an allowlisted provider failure code: ${name}`, async (t) => {
+    t.mock.method(globalThis, "fetch", async () =>
+      Response.json(
+        { name, message: "private operator@example.test provider details" },
+        { status: 409 },
+      ),
+    );
+    await assert.rejects(sendLaunchMonitorEmail(monitorMail()), (error) => {
+      assert.equal(error.message, "launch_monitor_email_failed");
+      assert.equal(error.code, `launch_monitor_email_${name}`);
+      assert.ok(!JSON.stringify(error).includes("example.test"));
+      return true;
+    });
+  });
+}
+
+test("monitor mail never logs unknown provider error names or messages", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      {
+        name: "operator@example.test",
+        message: "private provider details",
+      },
+      { status: 500 },
+    ),
+  );
+  await assert.rejects(sendLaunchMonitorEmail(monitorMail()), (error) => {
+    assert.equal(error.message, "launch_monitor_email_failed");
+    assert.equal(error.code, undefined);
+    assert.ok(!String(error.stack).includes("example.test"));
+    return true;
+  });
+});
 
 test("evaluateRenderSnapshot marks 5xx and app errors as critical", () => {
   const view = evaluateRenderSnapshot({

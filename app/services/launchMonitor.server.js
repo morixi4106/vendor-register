@@ -1407,17 +1407,29 @@ export async function sendLaunchMonitorEmail({ kind, report, state, env }) {
   }
   lines.push("", "確認先: Shopify管理画面 > アプリ > 本番確認 / 公開監視");
 
+  const message = { from, to, subject: title, text: lines.join("\n") };
+  // A provider key must never be reused with different request content.
   const idempotencyKey = `launch-monitor-${kind}-${crypto
     .createHash("sha256")
-    .update(`${kind}:${fingerprintReport(report)}:${hourBucket(state.now)}`)
+    .update(JSON.stringify(message))
     .digest("hex")
     .slice(0, 40)}`;
-  const response = await new Resend(apiKey).emails.send(
-    { from, to, subject: title, text: lines.join("\n") },
-    { idempotencyKey },
-  );
+  const response = await new Resend(apiKey).emails.send(message, {
+    idempotencyKey,
+  });
   if (response?.error) {
-    throw new Error("launch_monitor_email_failed");
+    const error = new Error("launch_monitor_email_failed");
+    if (
+      [
+        "invalid_idempotent_request",
+        "concurrent_idempotent_requests",
+        "rate_limit_exceeded",
+        "daily_quota_exceeded",
+        "monthly_quota_exceeded",
+      ].includes(response.error.name)
+    )
+      error.code = `launch_monitor_email_${response.error.name}`;
+    throw error;
   }
   if (isEnabled(env.LAUNCH_MONITOR_DELIVERY_PROOF_REQUIRED))
     await recordMonitorMailAccepted({
@@ -1632,9 +1644,4 @@ function formatJst(value) {
         timeStyle: "medium",
       }).format(date)
     : "-";
-}
-
-function hourBucket(value) {
-  const date = parseDate(value) || new Date();
-  return Math.floor(date.getTime() / (60 * 60 * 1000));
 }
