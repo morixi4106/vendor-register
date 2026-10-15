@@ -38,7 +38,7 @@ import {
   inspectOperationEnvironment,
   inspectStripeEnvironment,
 } from "./environment.server.js";
-import { buildShopifyChecks } from "./shopify.server.js";
+import { buildShopifyChecks, buildShopifyReadiness } from "./shopify.server.js";
 import {
   buildPayoutChecks,
   buildSellerChecks,
@@ -314,16 +314,15 @@ export async function getProductionReadiness({
       publishableKeyMode: stripeEnv.publishableKeyMode,
       platformAccount: platformStripeAccount,
     },
-    shopify: {
+    shopify: buildShopifyReadiness({
       configuredScopes,
       grantedScopes,
-      evaluatedShopDomain: normalizedShopDomain || null,
-      offlineSessionFound: Boolean(targetOfflineSession),
-      productSync: shopifyProductSync,
-      offlineSessionShops: sessions
-        .map((session) => session.shop)
-        .filter(Boolean),
-    },
+      normalizedShopDomain,
+      targetOfflineSession,
+      shopifyProductSync,
+      productShippingProfiles,
+      sessions,
+    }),
     sellers: {
       totalCount: marketplaceSellerRows.length,
       activeCount: marketplaceSellerRows.filter(
