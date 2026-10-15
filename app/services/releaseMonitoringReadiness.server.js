@@ -59,7 +59,7 @@ export async function inspectReleaseMonitoringReadiness({
 
 export function buildReleaseMonitoringChecks(
   inspection,
-  { env = process.env } = {},
+  { env = process.env, checkoutMode = null } = {},
 ) {
   const monitor = inspection?.monitor || unavailableState("not_inspected");
   const watchdog = inspection?.watchdog || unavailableState("not_inspected");
@@ -84,7 +84,11 @@ export function buildReleaseMonitoringChecks(
     },
   ];
 
-  if (!isShopifyStandardDirectCheckoutMode(env)) {
+  if (
+    !(checkoutMode
+      ? checkoutMode.standardDirectReady
+      : isShopifyStandardDirectCheckoutMode(env))
+  ) {
     checks.push({
       id: "independent_sale_eligibility_watchdog_live",
       category: "operations",

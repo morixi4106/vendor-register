@@ -17,7 +17,10 @@ function normalizeMode(value) {
     : PLATFORM_DIRECT_CHECKOUT_MODE.MARKETPLACE_VALIDATED;
 }
 
-export function inspectPlatformDirectCheckoutMode(env = process.env) {
+export function inspectPlatformDirectCheckoutMode(
+  env = process.env,
+  observedScope,
+) {
   const requestedMode = normalizeMode(env.PLATFORM_DIRECT_CHECKOUT_MODE);
   const thirdPartyCommerceDisabled = isThirdPartyCommerceDisabled(env);
   const enabledThirdPartyFlags = THIRD_PARTY_COMMERCE_FLAGS.filter((key) => {
@@ -29,7 +32,11 @@ export function inspectPlatformDirectCheckoutMode(env = process.env) {
   const standardDirectRequested =
     requestedMode === PLATFORM_DIRECT_CHECKOUT_MODE.SHOPIFY_STANDARD_DIRECT;
   const standardDirectReady =
-    standardDirectRequested && thirdPartyCommerceDisabled;
+    standardDirectRequested &&
+    thirdPartyCommerceDisabled &&
+    (observedScope === undefined ||
+      (observedScope.available === true &&
+        observedScope.internationalConfigured !== true));
 
   return {
     requestedMode,
@@ -40,13 +47,29 @@ export function inspectPlatformDirectCheckoutMode(env = process.env) {
     standardDirectReady,
     thirdPartyCommerceDisabled,
     enabledThirdPartyFlags,
+    ...(observedScope === undefined
+      ? {}
+      : {
+          scopeAvailable: observedScope.available === true,
+          internationalConfigured:
+            observedScope.internationalConfigured === true,
+        }),
     reason:
       standardDirectRequested && !thirdPartyCommerceDisabled
         ? "third_party_commerce_must_be_disabled"
-        : null,
+        : observedScope !== undefined && observedScope.available !== true
+          ? "checkout_scope_unverified"
+          : standardDirectRequested &&
+              observedScope?.internationalConfigured === true
+            ? "international_sales_require_validation"
+            : null,
   };
 }
 
-export function isShopifyStandardDirectCheckoutMode(env = process.env) {
-  return inspectPlatformDirectCheckoutMode(env).standardDirectReady;
+export function isShopifyStandardDirectCheckoutMode(
+  env = process.env,
+  observedScope,
+) {
+  return inspectPlatformDirectCheckoutMode(env, observedScope)
+    .standardDirectReady;
 }

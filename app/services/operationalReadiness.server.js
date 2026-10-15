@@ -20,7 +20,8 @@ import {
 } from "./komojuLimitedLaunchReadiness.server.js";
 import { buildOperationalReadinessChecks } from "./operationalReadinessChecks.js";
 import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "./checkoutValidationLiveProbe.js";
-import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { inspectCheckoutCommerceContext } from "./checkoutCommerceContext.server.js";
+import { inspectOperationEnvironment } from "./productionReadiness/environment.server.js";
 
 export { KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY };
 export { buildOperationalReadinessChecks };
@@ -145,8 +146,13 @@ const STANDARD_DIRECT_SUPPLEMENTAL_KEYS = new Set([
   KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
 ]);
 
-function resolveOperationalReadinessDefinitions(env) {
-  const standardDirect = isShopifyStandardDirectCheckoutMode(env);
+function resolveOperationalReadinessDefinitions(env, checkoutMode) {
+  const standardDirect = checkoutMode.standardDirectReady;
+  const unusedShopifyPayments =
+    checkoutMode.thirdPartyCommerceDisabled &&
+    !inspectOperationEnvironment(env).paymentProviders.includes(
+      "shopify_payments",
+    );
   return OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
     ...definition,
     supplemental: standardDirect
@@ -155,9 +161,15 @@ function resolveOperationalReadinessDefinitions(env) {
         : STANDARD_DIRECT_SUPPLEMENTAL_KEYS.has(definition.key)
           ? true
           : definition.supplemental === true
-      : definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+      : unusedShopifyPayments &&
+          [
+            "SHOPIFY_PAYMENTS_LIVE_CONFIRMED",
+            SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY,
+          ].includes(definition.key)
         ? true
-        : definition.supplemental === true,
+        : definition.key === PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY
+          ? true
+          : definition.supplemental === true,
   }));
 }
 
@@ -1736,11 +1748,16 @@ export async function inspectOperationalReadiness({
   prismaClient = prisma,
   now = new Date(),
   env = process.env,
+  checkoutContext = null,
 } = {}) {
-  const definitions = resolveOperationalReadinessDefinitions(env);
+  const context =
+    checkoutContext ||
+    (await inspectCheckoutCommerceContext({ prismaClient, env, now }));
+  const definitions = resolveOperationalReadinessDefinitions(env, context.mode);
   if (!prismaClient?.operationalReadinessAttestation?.findMany) {
     return {
       available: false,
+      checkoutMode: context.mode,
       definitions,
       attestations: [],
       rows: definitions.map((definition) => ({
@@ -1840,18 +1857,23 @@ export async function inspectOperationalReadiness({
     };
   });
 
-  const effectiveRows = isShopifyStandardDirectCheckoutMode(env)
-    ? rows
-    : await applyKomojuLimitedLaunchReadiness({
-        rows,
-        prismaClient,
-        env,
-        now,
-        strictCheckKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
-      });
+  const effectiveRows =
+    context.mode.standardDirectReady ||
+    !context.mode.scopeAvailable ||
+    context.mode.internationalConfigured ||
+    context.mode.reason
+      ? rows
+      : await applyKomojuLimitedLaunchReadiness({
+          rows,
+          prismaClient,
+          env,
+          now,
+          strictCheckKey: LIVE_ORDER_REFUND_E2E_CHECK_KEY,
+        });
 
   return {
     available: true,
+    checkoutMode: context.mode,
     definitions,
     attestations,
     rows: effectiveRows,

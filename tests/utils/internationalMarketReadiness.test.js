@@ -36,7 +36,9 @@ test("domestic destination does not require international market evidence", () =
 test("EU destination requires common and EU-specific evidence", () => {
   const requirements = getInternationalMarketRequirements("FR");
   assert.equal(
-    requirements.some((entry) => entry.code === "EU_WITHDRAWAL_OPERATION_READY"),
+    requirements.some(
+      (entry) => entry.code === "EU_WITHDRAWAL_OPERATION_READY",
+    ),
     true,
   );
   assert.equal(
@@ -62,6 +64,34 @@ test("current complete market evidence allows the destination", () => {
   assert.deepEqual(result.reasons, []);
 });
 
+test("legacy shop-domain confirmation requires a named operator to reconfirm", () => {
+  const now = new Date("2026-10-15T00:00:00Z");
+  const attestations = buildConfirmedAttestations("US", now);
+  attestations[0].confirmedBy = "example.myshopify.com";
+  const original = structuredClone(attestations);
+  const result = evaluateInternationalMarketReadiness({
+    countryCode: "US",
+    attestations,
+    now,
+  });
+  assert.equal(result.ready, false);
+  assert.ok(
+    result.reasons.some((reason) =>
+      reason.endsWith("market_evidence_confirmer_reverification_required"),
+    ),
+  );
+  assert.deepEqual(attestations, original);
+  attestations[0].confirmedBy = "shopify_user:123";
+  assert.equal(
+    evaluateInternationalMarketReadiness({
+      countryCode: "US",
+      attestations,
+      now,
+    }).ready,
+    true,
+  );
+});
+
 test("missing confirmation and expired evidence fail closed", () => {
   const now = new Date("2026-09-19T00:00:00.000Z");
   const attestations = buildConfirmedAttestations("FR", now);
@@ -76,9 +106,14 @@ test("missing confirmation and expired evidence fail closed", () => {
     now,
   });
   assert.equal(result.ready, false);
-  assert.equal(result.reasons.some((reason) => reason.includes("expired")), true);
   assert.equal(
-    result.reasons.some((reason) => reason.includes("market_confirmation_missing")),
+    result.reasons.some((reason) => reason.includes("expired")),
+    true,
+  );
+  assert.equal(
+    result.reasons.some((reason) =>
+      reason.includes("market_confirmation_missing"),
+    ),
     true,
   );
 });

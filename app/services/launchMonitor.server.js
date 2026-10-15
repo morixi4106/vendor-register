@@ -44,6 +44,10 @@ import {
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
 import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 import {
+  inspectCheckoutCommerceContext,
+  buildCheckoutCommerceScopeCheck,
+} from "./checkoutCommerceContext.server.js";
+import {
   getDomesticMarketplacePilotDashboard,
   isDomesticMarketplacePilotEnabled,
 } from "./domesticMarketplacePilot.server.js";
@@ -78,6 +82,7 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "payment_settlements_unmatched",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
+  "platform_direct_checkout_scope",
   "product_shipping_profiles_available",
   "marketplace_checkout_publication_boundary",
   "marketplace_checkout_server_validation",
@@ -738,6 +743,17 @@ export async function collectLaunchMonitorReport({
   }
 
   if (runHeavyChecks) {
+    const checkoutContext = await inspectCheckoutCommerceContext({
+      prismaClient,
+      env,
+      now,
+      inspectShippingProfilesImpl: inspectProductShippingProfilesImpl,
+    });
+    const scopeCheck = readinessCheckToMonitorCheck(
+      buildCheckoutCommerceScopeCheck(checkoutContext.mode),
+    );
+    heavyChecks.push(scopeCheck);
+    checks.push(scopeCheck);
     let checkoutBoundaryCompleted = false;
     let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;
@@ -782,7 +798,7 @@ export async function collectLaunchMonitorReport({
         await inspectMarketplaceCheckoutValidationImpl(shopDomain);
       const validationCheck = readinessCheckToMonitorCheck(
         buildMarketplaceCheckoutValidationReadinessCheck(validationStatus, {
-          standardDirect: isShopifyStandardDirectCheckoutMode(env),
+          standardDirect: checkoutContext.mode.standardDirectReady,
         }),
       );
       heavyChecks.push(validationCheck);
@@ -828,16 +844,13 @@ export async function collectLaunchMonitorReport({
       checks.push(failure);
     }
     try {
-      const shippingProfiles = await inspectProductShippingProfilesImpl({
-        prismaClient,
-        now,
-      });
+      const shippingProfiles = checkoutContext.shippingProfiles;
       const shippingChecks = buildProductShippingProfileChecks(shippingProfiles)
         .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
         .map(readinessCheckToMonitorCheck);
       heavyChecks.push(...shippingChecks);
       checks.push(...shippingChecks);
-      productShippingProfilesCompleted = true;
+      productShippingProfilesCompleted = checkoutContext.mode.scopeAvailable;
     } catch (error) {
       const failure = issueCheck(
         "international_product_readiness",
@@ -851,7 +864,12 @@ export async function collectLaunchMonitorReport({
     try {
       const [operationalReadiness, platformOperationalControl] =
         await Promise.all([
-          inspectOperationalReadinessImpl({ prismaClient, now }),
+          inspectOperationalReadinessImpl({
+            prismaClient,
+            now,
+            env,
+            checkoutContext,
+          }),
           getPlatformOperationalControlImpl({ prismaClient }),
         ]);
       const operationalChecks = buildOperationalReadinessChecks({

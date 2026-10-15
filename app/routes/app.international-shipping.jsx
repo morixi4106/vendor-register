@@ -17,7 +17,13 @@ import {
 import { useState } from "react";
 
 import prisma from "../db.server.js";
-import { authenticate } from "../shopify.server";
+import {
+  MARKETPLACE_OPERATOR_ROLES,
+  requireMarketplaceOperator,
+} from "../utils/marketplaceOperator.server.js";
+import { resolveInternationalShippingOperatorRole } from "../utils/marketplaceOperatorRoles.js";
+import { readBoundedFormData } from "../utils/requestBody.server.js";
+import { requirePostRequest } from "../utils/internalRouteSecurity.server.js";
 import { saveInternationalMarketEvidence } from "../services/internationalMarketReadiness.server.js";
 import { syncInternationalSaleGate } from "../services/internationalSaleGate.server.js";
 import { saveInternationalShippingCountryAvailability } from "../services/internationalShippingAvailability.server.js";
@@ -110,7 +116,13 @@ function EvidenceCheckbox({ name, checked, onChange }) {
 }
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  await requireMarketplaceOperator(request, {
+    roles: [
+      MARKETPLACE_OPERATOR_ROLES.ADMIN,
+      MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER,
+      MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
+    ],
+  });
 
   const [rows, evidenceRows] = await Promise.all([
     prisma.internationalShippingCountryAvailability.findMany({
@@ -129,24 +141,33 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const intent = String(formData.get("intent") || "saveShipping");
-  const confirmedBy =
-    String(session?.email || session?.userId || session?.shop || "").trim() ||
-    null;
+  requirePostRequest(request);
+  const formData = await readBoundedFormData(request);
+  const intent = String(formData.get("intent") || "");
+  const role = resolveInternationalShippingOperatorRole(intent);
+  if (!role) {
+    return Response.json(
+      { ok: false, error: "対応していない操作です。" },
+      { status: 400, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  const { session, operator } = await requireMarketplaceOperator(request, { role });
+  const confirmedBy = operator.actorKey;
 
   try {
     if (intent === "syncInternationalSaleGate") {
       const result = await syncInternationalSaleGate({
         shopDomain: session?.shop,
       });
-      return Response.json({
-        ok: true,
-        message: `Shopifyへ同期し、読み戻しました。販売可能国: ${
-          result.allowedCountries.join(", ") || "なし"
-        }`,
-      });
+      return Response.json(
+        {
+          ok: true,
+          message: `Shopifyへ同期し、読み戻しました。販売可能国: ${
+            result.allowedCountries.join(", ") || "なし"
+          }`,
+        },
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
     } else if (intent === "saveMarketEvidence") {
       const requirement = getInternationalMarketRequirements(
         formData.get("countryCode"),
@@ -166,7 +187,7 @@ export const action = async ({ request }) => {
         ),
         notes: formData.get("note"),
       });
-    } else {
+    } else if (intent === "saveShipping") {
       await saveInternationalShippingCountryAvailability({
         countryCode: formData.get("countryCode"),
         status: formData.get("status"),
@@ -196,17 +217,19 @@ export const action = async ({ request }) => {
         note: formData.get("note"),
       });
     }
-  } catch (error) {
+  } catch {
     return Response.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "保存できませんでした。",
+        error: "保存できませんでした。確認項目・証拠・同期状態を確認してください。",
       },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 
-  return redirect("/app/international-shipping");
+  return redirect("/app/international-shipping", {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 };
 
 export default function InternationalShippingPage() {
