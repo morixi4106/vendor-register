@@ -94,6 +94,7 @@ export async function exportInternationalProofArtifact({
     ],
     cwd: path.join(root, "extensions/marketplace-purchase-control"),
     timeoutMs: 180000,
+    sourceEnv: { ...process.env, PATH: [path.join(root, "node_modules/.bin"), process.env.PATH || process.env.Path || ""].join(path.delimiter) },
   });
   const files = collectProofDeploymentFiles(root);
   if (proofHash(listFiles(before)) !== proofHash(listFiles(files)))
