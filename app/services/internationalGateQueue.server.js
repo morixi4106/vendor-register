@@ -76,6 +76,7 @@ export async function invalidateInternationalGates(
       data: {
         shopDomain: state.shopDomain,
         generation,
+        authorizationRequestId: state.authorizationRequestId || null,
         targetType: "RECONCILE",
         targetId: state.shopDomain,
         nextAttemptAt: now,
@@ -185,16 +186,43 @@ export async function stopInternationalGateSync({
 }) {
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopDomain || ""))
     return { ok: false, reason: "invalid_shop_domain" };
-  await internationalGateTransaction(prismaClient, async (tx) => {
-    await tx.internationalGateSyncState.upsert({
-      where: { shopDomain },
-      create: { shopDomain, mode: "STOPPED" },
-      update: { mode: "STOPPED" },
-    });
-    await invalidateInternationalGates(tx, { shopDomain, now });
-  });
+  await internationalGateTransaction(prismaClient, (tx) =>
+    stopInternationalGateInTransaction(tx, { shopDomain, now, reason: "international_operator_stop" }),
+  );
   const result = await flushInternationalGateStops(prismaClient, {
     shopDomain,
   });
   return { ok: true, pending: true, protected: result?.protected === true };
+}
+
+export async function stopInternationalGateInTransaction(tx, {
+  shopDomain, now = new Date(), reason, expectedGeneration,
+}) {
+  const state = await tx.internationalGateSyncState.upsert({
+    where: { shopDomain }, create: { shopDomain }, update: {},
+  });
+  if (expectedGeneration !== undefined && state.desiredGeneration !== expectedGeneration)
+    throw staleInternationalEvidence();
+  if (state.authorizationRequestId)
+    await tx.internationalGateAuthorizationRequest.updateMany({
+      where: { id: state.authorizationRequestId, shopDomain, revokedAt: null },
+      data: { revokedAt: now, revocationReasonCode: reason },
+    });
+  await tx.internationalGateSyncState.update({ where: { shopDomain }, data: {
+    mode: "STOPPED", stoppedAt: now, stopReasonCode: reason,
+  } });
+  await invalidateInternationalGates(tx, { shopDomain, now });
+  if (tx.internationalCheckoutVerificationRun) {
+    await tx.internationalCheckoutVerificationRun.updateMany({
+      where: { shopDomain, status: { in: ["QUEUED", "RUNNING"] } },
+      data: { status: "CLOSING", outcomeCode: "FAILED", failureCode: reason,
+        stopRequestedAt: now, closureGeneration: state.desiredGeneration + 1, closureStatus: "PENDING",
+        leaseTokenHash: null, leaseUntil: null },
+    });
+    await tx.internationalCheckoutVerificationRun.updateMany({
+      where: { shopDomain, status: "CLOSING" },
+      data: { closureGeneration: state.desiredGeneration + 1 },
+    });
+  }
+  return { generation: state.desiredGeneration + 1 };
 }

@@ -242,6 +242,7 @@ export function syncFixture() {
       configHash: "native",
     }),
     inspectRelease: async () => ({ ready: true, binding: "release" }),
+    inspectAuthorization: async () => ({ ready: true, purpose: "SALE" }),
   };
   return { ...memory, graph, dependencies, state, now };
 }

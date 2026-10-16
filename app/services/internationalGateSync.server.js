@@ -8,6 +8,7 @@ import {
 import {
   internationalGateTransaction,
   invalidateInternationalGates,
+  stopInternationalGateInTransaction,
 } from "./internationalGateQueue.server.js";
 import {
   internationalGraphQL,
@@ -22,6 +23,8 @@ import {
   inspectInternationalStopProtection,
 } from "./internationalGateAuthorization.server.js";
 import { inspectInternationalCheckoutGate } from "./internationalCheckoutInspection.server.js";
+import { inspectInternationalAuthorizationState } from "./internationalAuthorizationState.server.js";
+import { expireInternationalVerificationRuns, recordInternationalRunClosure } from "./internationalVerificationRuns.server.js";
 
 const REVIEW_ERRORS = new Set([
   "international_access_denied",
@@ -48,6 +51,7 @@ export async function runInternationalGateSync(
     inspectNative = inspectInternationalNativeConfiguration,
     inspectRelease = inspectInternationalGateRelease,
     inspectStopProtection = inspectInternationalStopProtection,
+    inspectAuthorization = inspectInternationalAuthorizationState,
   } = {},
 ) {
   const started = Date.now();
@@ -58,6 +62,8 @@ export async function runInternationalGateSync(
       throw internationalGateError("international_budget_exhausted");
     return graphQL({ ...args, timeoutMs: Math.min(10000, remaining) });
   };
+  if (prismaClient.internationalCheckoutVerificationRun)
+    await expireInternationalVerificationRuns({ prismaClient, shopDomain });
   const states = await prismaClient.internationalGateSyncState.findMany({
     where: {
       mode: { in: ["ENFORCE", "STOPPED"] },
@@ -71,12 +77,19 @@ export async function runInternationalGateSync(
   let failed = 0;
   let protectedState = false;
   for (const initial of states) {
-    if (!stopOnly && initial.phase === "ACTIVE") {
+    const authorization = initial.mode === "ENFORCE"
+      ? await inspectAuthorization({ prismaClient, state: initial, now: new Date() }) : null;
+    if (initial.mode === "ENFORCE" && !authorization.ready && !authorization.waiting)
+      await internationalGateTransaction(prismaClient, (tx) => stopInternationalGateInTransaction(tx, {
+        shopDomain: initial.shopDomain, expectedGeneration: initial.desiredGeneration,
+        now: new Date(), reason: "international_authorization_unverified",
+      }));
+    if (!stopOnly && authorization?.ready && initial.phase === "ACTIVE") {
       const inspection = await inspectInternationalCheckoutGate(
         { shopDomain: initial.shopDomain, prismaClient, env, now },
-        { graphQL: call, buildSnapshot, inspectNative, inspectRelease },
+        { graphQL: call, buildSnapshot, inspectNative, inspectRelease, inspectAuthorization },
       );
-      if (!inspection.ready)
+      if (!inspection.ready && !inspection.verificationReady)
         await internationalGateTransaction(prismaClient, (tx) =>
           invalidateInternationalGates(tx, {
             shopDomain: initial.shopDomain,
@@ -87,6 +100,7 @@ export async function runInternationalGateSync(
     // Expiry renewal and periodic dependency checks still use the closed-first path.
     if (
       !stopOnly &&
+      authorization?.ready &&
       initial.phase === "ACTIVE" &&
       initial.nextExpiryAt &&
       new Date(initial.nextExpiryAt).getTime() <= now.getTime() + 3 * 3600000
@@ -160,6 +174,7 @@ export async function runInternationalGateSync(
         if (
           !current ||
           current.desiredGeneration !== job.generation ||
+          (current.authorizationRequestId || null) !== (job.authorizationRequestId || null) ||
           current.mode === "DISABLED" ||
           (job.payloadJson?.s === "ACTIVE" && current.mode !== "ENFORCE") ||
           lease?.leaseToken !== leaseToken ||
@@ -167,6 +182,10 @@ export async function runInternationalGateSync(
           new Date(lease.leaseUntil).getTime() <= Date.now()
         ) {
           throw internationalGateError("international_job_superseded");
+        }
+        if (job.payloadJson?.s === "ACTIVE" || (job.targetType === "PRODUCT" && job.payloadJson?.c?.length)) {
+          if (!(await inspectAuthorization({ prismaClient, state: current, now: new Date() })).ready)
+            throw internationalGateError("international_authorization_unverified");
         }
       };
       const finish = async (data) => {
@@ -223,6 +242,10 @@ export async function runInternationalGateSync(
             },
           });
           if (stopOnly) {
+            if (state.mode === "STOPPED")
+              await internationalGateTransaction(prismaClient, (tx) => recordInternationalRunClosure(tx, {
+                state, generation: job.generation, protected: protectedState, now: new Date(),
+              }));
             await finish({
               status: "RETRY",
               nextAttemptAt: new Date(),
@@ -231,6 +254,9 @@ export async function runInternationalGateSync(
             break;
           }
           if (state.mode === "STOPPED") {
+            await internationalGateTransaction(prismaClient, (tx) => recordInternationalRunClosure(tx, {
+              state, generation: job.generation, protected: protectedState, now: new Date(),
+            }));
             await prismaClient.internationalGateSyncState.updateMany({
               where: {
                 shopDomain: state.shopDomain,
@@ -238,9 +264,17 @@ export async function runInternationalGateSync(
               },
               data: { phase: "BLOCKED", appliedGeneration: job.generation },
             });
-            await finish({ status: "VERIFIED", verifiedAt: new Date() });
+            await finish(protectedState ? { status: "VERIFIED", verifiedAt: new Date() } : {
+              status: "RETRY", nextAttemptAt: new Date(Date.now() + 30000), lastErrorCode: "international_stop_unverified",
+            });
             break;
           }
+          const currentAuthorization = await inspectAuthorization({ prismaClient, state, now: new Date() });
+          if (currentAuthorization.waiting) {
+            await finish({ status: "RETRY", nextAttemptAt: new Date(Date.now() + 30000), lastErrorCode: "international_runner_not_started" });
+            break;
+          }
+          if (!currentAuthorization.ready) throw internationalGateError("international_authorization_unverified");
           if (observed.timezone !== state.shopTimezone)
             throw internationalGateError("international_timezone_changed");
           if (state.snapshotComplete) {
@@ -267,6 +301,7 @@ export async function runInternationalGateSync(
                   data: {
                     shopDomain: state.shopDomain,
                     generation: job.generation,
+                    authorizationRequestId: current.authorizationRequestId || null,
                     targetType: "PRODUCT",
                     targetId: target.targetId,
                     payloadJson: target.projection,
@@ -278,6 +313,7 @@ export async function runInternationalGateSync(
                 data: {
                   shopDomain: state.shopDomain,
                   generation: job.generation,
+                  authorizationRequestId: current.authorizationRequestId || null,
                   targetType: "SHOP",
                   targetId: state.shopDomain,
                   payloadJson: built.shop,
@@ -372,6 +408,7 @@ export async function runInternationalGateSync(
               native,
               env,
               now: new Date(),
+              purpose: state.authorizationPurpose || "SALE",
             });
             const shop = await readInternationalMetafield({
               shopDomain: state.shopDomain,
@@ -411,6 +448,8 @@ export async function runInternationalGateSync(
               where: {
                 shopDomain: state.shopDomain,
                 desiredGeneration: job.generation,
+                authorizationRequestId: state.authorizationRequestId || null,
+                mode: state.mode,
               },
               data:
                 job.targetType === "SHOP"
@@ -476,9 +515,14 @@ export async function runInternationalGateSync(
           },
           data: {
             lastErrorCode: safeCode,
-            ...(review ? { phase: "NEEDS_REVIEW", mode: "STOPPED" } : {}),
           },
         });
+        if (review)
+          await internationalGateTransaction(prismaClient, async (tx) => {
+            const current = await tx.internationalGateSyncState.findUnique({ where: { shopDomain: state.shopDomain } });
+            if (current?.desiredGeneration === job.generation)
+              await stopInternationalGateInTransaction(tx, { shopDomain: state.shopDomain, now: new Date(), reason: safeCode });
+          });
         if (safeCode === "international_source_changed")
           await internationalGateTransaction(prismaClient, (tx) =>
             invalidateInternationalGates(tx, {

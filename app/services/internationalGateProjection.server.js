@@ -224,6 +224,7 @@ export async function buildInternationalGateSnapshot({
     await prismaClient.operationalReadinessAttestation.findMany({
       where: { scopeType: "MARKET_COUNTRY", scopeId: { in: countries } },
     });
+  attestations.sort((a, b) => a.id.localeCompare(b.id));
   const control = await getPlatformOperationalControl({ prismaClient });
   if (!control.available)
     throw new Error("international_operational_control_unverified");

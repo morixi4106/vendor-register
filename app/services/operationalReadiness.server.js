@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
+import { INTERNATIONAL_SYSTEM_EVIDENCE_KEYS } from "./internationalAuthorizationPolicy.server.js";
 import { withInternationalGateInvalidation } from "./internationalGateQueue.server.js";
 import {
   isSingleOperatorPayoutReadinessAllowed,
@@ -1494,6 +1495,7 @@ export async function recordOperationalReadinessAttestation(
   { prismaClient = prisma, now = new Date(), env = process.env } = {},
 ) {
   const normalizedKey = normalizeUpper(checkKey);
+  if (INTERNATIONAL_SYSTEM_EVIDENCE_KEYS.includes(normalizedKey)) return { ok: false, reason: "international_dedicated_verifier_required" };
   const definition = ATTESTATION_DEFINITIONS.get(normalizedKey);
   const normalizedStatus = normalizeUpper(status);
   const normalizedReference = normalizeText(evidenceReference);

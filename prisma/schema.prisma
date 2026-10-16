@@ -2488,54 +2488,140 @@ model FxRate {
 }
 
 model InternationalGateSyncState {
-  shopDomain             String                     @id
-  mode                   String                     @default("DISABLED")
-  desiredGeneration      Int                        @default(0)
-  appliedGeneration      Int                        @default(0)
-  phase                  String                     @default("UNCONFIGURED")
-  authorizedScopeJson    Json                       @default("[]")
+  shopDomain             String                                 @id
+  mode                   String                                 @default("DISABLED")
+  desiredGeneration      Int                                    @default(0)
+  appliedGeneration      Int                                    @default(0)
+  phase                  String                                 @default("UNCONFIGURED")
+  authorizedScopeJson    Json                                   @default("[]")
   authorizedScopeHash    String?
   releaseBinding         String?
   authorizationExpiresAt DateTime?
   nativeConfigHash       String?
   shopTimezone           String?
-  snapshotComplete       Boolean                    @default(false)
+  snapshotComplete       Boolean                                @default(false)
   sourceHash             String?
   expectedShopJson       Json?
   expectedShopHash       String?
   observedShopHash       String?
-  expectedProductCount   Int                        @default(0)
-  verifiedProductCount   Int                        @default(0)
+  expectedProductCount   Int                                    @default(0)
+  verifiedProductCount   Int                                    @default(0)
   protectedAt            DateTime?
   verifiedAt             DateTime?
   nextExpiryAt           DateTime?
   lastErrorCode          String?
-  createdAt              DateTime                   @default(now())
-  updatedAt              DateTime                   @updatedAt
+  authorizationRequestId String?
+  authorizationPurpose   String?
+  verificationRunId      String?
+  stopReasonCode         String?
+  stoppedAt              DateTime?
+  createdAt              DateTime                               @default(now())
+  updatedAt              DateTime                               @updatedAt
   jobs                   InternationalGateSyncJob[]
+  authorizationRequest   InternationalGateAuthorizationRequest? @relation("CurrentAuthorization", fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
+  verificationRun        InternationalCheckoutVerificationRun?  @relation("CurrentVerification", fields: [shopDomain, verificationRunId], references: [shopDomain, id], onDelete: Restrict)
 
   @@index([mode, nextExpiryAt])
 }
 
 model InternationalGateSyncJob {
-  id            String                     @id @default(cuid())
-  shopDomain    String
-  generation    Int
-  targetType    String
-  targetId      String
-  payloadJson   Json?
-  expectedHash  String?
-  status        String                     @default("PENDING")
-  attempts      Int                        @default(0)
-  nextAttemptAt DateTime                   @default(now())
-  leaseToken    String?
-  leaseUntil    DateTime?
-  verifiedAt    DateTime?
-  lastErrorCode String?
-  createdAt     DateTime                   @default(now())
-  updatedAt     DateTime                   @updatedAt
-  state         InternationalGateSyncState @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+  id                     String                                 @id @default(cuid())
+  shopDomain             String
+  generation             Int
+  targetType             String
+  targetId               String
+  payloadJson            Json?
+  expectedHash           String?
+  status                 String                                 @default("PENDING")
+  attempts               Int                                    @default(0)
+  nextAttemptAt          DateTime                               @default(now())
+  leaseToken             String?
+  leaseUntil             DateTime?
+  verifiedAt             DateTime?
+  lastErrorCode          String?
+  authorizationRequestId String?
+  createdAt              DateTime                               @default(now())
+  updatedAt              DateTime                               @updatedAt
+  state                  InternationalGateSyncState             @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+  authorizationRequest   InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
 
   @@unique([shopDomain, generation, targetType, targetId], map: "InternationalGateSyncJob_target_key")
   @@index([shopDomain, generation, status, nextAttemptAt], map: "InternationalGateSyncJob_pending_idx")
+}
+
+model InternationalGateAuthorizationRequest {
+  id                   String                                 @id @default(cuid())
+  shopDomain           String
+  actorKey             String
+  purpose              String
+  resumePurpose        String?
+  verificationKind     String?
+  operatorJson         Json
+  scopeJson            Json
+  scopeHash            String
+  currenciesJson       Json
+  requestedExpiresAt   DateTime
+  effectiveExpiresAt   DateTime
+  expectedGeneration   Int
+  sourceHash           String
+  proofReferencesJson  Json
+  nativeConfigHash     String
+  releaseBinding       String
+  shopTimezone         String
+  nonceHash            String                                 @unique
+  previewExpiresAt     DateTime
+  consumedAt           DateTime?
+  consumedGeneration   Int?
+  resultCode           String?
+  revokedAt            DateTime?
+  revocationReasonCode String?
+  createdAt            DateTime                               @default(now())
+  currentStates        InternationalGateSyncState[]           @relation("CurrentAuthorization")
+  jobs                 InternationalGateSyncJob[]
+  verificationRuns     InternationalCheckoutVerificationRun[]
+
+  @@unique([shopDomain, id])
+  @@index([shopDomain, previewExpiresAt])
+}
+
+model InternationalCheckoutVerificationRun {
+  id                     String                                 @id @default(cuid())
+  shopDomain             String
+  kind                   String
+  authorizationRequestId String?
+  initiatedBy            String
+  executorId             String?
+  scenarioVersion        String
+  verifierVersion        String
+  scopeHash              String
+  releaseBinding         String
+  nativeConfigHash       String
+  proofReferencesJson    Json
+  requiredCasesHash      String
+  startGeneration        Int
+  closureGeneration      Int?
+  activeKey              String?                                @unique
+  status                 String                                 @default("QUEUED")
+  closureStatus          String                                 @default("PENDING")
+  expiresAt              DateTime
+  startedAt              DateTime?
+  heartbeatAt            DateTime?
+  leaseTokenHash         String?
+  leaseUntil             DateTime?
+  stopRequestedAt        DateTime?
+  closedAt               DateTime?
+  completedAt            DateTime?
+  outcomeCode            String?
+  failureCode            String?
+  resultsJson            Json?
+  artifactReference      String?
+  artifactHash           String?
+  artifactExpiresAt      DateTime?
+  financialProbeId       String?
+  createdAt              DateTime                               @default(now())
+  authorizationRequest   InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
+  currentStates          InternationalGateSyncState[]           @relation("CurrentVerification")
+
+  @@unique([shopDomain, id])
+  @@index([shopDomain, status, expiresAt])
 }
