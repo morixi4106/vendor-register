@@ -387,7 +387,12 @@ export function createInternationalAuthorizationCommands({
             throw authorizationError("international_source_changed");
           if (
             await tx.internationalCheckoutVerificationRun.findFirst({
-              where: { activeKey: `${actor.shopDomain}:VERIFY` },
+              where: {
+                OR: [
+                  { activeKey: `${actor.shopDomain}:VERIFY` },
+                  { activeKey: `${actor.shopDomain}:DEPLOYMENT` },
+                ],
+              },
             })
           )
             throw authorizationError("international_run_still_active");

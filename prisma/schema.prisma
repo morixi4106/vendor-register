@@ -2618,6 +2618,14 @@ model InternationalCheckoutVerificationRun {
   artifactHash           String?
   artifactExpiresAt      DateTime?
   financialProbeId       String?
+  revokedAt              DateTime?
+  revokedBy              String?
+  revocationReason       String?
+  observationJson        Json?
+  observedAt             DateTime?
+  observationExpiresAt   DateTime?
+  observationNonceHash   String?
+  observationRequestedAt DateTime?
   createdAt              DateTime                               @default(now())
   authorizationRequest   InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
   currentStates          InternationalGateSyncState[]           @relation("CurrentVerification")

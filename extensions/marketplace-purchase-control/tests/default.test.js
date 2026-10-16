@@ -5,6 +5,7 @@ import { buildFunction, getFunctionInfo, loadSchema, loadInputQuery, loadFixture
 import { cartValidationsGenerateRun } from "../src/cart_validations_generate_run.js";
 
 let wasmContext;
+const prebuilt = globalThis.__INTERNATIONAL_PROOF_PREBUILT__ === true;
 
 describe("Default Integration Test", () => {
   let schema;
@@ -17,7 +18,7 @@ describe("Default Integration Test", () => {
 
   beforeAll(async () => {
     functionDir = path.dirname(__dirname);
-    await buildFunction(functionDir);
+    if (!prebuilt) await buildFunction(functionDir);
     functionInfo = await getFunctionInfo(functionDir);
     ({ schemaPath, functionRunnerPath, wasmPath, targeting } = functionInfo);
     schema = await loadSchema(schemaPath);
@@ -163,7 +164,7 @@ describe("international destination gate", () => {
   beforeAll(async () => {
     if (wasmContext) return;
     const functionDir = path.dirname(__dirname);
-    await buildFunction(functionDir);
+    if (!prebuilt) await buildFunction(functionDir);
     const info = await getFunctionInfo(functionDir);
     wasmContext = { ...info, schema: await loadSchema(info.schemaPath) };
   }, 90000);
@@ -224,7 +225,7 @@ describe("international destination gate", () => {
   test.each([
     [{ countryCode: "GB", provinceCode: "NIR", zip: "BT1 1AA" }],
     [{ countryCode: "GB", provinceCode: null, zip: "BT48 6DQ" }],
-  ])("blocks Northern Ireland even when GB is covered", (address) => {
+  ])("blocks Northern Ireland even when GB is covered (case %#)", (address) => {
     const result = cartValidationsGenerateRun(
       buildDirectInput({
         deliveryAddresses: [address],
