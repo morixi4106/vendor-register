@@ -8,10 +8,8 @@ import {
   readInternationalMetafield,
 } from "./internationalGateTransport.server.js";
 
-// Dedicated deployment/release issuers and live-run adapters arrive in 4B-2/4C.
-export async function inspectInternationalAuthorizationProof() {
-  return { ready: false, reason: "international_system_proof_unavailable" };
-}
+export { inspectInternationalAuthorizationProof } from "./internationalProofReader.server.js";
+import { inspectInternationalAuthorizationProof } from "./internationalProofReader.server.js";
 
 export async function inspectInternationalAuthorizationContext(
   { prismaClient, shopDomain, input, now },
@@ -54,7 +52,7 @@ export async function inspectInternationalAuthorizationContext(
     ...proof,
     nativeConfigHash: native.configHash,
     shopTimezone: shop.timezone,
-    observedAt: now,
+    observedAt: proof.observedAt,
   };
 }
 
