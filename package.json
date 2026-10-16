@@ -26,7 +26,6 @@
     "audit:operational-migration": "node scripts/audit-operational-migration.mjs",
     "watchdog:sale-eligibility": "node scripts/sale-eligibility-watchdog-agent.mjs",
     "test:pricing": "node --test tests/**/*.test.js",
-    "test:international-authorization:postgres": "node scripts/test-international-authorization-postgres.mjs",
     "test:checkout-function": "node scripts/security/safe-build.mjs function-test",
     "shopify": "shopify",
     "prisma": "prisma",
