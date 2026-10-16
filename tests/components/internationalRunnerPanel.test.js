@@ -64,6 +64,7 @@ function render(role, phase) {
 test("actual panel keeps deployment success distinct from sale and locks unsupported approval", () => {
   const html = render("admin", "PASSED");
   assert.ok(html.includes("一般販売未承認"));
+  assert.ok(html.includes(" JST"));
   assert.ok(html.includes("購入・決済の検証機能は未完成"));
   const approvalButton = html
     .match(/<button\b[^>]*>[\s\S]*?<\/button>/g)

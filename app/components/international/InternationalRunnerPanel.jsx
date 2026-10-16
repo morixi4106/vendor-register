@@ -28,7 +28,10 @@ const labels = {
   FAILED: "不合格",
   EXPIRED: "期限切れ",
 };
-const date = (value) => (value ? new Date(value).toLocaleString("ja-JP") : "-");
+const date = (value) =>
+  value
+    ? `${new Date(value).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })} JST`
+    : "-";
 const hidden = (name, value) => (
   <input key={name} type="hidden" name={name} value={value ?? ""} />
 );
