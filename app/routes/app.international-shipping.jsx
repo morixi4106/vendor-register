@@ -1,5 +1,10 @@
 import { redirect } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 import {
   Badge,
   BlockStack,
@@ -24,7 +29,12 @@ import {
 import { resolveInternationalShippingOperatorRole } from "../utils/marketplaceOperatorRoles.js";
 import { readBoundedFormData } from "../utils/requestBody.server.js";
 import { requirePostRequest } from "../utils/internalRouteSecurity.server.js";
-import { saveInternationalMarketEvidence } from "../services/internationalMarketReadiness.server.js";
+import {
+  saveInternationalMarketEvidence,
+  revokeInternationalMarketEvidence,
+} from "../services/internationalMarketReadiness.server.js";
+import { stopInternationalGateSync } from "../services/internationalGateQueue.server.js";
+import { internationalEvidenceVersion } from "../utils/internationalEvidenceVersion.js";
 import { syncInternationalSaleGate } from "../services/internationalSaleGate.server.js";
 import { saveInternationalShippingCountryAvailability } from "../services/internationalShippingAvailability.server.js";
 import {
@@ -99,7 +109,9 @@ function statusTone(status) {
 }
 
 function statusLabel(status) {
-  return statusOptions.find((option) => option.value === status)?.label || "未確認";
+  return (
+    statusOptions.find((option) => option.value === status)?.label || "未確認"
+  );
 }
 
 function EvidenceCheckbox({ name, checked, onChange }) {
@@ -116,7 +128,7 @@ function EvidenceCheckbox({ name, checked, onChange }) {
 }
 
 export const loader = async ({ request }) => {
-  await requireMarketplaceOperator(request, {
+  const { session } = await requireMarketplaceOperator(request, {
     roles: [
       MARKETPLACE_OPERATOR_ROLES.ADMIN,
       MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER,
@@ -124,7 +136,7 @@ export const loader = async ({ request }) => {
     ],
   });
 
-  const [rows, evidenceRows] = await Promise.all([
+  const [rows, evidenceRows, gateState] = await Promise.all([
     prisma.internationalShippingCountryAvailability.findMany({
       orderBy: [{ status: "asc" }, { countryCode: "asc" }],
     }),
@@ -132,10 +144,21 @@ export const loader = async ({ request }) => {
       where: { scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE },
       orderBy: [{ scopeId: "asc" }, { checkKey: "asc" }],
     }),
+    prisma.internationalGateSyncState.findUnique({
+      where: { shopDomain: session.shop },
+      select: {
+        mode: true,
+        phase: true,
+        desiredGeneration: true,
+        appliedGeneration: true,
+        expectedProductCount: true,
+        verifiedProductCount: true,
+      },
+    }),
   ]);
 
   return Response.json(
-    { rows, evidenceRows },
+    { rows, evidenceRows, gateState },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 };
@@ -151,24 +174,55 @@ export const action = async ({ request }) => {
       { status: 400, headers: { "Cache-Control": "private, no-store" } },
     );
   }
-  const { session, operator } = await requireMarketplaceOperator(request, { role });
+  const { session, operator } = await requireMarketplaceOperator(request, {
+    role,
+  });
   const confirmedBy = operator.actorKey;
 
   try {
-    if (intent === "syncInternationalSaleGate") {
-      const result = await syncInternationalSaleGate({
+    if (
+      intent === "syncInternationalSaleGate" ||
+      intent === "stopInternationalSaleGate"
+    ) {
+      const command =
+        intent === "stopInternationalSaleGate"
+          ? stopInternationalGateSync
+          : syncInternationalSaleGate;
+      const result = await command({
         shopDomain: session?.shop,
       });
       return Response.json(
         {
-          ok: true,
-          message: `Shopifyへ同期し、読み戻しました。販売可能国: ${
-            result.allowedCountries.join(", ") || "なし"
-          }`,
+          ok: result.ok === true,
+          ...(result.ok
+            ? {
+                message: result.protected
+                  ? "同期要求を受け付け、Shopifyの海外停止を確認しました。許可の反映は未完了です。"
+                  : "同期要求を受け付けました。Shopifyの海外停止は未確認です。",
+              }
+            : {
+                error:
+                  "同期は未承認です。リリース・対象商品と国・実設定の確認が必要です。",
+              }),
         },
-        { headers: { "Cache-Control": "private, no-store" } },
+        {
+          status: result.ok ? 200 : 409,
+          headers: { "Cache-Control": "private, no-store" },
+        },
       );
+    } else if (intent === "revokeMarketEvidence") {
+      if (!formData.has("expectedVersion"))
+        throw new Error("evidence_version_required");
+      await revokeInternationalMarketEvidence({
+        countryCode: formData.get("countryCode"),
+        requirementCode: formData.get("requirementCode"),
+        confirmedBy,
+        expectedVersion: formData.get("expectedVersion"),
+        notes: formData.get("note"),
+      });
     } else if (intent === "saveMarketEvidence") {
+      if (!formData.has("expectedVersion"))
+        throw new Error("evidence_version_required");
       const requirement = getInternationalMarketRequirements(
         formData.get("countryCode"),
       ).find((entry) => entry.code === formData.get("requirementCode"));
@@ -179,6 +233,7 @@ export const action = async ({ request }) => {
         evidenceHash: formData.get("evidenceHash"),
         officialSourceUrl: formData.get("officialSourceUrl"),
         confirmedBy,
+        expectedVersion: formData.get("expectedVersion"),
         confirmations: Object.fromEntries(
           (requirement?.confirmations || []).map((key) => [
             key,
@@ -188,6 +243,8 @@ export const action = async ({ request }) => {
         notes: formData.get("note"),
       });
     } else if (intent === "saveShipping") {
+      if (!formData.has("expectedVersion"))
+        throw new Error("evidence_version_required");
       await saveInternationalShippingCountryAvailability({
         countryCode: formData.get("countryCode"),
         status: formData.get("status"),
@@ -195,6 +252,10 @@ export const action = async ({ request }) => {
         evidenceReference: formData.get("evidenceReference"),
         evidenceHash: formData.get("evidenceHash"),
         confirmedBy,
+        expectedVersion: formData.get("expectedVersion"),
+        expectedEvidenceVersions: JSON.parse(
+          String(formData.get("expectedEvidenceVersions") || "null"),
+        ),
         deliveryProfileId: formData.get("deliveryProfileId"),
         carrierConfirmations: {
           officialStatusChecked:
@@ -205,10 +266,8 @@ export const action = async ({ request }) => {
         routeAuditConfirmations: {
           deliveryProfileMatched:
             formData.get("deliveryProfileMatched") === "true",
-          manualRatesReviewed:
-            formData.get("manualRatesReviewed") === "true",
-          freeShippingReviewed:
-            formData.get("freeShippingReviewed") === "true",
+          manualRatesReviewed: formData.get("manualRatesReviewed") === "true",
+          freeShippingReviewed: formData.get("freeShippingReviewed") === "true",
           alternateCarrierReviewed:
             formData.get("alternateCarrierReviewed") === "true",
           alternateProfilesReviewed:
@@ -217,13 +276,19 @@ export const action = async ({ request }) => {
         note: formData.get("note"),
       });
     }
-  } catch {
+  } catch (error) {
     return Response.json(
       {
         ok: false,
-        error: "保存できませんでした。確認項目・証拠・同期状態を確認してください。",
+        error:
+          error?.code === "INTERNATIONAL_EVIDENCE_CONFLICT"
+            ? "別の更新があるため保存できません。再読み込みして確認してください。"
+            : "保存できませんでした。確認項目・証拠・同期状態を確認してください。",
       },
-      { status: 400, headers: { "Cache-Control": "private, no-store" } },
+      {
+        status: error?.code === "INTERNATIONAL_EVIDENCE_CONFLICT" ? 409 : 400,
+        headers: { "Cache-Control": "private, no-store" },
+      },
     );
   }
 
@@ -233,10 +298,12 @@ export const action = async ({ request }) => {
 };
 
 export default function InternationalShippingPage() {
-  const { rows, evidenceRows } = useLoaderData();
+  const { rows, evidenceRows, gateState } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
-  const [countryCode, setCountryCode] = useState(countryOptions[0]?.value || "");
+  const [countryCode, setCountryCode] = useState(
+    countryOptions[0]?.value || "",
+  );
   const [status, setStatus] = useState(INTERNATIONAL_SERVICE_STATUS.UNKNOWN);
   const [sourceUrl, setSourceUrl] = useState("");
   const [note, setNote] = useState("");
@@ -247,7 +314,8 @@ export default function InternationalShippingPage() {
   const [marketCountryCode, setMarketCountryCode] = useState(
     countryOptions[0]?.value || "",
   );
-  const marketRequirements = getInternationalMarketRequirements(marketCountryCode);
+  const marketRequirements =
+    getInternationalMarketRequirements(marketCountryCode);
   const [requirementCode, setRequirementCode] = useState(
     marketRequirements[0]?.code || "",
   );
@@ -278,7 +346,9 @@ export default function InternationalShippingPage() {
 
   function selectRequirement(value) {
     setRequirementCode(value);
-    const requirement = marketRequirements.find((entry) => entry.code === value);
+    const requirement = marketRequirements.find(
+      (entry) => entry.code === value,
+    );
     setMarketSourceUrl(requirement?.sourceUrl || "");
     setMarketChecks({});
   }
@@ -293,6 +363,34 @@ export default function InternationalShippingPage() {
           <Form method="post">
             <FormLayout>
               <input type="hidden" name="intent" value="saveShipping" />
+              <input
+                type="hidden"
+                name="expectedVersion"
+                value={internationalEvidenceVersion(
+                  rows.find((row) => row.countryCode === countryCode),
+                )}
+              />
+              <input
+                type="hidden"
+                name="expectedEvidenceVersions"
+                value={JSON.stringify(
+                  Object.fromEntries(
+                    [
+                      "INTERNATIONAL_CARRIER_SERVICE_STATUS",
+                      "INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT",
+                    ].map((code) => [
+                      code,
+                      internationalEvidenceVersion(
+                        evidenceRows.find(
+                          (row) =>
+                            row.scopeId === countryCode &&
+                            row.checkKey === code,
+                        ),
+                      ),
+                    ]),
+                  ),
+                )}
+              />
               <InlineStack gap="300" wrap>
                 <div style={{ minWidth: 280, flex: 1 }}>
                   <Select
@@ -371,10 +469,14 @@ export default function InternationalShippingPage() {
                 autoComplete="off"
               />
               {actionData?.message ? (
-                <Text as="p" tone="success">{actionData.message}</Text>
+                <Text as="p" tone="success">
+                  {actionData.message}
+                </Text>
               ) : null}
               {actionData?.error ? (
-                <Text as="p" tone="critical">{actionData.error}</Text>
+                <Text as="p" tone="critical">
+                  {actionData.error}
+                </Text>
               ) : null}
               <Button submit variant="primary" loading={isSubmitting}>
                 配送証拠と迂回防止確認を保存
@@ -385,9 +487,13 @@ export default function InternationalShippingPage() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Shopify国別販売ゲート</Text>
+            <Text as="h2" variant="headingMd">
+              Shopify国別販売ゲート
+            </Text>
             <Text as="p" tone="subdued">
-              有効期限内の配送・法務・税務証拠がすべて揃った国だけをShopifyへ同期し、読み戻して一致を確認します。同期はこのボタンを押した時だけ実行されます。
+              {gateState?.mode && gateState.mode !== "DISABLED"
+                ? `同期記録: ${gateState.phase} / 要求世代: ${gateState.desiredGeneration} / 反映世代: ${gateState.appliedGeneration} / 商品: ${gateState.verifiedProductCount}/${gateState.expectedProductCount}`
+                : "未承認"}
             </Text>
             <Form method="post">
               <input
@@ -395,8 +501,23 @@ export default function InternationalShippingPage() {
                 name="intent"
                 value="syncInternationalSaleGate"
               />
-              <Button submit variant="primary" loading={isSubmitting}>
-                国別販売ゲートを同期・確認
+              <Button
+                submit
+                variant="primary"
+                loading={isSubmitting}
+                disabled={!gateState || gateState.mode === "DISABLED"}
+              >
+                同期を要求
+              </Button>
+            </Form>
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="stopInternationalSaleGate"
+              />
+              <Button submit tone="critical" loading={isSubmitting}>
+                海外販売ゲートを停止
               </Button>
             </Form>
           </BlockStack>
@@ -404,13 +525,26 @@ export default function InternationalShippingPage() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">国別の法務・税務・運用証拠</Text>
+            <Text as="h2" variant="headingMd">
+              国別の法務・税務・運用証拠
+            </Text>
             <Text as="p" tone="subdued">
               商品証拠とは別に、販売国全体の撤回、保証、VAT・関税、EPR、プライバシー、サポート経路を記録します。
             </Text>
             <Form method="post">
               <FormLayout>
                 <input type="hidden" name="intent" value="saveMarketEvidence" />
+                <input
+                  type="hidden"
+                  name="expectedVersion"
+                  value={internationalEvidenceVersion(
+                    evidenceRows.find(
+                      (row) =>
+                        row.scopeId === marketCountryCode &&
+                        row.checkKey === selectedRequirement?.code,
+                    ),
+                  )}
+                />
                 <InlineStack gap="300" wrap>
                   <div style={{ minWidth: 240, flex: 1 }}>
                     <Select
@@ -489,7 +623,9 @@ export default function InternationalShippingPage() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">確認済みの国・地域</Text>
+            <Text as="h2" variant="headingMd">
+              確認済みの国・地域
+            </Text>
             <Text as="p" tone="subdued">
               未登録、一部制限、停止中、未確認の国にはチェックアウトで配送方法を表示しません。
             </Text>
@@ -501,12 +637,21 @@ export default function InternationalShippingPage() {
                 <Badge key={`${row.id}-status`} tone={statusTone(row.status)}>
                   {statusLabel(row.status)}
                 </Badge>,
-                row.checkedAt ? new Date(row.checkedAt).toLocaleString("ja-JP") : "-",
+                row.checkedAt
+                  ? new Date(row.checkedAt).toLocaleString("ja-JP")
+                  : "-",
                 row.sourceUrl ? (
-                  <a key={`${row.id}-source`} href={row.sourceUrl} target="_blank" rel="noreferrer">
+                  <a
+                    key={`${row.id}-source`}
+                    href={row.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     確認元を開く
                   </a>
-                ) : "-",
+                ) : (
+                  "-"
+                ),
               ])}
             />
           </BlockStack>
@@ -514,10 +659,12 @@ export default function InternationalShippingPage() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">保存済みの国別証拠</Text>
+            <Text as="h2" variant="headingMd">
+              保存済みの国別証拠
+            </Text>
             <DataTable
-              columnContentTypes={["text", "text", "text", "text"]}
-              headings={["国・地域", "確認項目", "状態", "有効期限"]}
+              columnContentTypes={["text", "text", "text", "text", "text"]}
+              headings={["国・地域", "確認項目", "状態", "有効期限", "操作"]}
               rows={evidenceRows.map((row) => [
                 row.scopeId,
                 row.metadataJson?.requirementLabel || row.checkKey,
@@ -530,6 +677,31 @@ export default function InternationalShippingPage() {
                 row.expiresAt
                   ? new Date(row.expiresAt).toLocaleString("ja-JP")
                   : "-",
+                <Form method="post" key={`${row.id}-revoke`}>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="revokeMarketEvidence"
+                  />
+                  <input type="hidden" name="countryCode" value={row.scopeId} />
+                  <input
+                    type="hidden"
+                    name="requirementCode"
+                    value={row.checkKey}
+                  />
+                  <input
+                    type="hidden"
+                    name="expectedVersion"
+                    value={internationalEvidenceVersion(row)}
+                  />
+                  <Button
+                    submit
+                    tone="critical"
+                    disabled={row.status === "REVOKED" || isSubmitting}
+                  >
+                    取り消す
+                  </Button>
+                </Form>,
               ])}
             />
           </BlockStack>

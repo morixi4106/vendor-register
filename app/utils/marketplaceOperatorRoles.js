@@ -39,9 +39,12 @@ export function resolveInternationalShippingOperatorRole(intent) {
   switch (String(intent || "")) {
     case "saveShipping":
     case "saveMarketEvidence":
+    case "revokeMarketEvidence":
       return MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER;
     case "syncInternationalSaleGate":
       return MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER;
+    case "stopInternationalSaleGate":
+      return MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER;
     default:
       return null;
   }

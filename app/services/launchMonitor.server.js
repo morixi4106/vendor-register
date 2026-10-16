@@ -43,6 +43,7 @@ import {
 } from "./operationalReadiness.server.js";
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
 import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { inspectInternationalCheckoutGate, buildInternationalCheckoutGateCheck } from "./internationalCheckoutInspection.server.js";
 import {
   inspectCheckoutCommerceContext,
   buildCheckoutCommerceScopeCheck,
@@ -82,6 +83,7 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "payment_settlements_unmatched",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
+  "international_checkout_gate",
   "platform_direct_checkout_scope",
   "product_shipping_profiles_available",
   "marketplace_checkout_publication_boundary",
@@ -754,6 +756,12 @@ export async function collectLaunchMonitorReport({
     );
     heavyChecks.push(scopeCheck);
     checks.push(scopeCheck);
+    if (checkoutContext.mode.internationalConfigured) {
+      const international = await (dependencies.inspectInternationalCheckoutGate || inspectInternationalCheckoutGate)({ shopDomain, prismaClient, env, now });
+      const check = readinessCheckToMonitorCheck(buildInternationalCheckoutGateCheck(international));
+      heavyChecks.push(check);
+      checks.push(check);
+    }
     let checkoutBoundaryCompleted = false;
     let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;

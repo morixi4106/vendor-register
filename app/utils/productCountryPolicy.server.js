@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { withInternationalGateInvalidation } from "../services/internationalGateQueue.server.js";
 import {
   buildProductCountryPolicyData,
   shouldPersistProductCountryPolicy,
@@ -13,23 +14,24 @@ export async function saveProductCountryPolicy({
   if (!productId) {
     throw new Error("PRODUCT_ID_REQUIRED");
   }
+  return withInternationalGateInvalidation(prismaClient, async (tx) => {
+    if (!shouldPersistProductCountryPolicy(productEuStatus, policyInput)) {
+      await tx.productCountryPolicy.deleteMany({
+        where: { productId },
+      });
 
-  if (!shouldPersistProductCountryPolicy(productEuStatus, policyInput)) {
-    await prismaClient.productCountryPolicy.deleteMany({
+      return null;
+    }
+
+    const data = buildProductCountryPolicyData(productEuStatus, policyInput);
+
+    return tx.productCountryPolicy.upsert({
       where: { productId },
+      create: {
+        productId,
+        ...data,
+      },
+      update: data,
     });
-
-    return null;
-  }
-
-  const data = buildProductCountryPolicyData(productEuStatus, policyInput);
-
-  return prismaClient.productCountryPolicy.upsert({
-    where: { productId },
-    create: {
-      productId,
-      ...data,
-    },
-    update: data,
   });
 }

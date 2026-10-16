@@ -3,6 +3,7 @@ import { useActionData, useLoaderData, useNavigation } from "react-router";
 import VendorManagementShell from "../components/vendor/VendorManagementShell";
 import VendorProductForm from "../components/vendor/VendorProductForm";
 import prisma from "../db.server";
+import { writeInternationalProduct } from "../services/internationalGateQueue.server.js";
 import {
   appendVendorIdToPath,
   requireVendorContext,
@@ -381,7 +382,7 @@ export const action = async ({ request, params }) => {
         throw new Error(metafieldErrors.map((entry) => entry.message).join(", "));
       }
 
-      await prisma.product.update({
+      await writeInternationalProduct(prisma, "update", {
         where: { id: productId },
         data: {
           ...nextProductData,
@@ -404,7 +405,7 @@ export const action = async ({ request, params }) => {
         console.error("vendor collection sync after product edit failed:", error);
       }
     } else {
-      await prisma.product.update({
+      await writeInternationalProduct(prisma, "update", {
         where: { id: productId },
         data: nextProductData,
       });

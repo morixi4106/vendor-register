@@ -21,32 +21,32 @@
           {
             "merchandise": {
               "product": {
-                "marketplaceCheckoutPolicy": {
-                  "value": "PLATFORM_DIRECT"
-                },
                 "saleEligibilityProjection": {
                   "value": "{\"routingClass\":\"PLATFORM_DIRECT\",\"allowed\":true,\"status\":\"ELIGIBLE\",\"reasonCodes\":[],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":1,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
                 },
-                "id": "gid://shopify/Product/1"
+                "id": "gid://shopify/Product/1",
+                "internationalSaleEligibility": null
               },
-              "id": "gid://shopify/ProductVariant/1"
+              "id": "gid://shopify/ProductVariant/1",
+              "requiresShipping": true
             },
-            "quantity": 1
+            "quantity": 1,
+            "id": "gid://shopify/CartLine/0"
           },
           {
             "merchandise": {
               "product": {
-                "marketplaceCheckoutPolicy": {
-                  "value": "MARKETPLACE_GOVERNED"
-                },
                 "saleEligibilityProjection": {
                   "value": "{\"routingClass\":\"MARKETPLACE_GOVERNED\",\"allowed\":false,\"status\":\"BLOCKED\",\"reasonCodes\":[\"PRODUCT_NOT_APPROVED\"],\"policyVersion\":\"sale-eligibility-2026-07-v1\",\"inputHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"decisionIds\":[],\"evaluatedAt\":\"2026-07-23T00:00:00.000Z\",\"expiresAt\":\"2026-07-25T00:00:00.000Z\",\"projectionRevision\":1,\"evaluatedOn\":\"2026-07-23\",\"expiresOnExclusive\":\"2026-07-25\",\"shopTimeZone\":\"UTC\"}"
                 },
-                "id": "gid://shopify/Product/2"
+                "id": "gid://shopify/Product/2",
+                "internationalSaleEligibility": null
               },
-              "id": "gid://shopify/ProductVariant/2"
+              "id": "gid://shopify/ProductVariant/2",
+              "requiresShipping": true
             },
-            "quantity": 1
+            "quantity": 1,
+            "id": "gid://shopify/CartLine/1"
           }
         ],
         "cost": {
@@ -55,7 +55,25 @@
             "currencyCode": "JPY"
           }
         },
-        "deliveryGroups": []
+        "deliveryGroups": [
+          {
+            "deliveryAddress": {
+              "countryCode": "JP",
+              "zip": null
+            },
+            "cartLines": [
+              {
+                "id": "gid://shopify/CartLine/0"
+              },
+              {
+                "id": "gid://shopify/CartLine/1"
+              }
+            ]
+          }
+        ]
+      },
+      "buyerJourney": {
+        "step": "CHECKOUT_COMPLETION"
       }
     },
     "output": {

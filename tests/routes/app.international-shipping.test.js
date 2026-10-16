@@ -12,6 +12,7 @@ import {
   INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
 } from "../../app/utils/internationalMarketReadiness.js";
 import { loadRouteHandler } from "../helpers/loadRouteHandler.js";
+import { internationalEvidenceVersion } from "../../app/services/internationalGateQueue.server.js";
 
 const route = new URL(
   "../../app/routes/app.international-shipping.jsx",
@@ -29,6 +30,7 @@ function fixture(assignedRole = roles.ADMIN) {
     getInternationalMarketRequirements,
     INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
     redirect,
+    internationalEvidenceVersion,
     requireMarketplaceOperator: async (_request, options) => {
       calls.push(["authorize", options]);
       const allowed = options.roles || [options.role];
@@ -45,9 +47,12 @@ function fixture(assignedRole = roles.ADMIN) {
       calls.push(["saveMarketEvidence", data]),
     syncInternationalSaleGate: async (data) => {
       calls.push(["sync", data]);
-      return { allowedCountries: [] };
+      return { ok: true, pending: true, protected: false };
     },
+    stopInternationalGateSync: async (data) => { calls.push(["stop", data]); return { ok: true, protected: false }; },
+    revokeInternationalMarketEvidence: async (data) => calls.push(["revoke", data]),
     prisma: {
+      internationalGateSyncState: { findUnique: async () => { calls.push(["gateRead"]); return null; } },
       internationalShippingCountryAvailability: {
         findMany: async () => {
           calls.push(["shippingRead"]);
@@ -73,7 +78,7 @@ function fixture(assignedRole = roles.ADMIN) {
 function request(intent, extra = {}) {
   return new Request("https://example.test/app/international-shipping", {
     method: "POST",
-    body: new URLSearchParams({ intent, countryCode: "US", ...extra }),
+    body: new URLSearchParams({ intent, countryCode: "US", expectedVersion: "absent", ...extra }),
   });
 }
 
@@ -147,6 +152,31 @@ test("service failures do not expose database details", async () => {
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
 });
 
+test("sync rejection is not reported as success", async () => {
+  const f = fixture();
+  f.dependencies.syncInternationalSaleGate = async () => ({ ok: false, reason: "international_sync_not_armed" });
+  const response = await f.action()({ request: request("syncInternationalSaleGate") });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).ok, false);
+});
+
+test("stale evidence returns 409 without exposing source details", async () => {
+  const f = fixture();
+  f.dependencies.saveInternationalMarketEvidence = async () => { const error = new Error("private database value"); error.code = "INTERNATIONAL_EVIDENCE_CONFLICT"; throw error; };
+  const response = await f.action()({ request: request("saveMarketEvidence") });
+  assert.equal(response.status, 409);
+  assert.ok(!(await response.text()).includes("private database"));
+});
+
+test("revoke and stop retain separate operator roles", async () => {
+  const f = fixture(roles.COMPLIANCE_REVIEWER);
+  assert.equal((await f.action()({ request: request("revokeMarketEvidence") })).status, 302);
+  assert.equal(f.calls[1][0], "revoke");
+  await assert.rejects(f.action()({ request: request("stopInternationalSaleGate") }), (error) => error.status === 403);
+  const incident = fixture(roles.INCIDENT_COMMANDER);
+  assert.equal((await incident.action()({ request: request("stopInternationalSaleGate") })).status, 200);
+});
+
 test("loader is authorized, non-cached and read-only", async () => {
   for (const role of [
     roles.ADMIN,
@@ -160,7 +190,7 @@ test("loader is authorized, non-cached and read-only", async () => {
     assert.equal(response.headers.get("Cache-Control"), "private, no-store");
     assert.deepEqual(
       f.calls.map(([name]) => name),
-      ["authorize", "shippingRead", "evidenceRead"],
+      ["authorize", "shippingRead", "evidenceRead", "gateRead"],
     );
   }
   const f = fixture(roles.FINANCE_EXECUTOR);

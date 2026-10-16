@@ -1,4 +1,7 @@
 query CartValidationsGenerateRunInput {
+  buyerJourney {
+    step
+  }
   shop {
     localTime {
       date
@@ -36,22 +39,26 @@ query CartValidationsGenerateRunInput {
       }
     }
     deliveryGroups {
+      cartLines {
+        id
+      }
       deliveryAddress {
         countryCode
-        provinceCode
         zip
       }
     }
     lines {
+      id
       quantity
       merchandise {
         ... on ProductVariant {
           id
+          requiresShipping
           product {
             id
-            marketplaceCheckoutPolicy: metafield(
+            internationalSaleEligibility: metafield(
               namespace: "$app"
-              key: "marketplace_checkout_policy"
+              key: "international_sale_eligibility"
             ) {
               value
             }
