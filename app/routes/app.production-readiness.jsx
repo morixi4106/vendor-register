@@ -256,7 +256,7 @@ export const action = async ({ request }) => {
   if (intent === "disable_checkout_validation_for_standard_direct") {
     const { inspectCheckoutCommerceContext } =
       await import("../services/checkoutCommerceContext.server.js");
-    const { mode } = await inspectCheckoutCommerceContext();
+    const { mode } = await inspectCheckoutCommerceContext({ shopDomain: session.shop });
     if (!mode.standardDirectReady) {
       return Response.json(
         {
@@ -410,7 +410,7 @@ export const action = async ({ request }) => {
         inspectCheckoutValidationActivationEvidence,
         inspectOperationalReadiness,
       } = await import("../services/operationalReadiness.server.js");
-      const operationalReadiness = await inspectOperationalReadiness();
+      const operationalReadiness = await inspectOperationalReadiness({ shopDomain: session.shop });
       const activationEvidence =
         inspectCheckoutValidationActivationEvidence(operationalReadiness);
       if (!activationEvidence.ok) {

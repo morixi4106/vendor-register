@@ -54,7 +54,7 @@ export function includeCheckoutValidationInProductionReadiness(
 ) {
   const checkoutMode =
     readiness?.operationalReadiness?.checkoutMode ||
-    inspectPlatformDirectCheckoutMode(env);
+    inspectPlatformDirectCheckoutMode(env, { available: false });
   const standardDirect = checkoutMode.standardDirectReady;
   const validationReady = standardDirect
     ? Boolean(

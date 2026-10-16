@@ -1,12 +1,15 @@
 import { inspectProductShippingProfiles } from "./productionReadiness/products.server.js";
 import { inspectPlatformDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { inspectShopifyCommerceScope } from "./shopifyCommerceScope.server.js";
+import { createNativeReadSession } from "./internationalNativeInventory.server.js";
 
 export function buildCheckoutCommerceContext(
   shippingProfiles,
   env = process.env,
+  nativeScope = null,
 ) {
   const service = shippingProfiles?.serviceAvailability;
-  const available =
+  const databaseAvailable =
     shippingProfiles?.available === true &&
     service?.available === true &&
     [
@@ -14,35 +17,85 @@ export function buildCheckoutCommerceContext(
       service.activeCount,
       service.requiredCountryCount,
     ].every((count) => Number.isSafeInteger(count) && count >= 0);
+  const databaseInternationalConfigured =
+    shippingProfiles?.internationalConfigured === true ||
+    shippingProfiles?.airPacketCount > 0 ||
+    service?.activeCount > 0 ||
+    service?.requiredCountryCount > 0;
+  const nativeAvailable =
+    nativeScope?.available === true &&
+    typeof nativeScope.internationalConfigured === "boolean" &&
+    /^[a-f0-9]{64}$/.test(nativeScope.configHash || "");
+  const available = databaseAvailable && nativeAvailable;
+  const internationalConfigured =
+    databaseInternationalConfigured ||
+    nativeScope?.internationalConfigured === true;
   const scope = {
     available,
-    internationalConfigured:
-      available &&
-      (shippingProfiles.internationalConfigured === true ||
-        shippingProfiles.airPacketCount > 0 ||
-        service.activeCount > 0 ||
-        service.requiredCountryCount > 0),
+    internationalConfigured,
+    scopeStatus: internationalConfigured
+      ? "INTERNATIONAL"
+      : available
+        ? "DOMESTIC_ONLY"
+        : "UNKNOWN",
+    databaseAvailable,
+    nativeAvailable,
+    observedAt: nativeScope?.observedAt || null,
+    nativeConfigHash: nativeAvailable ? nativeScope.configHash : null,
+    reason: !databaseAvailable
+      ? "checkout_database_scope_unverified"
+      : !nativeAvailable
+        ? nativeScope?.reason || "checkout_native_scope_unverified"
+        : null,
   };
   return {
-    mode: inspectPlatformDirectCheckoutMode(env, scope),
+    mode: {
+      ...inspectPlatformDirectCheckoutMode(env, scope),
+      scopeStatus: scope.scopeStatus,
+      databaseScopeAvailable: databaseAvailable,
+      nativeScopeAvailable: nativeAvailable,
+    },
     shippingProfiles,
+    scope,
   };
 }
 
 export async function inspectCheckoutCommerceContext({
+  shopDomain,
   prismaClient,
   env = process.env,
   now = new Date(),
   inspectShippingProfilesImpl = inspectProductShippingProfiles,
+  inspectNativeScopeImpl = inspectShopifyCommerceScope,
+  graphQL = createNativeReadSession(),
 } = {}) {
+  let shippingProfiles = { available: false };
+  let nativeScope = null;
+  const shop = String(shopDomain || "")
+    .trim()
+    .toLowerCase();
   try {
-    return buildCheckoutCommerceContext(
-      await inspectShippingProfilesImpl({ prismaClient, now }),
-      env,
-    );
+    shippingProfiles = await inspectShippingProfilesImpl({
+      prismaClient,
+      now,
+      shopDomain: shop,
+    });
   } catch {
-    return buildCheckoutCommerceContext({ available: false }, env);
+    /* Preserve a positive native observation if DB inspection fails. */
   }
+  if (/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+    try {
+      const observed = await inspectNativeScopeImpl({
+        shopDomain: shop,
+        graphQL,
+        now,
+      });
+      if (observed?.shopDomain === shop) nativeScope = observed;
+    } catch {
+      /* A failed read cannot establish domestic-only configuration. */
+    }
+  }
+  return buildCheckoutCommerceContext(shippingProfiles, env, nativeScope);
 }
 
 export function buildCheckoutCommerceScopeCheck(mode) {

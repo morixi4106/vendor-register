@@ -19,15 +19,20 @@ export async function internationalGraphQL({
   query,
   variables = {},
   timeoutMs = 10000,
+  signal,
 }) {
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopDomain || ""))
     throw internationalGateError("international_shop_invalid");
   const session = await getOfflineSessionForShopDomain(shopDomain);
+  signal?.throwIfAborted();
   const response = await fetch(
     `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
     {
       method: "POST",
-      signal: AbortSignal.timeout(Math.max(1, Math.min(10000, timeoutMs))),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(Math.max(1, Math.min(10000, timeoutMs))),
+        ...(signal ? [signal] : []),
+      ]),
       headers: {
         "Content-Type": "application/json",
         "X-Shopify-Access-Token": session.accessToken,

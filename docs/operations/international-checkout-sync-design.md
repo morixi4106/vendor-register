@@ -6,12 +6,14 @@
 
 R02とR03の永続同期基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)へ実装。cc8276eのCIは成功。現在地は[進捗メモ](launch-progress.md)の第3弾を参照。以下の本文は当初設計で、次の実装上の差異・残作業を優先する。
 
+2026-10-16の後続設計は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。未実装の証拠発行/承認UIとnative共通判定を具体化し、検証用承認と一般販売用承認を分ける。許可通貨を持つ全店v3/policy v2は後続の設計案であり、現在実装済みの全店v2を変更したことにはならない。
+
 - Function queryは上限コスト30。商品区分は一般projection内のroutingClassから読み、重複metafieldを要求しない。GBは郵便番号でNIを拒否し、不明なら拒否。provinceは要求しない。
 - 行数200に加え、一般/国際projectionの累積10,000文字をJSON解析前の作業上限とする。実行上限を超えるカートを許可せず分割案内する。大きい入力のWASM拒否と異なる12商品の許可を資源上限内で試験する。200行の一律購入保証ではない。
 - 初期native読取りは最大10ページのMarket/配送profile。内側は国250、profile商品25/variant10、配送group5/zone5/method10の範囲を読み、続きがあれば未確認。複合Market条件、条件付き送料、selling plan、分割profile等も未確認。対象商品の実variantが単一の物販かを別読取りで照合する。大規模/未対応構成には検査拡張が必要で、自動許可しない。
 - 状態・ジョブの2モデルに加え、既存の市場証拠と配送受付にrevisionを追加。同一ミリ秒の取消も旧フォームで上書きできないようにする。
 - 同期要求はRELEASE_MANAGER、証拠登録/取消はCOMPLIANCE_REVIEWER、明示停止はINCIDENT_COMMANDER。既定DISABLEDのまま。内部の範囲承認関数は存在するが、国際リリース証拠の実発行と有効化UIはR05への接続が残る。
-- 公開前チェックと監視の海外構成には読取り検査を接続。国内限定例外へのnative実設定の接続は残作業であり、アプリDBの海外0件からShopifyも国内限定とは証明しない。
+- 公開前チェックと監視の海外構成には読取り検査を接続。後続4Aで国内限定例外にもnative実設定の接続候補を実装した。実付与権限・実店舗の確認は未完了であり、アプリDBの海外0件からShopifyも国内限定とは証明しない。
 - migration、backend、Functionを本番へ反映していない。既存の期限日・稼働版の観測は更新せず、独立監査・実PostgreSQL競合・実チェックアウト/決済は未確認。
 
 対象は残実装R02・R03。既存の適格性評価をShopifyの購入判定へ接続し、取消・失効後に古い許可が残る問題を防ぐ。設計のみで、アプリコード、schema、本番設定、Shopify releaseは変更していない。

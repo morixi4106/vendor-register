@@ -42,7 +42,7 @@ import {
   inspectOperationalReadiness,
 } from "./operationalReadiness.server.js";
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
-import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { createNativeReadSession } from "./internationalNativeInventory.server.js";
 import { inspectInternationalCheckoutGate, buildInternationalCheckoutGateCheck } from "./internationalCheckoutInspection.server.js";
 import {
   inspectCheckoutCommerceContext,
@@ -491,11 +491,29 @@ export async function collectLaunchMonitorReport({
   const shopDomain = String(
     env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
   ).trim();
+  const nativeGraphQL = createNativeReadSession();
+  const checkoutContext = await inspectCheckoutCommerceContext({
+    shopDomain, prismaClient, env, now, graphQL: nativeGraphQL,
+    inspectShippingProfilesImpl: inspectProductShippingProfilesImpl,
+    inspectNativeScopeImpl: dependencies.inspectShopifyCommerceScope,
+  });
+  const scopeCheck = readinessCheckToMonitorCheck(
+    buildCheckoutCommerceScopeCheck(checkoutContext.mode),
+  );
+  checks.push(scopeCheck);
+  if (runHeavyChecks && checkoutContext.mode.internationalConfigured) {
+    const international = await (dependencies.inspectInternationalCheckoutGate || inspectInternationalCheckoutGate)(
+      { shopDomain, prismaClient, env, now }, { graphQL: nativeGraphQL },
+    );
+    const check = readinessCheckToMonitorCheck(buildInternationalCheckoutGateCheck(international));
+    heavyChecks.push(check);
+    checks.push(check);
+  }
 
   try {
     const guard = await runDomesticAutonomousLaunchGuardImpl(
       { shopDomain },
-      { prismaClient, env, now },
+      { prismaClient, env, now, inspectCheckoutCommerceContextImpl: async () => checkoutContext },
     );
     if (guard.active || guard.secured) {
       checks.push(
@@ -535,7 +553,7 @@ export async function collectLaunchMonitorReport({
   }
 
   try {
-    if (shopDomain && isShopifyStandardDirectCheckoutMode(env)) {
+    if (shopDomain && checkoutContext.mode.standardDirectReady) {
       checks.push(
         okCheck(
           "komoju_limited_launch_control",
@@ -745,23 +763,7 @@ export async function collectLaunchMonitorReport({
   }
 
   if (runHeavyChecks) {
-    const checkoutContext = await inspectCheckoutCommerceContext({
-      prismaClient,
-      env,
-      now,
-      inspectShippingProfilesImpl: inspectProductShippingProfilesImpl,
-    });
-    const scopeCheck = readinessCheckToMonitorCheck(
-      buildCheckoutCommerceScopeCheck(checkoutContext.mode),
-    );
     heavyChecks.push(scopeCheck);
-    checks.push(scopeCheck);
-    if (checkoutContext.mode.internationalConfigured) {
-      const international = await (dependencies.inspectInternationalCheckoutGate || inspectInternationalCheckoutGate)({ shopDomain, prismaClient, env, now });
-      const check = readinessCheckToMonitorCheck(buildInternationalCheckoutGateCheck(international));
-      heavyChecks.push(check);
-      checks.push(check);
-    }
     let checkoutBoundaryCompleted = false;
     let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;
@@ -909,7 +911,7 @@ export async function collectLaunchMonitorReport({
       operationalReadinessCompleted;
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(
-      (check) => READINESS_HEAVY_CHECK_IDS.has(check.id),
+      (check) => READINESS_HEAVY_CHECK_IDS.has(check.id) && check.id !== scopeCheck.id,
     );
     checks.push(
       ...(cachedHeavyChecks.length > 0

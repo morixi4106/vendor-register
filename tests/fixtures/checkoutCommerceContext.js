@@ -10,8 +10,21 @@ export const domesticShippingProfiles = Object.freeze({
   },
 });
 
+export const domesticNativeScope = Object.freeze({
+  available: true,
+  internationalConfigured: false,
+  scopeStatus: "DOMESTIC_ONLY",
+  configHash: "a".repeat(64),
+  observedAt: "2026-10-16T10:00:00.000Z",
+  reason: null,
+});
+
+export function inspectDomesticNativeScope({ shopDomain, now } = {}) {
+  return { ...domesticNativeScope, shopDomain, observedAt: now?.toISOString() || domesticNativeScope.observedAt };
+}
+
 export function domesticCheckoutContext({ env = {} } = {}) {
-  return buildCheckoutCommerceContext(domesticShippingProfiles, env);
+  return buildCheckoutCommerceContext(domesticShippingProfiles, env, domesticNativeScope);
 }
 
 export const domesticProbeOptions = {

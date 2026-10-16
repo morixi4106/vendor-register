@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspectDomesticNativeScope } from "../fixtures/checkoutCommerceContext.js";
 import test from "node:test";
 
 import {
@@ -640,7 +641,7 @@ test("failed heavy checks remain critical and are safe to reuse until retry", as
     prismaClient: basePrisma(),
     env: {
       WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
-      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
+      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop-example.myshopify.com",
     },
     now: NOW,
     runHeavyChecks: true,
@@ -695,6 +696,27 @@ test("standard direct mode treats a prepared disabled marketplace validation as 
     find(report.checks, "marketplace_checkout_server_validation").severity,
     "ok",
   );
+});
+
+test("native-only overseas configuration and lost native access cannot use a cached domestic pass", async () => {
+  for (const mode of ["international", "unavailable"]) {
+    const report = await collectReport({
+      env: {
+        PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+        MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "false",
+      },
+      runHeavyChecks: false,
+      previousHeavyChecks: [{ id: "platform_direct_checkout_scope", severity: "ok", detail: "old domestic snapshot" }],
+      inspectNativeScope: async (args) => ({
+        ...inspectDomesticNativeScope(args),
+        available: mode !== "unavailable",
+        internationalConfigured: mode === "international",
+      }),
+    });
+    const scopeChecks = report.checks.filter((check) => check.id === "platform_direct_checkout_scope");
+    assert.equal(scopeChecks.length, 1);
+    assert.equal(scopeChecks[0].severity, "critical");
+  }
 });
 
 test("monitor rejects disabled validation when standard direct has international configuration", async () => {
@@ -959,6 +981,7 @@ async function collectReport({
     runtimeErrorDetected: false,
   },
   shippingProfiles = healthyProductShippingProfiles(),
+  inspectNativeScope = inspectDomesticNativeScope,
 } = {}) {
   return collectLaunchMonitorReport({
     renderSnapshot,
@@ -967,7 +990,7 @@ async function collectReport({
       WITHDRAWAL_OUTBOX_WORKER_TOKEN: "configured",
       LAUNCH_MONITOR_NOTIFICATION_MODE: "live",
       MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "true",
-      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop.example.myshopify.com",
+      SHOPIFY_PRIMARY_SHOP_DOMAIN: "shop-example.myshopify.com",
       ...env,
     },
     now: NOW,
@@ -1000,6 +1023,7 @@ async function collectReport({
         checkoutHold: false,
       }),
       inspectProductShippingProfiles: async () => shippingProfiles,
+      inspectShopifyCommerceScope: inspectNativeScope,
       refreshKomojuLimitedLaunchControl: async () => limitedLaunch,
     },
   });

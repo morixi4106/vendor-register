@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { domesticCheckoutContext } from "../fixtures/checkoutCommerceContext.js";
 import test from "node:test";
 
 import {
@@ -94,6 +95,7 @@ test("standard direct launch does not require the marketplace watchdog", async (
   });
 
   const checks = buildReleaseMonitoringChecks(inspection, {
+    checkoutMode: domesticCheckoutContext({ env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" } }).mode,
     env: {
       PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
     },

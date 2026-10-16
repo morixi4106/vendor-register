@@ -1753,10 +1753,11 @@ export async function inspectOperationalReadiness({
   now = new Date(),
   env = process.env,
   checkoutContext = null,
+  shopDomain = null,
 } = {}) {
   const context =
     checkoutContext ||
-    (await inspectCheckoutCommerceContext({ prismaClient, env, now }));
+    (await inspectCheckoutCommerceContext({ prismaClient, env, now, shopDomain }));
   const definitions = resolveOperationalReadinessDefinitions(env, context.mode);
   if (!prismaClient?.operationalReadinessAttestation?.findMany) {
     return {
