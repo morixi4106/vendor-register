@@ -9,6 +9,7 @@ import {
   FUNCTION_UID,
   signProofPayload,
   PROOF_SCHEMA_MIGRATION_VERSION,
+  CHECKOUT_CONTRACT_PATHS,
 } from "../../app/utils/internationalProofContract.js";
 import { internationalGraphMemory } from "./internationalGateMemory.js";
 
@@ -124,12 +125,16 @@ export function internationalProofFixture(
       wasm: `${root}/dist/function.wasm`,
       query: `${root}/src/cart_validations_generate_run.graphql`,
       schema: `${root}/schema.graphql`,
-      policy: "international-sale-2026-10-v1",
-      projectionVersion: 2,
+      policy: "international-sale-2026-10-v2",
+      projectionVersion: 3,
     },
     files: rows,
     deploymentDigest: proofHash(rows),
   };
+  const verifierFiles = CHECKOUT_CONTRACT_PATHS.map((path) => ({ path, size: 7, sha256: byteHash(Buffer.from("fixture")) }));
+  manifest.checkoutVerifier = { v: "international-checkout-verifier-v1", level: "CONTRACT_ONLY",
+    scenarioVersion: "international-checkout-cases-v1", verifierVersion: "international-checkout-contract-v1",
+    files: verifierFiles, digest: proofHash(verifierFiles) };
   const archive = proofZip([
     ["manifest.json", Buffer.from(JSON.stringify(manifest))],
     ...files,
@@ -228,6 +233,9 @@ export function internationalProofFixture(
       return structuredClone(responses[p]);
     },
     archive: async () => archive,
+  };
+  for (const row of verifierFiles) responses[`/contents/${row.path}?ref=${manifest.headSha}`] = {
+    encoding: "base64", content: Buffer.from("fixture").toString("base64"),
   };
   const graph = internationalGraphMemory();
   const graphQL = async (args) => {

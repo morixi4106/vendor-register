@@ -1,9 +1,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  internationalHash,
   internationalLocalDate,
   normalizeInternationalScope,
+  internationalScopeHash,
 } from "./internationalGateProjection.server.js";
+import { requireInternationalCurrencies } from "../utils/internationalCurrencyPolicy.js";
 
 export const INTERNATIONAL_DEPLOYMENT_EVIDENCE_KEY =
   "INTERNATIONAL_CHECKOUT_DEPLOYMENT_VERIFIED";
@@ -88,12 +89,7 @@ export function normalizeInternationalAuthorization(input) {
       : input.verificationKind != null
   )
     throw authorizationError("international_verification_kind_invalid", 422);
-  if (
-    !Array.isArray(input.currencies) ||
-    input.currencies.length !== 1 ||
-    input.currencies[0] !== "JPY"
-  )
-    throw authorizationError("international_currency_unsupported", 422);
+  const currencies = requireInternationalCurrencies(input.currencies);
   const requestedExpiresAt = new Date(input.expiresAt);
   if (
     typeof input.expiresAt !== "string" ||
@@ -106,8 +102,8 @@ export function normalizeInternationalAuthorization(input) {
     resumePurpose: input.resumePurpose || null,
     verificationKind: input.verificationKind || null,
     scope,
-    scopeHash: internationalHash(scope),
-    currencies: ["JPY"],
+    scopeHash: internationalScopeHash(scope, currencies),
+    currencies,
     requestedExpiresAt,
   };
 }

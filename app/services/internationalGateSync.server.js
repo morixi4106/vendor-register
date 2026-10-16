@@ -380,7 +380,8 @@ export async function runInternationalGateSync(
             });
             if (
               fresh.sourceHash !== state.sourceHash ||
-              JSON.stringify(fresh.shop.c) !== JSON.stringify(job.payloadJson.c)
+              JSON.stringify(fresh.shop.c) !== JSON.stringify(job.payloadJson.c) ||
+              JSON.stringify(fresh.shop.u) !== JSON.stringify(job.payloadJson.u)
             )
               throw internationalGateError("international_source_changed");
             const routes =

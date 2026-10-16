@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION,
+  INTERNATIONAL_CURRENCIES, requireInternationalCurrencies,
+} from "../utils/internationalCurrencyPolicy.js";
 import { evaluateInternationalMarketReadiness } from "../utils/internationalMarketReadiness.js";
 import { evaluateInternationalMarketCompliance } from "../utils/internationalMarketCompliance.js";
 import { JAPAN_POST_AIR_PACKET_COUNTRY_CODES } from "../utils/japanPostAirPacket.js";
@@ -10,7 +14,7 @@ import {
 } from "./saleEligibility.server.js";
 import { getPlatformOperationalControl } from "./operationalControls.server.js";
 
-export const INTERNATIONAL_GATE_POLICY = "international-sale-2026-10-v1";
+export const INTERNATIONAL_GATE_POLICY = INTERNATIONAL_CURRENCY_POLICY;
 export const INTERNATIONAL_PRODUCT_GATE_KEY = "international_sale_eligibility";
 export const INTERNATIONAL_SHOP_GATE_KEY = "international_sale_gate";
 export const MAX_INTERNATIONAL_PRODUCTS = 200;
@@ -36,6 +40,11 @@ export function internationalHash(value) {
   return createHash("sha256")
     .update(serializeInternationalProjection(value))
     .digest("hex");
+}
+
+export function internationalScopeHash(scope, currencies) {
+  return internationalHash({ policy: INTERNATIONAL_GATE_POLICY, scope,
+    currencies: requireInternationalCurrencies(currencies) });
 }
 
 export function sealInternationalProjection(base) {
@@ -190,13 +199,14 @@ export function closedInternationalGate(
 ) {
   const d = internationalLocalDate(now, timezone);
   return sealInternationalProjection({
-    v: 2,
+    v: INTERNATIONAL_SHOP_PROJECTION_VERSION,
     p: INTERNATIONAL_GATE_POLICY,
     g: generation,
     s: state,
     d,
     e: d,
     c: [],
+    u: [...INTERNATIONAL_CURRENCIES],
   });
 }
 
@@ -208,6 +218,16 @@ export async function buildInternationalGateSnapshot({
   persist = false,
 }) {
   const scope = normalizeInternationalScope(state.authorizedScopeJson);
+  const request = state.authorizationRequestId
+    ? await prismaClient.internationalGateAuthorizationRequest.findFirst({
+        where: { id: state.authorizationRequestId, shopDomain: state.shopDomain },
+      })
+    : null;
+  const currencies = requireInternationalCurrencies(request ? request.currenciesJson : INTERNATIONAL_CURRENCIES);
+  if (state.authorizationRequestId && (!request ||
+      request.scopeHash !== internationalScopeHash(scope, currencies) ||
+      request.scopeHash !== state.authorizedScopeHash))
+    throw new Error("international_authorization_unverified");
   const products = await prismaClient.product.findMany({
     where: {
       id: { in: scope.map((s) => s.productId) },
@@ -364,13 +384,14 @@ export async function buildInternationalGateSnapshot({
     .sort();
   const e = activeExpiries[0] || d;
   const shop = sealInternationalProjection({
-    v: 2,
+    v: INTERNATIONAL_SHOP_PROJECTION_VERSION,
     p: INTERNATIONAL_GATE_POLICY,
     g: state.desiredGeneration,
     s: allowedCountries.length ? "ACTIVE" : "BLOCKED",
     d,
     e,
     c: allowedCountries,
+    u: currencies,
   });
   const controlSource = {
     checkoutHold: control.checkoutHold,
@@ -381,6 +402,7 @@ export async function buildInternationalGateSnapshot({
     targets,
     shop,
     sourceHash: internationalHash([
+      INTERNATIONAL_GATE_POLICY, currencies,
       sources,
       [...countryResults],
       controlSource,

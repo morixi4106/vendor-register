@@ -1,4 +1,4 @@
-export const INTERNATIONAL_POLICY_VERSION = "international-sale-2026-10-v1";
+export const INTERNATIONAL_POLICY_VERSION = "international-sale-2026-10-v2";
 const ERROR = "海外販売条件を確認できないため、この配送先への注文を受け付けられません。";
 const NI_ERROR = "現在、北アイルランドへの配送は受け付けていません。";
 const COUNTRY_CODES = new Set((
@@ -82,8 +82,10 @@ export function getInternationalDestinationError(input, currentDate) {
       covered.add(member.id);
       if (country === "JP") continue;
       if (containsNonPhysical) return ERROR;
-      gate ??= parse(input.shop?.internationalSaleGate?.value, 2, currentDate);
-      if (!gate || gate.s !== "ACTIVE" || !gate.c.includes(country)) return ERROR;
+      gate ??= parse(input.shop?.internationalSaleGate?.value, 3, currentDate);
+      if (!gate || gate.s !== "ACTIVE" || !gate.c.includes(country) ||
+          !Array.isArray(gate.u) || gate.u.length !== 1 || gate.u[0] !== "JPY" ||
+          input.cart?.cost?.totalAmount?.currencyCode !== "JPY") return ERROR;
       const serialized = line.merchandise.product?.internationalSaleEligibility?.value;
       bytes += typeof serialized === "string" ? serialized.length : 0;
       if (bytes > 96000) return ERROR;

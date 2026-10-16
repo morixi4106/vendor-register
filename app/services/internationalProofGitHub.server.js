@@ -210,6 +210,15 @@ export async function inspectProofArtifactMetadata({
     byteHash(Buffer.from(content.content, "base64")) !== manifest.workflowDigest
   )
     throw proofError();
+  if (manifest.checkoutVerifier) {
+    for (const file of manifest.checkoutVerifier.files) {
+      const source = await get(`/contents/${file.path}?ref=${manifest.headSha}`);
+      if (source.encoding !== "base64" || typeof source.content !== "string" || source.content.length > 100000)
+        throw proofError();
+      const bytes = Buffer.from(source.content, "base64");
+      if (bytes.length !== file.size || byteHash(bytes) !== file.sha256) throw proofError();
+    }
+  }
   for (const [name, path] of [
     ["quality", ".github/workflows/quality.yml"],
     ["postgres", ".github/workflows/international-authorization-postgres.yml"],

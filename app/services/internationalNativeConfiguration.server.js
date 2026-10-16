@@ -1,4 +1,5 @@
 import { inspectMarketplaceCheckoutValidation } from "./shopifyCheckoutValidation.server.js";
+import { collectInternationalCheckoutInventory } from "./internationalCheckoutInventory.server.js";
 import {
   createNativeReadSession,
   hashNativeConfiguration,
@@ -215,8 +216,15 @@ export async function inspectInternationalNativeConfiguration({
     const validation = await inspectMarketplaceCheckoutValidation(shopDomain, {
       graphQL,
     });
+    let verificationInventory = null;
+    try {
+      verificationInventory = collectInternationalCheckoutInventory({ markets, profiles, scope, variantFacts });
+    } catch {
+      // A stricter test plan must not change the existing native-scope result.
+    }
     return {
       ...result,
+      verificationInventory,
       configHash: hashNativeConfiguration([result.configHash, variantFacts]),
       validationReady:
         validation.ok && validation.active && !validation.runtimeErrorDetected,

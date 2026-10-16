@@ -2,11 +2,11 @@
 
 作成日: 2026-10-15 JST
 
-状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)として実装し、cc8276eのCI成功を確認。4Aのnative共通判定は[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)、5a0d632のCI成功。R03の承認UI/証拠発行、R05・R06は後続。本番再監査・設定変更・実取引は未実施。
+状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。R02/R03基盤は[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)、4Aのnative共通判定は[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)で候補CI成功。4B-1/2/3もPR #55/#56/#57で候補CI成功。R05の4C-1はローカル候補実装・検証済み、4C-2/3は未実装、R06は別変更。本番再監査・設定変更・実取引は未実施。
 
-次段階の詳細は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。4Aのnative共通判定に続き、4B-1の単回承認/永続停止は[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)でCI成功。4B-2は候補実装・CI確認前、4B-3のUIと4Cの国・商品・通貨付き取引証拠は未実装。R06は別変更とする。schema/migrationは本番未適用。
+全体方針は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)、次の実装仕様は2026-10-17の[国際購入の通し検証と販売用証拠](international-checkout-verification-design.md)。4C-1通貨/対象契約、4C-2非課金runner/正常閉鎖、4C-3注文対応/金融照合/最終proofに分ける。R06は別変更とし、schema/migrationは本番未適用。
 
-4Bの実装仕様は[承認と検証証拠の詳細設計](international-authorization-design.md)。単回承認/永続停止の4B-1は候補実装と隔離PostgreSQL検証を実施。信頼済み証拠発行の4B-2、既存UI/runner接続の4B-3は後続。4Cの通貨制限・実機照合が未実装の間は、承認実行をサーバー側で拒否する。P21/P22は未完了のまま。
+4Bの実装仕様は[承認と検証証拠の詳細設計](international-authorization-design.md)、[システム証拠発行](international-proof-issuance-design.md)、[管理操作/runner接続](international-runner-interface-design.md)。4Cの通貨制限・実機/金融照合が未実装の間は、承認実行をサーバー側で拒否する。P21/P22は未完了のまま。以下の各弾の実装順は当初の履歴を含み、現在地は進捗メモを正本とする。
 
 2026-10-16に[4B-2のシステム証拠発行](international-proof-issuance-design.md)を下書きPR #56へ候補実装。独立artifact workflow、最終WASMの再buildなし試験、署名配備receipt、閉鎖専用DEPLOYMENT run、専用issuer/reader/revokerを追加した。`cc9ad9d` のCI3本と実artifactを検証済み。本番操作は行っていない。
 
@@ -112,6 +112,8 @@ R01-R05は海外販売の安全性と確認に関係する。R06は予備通知�
 この変更だけでShopifyアカウントのMFAや会社としての適法性を認定しない。
 
 ## R05 海外購入と取引証拠の自動検証
+
+2026-10-17に[4Cの詳細契約](international-checkout-verification-design.md)へ具体化。GraphQL `Order.checkoutToken` を取得できる前提は採用せず、署名済み注文Webhookと注文前runner識別子の対応可否を実確認する。国内限定制御を海外の同時注文hard capへ流用しない。以下の方針を維持し、case子モデル以外は既存run/probe/証拠管理を優先する。
 
 - 既存の本番probeに、対象販売範囲、配送国コード、対象商品、期待する決済通貨、release fingerprint、ゲートrevisionを紐付ける。
 - Shopify注文から追加取得する個人情報は配送国コードに限定する。購入者氏名、詳細住所、メール、カード番号を新規保存しない。

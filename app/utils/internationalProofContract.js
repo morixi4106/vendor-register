@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, sign, verify } from "node:crypto";
+import { isInternationalPolicyPair } from "./internationalCurrencyPolicy.js";
 
 export const PROOF_REPOSITORY = "morixi4106/vendor-register";
 export const PROOF_WORKFLOW =
@@ -6,6 +7,28 @@ export const PROOF_WORKFLOW =
 export const PROOF_VERSION = "international-proof-v1";
 export const PROOF_VALIDITY = "international-proof-validity-v1";
 export const PROOF_SCHEMA_MIGRATION_VERSION = "20261017000000";
+export const CHECKOUT_CONTRACT_PATHS = Object.freeze([
+  "app/services/internationalCheckoutInventory.server.js",
+  "app/services/internationalCheckoutPlan.server.js",
+  "app/services/internationalTransactionSnapshot.server.js",
+  "app/utils/internationalCheckoutVerification.js",
+  "app/utils/internationalCurrencyPolicy.js",
+]);
+
+export function validateCheckoutVerifier(value) {
+  shape(value, ["v", "level", "scenarioVersion", "verifierVersion", "files", "digest"]);
+  if (value.v !== "international-checkout-verifier-v1" || value.level !== "CONTRACT_ONLY" ||
+      value.scenarioVersion !== "international-checkout-cases-v1" ||
+      value.verifierVersion !== "international-checkout-contract-v1" ||
+      !Array.isArray(value.files) || value.files.length !== CHECKOUT_CONTRACT_PATHS.length) throw proofError();
+  for (const [index, file] of value.files.entries()) {
+    shape(file, ["path", "size", "sha256"]);
+    if (file.path !== CHECKOUT_CONTRACT_PATHS[index] || !Number.isSafeInteger(file.size) ||
+        file.size < 1 || file.size > 65536 || !HASH.test(file.sha256)) throw proofError();
+  }
+  if (proofHash(value.files) !== value.digest) throw proofError();
+  return value;
+}
 export const DEPLOYMENT_CASES = Object.freeze([
   "artifact",
   "receipt",
@@ -104,6 +127,7 @@ export function validateManifest(m) {
     "function",
     "files",
     "deploymentDigest",
+    ...(m?.function?.policy === "international-sale-2026-10-v2" ? ["checkoutVerifier"] : []),
   ]);
   if (
     m.v !== PROOF_VERSION ||
@@ -161,10 +185,10 @@ export function validateManifest(m) {
     m.function.apiVersion !== "2026-04" ||
     m.function.target !== "cart.validations.generate.run" ||
     m.function.export !== "cart-validations-generate-run" ||
-    !/^international-sale-2026-10-v[12]$/.test(m.function.policy) ||
-    ![2, 3].includes(m.function.projectionVersion)
+    !isInternationalPolicyPair(m.function.policy, m.function.projectionVersion)
   )
     throw proofError();
+  if (m.function.policy === "international-sale-2026-10-v2") validateCheckoutVerifier(m.checkoutVerifier);
   if (!Array.isArray(m.files) || !m.files.length || m.files.length > 1999)
     throw proofError();
   const names = new Set();
@@ -205,6 +229,7 @@ export function validateManifest(m) {
 export const INTERNATIONAL_PROOF_TRUST = Object.freeze({
   publisher: Object.freeze([]),
   observer: Object.freeze([]),
+  checkoutVerifier: Object.freeze([]),
 });
 export function signProofPayload(purpose, payload, keyId, privateKey) {
   return {

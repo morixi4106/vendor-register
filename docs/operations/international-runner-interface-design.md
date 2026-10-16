@@ -16,6 +16,8 @@
 
 4B-3では閉鎖専用DEPLOYMENTの実行接続までを完成対象にする。4Cのbrowserシナリオ、通貨の強制、金融結果schema、正常VERIFY終了からの最終proof発行は別変更。未実装の結果受付を汎用JSON uploadで先に公開しない。
 
+2026-10-17追記: その後続仕様は[4Cの国際購入・販売用証拠設計](international-checkout-verification-design.md)。JPY強制/対象契約、非課金case runner/正常閉鎖、注文対応/金融probe/最終proofに分割した。4Cは設計のみで、現在の固定falseや通常VERIFY結果受付の拒否は変更していない。
+
 ## 2. 実コードで確認した接続不足
 
 | 箇所 | 現在 | 4B-3の差分 |

@@ -6,6 +6,8 @@ import {
   normalizeInternationalScope,
   internationalHash,
   serializeInternationalProjection,
+  closedInternationalGate,
+  internationalScopeHash,
 } from "../../app/services/internationalGateProjection.server.js";
 import { getInternationalMarketRequirements } from "../../app/utils/internationalMarketReadiness.js";
 
@@ -165,11 +167,36 @@ test("product-country snapshot uses the real eligibility engine and complete mar
   const f = fixture();
   const result = await f.build();
   assert.deepEqual(result.shop.c, ["US"]);
+  assert.equal(result.shop.v, 3);
+  assert.equal(result.shop.p, "international-sale-2026-10-v2");
+  assert.deepEqual(result.shop.u, ["JPY"]);
   assert.deepEqual(result.targets[0].projection.c, ["US"]);
   assert.equal(result.targets[0].projection.g, 3);
   assert.equal(result.targets[0].projection.i, f.product.shopifyProductId);
   assert.ok(result.nextExpiryAt <= f.future);
   assert.ok(!JSON.stringify(result).includes("operator:1"));
+});
+
+test("closed gate carries the new policy and currency without authorizing destinations", () => {
+  const result = closedInternationalGate(2, new Date(), "Asia/Tokyo");
+  assert.equal(result.v, 3);
+  assert.deepEqual(result.u, ["JPY"]);
+  assert.deepEqual(result.c, []);
+  assert.notEqual(internationalScopeHash([], ["JPY"]), internationalHash([]));
+  assert.throws(() => internationalScopeHash([], ["USD"]));
+});
+
+test("snapshot refuses missing or foreign currencies on a persisted authorization", async () => {
+  const f = fixture();
+  f.state.authorizationRequestId = "request";
+  const request = { currenciesJson: ["JPY"], scopeHash: internationalScopeHash(f.state.authorizedScopeJson, ["JPY"]) };
+  f.state.authorizedScopeHash = request.scopeHash;
+  f.db.internationalGateAuthorizationRequest = { findFirst: async () => request };
+  assert.deepEqual((await f.build()).shop.u, ["JPY"]);
+  for (const currencies of [null, [], ["USD"]]) {
+    request.currenciesJson = currencies;
+    await assert.rejects(f.build());
+  }
 });
 
 test("one approved product does not grant a second recalled product its countries", async () => {

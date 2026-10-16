@@ -16,7 +16,10 @@ import {
   PROOF_REPOSITORY,
   PROOF_WORKFLOW,
   FUNCTION_UID,
+  CHECKOUT_CONTRACT_PATHS,
 } from "../app/utils/internationalProofContract.js";
+import { INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION } from "../app/utils/internationalCurrencyPolicy.js";
+import { INTERNATIONAL_CHECKOUT_SCENARIOS, INTERNATIONAL_CHECKOUT_VERIFIER } from "../app/utils/internationalCheckoutVerification.js";
 import { createInternationalProofGitHub } from "../app/services/internationalProofGitHub.server.js";
 
 export function collectProofDeploymentFiles(root) {
@@ -77,6 +80,19 @@ const listFiles = (files) =>
     size: bytes.length,
     sha256: byteHash(bytes),
   }));
+
+export function collectCheckoutVerifier(root) {
+  const files = CHECKOUT_CONTRACT_PATHS.map((relative) => {
+    const absolute = path.join(root, relative);
+    const stat = fs.lstatSync(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 1 || stat.size > 65536)
+      throw new Error("proof_verifier_source_invalid");
+    return { path: relative, size: stat.size, sha256: byteHash(fs.readFileSync(absolute)) };
+  });
+  return { v: "international-checkout-verifier-v1", level: "CONTRACT_ONLY",
+    scenarioVersion: INTERNATIONAL_CHECKOUT_SCENARIOS, verifierVersion: INTERNATIONAL_CHECKOUT_VERIFIER,
+    files, digest: proofHash(files) };
+}
 
 export async function exportInternationalProofArtifact({
   root = process.cwd(),
@@ -185,9 +201,10 @@ export async function exportInternationalProofArtifact({
       wasm: `${base}/dist/function.wasm`,
       query: `${base}/src/cart_validations_generate_run.graphql`,
       schema: `${base}/schema.graphql`,
-      policy: "international-sale-2026-10-v1",
-      projectionVersion: 2,
+      policy: INTERNATIONAL_CURRENCY_POLICY,
+      projectionVersion: INTERNATIONAL_SHOP_PROJECTION_VERSION,
     },
+    checkoutVerifier: collectCheckoutVerifier(root),
     files: listFiles(files),
     deploymentDigest: proofHash(listFiles(files)),
   });
