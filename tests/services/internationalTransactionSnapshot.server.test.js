@@ -136,6 +136,8 @@ for (const field of [
   "variant",
   "fractional",
   "cancelled",
+  "manualGateway",
+  "missingGatewayFlag",
 ]) {
   test(`international snapshot fails closed for ${field}`, () => {
     const o = internationalOrderFixture();
@@ -173,6 +175,10 @@ for (const field of [
     if (field === "variant") o.lineItems.nodes[0].variant = null;
     if (field === "fractional") o.totalTaxSet = moneyBag("0.1");
     if (field === "cancelled") o.cancelledAt = o.createdAt;
+    if (field === "manualGateway")
+      o.transactions[0].manualPaymentGateway = true;
+    if (field === "missingGatewayFlag")
+      delete o.transactions[0].manualPaymentGateway;
     assert.throws(
       () => buildInternationalTransactionSnapshot(o),
       (e) => e.code === "international_transaction_unverified",
@@ -201,6 +207,15 @@ test("refund snapshot preserves exact parent and amounts without assuming succes
   assert.equal(
     snapshot.refunds[0].transactions[0].parentId,
     o.transactions[0].id,
+  );
+});
+
+test("missing wallet details cannot certify a plain card payment", () => {
+  const o = internationalOrderFixture();
+  delete o.transactions[0].paymentDetails.wallet;
+  assert.equal(
+    buildInternationalTransactionSnapshot(o).transactions[0].paymentMethod,
+    "UNKNOWN",
   );
 });
 

@@ -71,6 +71,7 @@ export function internationalOrderFixture() {
     kind: "SALE",
     status: "SUCCESS",
     gateway: "KOMOJU",
+    manualPaymentGateway: false,
     test: false,
     processedAt: "2026-10-17T00:00:00Z",
     parentTransaction: null,

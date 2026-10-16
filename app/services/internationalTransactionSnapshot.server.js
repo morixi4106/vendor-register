@@ -8,7 +8,7 @@ import { JAPAN_POST_AIR_PACKET_COUNTRY_CODES } from "../utils/japanPostAirPacket
 
 const MAX_DB_AMOUNT = 2147483647;
 const BAG = `shopMoney { amount currencyCode } presentmentMoney { amount currencyCode }`;
-const TX = `id kind status gateway test processedAt parentTransaction { id }
+const TX = `id kind status gateway test manualPaymentGateway processedAt parentTransaction { id }
   paymentDetails { __typename ... on BasePaymentDetails { paymentMethodName } ... on CardPaymentDetails { wallet } }
   amountSet { ${BAG} }`;
 export const INTERNATIONAL_TRANSACTION_ORDER_QUERY = `query InternationalTransactionOrder($id: ID!) {
@@ -95,6 +95,7 @@ function unique(rows) {
 function transaction(row) {
   if (
     !row ||
+    row.manualPaymentGateway !== false ||
     typeof row.test !== "boolean" ||
     !["AUTHORIZATION", "CAPTURE", "SALE", "VOID", "REFUND"].includes(
       row.kind,
@@ -121,7 +122,7 @@ function transaction(row) {
         ? "KOMOJU"
         : "UNKNOWN",
     paymentMethod:
-      details?.__typename === "CardPaymentDetails" && !details.wallet
+      details?.__typename === "CardPaymentDetails" && details.wallet === null
         ? "CARD"
         : "UNKNOWN",
     processedAt: row.processedAt === null ? null : instant(row.processedAt),

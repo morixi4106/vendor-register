@@ -168,6 +168,6 @@ native readerの既存の単一physical variant制限を維持し、JPY固定mar
 
 proof manifestへ固定5ソースファイルのhashと `CONTRACT_ONLY` descriptorを追加し、同commitのGitHub sourceを独立照合する。ブラウザ実行済みとは表示せず、checkoutVerifier鍵registryも空、source capabilityはfalse、SALE readerは未対応のまま。Function query/schema、DB schema/migration、package/lockfile、品質workflow/既存の例外条件は変更していない。
 
-ローカル全体1327件中1320成功・既存skip7、専用PG40件成功/schema差分0、Function/WASMとexact prebuilt各92件成功、lint/text/architecture、拡張/アプリbuild、隔離runtime成功。通常local production auditは既存の審査不足3codeで拒否し、例外を広げて通していない。実GraphQL権限/フィールド可用性・checkout対応・決済上限・本番の成功証拠ではない。
+ローカル全体は手動決済/フラグ欠損・wallet欠損の拒否追加後、1330件中1323成功・既存skip7。専用PG40件成功/schema差分0、Function/WASMとexact prebuilt各92件成功、lint/text/architecture、拡張/アプリbuild、隔離runtime成功。通常local production auditは既存の審査不足3codeで拒否し、例外を広げて通していない。実GraphQL権限/フィールド可用性・checkout対応・決済上限・本番の成功証拠ではない。
 
 [下書きPR #58](https://github.com/morixi4106/vendor-register/pull/58)の実装e6d21b2はQuality/PG/artifactの3本がSUCCESS。Linux1323成功・skip4、既存の条件付きproduction auditも成功。candidate artifactの26ファイルと同commitのcontract 5ソースを独立照合した。PR merge commitに対する候補で、production証拠としては使えない。具体的なrun/commit/digest確認は進捗メモに記録する。

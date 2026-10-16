@@ -1,6 +1,6 @@
 # 公開準備の進捗と次の作業
 
-更新日時: 2026-10-17 03:14 JST
+更新日時: 2026-10-17 03:16 JST
 
 公開準備に関するCodexの引き継ぎと進捗管理の入口です。作業開始時に読み、進捗があった作業の終了前に更新します。会話履歴だけを根拠に完了扱いにしないでください。
 
@@ -256,6 +256,7 @@
 
 - 基準は4B-3 `960024e`、ブランチ `agent/international-currency-contract`。shop v3/policy v2とJPY allowlistをFunction/同期/閉鎖/runtimeへ接続。currency込みscope/source hashで旧承認・旧海外許可を現在の承認へ流用しない。国内の通常購入/国内probeは置換しない。
 - 新しいread-only国際snapshotは国、全行/variant、両側MoneyBag、注文/取引/返金の完全性と厳密なJPY整数を扱う。国/商品/variant/金額/配送参照/期間のscope照合も追加。住所本文・メール・電話・tokenはquery/結果へ追加しない。GB実取引、外貨、未知のprovider/methodは未確認。checkout/Webhook対応と既存金融probe接続は4C-3に残る。
+- 最終確認で手動決済/手動フラグ欠損を拒否し、wallet field欠損を通常CARDへ補完しない検査も追加した。追加後のローカル全体1330件中1323成功・既存skip7、lint成功。金融成功の自己認定には使わず、最新候補の検査状態はPR #58のHEAD checksを確認する。
 - 単一physical variantという既存native制約を維持。case用のJPY固定market/全経路inventoryは厳しい独立判定とし、国内外scopeの可用性を上書きしない。無料/手動/carrier service別の必須計画、2048件上限、coverageの不足/余分/重複/流用拒否を実装。保存/実機負例/実行/正常終了は4C-2に残る。
 - manifestへ固定5ソースのdigestとCONTRACT_ONLY descriptorを追加し、同commitのGitHub sourceと照合。旧policy/versionの交差組合せや現在runtimeでの旧policyを拒否。checkoutVerifier鍵registryは空、source capability=false、SALE reader未対応を維持する。新規DB migration、Function query/schema、package/lockfile、品質workflow/ビルド例外変更はない。
 - ローカル全体1327件中1320成功、既存Windows依存skip4と専用PG wrapper skip3。専用loopback PG17で既存delta/競合試験40件成功、schema差分0。Function/WASMとexact prebuiltは各92件成功。大量cartは入力75655bytes/6509058命令、国内大量cartは102855bytes/10430162命令で既存上限内。
