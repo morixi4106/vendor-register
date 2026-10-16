@@ -23,6 +23,9 @@ const roles = MARKETPLACE_OPERATOR_ROLES;
 function fixture(assignedRole = roles.ADMIN) {
   const calls = [];
   const dependencies = {
+    requireInternationalAdminMutation: () => {},
+    dispatchInternationalRunnerAdmin: async () => null,
+    loadInternationalRunnerAdmin: async () => ({ permissions: {} }),
     MARKETPLACE_OPERATOR_ROLES,
     resolveInternationalShippingOperatorRole,
     readBoundedFormData,
@@ -49,10 +52,19 @@ function fixture(assignedRole = roles.ADMIN) {
       calls.push(["sync", data]);
       return { ok: true, pending: true, protected: false };
     },
-    stopInternationalGateSync: async (data) => { calls.push(["stop", data]); return { ok: true, protected: false }; },
-    revokeInternationalMarketEvidence: async (data) => calls.push(["revoke", data]),
+    stopInternationalGateSync: async (data) => {
+      calls.push(["stop", data]);
+      return { ok: true, protected: false };
+    },
+    revokeInternationalMarketEvidence: async (data) =>
+      calls.push(["revoke", data]),
     prisma: {
-      internationalGateSyncState: { findUnique: async () => { calls.push(["gateRead"]); return null; } },
+      internationalGateSyncState: {
+        findUnique: async () => {
+          calls.push(["gateRead"]);
+          return null;
+        },
+      },
       internationalShippingCountryAvailability: {
         findMany: async () => {
           calls.push(["shippingRead"]);
@@ -70,7 +82,15 @@ function fixture(assignedRole = roles.ADMIN) {
   return {
     calls,
     dependencies,
-    action: () => loadRouteHandler(route, "action", dependencies),
+    action: () =>
+      loadRouteHandler(
+        new URL(
+          "../../app/services/internationalShippingAction.server.js",
+          import.meta.url,
+        ),
+        "internationalShippingAction",
+        dependencies,
+      ),
     loader: () => loadRouteHandler(route, "loader", dependencies),
   };
 }
@@ -78,7 +98,12 @@ function fixture(assignedRole = roles.ADMIN) {
 function request(intent, extra = {}) {
   return new Request("https://example.test/app/international-shipping", {
     method: "POST",
-    body: new URLSearchParams({ intent, countryCode: "US", expectedVersion: "absent", ...extra }),
+    body: new URLSearchParams({
+      intent,
+      countryCode: "US",
+      expectedVersion: "absent",
+      ...extra,
+    }),
   });
 }
 
@@ -154,15 +179,24 @@ test("service failures do not expose database details", async () => {
 
 test("sync rejection is not reported as success", async () => {
   const f = fixture();
-  f.dependencies.syncInternationalSaleGate = async () => ({ ok: false, reason: "international_sync_not_armed" });
-  const response = await f.action()({ request: request("syncInternationalSaleGate") });
+  f.dependencies.syncInternationalSaleGate = async () => ({
+    ok: false,
+    reason: "international_sync_not_armed",
+  });
+  const response = await f.action()({
+    request: request("syncInternationalSaleGate"),
+  });
   assert.equal(response.status, 409);
   assert.equal((await response.json()).ok, false);
 });
 
 test("stale evidence returns 409 without exposing source details", async () => {
   const f = fixture();
-  f.dependencies.saveInternationalMarketEvidence = async () => { const error = new Error("private database value"); error.code = "INTERNATIONAL_EVIDENCE_CONFLICT"; throw error; };
+  f.dependencies.saveInternationalMarketEvidence = async () => {
+    const error = new Error("private database value");
+    error.code = "INTERNATIONAL_EVIDENCE_CONFLICT";
+    throw error;
+  };
   const response = await f.action()({ request: request("saveMarketEvidence") });
   assert.equal(response.status, 409);
   assert.ok(!(await response.text()).includes("private database"));
@@ -170,11 +204,21 @@ test("stale evidence returns 409 without exposing source details", async () => {
 
 test("revoke and stop retain separate operator roles", async () => {
   const f = fixture(roles.COMPLIANCE_REVIEWER);
-  assert.equal((await f.action()({ request: request("revokeMarketEvidence") })).status, 302);
+  assert.equal(
+    (await f.action()({ request: request("revokeMarketEvidence") })).status,
+    302,
+  );
   assert.equal(f.calls[1][0], "revoke");
-  await assert.rejects(f.action()({ request: request("stopInternationalSaleGate") }), (error) => error.status === 403);
+  await assert.rejects(
+    f.action()({ request: request("stopInternationalSaleGate") }),
+    (error) => error.status === 403,
+  );
   const incident = fixture(roles.INCIDENT_COMMANDER);
-  assert.equal((await incident.action()({ request: request("stopInternationalSaleGate") })).status, 200);
+  assert.equal(
+    (await incident.action()({ request: request("stopInternationalSaleGate") }))
+      .status,
+    200,
+  );
 });
 
 test("loader is authorized, non-cached and read-only", async () => {

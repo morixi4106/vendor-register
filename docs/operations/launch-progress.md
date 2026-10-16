@@ -1,6 +1,6 @@
 # 公開準備の進捗と次の作業
 
-更新日時: 2026-10-16 22:49 JST
+更新日時: 2026-10-17 00:46 JST
 
 公開準備に関するCodexの引き継ぎと進捗管理の入口です。作業開始時に読み、進捗があった作業の終了前に更新します。会話履歴だけを根拠に完了扱いにしないでください。
 
@@ -77,7 +77,7 @@
 | P18 | Shopify Markets・通貨・言語 | 未確認 | 国、表示通貨、言語、商品、送料を整合。現在は海外販売無効 |
 | P19 | 税・関税・輸入費用 | 未確認 | 対象国別に最新確認し、徴収方法・負担者・分類・原産国等を確定。アプリに独自税額計算を追加しない |
 | P20 | 国別の法務・商品要件 | 未確認 | 消費者保護、包装EPR、個人情報移転、化粧品等の該当条件を最新の一次資料と証拠で確認。EU・GB・US等を一括で合格にしない |
-| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | 4A #54、4B-1 #55、4B-2 #56は候補CI成功。B2のartifact/署名配備receipt・閉鎖run・専用発行/取消、隔離PG各11件と実artifactを検証。4B-3/4C、本番/実機は未完了。有効化ロックを維持 |
+| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | 4A #54、4B-1 #55、4B-2 #56は候補CI成功。4B-3の管理操作/専用認証・配送/観測競合はローカル実装済み、PG計40件・画面21ケース成功。下書きPR #57のCI3本成功。4C、本番/実機は未完了。有効化ロックを維持 |
 | P22 | Shopify反映と国際取引の通し確認 | 未確認 | 後続4Cで国・商品・購入者通貨・checkout由来・releaseの束縛を設計。初期はJPY建ての検証対象のみ、外貨対応は未完了。実取引・返金・台帳の証拠は未確認 |
 
 北アイルランドはGBの確認を流用せず、別条件を満たすまで対象外。対象国の法令・制度は実行時に最新確認する。このメモは法的適合を認定しない。国内限定の期限付き公開や既存の国内承認を海外販売の証拠として流用しない。
@@ -100,11 +100,11 @@
 
 ## 次に行う3つ
 
-1. **次は4B-3の設計/実装**: [下書きPR #56](https://github.com/morixi4106/vendor-register/pull/56) の4B-2候補 `cc9ad9d` はQuality/PG/artifact CI成功。既存UIの用途別操作、専用runner/observerの内部認証/API、nonce付き観測配送を追加する。内部serviceが存在するだけでAPIを公開せず、鍵・権限を別管理する。
-2. **4Cの実測/金融へ接続**: 通貨制限、国/商品/checkout由来の照合、実機ケースと正常終了/閉鎖を実装する。B1の暫定FAILED処理は実測検査と同時に専用終了へ接続し、先に緩めない。最終SALE proofとcapabilityはまだ拒否、初期はJPY。R06は別変更、prelaunch通知抑止を維持する。
-3. **外部証拠とPR連鎖を別管理**: P01-P28、固定publisher/runner・署名鍵・artifact保管範囲、実scope/native・国内ガード停止影響を確認する。#55は#54をbaseとする候補で、#51以降の反映前に依存PRの再確認・retarget/rebase・CIが必要。既存の空DB migration通し適用不整合も残す。資金・MFA・実入金を仮データで代用せず、main反映・本番操作・実取引・通知再開は別承認。
+1. **次は4Cの詳細設計**: [PR #57](https://github.com/morixi4106/vendor-register/pull/57) の4B-3は候補CI成功。JPY制限、国/商品/checkout由来、実機ケース、正常終了/閉鎖、既存金融probeの接続を具体化する。実測検査なしでB1のFAILED終了や最終SALE proof/capabilityを先に緩めない。
+2. **実runnerと外部証拠を確認**: 固定publisher/observerの鍵・credential、管理されたscheduler、実scope/native、実埋込み画面の認証、P01-P28の法務/配送/資金/MFA/業務メール/実取引証拠は未確認。fixtureや監視メールの受信記録で代用しない。R06とprelaunch通知抑止は別管理。
+3. **依存PRの反映準備**: #57は#56、#56は#55をbaseとする候補。#51以降のretarget/rebase・CI、migration/実権限・国内ガード停止影響を確認してから本番操作を別承認する。空DBの旧migration履歴不整合、AWAITING_ORDER、公開/実決済/返金/通知再開の境界は維持する。
 
-ユーザーの最新依頼は「実装どうぞ」。4B-2を下書きPR #56へ候補実装し、`cc9ad9d` のCI3本と実artifactのdigestを検証した。4B-3/4C、本番の鍵/credential・実scope・実配備は未確認で、有効化ロックを維持。本番の最新観測日は引き続き2026-10-15 11:35 JSTまで。本番migration・設定・実決済/返金・メール送信はしていない。
+ユーザーの最新依頼は「実装どうぞ」。4B-3を[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)へ候補実装し、`d3dcbc5` のQuality/PG/artifact CI3本成功を確認した。4C、本番の鍵/credential・実scope・実配備は未完了で、有効化ロックを維持。本番の最新観測日は引き続き2026-10-15 11:35 JSTまで。本番migration・設定・実決済/返金・メール送信はしていない。
 
 調査結果が既存の確認と変わらない場合は同じ監査を繰り返すだけで終えず、残作業の実装・検証か、必要な外部証拠の特定へ進む。ユーザーが新しい指示をした場合はそちらを優先する。
 
@@ -221,6 +221,28 @@
 - 実artifact `12049344728` を固定GitHub取得経路で独立読取りし、archive digestと全27ファイルのhash/サイズ一致、77ケースを検査。これは `channel=candidate`、PR合成merge SHA `a5b775b9b1bb7e5aec51809318011c258b06b604` の成果物であり、本番配備/店舗/金融の証拠へ昇格させない。署名receipt等はこの公開artifactへ入れていない。
 - ローカルPGは停止済み。所有する一時初期化ディレクトリの削除はツールが拒否したため未実施で、本番データは含まれない。既存 `.codex-temp` は変更していない。進捗/設計書のUTF-8・相対リンク44件・差分空白も確認した。
 
+### 4B-3の管理操作とrunner接続の詳細設計
+
+- 2026-10-16 23:01 JST、[管理操作と検証runner接続設計](international-runner-interface-design.md)を追加。基準は4B-2の `bc20c0849b22a3b1c3baa8a2a65a7559c9c6491c`。前回このHEADの[Quality 38911149368](https://github.com/morixi4106/vendor-register/actions/runs/38911149368)、[PG 38911149008](https://github.com/morixi4106/vendor-register/actions/runs/38911149008)、[artifact 38911149153](https://github.com/morixi4106/vendor-register/actions/runs/38911149153)は成功確認済み。今回CI/GitHub/本番の再監査はしていない。
+- 既存画面/authorizer/内部Bearer helper/同梱SDK/issuer/runを静的確認。管理画面の用途別操作とheader session token、publisher配送/閉鎖runner/observerの別credential、固定店舗/実行者、非公開DTOを設計。自己申告JSONや監視tokenを発行経路にしない。
+- 新規1モデルは署名receiptの受信箱だけ。開始request keyの冪等性と同店舗FK、取消の依存追跡を既存run/queueへ接続する。P03は既存GLOBALを流用せず、店舗別証拠をrevision付きtransactionで更新/無効化する。
+- UIの観測更新需要とexecutorのnonce発行を分離し、nonce非上書き、サーバー採番、同一署名再送、60秒/15分の鮮度、固定CLI/schedulerの責務を具体化。4C不在時の承認/通常VERIFY結果受付は拒否し、prelaunch通知を再開しない。
+- 文書のUTF-8/文字化け、相対リンク30件、差分空白を検査。設計のみのためアプリテスト/build/CIは再実行していない。既存 `.codex-temp` は変更していない。
+- 文書のみローカル保存。追加実装、migration、credential/設定/scope変更、push/merge、配備/release、実決済/返金、通知送信はない。次は4B-3A/B/Cの実装と検証、4CとP01-P28の実確認は残る。
+
+### 第4弾4B-3: 管理操作とrunner接続の候補実装
+
+- 基準は4B-2 `bc20c08`、ブランチ `agent/international-runner-interface`、[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)。管理操作を既存routeからserviceへ分離し、header session token、Origin、用途別ロール、非キャッシュresource action、配備/履歴/承認UIへ接続。capability固定falseを維持し、通常VERIFY/SALEの開始と自己申告結果は拒否する。
+- publisher配送/閉鎖runner/observerの専用credentialと内部routeを追加。固定shop/app、厳密Bearer、既存secretとの同値拒否、正準JSON/32KB、用途別rate limit。鍵registryは空のまま、新しいcredentialは作成・登録していない。
+- migration `20261017000000_international_runner_interface` は候補のみ。receipt受信箱1モデル、同店舗FK、開始request key unique、取消追跡、観測需要/backoff欄を追加。旧delivery参照なしrunは自動採用しない。隔離PGは旧schemaと3つのdeltaを適用しschema差分0、B1/B2/B3が11+11+18件成功。旧空DB全履歴不整合の修復ではない。
+- nonceの並行上書きを拒否し、サーバー採番、初回/更新の60秒challenge、同一結果再送、依存取消/STOP/leaseの競合とrollbackを検証。観測更新でproof/承認の期限やrevisionを延ばさない。受信と合格・停止保護・販売readyは別表示。
+- 固定read-only observerを子processへ限定credentialで起動するbounded agentを追加。HTTP/Cron handlerからCLIを起動せず、公開・配備・実決済は実行しない。実scheduler、実CLI読取り権限、実公開鍵の導入/失効管理は未確認。背景処理はメールを送らない。
+- ローカル全体1279件中1272成功・既存Windows依存skip4と専用PG wrapper未設定skip3。Prisma format/generate/validate、lint/text/architecture、WASM77件、拡張/アプリbuild、隔離runtime成功。production audit試験のcoverageは行98.49%・分岐92.49%・関数98.60%。通常local auditは審査不足の3codeで拒否し、既存品質workflow/package/lockfile/例外条件は変更していない。
+- 仮データの実pageで320/375/1440px、4状態/ロール別の計21ケースをPlaywright確認。横はみ出しなし、GETで副作用なし、header認証送信、同じ開始の再送key、4C未完成の承認禁止を検査。新しい日時表示はJSTへ固定し、UTCのSSRでも試験。実Shopify埋込み画面のOAuthや実店舗検証ではない。
+- 画面確認用は `http://127.0.0.1:4179/`、`scripts/preview-international-runner.mjs` の仮データ専用server。CORSを無効にし、ファイル配信はworkspaceに制限、`.audit`/`.codex-temp`/env/鍵等を拒否する。ローカル生成証拠は `.audit/international-runner-preview/results.json` と同ディレクトリの画像、全体/audit試験ログ。Git管理外で他PCへ自動移動しない。既存 `.codex-temp` は変更していない。
+- 初回候補 `07e58e4` の[Quality 38925734867](https://github.com/morixi4106/vendor-register/actions/runs/38925734867)、[独立PG 38925734847](https://github.com/morixi4106/vendor-register/actions/runs/38925734847)、[artifact 38925734657](https://github.com/morixi4106/vendor-register/actions/runs/38925734657)は全てSUCCESS。追加のquota期限切れ整理/未知intent境界を含む `d3dcbc57e69b7b33e542ac723ecfb2a5392b8d5f` の[Quality 38926215445](https://github.com/morixi4106/vendor-register/actions/runs/38926215445)、[独立PG 38926215774](https://github.com/morixi4106/vendor-register/actions/runs/38926215774)、[artifact 38926215682](https://github.com/morixi4106/vendor-register/actions/runs/38926215682)も全てSUCCESS。PG11+11+18/schema差分0、既存条件付きproduction auditとprebuilt77件も成功。
+- ローカルPGは停止済み。一時初期化ディレクトリは残存し、本番データは含まれない。preview serverは仮データ確認用にloopbackで稼働。mainのpush/merge、本番migration、scope/Markets/通知設定、Shopify stage/release、実決済/返金、メール送信は行っていない。実scope不足による国内ガードの影響、AWAITING_ORDER、P01-P28、R06は未完了のまま。
+
 ## 更新ルール
 
 1. 開始時にこのメモ、`git status`、対象worktreeと必要な個別手順を確認する。
@@ -244,11 +266,14 @@
 - [海外販売の実設定・承認・取引検証](international-release-verification-design.md): 後続4A-4Cのnative共通判定、初回検証の証拠発行、範囲承認、国/商品/通貨付き取引証拠。
 - [国際販売の承認と検証証拠](international-authorization-design.md): 4Bの用途別承認、単回confirm、2モデル、信頼済みverifier、runner失効/閉鎖、実装3単位と4C依存。
 - [国際販売のシステム証拠発行](international-proof-issuance-design.md): 4B-2の試験済みartifact、署名配備receipt、閉鎖専用run、専用発行/取消、期限と障害時の停止。
+- [国際販売の管理操作と検証runner接続](international-runner-interface-design.md): 4B-3の用途別UI、専用認証/内部API、receipt配送と開始冪等性、観測競合、店舗別P03、受入試験。
 
 ## 直近の変更履歴
 
 | 日付 | 内容 | 検証と残作業 |
 | --- | --- | --- |
+| 2026-10-17 | 4B-3の専用認証・配送・runner・管理画面をローカル実装 | 全体1272成功/skip7、PG計40件/schema差分0、画面21ケース、WASM77、build/runtime成功。下書きPR #57のCI3本成功、本番/4Cは未完了 |
+| 2026-10-16 | 4B-3の管理画面・専用認証/配送・観測競合を設計 | 4B-2候補bc20c08の実コードを静的確認。文書のみローカル保存。3A/B/Cと4C・本番は未完了。有効化/通知ロックを維持 |
 | 2026-10-16 | 4B-2を下書きPR #56へ実装しCI3本と実artifactを検証 | cc9ad9dのQuality/PG/artifact成功。Linux1264成功・skip3、PG各11/schema差分0、prebuilt77と実artifact全digest一致。本番/実key/4B-3/4Cは未完了 |
 | 2026-10-16 | 4B-2の成果物固定・配備receipt・専用証拠発行/取消を設計 | 4B-1候補6ddc76cとCLI/公式仕様を確認。文書のみローカル更新。4B-2/3・4Cの実装、実配備/実取引は未完了。有効化/通知ロックを維持 |
 | 2026-10-16 | 4B-1の単回承認・2モデル・永続停止を下書きPR #55へ実装 | 7ca46deのQuality checks 38900277480と独立PG 38900277332が成功。Linux1242成功・skip2、PG11成功、WASM77成功、production audit成功。4B-2/3・4C・本番は未完了 |

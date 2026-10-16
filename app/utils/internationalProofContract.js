@@ -5,7 +5,7 @@ export const PROOF_WORKFLOW =
   ".github/workflows/international-proof-artifact.yml";
 export const PROOF_VERSION = "international-proof-v1";
 export const PROOF_VALIDITY = "international-proof-validity-v1";
-export const PROOF_SCHEMA_MIGRATION_VERSION = "20261016140000";
+export const PROOF_SCHEMA_MIGRATION_VERSION = "20261017000000";
 export const DEPLOYMENT_CASES = Object.freeze([
   "artifact",
   "receipt",

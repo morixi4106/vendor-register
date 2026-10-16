@@ -1,10 +1,4 @@
-import { redirect } from "react-router";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "react-router";
+import { useActionData, useLoaderData, useNavigation } from "react-router";
 import {
   Badge,
   BlockStack,
@@ -26,17 +20,15 @@ import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
 } from "../utils/marketplaceOperator.server.js";
-import { resolveInternationalShippingOperatorRole } from "../utils/marketplaceOperatorRoles.js";
-import { readBoundedFormData } from "../utils/requestBody.server.js";
-import { requirePostRequest } from "../utils/internalRouteSecurity.server.js";
+import { internationalShippingAction } from "../services/internationalShippingAction.server.js";
+import { loadInternationalRunnerAdmin } from "../services/internationalRunnerAdminRead.server.js";
+import { internationalErrorResponse } from "../services/internationalRunnerAuthentication.server.js";
+import InternationalRunnerPanel from "../components/international/InternationalRunnerPanel.jsx";
 import {
-  saveInternationalMarketEvidence,
-  revokeInternationalMarketEvidence,
-} from "../services/internationalMarketReadiness.server.js";
-import { stopInternationalGateSync } from "../services/internationalGateQueue.server.js";
+  InternationalAdminForm as Form,
+  InternationalActionProvider,
+} from "../components/international/InternationalAdminForm.jsx";
 import { internationalEvidenceVersion } from "../utils/internationalEvidenceVersion.js";
-import { syncInternationalSaleGate } from "../services/internationalSaleGate.server.js";
-import { saveInternationalShippingCountryAvailability } from "../services/internationalShippingAvailability.server.js";
 import {
   getInternationalMarketRequirements,
   INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
@@ -128,13 +120,17 @@ function EvidenceCheckbox({ name, checked, onChange }) {
 }
 
 export const loader = async ({ request }) => {
-  const { session } = await requireMarketplaceOperator(request, {
+  const context = await requireMarketplaceOperator(request, {
     roles: [
       MARKETPLACE_OPERATOR_ROLES.ADMIN,
       MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER,
       MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER,
+      MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER,
+      MARKETPLACE_OPERATOR_ROLES.RECOVERY_APPROVER,
     ],
   });
+  const { session } = context;
+  const runner = await loadInternationalRunnerAdmin(prisma, context, request);
 
   const [rows, evidenceRows, gateState] = await Promise.all([
     prisma.internationalShippingCountryAvailability.findMany({
@@ -153,152 +149,27 @@ export const loader = async ({ request }) => {
         appliedGeneration: true,
         expectedProductCount: true,
         verifiedProductCount: true,
+        protectedAt: true,
       },
     }),
   ]);
 
   return Response.json(
-    { rows, evidenceRows, gateState },
+    { rows, evidenceRows, gateState, runner },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 };
 
 export const action = async ({ request }) => {
-  requirePostRequest(request);
-  const formData = await readBoundedFormData(request);
-  const intent = String(formData.get("intent") || "");
-  const role = resolveInternationalShippingOperatorRole(intent);
-  if (!role) {
-    return Response.json(
-      { ok: false, error: "対応していない操作です。" },
-      { status: 400, headers: { "Cache-Control": "private, no-store" } },
-    );
-  }
-  const { session, operator } = await requireMarketplaceOperator(request, {
-    role,
-  });
-  const confirmedBy = operator.actorKey;
-
   try {
-    if (
-      intent === "syncInternationalSaleGate" ||
-      intent === "stopInternationalSaleGate"
-    ) {
-      const command =
-        intent === "stopInternationalSaleGate"
-          ? stopInternationalGateSync
-          : syncInternationalSaleGate;
-      const result = await command({
-        shopDomain: session?.shop,
-      });
-      return Response.json(
-        {
-          ok: result.ok === true,
-          ...(result.ok
-            ? {
-                message: result.protected
-                  ? "同期要求を受け付け、Shopifyの海外停止を確認しました。許可の反映は未完了です。"
-                  : "同期要求を受け付けました。Shopifyの海外停止は未確認です。",
-              }
-            : {
-                error:
-                  "同期は未承認です。リリース・対象商品と国・実設定の確認が必要です。",
-              }),
-        },
-        {
-          status: result.ok ? 200 : 409,
-          headers: { "Cache-Control": "private, no-store" },
-        },
-      );
-    } else if (intent === "revokeMarketEvidence") {
-      if (!formData.has("expectedVersion"))
-        throw new Error("evidence_version_required");
-      await revokeInternationalMarketEvidence({
-        countryCode: formData.get("countryCode"),
-        requirementCode: formData.get("requirementCode"),
-        confirmedBy,
-        expectedVersion: formData.get("expectedVersion"),
-        notes: formData.get("note"),
-      });
-    } else if (intent === "saveMarketEvidence") {
-      if (!formData.has("expectedVersion"))
-        throw new Error("evidence_version_required");
-      const requirement = getInternationalMarketRequirements(
-        formData.get("countryCode"),
-      ).find((entry) => entry.code === formData.get("requirementCode"));
-      await saveInternationalMarketEvidence({
-        countryCode: formData.get("countryCode"),
-        requirementCode: formData.get("requirementCode"),
-        evidenceReference: formData.get("evidenceReference"),
-        evidenceHash: formData.get("evidenceHash"),
-        officialSourceUrl: formData.get("officialSourceUrl"),
-        confirmedBy,
-        expectedVersion: formData.get("expectedVersion"),
-        confirmations: Object.fromEntries(
-          (requirement?.confirmations || []).map((key) => [
-            key,
-            formData.get(key) === "true",
-          ]),
-        ),
-        notes: formData.get("note"),
-      });
-    } else if (intent === "saveShipping") {
-      if (!formData.has("expectedVersion"))
-        throw new Error("evidence_version_required");
-      await saveInternationalShippingCountryAvailability({
-        countryCode: formData.get("countryCode"),
-        status: formData.get("status"),
-        sourceUrl: formData.get("sourceUrl"),
-        evidenceReference: formData.get("evidenceReference"),
-        evidenceHash: formData.get("evidenceHash"),
-        confirmedBy,
-        expectedVersion: formData.get("expectedVersion"),
-        expectedEvidenceVersions: JSON.parse(
-          String(formData.get("expectedEvidenceVersions") || "null"),
-        ),
-        deliveryProfileId: formData.get("deliveryProfileId"),
-        carrierConfirmations: {
-          officialStatusChecked:
-            formData.get("officialStatusChecked") === "true",
-          countryServiceMatched:
-            formData.get("countryServiceMatched") === "true",
-        },
-        routeAuditConfirmations: {
-          deliveryProfileMatched:
-            formData.get("deliveryProfileMatched") === "true",
-          manualRatesReviewed: formData.get("manualRatesReviewed") === "true",
-          freeShippingReviewed: formData.get("freeShippingReviewed") === "true",
-          alternateCarrierReviewed:
-            formData.get("alternateCarrierReviewed") === "true",
-          alternateProfilesReviewed:
-            formData.get("alternateProfilesReviewed") === "true",
-        },
-        note: formData.get("note"),
-      });
-    }
+    return await internationalShippingAction({ request });
   } catch (error) {
-    return Response.json(
-      {
-        ok: false,
-        error:
-          error?.code === "INTERNATIONAL_EVIDENCE_CONFLICT"
-            ? "別の更新があるため保存できません。再読み込みして確認してください。"
-            : "保存できませんでした。確認項目・証拠・同期状態を確認してください。",
-      },
-      {
-        status: error?.code === "INTERNATIONAL_EVIDENCE_CONFLICT" ? 409 : 400,
-        headers: { "Cache-Control": "private, no-store" },
-      },
-    );
+    return internationalErrorResponse(error);
   }
-
-  return redirect("/app/international-shipping", {
-    headers: { "Cache-Control": "private, no-store" },
-  });
 };
 
 export default function InternationalShippingPage() {
-  const { rows, evidenceRows, gateState } = useLoaderData();
+  const { rows, evidenceRows, gateState, runner } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const [countryCode, setCountryCode] = useState(
@@ -354,359 +225,388 @@ export default function InternationalShippingPage() {
   }
 
   return (
-    <Page
-      title="国際配送の受付状況"
-      subtitle="国別の日本郵便 国際エアパケット受付状況を確認し、確認した国だけ有効にします。"
+    <InternationalActionProvider
+      pending={runner.runs.some(
+        (r) =>
+          ["QUEUED", "RUNNING", "CLOSING"].includes(r.status) ||
+          r.observationRefreshRequestedAt,
+      )}
     >
-      <BlockStack gap="400">
-        <Card>
-          <Form method="post">
-            <FormLayout>
-              <input type="hidden" name="intent" value="saveShipping" />
-              <input
-                type="hidden"
-                name="expectedVersion"
-                value={internationalEvidenceVersion(
-                  rows.find((row) => row.countryCode === countryCode),
-                )}
-              />
-              <input
-                type="hidden"
-                name="expectedEvidenceVersions"
-                value={JSON.stringify(
-                  Object.fromEntries(
-                    [
-                      "INTERNATIONAL_CARRIER_SERVICE_STATUS",
-                      "INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT",
-                    ].map((code) => [
-                      code,
-                      internationalEvidenceVersion(
-                        evidenceRows.find(
-                          (row) =>
-                            row.scopeId === countryCode &&
-                            row.checkKey === code,
-                        ),
-                      ),
-                    ]),
-                  ),
-                )}
-              />
-              <InlineStack gap="300" wrap>
-                <div style={{ minWidth: 280, flex: 1 }}>
-                  <Select
-                    label="国・地域"
-                    name="countryCode"
-                    options={countryOptions}
-                    value={countryCode}
-                    onChange={setCountryCode}
-                  />
-                </div>
-                <div style={{ minWidth: 180, flex: 1 }}>
-                  <Select
-                    label="受付状況"
-                    name="status"
-                    options={statusOptions}
-                    value={status}
-                    onChange={setStatus}
-                  />
-                </div>
-              </InlineStack>
-              <TextField
-                label="確認元URL"
-                name="sourceUrl"
-                type="url"
-                value={sourceUrl}
-                onChange={setSourceUrl}
-                autoComplete="off"
-                helpText="日本郵便など、受付状況を確認したページを記録します。"
-              />
-              <TextField
-                label="証拠ファイルの保存先またはチケット番号"
-                name="evidenceReference"
-                value={evidenceReference}
-                onChange={setEvidenceReference}
-                autoComplete="off"
-              />
-              <TextField
-                label="証拠ファイルのSHA-256"
-                name="evidenceHash"
-                value={evidenceHash}
-                onChange={setEvidenceHash}
-                autoComplete="off"
-                helpText="受付中にする場合は64桁のSHA-256が必須です。"
-              />
-              <TextField
-                label="Shopify配送プロファイルID"
-                name="deliveryProfileId"
-                value={deliveryProfileId}
-                onChange={setDeliveryProfileId}
-                autoComplete="off"
-              />
-              <BlockStack gap="200">
-                {[
-                  "officialStatusChecked",
-                  "countryServiceMatched",
-                  "deliveryProfileMatched",
-                  "manualRatesReviewed",
-                  "freeShippingReviewed",
-                  "alternateCarrierReviewed",
-                  "alternateProfilesReviewed",
-                ].map((name) => (
-                  <EvidenceCheckbox
-                    key={name}
-                    name={name}
-                    checked={shippingChecks[name] === true}
-                    onChange={(checked) => updateShippingCheck(name, checked)}
-                  />
-                ))}
-              </BlockStack>
-              <TextField
-                label="運用メモ"
-                name="note"
-                multiline={3}
-                value={note}
-                onChange={setNote}
-                autoComplete="off"
-              />
-              {actionData?.message ? (
-                <Text as="p" tone="success">
-                  {actionData.message}
-                </Text>
-              ) : null}
-              {actionData?.error ? (
-                <Text as="p" tone="critical">
-                  {actionData.error}
-                </Text>
-              ) : null}
-              <Button submit variant="primary" loading={isSubmitting}>
-                配送証拠と迂回防止確認を保存
-              </Button>
-            </FormLayout>
-          </Form>
-        </Card>
-
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              Shopify国別販売ゲート
-            </Text>
-            <Text as="p" tone="subdued">
-              {gateState?.mode && gateState.mode !== "DISABLED"
-                ? `同期記録: ${gateState.phase} / 要求世代: ${gateState.desiredGeneration} / 反映世代: ${gateState.appliedGeneration} / 商品: ${gateState.verifiedProductCount}/${gateState.expectedProductCount}`
-                : "未承認"}
-            </Text>
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="syncInternationalSaleGate"
-              />
-              <Button
-                submit
-                variant="primary"
-                loading={isSubmitting}
-                disabled={!gateState || gateState.mode === "DISABLED"}
-              >
-                同期を要求
-              </Button>
-            </Form>
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="stopInternationalSaleGate"
-              />
-              <Button submit tone="critical" loading={isSubmitting}>
-                海外販売ゲートを停止
-              </Button>
-            </Form>
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              国別の法務・税務・運用証拠
-            </Text>
-            <Text as="p" tone="subdued">
-              商品証拠とは別に、販売国全体の撤回、保証、VAT・関税、EPR、プライバシー、サポート経路を記録します。
-            </Text>
+      <Page
+        title="国際配送の受付状況"
+        subtitle="国別の日本郵便 国際エアパケット受付状況を確認し、確認した国だけ有効にします。"
+      >
+        <BlockStack gap="400">
+          <InternationalRunnerPanel
+            data={runner}
+            countryOptions={countryOptions}
+          />
+          <Card>
             <Form method="post">
               <FormLayout>
-                <input type="hidden" name="intent" value="saveMarketEvidence" />
+                <input type="hidden" name="intent" value="saveShipping" />
                 <input
                   type="hidden"
                   name="expectedVersion"
                   value={internationalEvidenceVersion(
-                    evidenceRows.find(
-                      (row) =>
-                        row.scopeId === marketCountryCode &&
-                        row.checkKey === selectedRequirement?.code,
+                    rows.find((row) => row.countryCode === countryCode),
+                  )}
+                />
+                <input
+                  type="hidden"
+                  name="expectedEvidenceVersions"
+                  value={JSON.stringify(
+                    Object.fromEntries(
+                      [
+                        "INTERNATIONAL_CARRIER_SERVICE_STATUS",
+                        "INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT",
+                      ].map((code) => [
+                        code,
+                        internationalEvidenceVersion(
+                          evidenceRows.find(
+                            (row) =>
+                              row.scopeId === countryCode &&
+                              row.checkKey === code,
+                          ),
+                        ),
+                      ]),
                     ),
                   )}
                 />
                 <InlineStack gap="300" wrap>
-                  <div style={{ minWidth: 240, flex: 1 }}>
+                  <div style={{ minWidth: 0, flex: "1 1 240px" }}>
                     <Select
                       label="国・地域"
                       name="countryCode"
                       options={countryOptions}
-                      value={marketCountryCode}
-                      onChange={selectMarketCountry}
+                      value={countryCode}
+                      onChange={setCountryCode}
                     />
                   </div>
-                  <div style={{ minWidth: 360, flex: 2 }}>
+                  <div style={{ minWidth: 0, flex: "1 1 180px" }}>
                     <Select
-                      label="確認項目"
-                      name="requirementCode"
-                      options={marketRequirements.map((entry) => ({
-                        value: entry.code,
-                        label: entry.label,
-                      }))}
-                      value={selectedRequirement?.code || ""}
-                      onChange={selectRequirement}
+                      label="受付状況"
+                      name="status"
+                      options={statusOptions}
+                      value={status}
+                      onChange={setStatus}
                     />
                   </div>
                 </InlineStack>
                 <TextField
-                  label="公式URL"
-                  name="officialSourceUrl"
+                  label="確認元URL"
+                  name="sourceUrl"
                   type="url"
-                  value={marketSourceUrl}
-                  onChange={setMarketSourceUrl}
+                  value={sourceUrl}
+                  onChange={setSourceUrl}
                   autoComplete="off"
+                  helpText="日本郵便など、受付状況を確認したページを記録します。"
                 />
                 <TextField
                   label="証拠ファイルの保存先またはチケット番号"
                   name="evidenceReference"
-                  value={marketEvidenceReference}
-                  onChange={setMarketEvidenceReference}
+                  value={evidenceReference}
+                  onChange={setEvidenceReference}
                   autoComplete="off"
                 />
                 <TextField
                   label="証拠ファイルのSHA-256"
                   name="evidenceHash"
-                  value={marketEvidenceHash}
-                  onChange={setMarketEvidenceHash}
+                  value={evidenceHash}
+                  onChange={setEvidenceHash}
+                  autoComplete="off"
+                  helpText="受付中にする場合は64桁のSHA-256が必須です。"
+                />
+                <TextField
+                  label="Shopify配送プロファイルID"
+                  name="deliveryProfileId"
+                  value={deliveryProfileId}
+                  onChange={setDeliveryProfileId}
                   autoComplete="off"
                 />
                 <BlockStack gap="200">
-                  {(selectedRequirement?.confirmations || []).map((name) => (
+                  {[
+                    "officialStatusChecked",
+                    "countryServiceMatched",
+                    "deliveryProfileMatched",
+                    "manualRatesReviewed",
+                    "freeShippingReviewed",
+                    "alternateCarrierReviewed",
+                    "alternateProfilesReviewed",
+                  ].map((name) => (
                     <EvidenceCheckbox
-                      key={`${selectedRequirement?.code}-${name}`}
+                      key={name}
                       name={name}
-                      checked={marketChecks[name] === true}
-                      onChange={(checked) =>
-                        setMarketChecks((current) => ({
-                          ...current,
-                          [name]: checked,
-                        }))
-                      }
+                      checked={shippingChecks[name] === true}
+                      onChange={(checked) => updateShippingCheck(name, checked)}
                     />
                   ))}
                 </BlockStack>
                 <TextField
-                  label="確認メモ"
+                  label="運用メモ"
                   name="note"
                   multiline={3}
-                  value={marketNote}
-                  onChange={setMarketNote}
+                  value={note}
+                  onChange={setNote}
                   autoComplete="off"
                 />
-                <Button submit variant="primary" loading={isSubmitting}>
-                  国別証拠を保存
+                {actionData?.message ? (
+                  <Text as="p" tone="success">
+                    {actionData.message}
+                  </Text>
+                ) : null}
+                {actionData?.error ? (
+                  <Text as="p" tone="critical">
+                    {actionData.error}
+                  </Text>
+                ) : null}
+                <Button
+                  submit
+                  variant="primary"
+                  loading={isSubmitting}
+                  disabled={!runner.permissions.review}
+                >
+                  配送証拠と迂回防止確認を保存
                 </Button>
               </FormLayout>
             </Form>
-          </BlockStack>
-        </Card>
+          </Card>
 
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              確認済みの国・地域
-            </Text>
-            <Text as="p" tone="subdued">
-              未登録、一部制限、停止中、未確認の国にはチェックアウトで配送方法を表示しません。
-            </Text>
-            <DataTable
-              columnContentTypes={["text", "text", "text", "text"]}
-              headings={["国・地域", "状況", "確認日時", "確認元"]}
-              rows={rows.map((row) => [
-                `${countryNames.of(row.countryCode) || row.countryCode} (${row.countryCode})`,
-                <Badge key={`${row.id}-status`} tone={statusTone(row.status)}>
-                  {statusLabel(row.status)}
-                </Badge>,
-                row.checkedAt
-                  ? new Date(row.checkedAt).toLocaleString("ja-JP")
-                  : "-",
-                row.sourceUrl ? (
-                  <a
-                    key={`${row.id}-source`}
-                    href={row.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    確認元を開く
-                  </a>
-                ) : (
-                  "-"
-                ),
-              ])}
-            />
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              保存済みの国別証拠
-            </Text>
-            <DataTable
-              columnContentTypes={["text", "text", "text", "text", "text"]}
-              headings={["国・地域", "確認項目", "状態", "有効期限", "操作"]}
-              rows={evidenceRows.map((row) => [
-                row.scopeId,
-                row.metadataJson?.requirementLabel || row.checkKey,
-                <Badge
-                  key={`${row.id}-evidence-status`}
-                  tone={row.status === "CONFIRMED" ? "success" : "critical"}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                Shopify国別販売ゲート
+              </Text>
+              <Text as="p" tone="subdued">
+                {gateState?.mode && gateState.mode !== "DISABLED"
+                  ? `同期記録: ${gateState.phase} / 要求世代: ${gateState.desiredGeneration} / 反映世代: ${gateState.appliedGeneration} / 商品: ${gateState.verifiedProductCount}/${gateState.expectedProductCount}`
+                  : "未承認"}
+              </Text>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="syncInternationalSaleGate"
+                />
+                <Button
+                  submit
+                  variant="primary"
+                  loading={isSubmitting}
+                  disabled={
+                    !runner.permissions.release ||
+                    !gateState ||
+                    gateState.mode === "DISABLED" ||
+                    gateState.mode === "STOPPED"
+                  }
                 >
-                  {row.status}
-                </Badge>,
-                row.expiresAt
-                  ? new Date(row.expiresAt).toLocaleString("ja-JP")
-                  : "-",
-                <Form method="post" key={`${row.id}-revoke`}>
+                  同期を要求
+                </Button>
+              </Form>
+            </BlockStack>
+          </Card>
+
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                国別の法務・税務・運用証拠
+              </Text>
+              <Text as="p" tone="subdued">
+                商品証拠とは別に、販売国全体の撤回、保証、VAT・関税、EPR、プライバシー、サポート経路を記録します。
+              </Text>
+              <Form method="post">
+                <FormLayout>
                   <input
                     type="hidden"
                     name="intent"
-                    value="revokeMarketEvidence"
-                  />
-                  <input type="hidden" name="countryCode" value={row.scopeId} />
-                  <input
-                    type="hidden"
-                    name="requirementCode"
-                    value={row.checkKey}
+                    value="saveMarketEvidence"
                   />
                   <input
                     type="hidden"
                     name="expectedVersion"
-                    value={internationalEvidenceVersion(row)}
+                    value={internationalEvidenceVersion(
+                      evidenceRows.find(
+                        (row) =>
+                          row.scopeId === marketCountryCode &&
+                          row.checkKey === selectedRequirement?.code,
+                      ),
+                    )}
+                  />
+                  <InlineStack gap="300" wrap>
+                    <div style={{ minWidth: 0, flex: "1 1 240px" }}>
+                      <Select
+                        label="国・地域"
+                        name="countryCode"
+                        options={countryOptions}
+                        value={marketCountryCode}
+                        onChange={selectMarketCountry}
+                      />
+                    </div>
+                    <div style={{ minWidth: 0, flex: "2 1 280px" }}>
+                      <Select
+                        label="確認項目"
+                        name="requirementCode"
+                        options={marketRequirements.map((entry) => ({
+                          value: entry.code,
+                          label: entry.label,
+                        }))}
+                        value={selectedRequirement?.code || ""}
+                        onChange={selectRequirement}
+                      />
+                    </div>
+                  </InlineStack>
+                  <TextField
+                    label="公式URL"
+                    name="officialSourceUrl"
+                    type="url"
+                    value={marketSourceUrl}
+                    onChange={setMarketSourceUrl}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="証拠ファイルの保存先またはチケット番号"
+                    name="evidenceReference"
+                    value={marketEvidenceReference}
+                    onChange={setMarketEvidenceReference}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="証拠ファイルのSHA-256"
+                    name="evidenceHash"
+                    value={marketEvidenceHash}
+                    onChange={setMarketEvidenceHash}
+                    autoComplete="off"
+                  />
+                  <BlockStack gap="200">
+                    {(selectedRequirement?.confirmations || []).map((name) => (
+                      <EvidenceCheckbox
+                        key={`${selectedRequirement?.code}-${name}`}
+                        name={name}
+                        checked={marketChecks[name] === true}
+                        onChange={(checked) =>
+                          setMarketChecks((current) => ({
+                            ...current,
+                            [name]: checked,
+                          }))
+                        }
+                      />
+                    ))}
+                  </BlockStack>
+                  <TextField
+                    label="確認メモ"
+                    name="note"
+                    multiline={3}
+                    value={marketNote}
+                    onChange={setMarketNote}
+                    autoComplete="off"
                   />
                   <Button
                     submit
-                    tone="critical"
-                    disabled={row.status === "REVOKED" || isSubmitting}
+                    variant="primary"
+                    loading={isSubmitting}
+                    disabled={!runner.permissions.review}
                   >
-                    取り消す
+                    国別証拠を保存
                   </Button>
-                </Form>,
-              ])}
-            />
-          </BlockStack>
-        </Card>
-      </BlockStack>
-    </Page>
+                </FormLayout>
+              </Form>
+            </BlockStack>
+          </Card>
+
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                確認済みの国・地域
+              </Text>
+              <Text as="p" tone="subdued">
+                未登録、一部制限、停止中、未確認の国にはチェックアウトで配送方法を表示しません。
+              </Text>
+              <DataTable
+                columnContentTypes={["text", "text", "text", "text"]}
+                headings={["国・地域", "状況", "確認日時", "確認元"]}
+                rows={rows.map((row) => [
+                  `${countryNames.of(row.countryCode) || row.countryCode} (${row.countryCode})`,
+                  <Badge key={`${row.id}-status`} tone={statusTone(row.status)}>
+                    {statusLabel(row.status)}
+                  </Badge>,
+                  row.checkedAt
+                    ? new Date(row.checkedAt).toLocaleString("ja-JP")
+                    : "-",
+                  row.sourceUrl ? (
+                    <a
+                      key={`${row.id}-source`}
+                      href={row.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      確認元を開く
+                    </a>
+                  ) : (
+                    "-"
+                  ),
+                ])}
+              />
+            </BlockStack>
+          </Card>
+
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                保存済みの国別証拠
+              </Text>
+              <DataTable
+                columnContentTypes={["text", "text", "text", "text", "text"]}
+                headings={["国・地域", "確認項目", "状態", "有効期限", "操作"]}
+                rows={evidenceRows.map((row) => [
+                  row.scopeId,
+                  row.metadataJson?.requirementLabel || row.checkKey,
+                  <Badge
+                    key={`${row.id}-evidence-status`}
+                    tone={row.status === "CONFIRMED" ? "success" : "critical"}
+                  >
+                    {row.status}
+                  </Badge>,
+                  row.expiresAt
+                    ? new Date(row.expiresAt).toLocaleString("ja-JP")
+                    : "-",
+                  <Form method="post" key={`${row.id}-revoke`}>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="revokeMarketEvidence"
+                    />
+                    <input
+                      type="hidden"
+                      name="countryCode"
+                      value={row.scopeId}
+                    />
+                    <input
+                      type="hidden"
+                      name="requirementCode"
+                      value={row.checkKey}
+                    />
+                    <input
+                      type="hidden"
+                      name="expectedVersion"
+                      value={internationalEvidenceVersion(row)}
+                    />
+                    <Button
+                      submit
+                      tone="critical"
+                      disabled={
+                        !runner.permissions.review ||
+                        row.status === "REVOKED" ||
+                        isSubmitting
+                      }
+                    >
+                      取り消す
+                    </Button>
+                  </Form>,
+                ])}
+              />
+            </BlockStack>
+          </Card>
+        </BlockStack>
+      </Page>
+    </InternationalActionProvider>
   );
 }
