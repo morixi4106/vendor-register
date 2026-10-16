@@ -2,9 +2,9 @@
 
 作成日: 2026-10-15 JST
 
-状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)として実装し、cc8276eのCI成功を確認。R03の承認UI/証拠発行・国内例外へのnative接続、R05・R06は後続。本番再監査・設定変更・実取引は未実施。
+状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)として実装し、cc8276eのCI成功を確認。4Aのnative共通判定は[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)、5a0d632のCI成功。R03の承認UI/証拠発行、R05・R06は後続。本番再監査・設定変更・実取引は未実施。
 
-次段階の詳細は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。4Aのnative共通判定は候補を実装・ローカル検証した。4Bの検証用/一般販売用承認と4Cの国・商品・通貨付き取引証拠は設計のみで、初回有効化の証拠循環と通貨制限を補う。R06は別変更とする。schema・本番は変更していない。
+次段階の詳細は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。4Aのnative共通判定は候補を実装・CI検証した。4Bの検証用/一般販売用承認と4Cの国・商品・通貨付き取引証拠は設計のみで、初回有効化の証拠循環と通貨制限を補う。R06は別変更とする。4Aではschema・本番は変更していない。
 
 ## 対象
 

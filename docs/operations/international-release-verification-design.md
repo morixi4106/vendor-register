@@ -2,7 +2,7 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4Aは候補実装・ローカル検証済み、4B/4Cは設計のみ、本番未反映**。設計の基準は `156f393`、第3弾の実装は `cc8276e`。本番状態は再監査していない。最新のPR/CIと最後の本番観測は[進捗メモ](launch-progress.md)を参照する。
+状態: **4AはPR #54で候補実装・CI成功、4B/4Cは設計のみ、本番未反映**。設計の基準は `156f393`、第3弾の実装は `cc8276e`。本番状態は再監査していない。最新のPR/CIと最後の本番観測は[進捗メモ](launch-progress.md)を参照する。
 
 ## 4Aの実装状況 2026-10-16
 
@@ -13,6 +13,7 @@
 - readiness・監視・国内ガード・新規probe・paid-only完了・Validation無効化へ接続。軽い監視でもscopeは再取得し、古い国内合格結果で上書きしない。取引probe画面と国内ガード内では同じ処理のscope結果を共有する。
 - 既存strict flowの支払/返金の照合や注文取込みは、native取得不能だけでは停止しない。新規probe開始と国内例外の使用は確認完了を要求し、過去の金融履歴を現在の販売許可としない。
 - ローカル全体1233件中1229成功・既存Windows依存skip4件、Function/WASM77件成功。lint・text・architecture・アプリbuildも成功。scope付与、native実店舗の取得、本番反映、4B/4Cは未実施。
+- [下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)、実装 `5a0d632` の[CI 38893113799](https://github.com/morixi4106/vendor-register/actions/runs/38893113799)はSUCCESS。Linux1232件成功・既存skip1、Function/拡張/アプリbuild、隔離runtime、既存の条件付き審査に従うproduction auditも成功。mainへは未反映。
 - **反映前の注意**: 実付与 `read_markets`/配送読取り権限が足りなければ国内例外も未確認になる。有効な国内自動公開ガードがあれば既存の停止経路へ進み得るため、main反映前にscope承認・実値・停止影響を別途確認する。この実装から権限を追加しない。
 
 対象はR03の残る接続とR05。商品適格性・証拠・世代付き同期は作り直さない。この文書は公開、Shopify release、scope追加、海外有効化、実決済・返金、メール送信の承認ではない。
