@@ -4,7 +4,7 @@
 
 ## 実装状況 2026-10-16
 
-R02とR03の永続同期基盤を `agent/international-product-gates` へ実装。現在地は[進捗メモ](launch-progress.md)の第3弾を参照。以下の本文は当初設計で、次の実装上の差異・残作業を優先する。
+R02とR03の永続同期基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)へ実装。cc8276eのCIは成功。現在地は[進捗メモ](launch-progress.md)の第3弾を参照。以下の本文は当初設計で、次の実装上の差異・残作業を優先する。
 
 - Function queryは上限コスト30。商品区分は一般projection内のroutingClassから読み、重複metafieldを要求しない。GBは郵便番号でNIを拒否し、不明なら拒否。provinceは要求しない。
 - 行数200に加え、一般/国際projectionの累積10,000文字をJSON解析前の作業上限とする。実行上限を超えるカートを許可せず分割案内する。大きい入力のWASM拒否と異なる12商品の許可を資源上限内で試験する。200行の一律購入保証ではない。

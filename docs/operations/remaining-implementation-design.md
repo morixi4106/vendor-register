@@ -2,7 +2,7 @@
 
 作成日: 2026-10-15 JST
 
-状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03の永続同期基盤を第3弾として実装。R03の承認UI/証拠発行・国内例外へのnative接続、R05・R06は後続。本番再監査・設定変更・実取引は未実施。PR #51/#52に依存する別ブランチで扱う。
+状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)として実装し、cc8276eのCI成功を確認。R03の承認UI/証拠発行・国内例外へのnative接続、R05・R06は後続。本番再監査・設定変更・実取引は未実施。
 
 ## 対象
 
