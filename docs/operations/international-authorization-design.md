@@ -2,11 +2,11 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4B-1はPR #55でCI成功、4B-2は候補実装・CI確認前、4B-3/4Cは未実装、本番未反映**。基準は4A候補 `5a0d632` と文書追記 `255b6f5`、[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)。4B-1は `agent/international-authorization` の[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)。本番の最後の独立観測は2026-10-15 11:35 JSTであり、現在の稼働状態を再確認した文書ではない。
+状態: **4B-1はPR #55、4B-2はPR #56で候補CI成功。4B-3/4Cは未実装、本番未反映**。基準は4A候補 `5a0d632` と文書追記 `255b6f5`、[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)。4B-1は `agent/international-authorization` の[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)。本番の最後の独立観測は2026-10-15 11:35 JSTであり、現在の稼働状態を再確認した文書ではない。
 
 [4A-4C全体設計](international-release-verification-design.md)の4Bを実装単位まで具体化する。既存の適格性・国別証拠・閉鎖後同期を再利用し、別の販売許可エンジンは作らない。設計の採用は公開・配備・scope追加・海外有効化・実決済・返金・通知再開の承認ではない。
 
-4B-2の具体的な発行契約・成果物固定・署名配備receipt・閉鎖専用run・取消は[システム証拠発行設計](international-proof-issuance-design.md)を参照。4B-1候補 `6ddc76c` を土台に候補実装・隔離PG検証を実施し、CIは確認前。実環境の確認と4B-3/4Cは未完了。
+4B-2の具体的な発行契約・成果物固定・署名配備receipt・閉鎖専用run・取消は[システム証拠発行設計](international-proof-issuance-design.md)を参照。4B-1候補 `6ddc76c` を土台に候補実装・隔離PG・CI3本を検証した。実環境の確認と4B-3/4Cは未完了。
 
 ## 4B-1の候補実装 2026-10-16
 

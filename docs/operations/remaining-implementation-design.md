@@ -8,7 +8,7 @@
 
 4Bの実装仕様は[承認と検証証拠の詳細設計](international-authorization-design.md)。単回承認/永続停止の4B-1は候補実装と隔離PostgreSQL検証を実施。信頼済み証拠発行の4B-2、既存UI/runner接続の4B-3は後続。4Cの通貨制限・実機照合が未実装の間は、承認実行をサーバー側で拒否する。P21/P22は未完了のまま。
 
-2026-10-16に[4B-2のシステム証拠発行](international-proof-issuance-design.md)を候補実装。独立artifact workflow、最終WASMの再buildなし試験、署名配備receipt、閉鎖専用DEPLOYMENT run、専用issuer/reader/revokerを追加した。ローカルPG/単体検証済み、CI確認前。本番操作は行っていない。
+2026-10-16に[4B-2のシステム証拠発行](international-proof-issuance-design.md)を下書きPR #56へ候補実装。独立artifact workflow、最終WASMの再buildなし試験、署名配備receipt、閉鎖専用DEPLOYMENT run、専用issuer/reader/revokerを追加した。`cc9ad9d` のCI3本と実artifactを検証済み。本番操作は行っていない。
 
 ## 対象
 

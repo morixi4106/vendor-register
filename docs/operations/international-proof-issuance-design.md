@@ -2,7 +2,7 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4B-2は候補実装・ローカル検証済み、CI確認前。本番未反映**。基準は4B-1候補 `6ddc76c`、[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)。実装ブランチは `agent/international-proof-issuance`。本番の独立観測は2026-10-15 11:35 JSTまでで、今回更新していない。
+状態: **4B-2は下書きPR #56で候補実装・CI3本成功。本番未反映**。基準は4B-1候補 `6ddc76c`、[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)。実装ブランチは `agent/international-proof-issuance`、[PR #56](https://github.com/morixi4106/vendor-register/pull/56)。本番の独立観測は2026-10-15 11:35 JSTまでで、今回更新していない。
 
 [承認の詳細設計](international-authorization-design.md)の4B-2を具体化する。4B-1の単回承認・永続停止・世代付き同期を再利用する。設計の採用はmain反映、migration、credential追加、Shopify配備/release、scope追加、実決済/返金、通知再開の承認ではない。
 
@@ -13,7 +13,7 @@
 - migration `20261016140000_international_proof_issuance` は候補のみ。既存runに取消・観測欄を追加し、新しい汎用証拠テーブルは作らない。隔離PGで旧schemaから2つのdelta migrationを適用し、schema差分0、B1/B2各11件成功を確認した。
 - issuer/readerの信頼鍵はコードの空リストが既定。鍵の導入/失効registry審査・実サービスの取得権限は別途必要。B3のHTTP認証/配送は未実装で、任意のenvやフォームから信頼鍵・合格値を渡す経路はない。
 - 4Cの結果schema・coverage・金融照合が未実装のため最終販売proofは拒否する。通常VERIFY終了を成功候補へ進める接続も4Cの実測検査と同時に行い、B1の暫定FAILED処理を先に緩めない。capability固定falseを維持する。
-- ローカル全体1266件中1260成功・skip6、追加の圧縮ZIP試験とpublisher/observer試験も成功。prebuiltの77ケースとcandidate出力、アプリ/拡張build、隔離runtime、lint/text/architecture、Prisma validateが成功。通常のproduction auditは既存のartifact/build審査不足として拒否し、例外を緩和していない。Linux CIでの最終検査はこれから。
+- 最終ローカル全体1267件中1261成功・skip6。prebuilt77ケースとcandidate出力、アプリ/拡張build、隔離runtime、lint/text/architecture、Prisma validateが成功。通常モードのlocal auditは審査不足で拒否したが、例外を緩和せず、`cc9ad9d` のLinux Quality/PG/artifact CI3本が成功した。Linux1264成功・skip3、PG各11成功・schema差分0、実artifactの全digest一致も確認。詳細は進捗メモを参照する。
 
 ## 1. 今回決める3点
 
