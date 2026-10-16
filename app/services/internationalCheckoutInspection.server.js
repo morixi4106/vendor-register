@@ -12,6 +12,7 @@ import {
 } from "./internationalGateTransport.server.js";
 import { inspectInternationalNativeConfiguration } from "./internationalNativeConfiguration.server.js";
 import { inspectInternationalGateRelease } from "./internationalGateAuthorization.server.js";
+import { inspectInternationalAuthorizationState } from "./internationalAuthorizationState.server.js";
 
 export async function inspectInternationalCheckoutGate(
   { shopDomain, prismaClient = prisma, env = process.env, now = new Date() },
@@ -20,6 +21,7 @@ export async function inspectInternationalCheckoutGate(
     buildSnapshot = buildInternationalGateSnapshot,
     inspectNative = inspectInternationalNativeConfiguration,
     inspectRelease = inspectInternationalGateRelease,
+    inspectAuthorization = inspectInternationalAuthorizationState,
   } = {},
 ) {
   try {
@@ -70,6 +72,7 @@ export async function inspectInternationalCheckoutGate(
       native,
       env,
       now,
+      purpose: state.authorizationPurpose || "SALE",
     });
     const closed =
       validHash &&
@@ -107,6 +110,8 @@ export async function inspectInternationalCheckoutGate(
       internationalLocalDate(now, observed.timezone) >= gate.e
     )
       return base;
+    const authorization = await inspectAuthorization({ prismaClient, state, now });
+    if (!authorization.ready) return base;
     const fresh = await buildSnapshot({
       state,
       prismaClient,
@@ -130,7 +135,9 @@ export async function inspectInternationalCheckoutGate(
     });
     if (targets.length !== state.expectedProductCount) return base;
     await verifyInternationalProductReadbacks({ shopDomain, targets, graphQL });
-    return { ...base, ready: true, protected: true, status: "ACTIVE" };
+    return authorization.purpose === "VERIFY"
+      ? { ...base, ready: false, verificationReady: true, protected: true, status: "VERIFYING" }
+      : { ...base, ready: true, protected: true, status: "ACTIVE" };
   } catch {
     return {
       configured: true,

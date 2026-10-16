@@ -12,6 +12,38 @@ permissions:
   pull-requests: read
 
 jobs:
+  international-authorization-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      INTERNATIONAL_AUTHORIZATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/vendor_register_auth_test_ci
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/vendor_register_auth_test_ci
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vendor_register_auth_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Require trusted source
+        env:
+          TRUSTED_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_SOURCE !== 'true') process.exit(1)"
+      - run: npm ci
+      - run: npm exec --offline -- prisma generate --schema=prisma/schema.prisma
+      - run: npm run test:international-authorization:postgres
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25

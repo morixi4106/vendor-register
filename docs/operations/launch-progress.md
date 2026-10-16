@@ -1,6 +1,6 @@
 # 公開準備の進捗と次の作業
 
-更新日時: 2026-10-16 20:23 JST
+更新日時: 2026-10-16 21:18 JST
 
 公開準備に関するCodexの引き継ぎと進捗管理の入口です。作業開始時に読み、進捗があった作業の終了前に更新します。会話履歴だけを根拠に完了扱いにしないでください。
 
@@ -77,7 +77,7 @@
 | P18 | Shopify Markets・通貨・言語 | 未確認 | 国、表示通貨、言語、商品、送料を整合。現在は海外販売無効 |
 | P19 | 税・関税・輸入費用 | 未確認 | 対象国別に最新確認し、徴収方法・負担者・分類・原産国等を確定。アプリに独自税額計算を追加しない |
 | P20 | 国別の法務・商品要件 | 未確認 | 消費者保護、包装EPR、個人情報移転、化粧品等の該当条件を最新の一次資料と証拠で確認。EU・GB・US等を一括で合格にしない |
-| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | R02/R03基盤に続き4Aのnative共通判定をPR #54へ候補実装しCI成功。4Bの証拠発行/承認UI、本番反映・実機遮断試験は未完了 |
+| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | 4A候補PR #54に続き4B-1の単回承認/永続停止/復旧を候補実装、隔離PG試験成功。4B-2/3の証拠発行・UI、4C、本番反映・実機遮断試験は未完了。有効化ロックを維持 |
 | P22 | Shopify反映と国際取引の通し確認 | 未確認 | 後続4Cで国・商品・購入者通貨・checkout由来・releaseの束縛を設計。初期はJPY建ての検証対象のみ、外貨対応は未完了。実取引・返金・台帳の証拠は未確認 |
 
 北アイルランドはGBの確認を流用せず、別条件を満たすまで対象外。対象国の法令・制度は実行時に最新確認する。このメモは法的適合を認定しない。国内限定の期限付き公開や既存の国内承認を海外販売の証拠として流用しない。
@@ -100,11 +100,11 @@
 
 ## 次に行う3つ
 
-1. **次は4B**: [PR #54](https://github.com/morixi4106/vendor-register/pull/54)の4A実装 `5a0d632` は[CI 38893113799](https://github.com/morixi4106/vendor-register/actions/runs/38893113799)成功。次は[後続設計](international-release-verification-design.md)の配備/最終販売証拠発行と、検証用/一般販売用の単回承認を実装する。試験結果を手動チェックで合格へ埋めず、一般販売へ自動移行しない。
-2. **4CとR06を別々に仕上げる**: 国・商品・購入者通貨・checkout由来付きの取引検証を追加する。今回は4B/4Cを実装していない。初期のJPY検証・外貨未確認の区別を維持する。R06の予備通知ACKは別変更、prelaunch通知抑止は維持。
-3. **外部証拠とPR連鎖を別管理**: P01-P28の実証跡は未確認のまま必要なものを揃える。#54は[PR #53](https://github.com/morixi4106/vendor-register/pull/53) head `156f393` をbaseにした下書き。#53のOPEN/DRAFTと#52をbaseにする状態は今回再確認した。#51→#52→#53→#54の連鎖を反映前に再確認・retarget/rebaseしてCIを通す。実付与scope・native実店舗・権限不足時のガード停止への影響も別確認し、資金・MFA・実入金を自動試験で代用しない。本番反映・海外有効化・実取引・通知再開は別承認とする。
+1. **4B-1のCI確認、次は4B-2**: `agent/international-authorization` に2モデル/単回preview-confirm/永続停止を候補実装。ローカル全体1239成功・専用隔離PG11件成功。既存CIで検証し、次は固定CI artifactと承認された配備記録から専用proofを発行する。通常モードのproduction auditの拒否を、例外緩和や偽の証拠で解消しない。
+2. **4B-3と4Cへ接続**: 既存UI、runner用HTTP認証/APIと実機/金融照合を追加する。今は内部lifecycleのみで成功証拠は発行できない。4Cの通貨制限・国/商品/checkout由来の照合が揃うまで有効化は拒否、初期はJPY。R06は別変更、prelaunch通知抑止を維持する。
+3. **外部証拠とPR連鎖を別管理**: P01-P28、固定runner/非公開証拠保管先、実scope・native実店舗・国内ガード停止影響を確認する。#54のOPEN/DRAFT、head `255b6f5`、base #53ブランチは今回再確認。新候補は#54を土台とし、反映前に依存PRの再確認・retarget/rebase・CIが必要。既存の空DB migration通し適用不整合も残す。資金・MFA・実入金を仮データで代用せず、本番・実取引・通知再開は別承認。
 
-ユーザーの最新依頼は「実装どうぞ」。後続設計の第1段階4Aを `agent/checkout-native-scope` の下書きPR #54へ候補実装し、実装commit `5a0d632` のCI成功を確認した。4B/4C、R06、外部証拠、本番反映は未完了。schema・環境変数・Shopify release/scope・実取引・通知は変更していない。本番の最新観測日は引き続き2026-10-15 11:35 JSTまでで、今回再監査していない。販売開始可能という意味ではない。
+ユーザーの最新依頼は「実装どうぞ」。4B-1の候補実装とローカル検証を実施し、CI用の隔離PG jobも追加。4B-2/3・4Cがないため有効化は拒否し、main反映・本番migration・scope追加・Shopify release・実決済/返金・通知再開はしていない。PR/CI結果は以下へ追記する。本番の最新観測日は引き続き2026-10-15 11:35 JSTまでで、販売開始可能という意味ではない。
 
 調査結果が既存の確認と変わらない場合は同じ監査を繰り返すだけで終えず、残作業の実装・検証か、必要な外部証拠の特定へ進む。ユーザーが新しい指示をした場合はそちらを優先する。
 
@@ -177,6 +177,26 @@
 - 追加のローカルcoverage検査は対象45件成功。新規のnative読取り/国範囲判定と共通contextの3モジュール合計で行98.61%・分岐91.01%・関数100%。アプリ全体のcoverageや実店舗の確認率ではない。
 - 本番反映前には実付与 `read_markets`/配送読取り権限を確認する。欠落すれば国内例外も未確認となり、既存の有効な国内ガードが停止処理へ進み得る。権限追加・ガード解除は自動実行しない。4B/4C、P01-P28の実証跡、本番反映は未完了。
 
+### 4Bの承認・検証証拠の詳細設計
+
+- 2026-10-16 20:40 JST、[国際販売の承認と検証証拠](international-authorization-design.md)を作成。4A候補 `5a0d632` / 文書HEAD `255b6f5` を基準に既存authorizer・同期・queue・role・Prisma・CI artifactを静的確認した。GitHub/本番の再監査はしていない。
+- VERIFY/SALE/RESUMEの用途、承認要求とrunの2モデル、source/証拠versionのtransaction内再検査、nonce単回消費、世代/承認ID/leaseのフェンスを具体化。DISABLED中の証拠変更は世代だけで検出できないためsourceも比較する。
+- 現在のCI uploadは監査JSONのみで、国際配備proofに必要なWASM/query/schema/policyのartifactと配備記録は追加が必要。固定verifierと専用issuerを使い、自己申告JSON/checkboxでシステム証拠を作らない。
+- runner終了/失効/障害の停止要求をDBへ残す。閉鎖未確認の試験runは解放しないが、閉鎖専用の配備再検査を許可してproof失効による行き詰まりを避ける。非課金VERIFYでも他のパスワード保有者の課金露出が残ることを明記した。
+- 次は4B-1。4B-2の証拠発行、4B-3の既存UI/runner接続は段階実装し、4Cの通貨制限/実機照合が揃うまでは有効化を拒否する。schema/migration・コード・workflowは今回編集せず、P01-P28の実確認は未完了のまま。
+- 文書のUTF-8/文字化け、相対リンク、差分空白を検査。設計のみのためアプリテスト・build・CIは再実行しない。ローカル文書のみで、push/merge/デプロイ・Shopify release/scope・実決済/返金・通知送信はない。
+
+### 第4弾4B-1: 単回承認と永続停止の候補実装
+
+- `agent/international-authorization`、baseは4A候補 `255b6f5`。2モデルと同店舗参照/CHECK、state/jobの承認ID、単回preview/confirm、10分TTL、Serializableによるsource/proof/generation再検査と原子的な承認・世代・job/run作成を追加。復旧には両権限と閉鎖確認を要求する。
+- workerは現在の承認ID/用途/leaseを確認。旧actor文字列による有効化、QUEUEDの許可反映、VERIFYの一般販売ready、汎用フォームからのシステム証拠を拒否する。4C capabilityとproof adapterは既定で未対応のまま。
+- run失効/終了からSTOPPEDと閉鎖jobを永続化し、閉鎖未確認ならretry/activeKey保持。PASSEDは発行しない。証拠発行・配備検査runの実行adapter・runner HTTP認証・UI・金融検証は4B-2/3・4Cに残る。
+- migration `20261016120000_international_authorization` は本番未適用。旧migration全履歴の空DB適用は既存の `Product` テーブル名不整合で失敗したため、旧schemaを隔離PGへ作り今回migrationを適用して検証。適用後のschema差分0。全履歴修復済み、本番migration済みとは扱わない。
+- 専用隔離PostgreSQLは11件成功。二重confirm・STOP競合・source変更・別shop/actor・nonce/期限・DB rollback・復旧ロール・lease/閉鎖・proof取消を試験。native/proofの外部取得は試験用adapterであり、実Shopifyや法務の証拠ではない。CIへ専用PG jobを追加し、通常全体テストでの未設定skipとは分離する。
+- ローカル全体1244件中1239成功、既存Windows依存skip4と専用PG wrapperの未設定skip1。Function/WASM77件、Prisma format/generate/validate、lint/text/architecture、アプリbuild、隔離runtimeが成功。既存Polaris CSS/chunk警告は継続。UI/Function sourceは変更せず新しいPlaywright画面検証はしていない。
+- 通常モードのproduction auditは `artifact_set_changed_since_review` / `build_control_evidence_failed` / `risk_not_accepted` で拒否。runtime単独監査・artifact reachabilityは成功。例外や必須検査を緩めず、既存の条件付き審査を含むCIで確認する。
+- 本番/Shopify再監査・設定変更・実取引・メール送信なし。既存AWAITING_ORDER、国内ガード、prelaunch通知停止を維持。4B-1は候補であり、海外販売可能の証明ではない。
+
 ## 更新ルール
 
 1. 開始時にこのメモ、`git status`、対象worktreeと必要な個別手順を確認する。
@@ -198,11 +218,14 @@
 - [残りの実装設計](remaining-implementation-design.md): 確認できたコード不足R01-R06、既存機能との区別、PRの順序。
 - [商品別の海外購入制御と失効同期](international-checkout-sync-design.md): 第3弾R02/R03のデータ形式、同期状態、必要権限、期限、試験と反映順。
 - [海外販売の実設定・承認・取引検証](international-release-verification-design.md): 後続4A-4Cのnative共通判定、初回検証の証拠発行、範囲承認、国/商品/通貨付き取引証拠。
+- [国際販売の承認と検証証拠](international-authorization-design.md): 4Bの用途別承認、単回confirm、2モデル、信頼済みverifier、runner失効/閉鎖、実装3単位と4C依存。
 
 ## 直近の変更履歴
 
 | 日付 | 内容 | 検証と残作業 |
 | --- | --- | --- |
+| 2026-10-16 | 4B-1の単回承認・2モデル・永続停止を候補実装 | ローカル全体1239成功、隔離PG11件、WASM77件、build/隔離runtime成功。通常auditは再審査を要求。4B-2/3・4C・本番は未完了 |
+| 2026-10-16 | 4Bの単回承認・証拠発行・runner停止の詳細設計を作成 | 既存コード/CIと公式artifact・App Version仕様を確認。文書のみローカル更新、4B/4Cは未実装。次は4B-1、4C不在時の有効化は禁止 |
 | 2026-10-16 | 4Aのnative共通判定と国内例外/監視/probeへの接続候補をPR #54へ実装 | 5a0d632のverify 38893113799成功、Linux1232件成功・既存skip1、Function/隔離runtime/production audit成功。4B/4C・R06・本番反映は未完了 |
 | 2026-10-16 | 後続4A-4Cの詳細設計を作成 | コードと公式2026-04仕様を確認。文書のみローカル保存、コード/schema/本番は未変更。実装・R06・外部証拠は未完了 |
 | 2026-10-16 | 第3弾R02とR03基盤を実装し下書きPR #53作成 | 実装cc8276eのverify 38884464961成功、全体1200成功・既存skip1、WASM77成功。資源上限とJSONB正規化も検査。R03の残る接続・R05/R06・本番反映は未完了 |
