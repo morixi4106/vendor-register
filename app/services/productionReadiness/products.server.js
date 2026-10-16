@@ -81,6 +81,7 @@ export function buildShopifyProductSyncChecks(syncState) {
 }
 export async function inspectProductShippingProfiles({
   prismaClient = prisma,
+  shopDomain = null,
   now = new Date()
 } = {}) {
   if (!prismaClient.product?.findMany) {
@@ -113,6 +114,7 @@ export async function inspectProductShippingProfiles({
     const products = await prismaClient.product.findMany({
       where: {
         approvalStatus: "approved",
+        ...(shopDomain ? { shopDomain: normalizeShopDomain(shopDomain) } : {}),
         vendorStore: {
           is: {
             isTestStore: false

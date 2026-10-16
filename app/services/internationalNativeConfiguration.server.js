@@ -1,18 +1,12 @@
-import {
-  internationalGraphQL,
-  internationalGateError,
-} from "./internationalGateTransport.server.js";
-import { internationalHash } from "./internationalGateProjection.server.js";
 import { inspectMarketplaceCheckoutValidation } from "./shopifyCheckoutValidation.server.js";
-
-const MARKETS = `query InternationalNativeMarkets($after: String) {
-  markets(first: 1, after: $after) { nodes { id status
-    conditions { conditionTypes regionsCondition { applicationLevel regions(first: 250) {
-      nodes { __typename ... on MarketRegionCountry { code } } pageInfo { hasNextPage }
-    } } }
-    currencySettings { baseCurrency { currencyCode } localCurrencies }
-  } pageInfo { hasNextPage endCursor } }
-}`;
+import {
+  createNativeReadSession,
+  hashNativeConfiguration,
+  inspectNativeReadAccess,
+  nativeConnectionComplete as complete,
+  NATIVE_MARKETS_QUERY,
+  readNativeInventory,
+} from "./internationalNativeInventory.server.js";
 const PROFILES = `query InternationalNativeProfiles($after: String) {
   deliveryProfiles(first: 1, after: $after) { nodes { id default version
     sellingPlanGroups(first: 1) { nodes { id } pageInfo { hasNextPage } }
@@ -27,34 +21,6 @@ const PROFILES = `query InternationalNativeProfiles($after: String) {
     } pageInfo { hasNextPage } } }
   } pageInfo { hasNextPage endCursor } }
 }`;
-
-async function inventory(shopDomain, query, field, graphQL) {
-  const rows = [];
-  const seen = new Set();
-  let after = null;
-  for (let page = 0; page < 10; page++) {
-    const response = await graphQL({ shopDomain, query, variables: { after } });
-    const connection = response?.data?.[field];
-    if (
-      !Array.isArray(connection?.nodes) ||
-      typeof connection.pageInfo?.hasNextPage !== "boolean"
-    )
-      throw internationalGateError("international_inventory_incomplete");
-    rows.push(...connection.nodes);
-    if (!connection.pageInfo.hasNextPage) return rows;
-    after = connection.pageInfo.endCursor;
-    if (!after || seen.has(after)) break;
-    seen.add(after);
-  }
-  throw internationalGateError("international_inventory_incomplete");
-}
-
-function complete(connection) {
-  return (
-    Array.isArray(connection?.nodes) &&
-    connection.pageInfo?.hasNextPage === false
-  );
-}
 
 export function evaluateInternationalNativeInventory({
   markets,
@@ -191,7 +157,7 @@ export function evaluateInternationalNativeInventory({
     countries: [...countries].sort(),
     internationalConfigured:
       overseasRoutes || [...countries].some((c) => c !== "JP"),
-    configHash: internationalHash([markets, profiles]),
+    configHash: hashNativeConfiguration([markets, profiles]),
   };
 }
 
@@ -199,33 +165,17 @@ export async function inspectInternationalNativeConfiguration({
   shopDomain,
   scope = [],
   expectedRoutes = {},
-  graphQL = internationalGraphQL,
+  graphQL = createNativeReadSession(),
 }) {
   try {
-    const access = await graphQL({
-      shopDomain,
-      query: `query InternationalNativeAccess { currentAppInstallation { accessScopes { handle } } }`,
-    });
-    const handles =
-      access?.data?.currentAppInstallation?.accessScopes?.map(
-        (s) => s.handle,
-      ) || [];
-    if (
-      !handles.includes("read_markets") ||
-      !handles.some((s) => ["read_shipping", "write_shipping"].includes(s))
-    ) {
+    if (!await inspectNativeReadAccess({ shopDomain, graphQL })) {
       return {
         available: false,
         reason: "international_native_read_scope_missing",
       };
     }
-    const markets = await inventory(shopDomain, MARKETS, "markets", graphQL);
-    const profiles = await inventory(
-      shopDomain,
-      PROFILES,
-      "deliveryProfiles",
-      graphQL,
-    );
+    const markets = await readNativeInventory({ shopDomain, query: NATIVE_MARKETS_QUERY, field: "markets", graphQL });
+    const profiles = await readNativeInventory({ shopDomain, query: PROFILES, field: "deliveryProfiles", graphQL });
     const result = evaluateInternationalNativeInventory({
       markets,
       profiles,
@@ -267,7 +217,7 @@ export async function inspectInternationalNativeConfiguration({
     });
     return {
       ...result,
-      configHash: internationalHash([result.configHash, variantFacts]),
+      configHash: hashNativeConfiguration([result.configHash, variantFacts]),
       validationReady:
         validation.ok && validation.active && !validation.runtimeErrorDetected,
       validationId: validation.validation?.id,

@@ -87,7 +87,7 @@ export function buildReleaseMonitoringChecks(
   if (
     !(checkoutMode
       ? checkoutMode.standardDirectReady
-      : isShopifyStandardDirectCheckoutMode(env))
+      : isShopifyStandardDirectCheckoutMode(env, { available: false }))
   ) {
     checks.push({
       id: "independent_sale_eligibility_watchdog_live",

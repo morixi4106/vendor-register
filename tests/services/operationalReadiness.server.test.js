@@ -764,6 +764,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
     prismaClient,
     env,
     now: new Date("2026-08-08T00:00:00Z"),
+    checkoutContext: domesticCheckoutContext({ env }),
   });
   const strictRow = inspection.rows.find(
     (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
@@ -800,6 +801,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
 
   const expandedScope = await inspectOperationalReadiness({
     prismaClient,
+    checkoutContext: domesticCheckoutContext({ env: { ...env, PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true" } }),
     env: {
       ...env,
       PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
@@ -833,6 +835,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
   });
   const cancelled = await inspectOperationalReadiness({
     prismaClient,
+    checkoutContext: domesticCheckoutContext({ env }),
     env,
     now: new Date("2026-08-08T00:00:00Z"),
   });

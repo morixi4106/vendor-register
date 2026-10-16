@@ -12,7 +12,7 @@ import {
   buildProductionTransactionProbePage,
   buildShopifyProbeOrderSnapshot,
   confirmProductionTransactionRefundReserve,
-  createProductionTransactionProbe,
+  createProductionTransactionProbe as createProductionTransactionProbeImpl,
   fetchShopifyOrderForProductionProbe,
   getProductionTransactionProbeTarget,
   inspectProductionTransactionProbePreflight,
@@ -26,6 +26,12 @@ import {
 } from "../../app/services/productionRelease.server.js";
 
 const SHOP = "example.myshopify.com";
+function createProductionTransactionProbe(input, options = {}) {
+  return createProductionTransactionProbeImpl(input, {
+    inspectCheckoutCommerceContextImpl: domesticCheckoutContext,
+    ...options,
+  });
+}
 const ORDER_ID = "gid://shopify/Order/1234";
 const REFUND_ID = "gid://shopify/Refund/9876";
 const LINE_ID = "gid://shopify/LineItem/10";
@@ -867,6 +873,26 @@ test("paid-only creation rejects international and unknown scope before persiste
       },
     );
     assert.deepEqual(result, { ok: false, reason });
+  }
+});
+
+test("new strict and paid-only probes reject unverified native scope before writing probe state", async () => {
+  for (const env of [{}, domesticProbeOptions.env]) {
+    const result = await createProductionTransactionProbeImpl({
+      shopDomain: SHOP,
+      startedBy: "operator",
+      releaseExpectation: releaseExpectation(),
+      targetProvider: "KOMOJU",
+      targetPaymentMethod: "CARD",
+    }, {
+      env,
+      prismaClient: { productionTransactionProbe: { findUnique: () => assert.fail("must reject before probe persistence") } },
+      inspectCheckoutCommerceContextImpl: async ({ shopDomain }) => {
+        assert.equal(shopDomain, SHOP);
+        return buildCheckoutCommerceContext(domesticShippingProfiles, env);
+      },
+    });
+    assert.deepEqual(result, { ok: false, reason: "checkout_scope_unverified" });
   }
 });
 

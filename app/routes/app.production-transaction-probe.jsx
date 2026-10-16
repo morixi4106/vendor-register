@@ -1,6 +1,7 @@
 
 import { Form, Link, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
 import { useEffect } from "react";
+import { inspectCheckoutCommerceContext } from "../services/checkoutCommerceContext.server.js";
 
 import {
   previewKomojuZeroBalanceLimitedLaunch,
@@ -42,14 +43,15 @@ export async function loader({ request }) {
     shopDomain: session.shop,
     releaseExpectation,
   });
+  const checkoutContext = await inspectCheckoutCommerceContext({ shopDomain: session.shop });
   const preflight = await inspectProductionTransactionProbePreflight({
     shopDomain: session.shop,
     releaseExpectation,
     checkoutValidation,
     targetProvider: "KOMOJU",
     targetPaymentMethod: "CARD",
-  });
-  const operationalReadiness = await inspectOperationalReadiness();
+  }, { inspectCheckoutCommerceContextImpl: async () => checkoutContext });
+  const operationalReadiness = await inspectOperationalReadiness({ shopDomain: session.shop, checkoutContext });
   const limitedLaunch = operationalReadiness.rows.find(
     (row) =>
       row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,

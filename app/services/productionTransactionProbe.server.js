@@ -8,7 +8,6 @@ import {
   PLATFORM_DIRECT_PAYMENT_FLOW_CHECK_KEY,
   recordOperationalReadinessAttestation,
 } from "./operationalReadiness.server.js";
-import { inspectPlatformDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 import { inspectCheckoutCommerceContext } from "./checkoutCommerceContext.server.js";
 import {
   buildProductionReleaseFingerprint,
@@ -770,6 +769,7 @@ export async function inspectProductionTransactionProbePreflight(
     ? allowedProviders.includes(PAYMENT_PROVIDER.KOMOJU)
     : target.provider === PAYMENT_PROVIDER.KOMOJU;
   const checkoutContext = await inspectCheckoutCommerceContextImpl({
+    shopDomain: shop,
     prismaClient,
     env,
   });
@@ -968,12 +968,7 @@ export async function createProductionTransactionProbe(
     provider: targetProvider,
     paymentMethod: targetPaymentMethod,
   });
-  const requestedPolicy = inspectPlatformDirectCheckoutMode(env);
-  if (requestedPolicy.reason) return { ok: false, reason: requestedPolicy.reason };
-  const standardDirectRequested = requestedPolicy.standardDirectRequested;
-  const checkoutContext = standardDirectRequested
-    ? await inspectCheckoutCommerceContextImpl({ prismaClient, env, now })
-    : null;
+  const checkoutContext = await inspectCheckoutCommerceContextImpl({ shopDomain: shop, prismaClient, env, now });
   if (checkoutContext?.mode.reason) {
     return { ok: false, reason: checkoutContext.mode.reason };
   }
@@ -2586,6 +2581,7 @@ export async function refreshProductionTransactionProbe(
     PRODUCTION_TRANSACTION_PROBE_FLOW.PLATFORM_DIRECT_PAID_ONLY
   ) {
     const context = await inspectCheckoutCommerceContextImpl({
+      shopDomain: probe.shopDomain,
       prismaClient,
       env,
       now,

@@ -57,11 +57,11 @@ export function inspectPlatformDirectCheckoutMode(
     reason:
       standardDirectRequested && !thirdPartyCommerceDisabled
         ? "third_party_commerce_must_be_disabled"
-        : observedScope !== undefined && observedScope.available !== true
-          ? "checkout_scope_unverified"
-          : standardDirectRequested &&
-              observedScope?.internationalConfigured === true
-            ? "international_sales_require_validation"
+        : standardDirectRequested &&
+            observedScope?.internationalConfigured === true
+          ? "international_sales_require_validation"
+          : observedScope !== undefined && observedScope.available !== true
+            ? "checkout_scope_unverified"
             : null,
   };
 }

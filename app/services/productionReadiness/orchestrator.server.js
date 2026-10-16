@@ -57,6 +57,7 @@ export async function getProductionReadiness({
   env = process.env,
   now = new Date(),
   shopDomain = null,
+  inspectNativeScopeImpl,
 } = {}) {
   const normalizedShopDomain = normalizeShopDomain(shopDomain);
   const stripeEnv = inspectStripeEnvironment(env);
@@ -136,7 +137,7 @@ export async function getProductionReadiness({
     checkoutScopeCheck,
     internationalChecks,
     productShippingProfiles,
-  } = await inspectReadinessOperations({ prismaClient, now, env });
+  } = await inspectReadinessOperations({ prismaClient, now, env, shopDomain: normalizedShopDomain, inspectNativeScopeImpl });
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
   const directReturns = await inspectDirectReturnReadiness({
     prismaClient,

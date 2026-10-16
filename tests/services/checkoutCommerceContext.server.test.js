@@ -13,7 +13,7 @@ import {
 import { includeCheckoutValidationInProductionReadiness } from "../../app/services/productionReadiness/checkoutControls.server.js";
 import { buildOperationalReadinessChecks } from "../../app/services/operationalReadinessChecks.js";
 import { DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZATION } from "../../app/services/domesticAutonomousLaunchAuthorization.js";
-import { domesticShippingProfiles } from "../fixtures/checkoutCommerceContext.js";
+import { domesticShippingProfiles, domesticNativeScope, inspectDomesticNativeScope } from "../fixtures/checkoutCommerceContext.js";
 
 const standardEnv = {
   PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
@@ -25,9 +25,58 @@ test("known domestic scope alone permits standard direct checkout", () => {
   const { mode } = buildCheckoutCommerceContext(
     domesticShippingProfiles,
     standardEnv,
+    domesticNativeScope,
   );
   assert.equal(mode.standardDirectReady, true);
   assert.equal(buildCheckoutCommerceScopeCheck(mode).status, "pass");
+});
+
+test("DB-only scope, missing native access and mismatched shops cannot establish domestic standard checkout", async () => {
+  assert.equal(buildCheckoutCommerceContext(domesticShippingProfiles, standardEnv).mode.standardDirectReady, false);
+  for (const inspectNativeScopeImpl of [
+    async () => ({ available: false, reason: "checkout_native_read_scope_missing" }),
+    async () => ({ ...domesticNativeScope, shopDomain: "other.myshopify.com" }),
+    async () => { throw new Error("private access detail"); },
+  ]) {
+    const result = await inspectCheckoutCommerceContext({
+      shopDomain: "example.myshopify.com", env: standardEnv, now,
+      inspectShippingProfilesImpl: async () => domesticShippingProfiles,
+      inspectNativeScopeImpl,
+    });
+    assert.equal(result.mode.standardDirectReady, false);
+    assert.equal(result.scope.scopeStatus, "UNKNOWN");
+    assert.equal(result.scope.nativeConfigHash, null);
+    assert.ok(!JSON.stringify(result).includes("private access detail"));
+  }
+});
+
+test("a native-only foreign observation defeats domestic exceptions even when DB inventory is empty or failed", async () => {
+  for (const databaseAvailable of [true, false]) {
+    const result = await inspectCheckoutCommerceContext({
+      shopDomain: " Example.Myshopify.com ", env: standardEnv, now,
+      inspectShippingProfilesImpl: async () => {
+        if (!databaseAvailable) throw new Error("private database detail");
+        return domesticShippingProfiles;
+      },
+      inspectNativeScopeImpl: async (args) => ({ ...inspectDomesticNativeScope(args), internationalConfigured: true }),
+    });
+    assert.equal(result.mode.standardDirectReady, false);
+    assert.equal(result.mode.reason, "international_sales_require_validation");
+    assert.equal(result.scope.scopeStatus, "INTERNATIONAL");
+    assert.equal(result.scope.available, databaseAvailable);
+    assert.ok(!JSON.stringify(result).includes("private database detail"));
+  }
+});
+
+test("each context inspection obtains new native observations instead of reusing an old domestic result", async () => {
+  let observations = 0;
+  const options = {
+    shopDomain: "example.myshopify.com", env: standardEnv, now,
+    inspectShippingProfilesImpl: async () => domesticShippingProfiles,
+    inspectNativeScopeImpl: async (args) => ({ ...inspectDomesticNativeScope(args), internationalConfigured: observations++ > 0 }),
+  };
+  assert.equal((await inspectCheckoutCommerceContext(options)).mode.standardDirectReady, true);
+  assert.equal((await inspectCheckoutCommerceContext(options)).mode.standardDirectReady, false);
 });
 
 test("stored international country policies cannot look domestic just because air packet is disabled", async () => {
@@ -78,7 +127,7 @@ test("each international configuration independently rejects domestic standard c
     assert.equal(buildCheckoutCommerceScopeCheck(standard).status, "fail");
     const validated = buildCheckoutCommerceContext(profile, {
       PAYMENT_PROVIDERS: "komoju",
-    }).mode;
+    }, domesticNativeScope).mode;
     assert.equal(validated.reason, null);
     assert.equal(validated.standardDirectReady, false);
     assert.equal(buildCheckoutCommerceScopeCheck(validated).status, "pass");

@@ -6,6 +6,7 @@ import {
   inspectDomesticAutonomousLaunchAuthorization,
 } from "../../app/services/domesticAutonomousLaunchAuthorization.js";
 import { buildOperationalReadinessChecks } from "../../app/services/operationalReadinessChecks.js";
+import { domesticCheckoutContext } from "../fixtures/checkoutCommerceContext.js";
 
 const NOW = new Date("2026-09-29T00:00:00.000Z");
 
@@ -36,6 +37,7 @@ test("domestic autonomous launch authorization is explicit and time-bound", () =
   const active = inspectDomesticAutonomousLaunchAuthorization(
     authorizedEnv(),
     NOW,
+    domesticCheckoutContext({ env: authorizedEnv() }).mode,
   );
   assert.equal(active.active, true);
   assert.equal(active.enabled, true);
@@ -48,6 +50,7 @@ test("domestic autonomous launch authorization is explicit and time-bound", () =
       DOMESTIC_AUTONOMOUS_LAUNCH_EXPIRES_AT: "2026-09-28T23:59:59.000Z",
     }),
     NOW,
+    domesticCheckoutContext({ env: authorizedEnv() }).mode,
   );
   assert.equal(expired.active, false);
   assert.equal(expired.reason, "authorization_window_invalid");
@@ -73,6 +76,7 @@ test("domestic autonomous launch authorization is explicit and time-bound", () =
 test("authorization converts only fixed pending attestations to non-blocking warnings", () => {
   const checks = buildOperationalReadinessChecks({
     inspection: {
+      checkoutMode: domesticCheckoutContext({ env: authorizedEnv() }).mode,
       rows: [
         readinessRow("LEGAL_DISCLOSURES_REVIEWED"),
         readinessRow("SOME_FUTURE_REQUIRED_CHECK"),
@@ -94,6 +98,14 @@ test("authorization converts only fixed pending attestations to non-blocking war
   assert.equal(accepted.releaseDisposition, "owner_risk_accepted");
   assert.equal(unknown.status, "fail");
   assert.notEqual(unknown.releaseBlocking, false);
+});
+
+test("environment intent and a scope-less standard mode do not authorize a domestic launch", () => {
+  for (const mode of [null, { standardDirectReady: true }]) {
+    const authorization = inspectDomesticAutonomousLaunchAuthorization(authorizedEnv(), NOW, mode);
+    assert.equal(authorization.active, false);
+    assert.equal(authorization.reason, "checkout_scope_unverified");
+  }
 });
 
 test("failed attestations cannot be risk accepted", () => {

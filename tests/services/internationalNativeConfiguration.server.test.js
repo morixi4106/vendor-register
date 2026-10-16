@@ -151,3 +151,17 @@ test("missing read scopes are unverified and never changed by inspection", async
   assert.equal(result.reason, "international_native_read_scope_missing");
   assert.equal(calls, 1);
 });
+
+test("detailed native fingerprints ignore record ordering without relaxing conditional-rate checks", () => {
+  const f = fixture();
+  const method = structuredClone(f.profiles[0].profileLocationGroups[0].locationGroupZones.nodes[0].methodDefinitions.nodes[0]);
+  method.id = "paid-rate";
+  method.rateProvider.price.amount = "500";
+  const methods = f.profiles[0].profileLocationGroups[0].locationGroupZones.nodes[0].methodDefinitions.nodes;
+  methods.push(method);
+  const first = evaluateInternationalNativeInventory(f);
+  methods.reverse();
+  assert.equal(evaluateInternationalNativeInventory(f).configHash, first.configHash);
+  methods[0].methodConditions = [{ id: "weight-condition" }];
+  assert.equal(evaluateInternationalNativeInventory(f).available, false);
+});

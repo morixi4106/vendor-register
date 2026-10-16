@@ -5,7 +5,8 @@ import {
   domesticProbeOptions,
 } from "../fixtures/checkoutCommerceContext.js";
 import { buildCheckoutCommerceContext } from "../../app/services/checkoutCommerceContext.server.js";
-import { domesticShippingProfiles } from "../fixtures/checkoutCommerceContext.js";
+import { domesticShippingProfiles, domesticNativeScope } from "../fixtures/checkoutCommerceContext.js";
+import { DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZATION, inspectDomesticAutonomousLaunchAuthorization } from "../../app/services/domesticAutonomousLaunchAuthorization.js";
 
 import { runDomesticAutonomousLaunchGuard } from "../../app/services/domesticAutonomousLaunchGuard.server.js";
 
@@ -121,6 +122,41 @@ test("domestic guard stops before reusing passed probes when scope is internatio
     assert.equal(result.ok, false);
     assert.equal(result.secured, true);
     assert.equal(stopped, true);
+  }
+});
+
+test("the real authorization checks fresh native scope before arming and shares that observation with preflight", async () => {
+  const env = {
+    ...domesticProbeOptions.env,
+    SHOPIFY_PRIMARY_SHOP_DOMAIN: SHOP,
+    DOMESTIC_AUTONOMOUS_LAUNCH_MAX_ORDER_AMOUNT: "50000",
+    DOMESTIC_AUTONOMOUS_LAUNCH_ENABLED: "true",
+    DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZATION,
+    DOMESTIC_AUTONOMOUS_LAUNCH_SCOPE: "DOMESTIC_PLATFORM_DIRECT_ONLY",
+    DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZED_AT: NOW.toISOString(),
+    DOMESTIC_AUTONOMOUS_LAUNCH_EXPIRES_AT: "2026-12-28T00:00:00Z",
+    PRODUCTION_INTEGRITY_MONITOR_ENABLED: "true",
+  };
+  for (const internationalConfigured of [false, true]) {
+    let reads = 0;
+    const context = buildCheckoutCommerceContext(domesticShippingProfiles, env, { ...domesticNativeScope, internationalConfigured });
+    const result = await runDomesticAutonomousLaunchGuard({ shopDomain: SHOP }, dependencies({
+      env,
+      inspectAuthorizationImpl: inspectDomesticAutonomousLaunchAuthorization,
+      inspectCheckoutCommerceContextImpl: async ({ shopDomain }) => {
+        assert.equal(shopDomain, SHOP);
+        reads++;
+        return context;
+      },
+      inspectPreflightImpl: async (_input, options) => {
+        assert.equal(internationalConfigured, false);
+        assert.equal(await options.inspectCheckoutCommerceContextImpl(), context);
+        return { canStart: true };
+      },
+    }));
+    assert.equal(reads, 1);
+    assert.equal(result.armed === true, !internationalConfigured);
+    assert.equal(result.secured, internationalConfigured);
   }
 });
 
