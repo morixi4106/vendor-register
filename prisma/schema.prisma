@@ -2585,51 +2585,81 @@ model InternationalGateAuthorizationRequest {
 }
 
 model InternationalCheckoutVerificationRun {
-  id                     String                                 @id @default(cuid())
-  shopDomain             String
-  kind                   String
-  authorizationRequestId String?
-  initiatedBy            String
-  executorId             String?
-  scenarioVersion        String
-  verifierVersion        String
-  scopeHash              String
-  releaseBinding         String
-  nativeConfigHash       String
-  proofReferencesJson    Json
-  requiredCasesHash      String
-  startGeneration        Int
-  closureGeneration      Int?
-  activeKey              String?                                @unique
-  status                 String                                 @default("QUEUED")
-  closureStatus          String                                 @default("PENDING")
-  expiresAt              DateTime
-  startedAt              DateTime?
-  heartbeatAt            DateTime?
-  leaseTokenHash         String?
-  leaseUntil             DateTime?
-  stopRequestedAt        DateTime?
-  closedAt               DateTime?
-  completedAt            DateTime?
-  outcomeCode            String?
-  failureCode            String?
-  resultsJson            Json?
-  artifactReference      String?
-  artifactHash           String?
-  artifactExpiresAt      DateTime?
-  financialProbeId       String?
-  revokedAt              DateTime?
-  revokedBy              String?
-  revocationReason       String?
-  observationJson        Json?
-  observedAt             DateTime?
-  observationExpiresAt   DateTime?
-  observationNonceHash   String?
-  observationRequestedAt DateTime?
-  createdAt              DateTime                               @default(now())
-  authorizationRequest   InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
-  currentStates          InternationalGateSyncState[]           @relation("CurrentVerification")
+  id                            String                                 @id @default(cuid())
+  shopDomain                    String
+  kind                          String
+  authorizationRequestId        String?
+  initiatedBy                   String
+  executorId                    String?
+  scenarioVersion               String
+  verifierVersion               String
+  scopeHash                     String
+  releaseBinding                String
+  nativeConfigHash              String
+  proofReferencesJson           Json
+  requiredCasesHash             String
+  startGeneration               Int
+  closureGeneration             Int?
+  activeKey                     String?                                @unique
+  status                        String                                 @default("QUEUED")
+  closureStatus                 String                                 @default("PENDING")
+  expiresAt                     DateTime
+  startedAt                     DateTime?
+  heartbeatAt                   DateTime?
+  leaseTokenHash                String?
+  leaseUntil                    DateTime?
+  stopRequestedAt               DateTime?
+  closedAt                      DateTime?
+  completedAt                   DateTime?
+  outcomeCode                   String?
+  failureCode                   String?
+  resultsJson                   Json?
+  artifactReference             String?
+  artifactHash                  String?
+  artifactExpiresAt             DateTime?
+  financialProbeId              String?
+  revokedAt                     DateTime?
+  revokedBy                     String?
+  revocationReason              String?
+  observationJson               Json?
+  observedAt                    DateTime?
+  observationExpiresAt          DateTime?
+  observationNonceHash          String?
+  observationRequestedAt        DateTime?
+  observationRefreshRequestedAt DateTime?
+  observationRetryAt            DateTime?
+  observationFailureCode        String?
+  proofDeliveryId               String?
+  preparationRequestKey         String?
+  createdAt                     DateTime                               @default(now())
+  authorizationRequest          InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
+  currentStates                 InternationalGateSyncState[]           @relation("CurrentVerification")
+  proofDelivery                 InternationalProofDelivery?            @relation(fields: [shopDomain, proofDeliveryId], references: [shopDomain, id], onDelete: Restrict, map: "intl_run_delivery_fkey")
 
   @@unique([shopDomain, id])
+  @@unique([shopDomain, preparationRequestKey], map: "intl_run_preparation_key")
+  @@index([shopDomain, proofDeliveryId], map: "intl_run_delivery_idx")
   @@index([shopDomain, status, expiresAt])
+}
+
+model InternationalProofDelivery {
+  id               String                                 @id @default(cuid())
+  shopDomain       String
+  appId            String
+  receiptId        String
+  receiptJson      Json
+  receiptDigest    String
+  artifactId       Int
+  headSha          String
+  versionTag       String
+  allowedUseUntil  DateTime
+  receivedBy       String
+  revokedAt        DateTime?
+  revokedBy        String?
+  createdAt        DateTime                               @default(now())
+  verificationRuns InternationalCheckoutVerificationRun[]
+
+  @@unique([shopDomain, id])
+  @@unique([shopDomain, receiptId])
+  @@index([shopDomain, createdAt, id])
 }

@@ -6,6 +6,8 @@
 
 [承認の詳細設計](international-authorization-design.md)の4B-2を具体化する。4B-1の単回承認・永続停止・世代付き同期を再利用する。設計の採用はmain反映、migration、credential追加、Shopify配備/release、scope追加、実決済/返金、通知再開の承認ではない。
 
+後続4B-3の管理画面、専用認証/API、receipt配送、観測nonceの競合/再送対策は[管理操作とrunner接続設計](international-runner-interface-design.md)を参照。4B-2候補 `bc20c08` を基準に候補実装・ローカル検証済みで、CI確認中。本番未反映、4Cの販売証拠発行は未実装。
+
 ## 候補実装 2026-10-16
 
 - 専用artifact workflow、最終WASMを再buildせず試験する設定/禁止hook、全3拡張のファイル一覧、固定GitHub出所/attempt/digest照合、制限付きZIP読取りを追加した。新しい依存は追加せずpackage/lockfile・quality.yml・既存ビルド例外は変更していない。
@@ -210,4 +212,4 @@ leaseや観測TTLは厳密な同時刻の購入遮断保証ではない。Cron�
 
 PR #51-#55の連鎖を整理し、保護されたmainと本番/候補を区別する。既存空DB migration通し適用の不整合、P01-P28、初期国/商品、金融原資、AWAITING_ORDERガード、R06は未完了のまま引き継ぐ。国内例外や海外設定を一時的に緩めて合格にしない。
 
-今回の候補実装の検証結果とPR/CIは[進捗メモ](launch-progress.md)へ記録する。本番のDB・設定・通知・Shopify配備は未変更。次はCIで候補を確認し、4B-3/4Cへ接続する。
+今回の候補実装の検証結果とPR/CIは[進捗メモ](launch-progress.md)へ記録する。本番のDB・設定・通知・Shopify配備は未変更。4B-2候補のCI成功後、次は4B-3を実装し4Cへ接続する。

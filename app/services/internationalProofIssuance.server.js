@@ -37,6 +37,37 @@ import {
   internationalGraphQL,
 } from "./internationalGateTransport.server.js";
 import { closedInternationalGate } from "./internationalGateProjection.server.js";
+import { internationalProofBudget } from "./internationalProofBudget.server.js";
+import {
+  readInternationalDelivery,
+  assertInternationalRunDelivery,
+} from "./internationalProofDeliveryState.server.js";
+
+async function preparationReplay(tx, actor, input) {
+  const row = await tx.internationalCheckoutVerificationRun.findUnique({
+    where: {
+      shopDomain_preparationRequestKey: {
+        shopDomain: actor.shopDomain,
+        preparationRequestKey: input.requestKey,
+      },
+    },
+  });
+  if (!row) return null;
+  if (
+    row.initiatedBy !== actor.actorKey ||
+    row.proofDeliveryId !== input.deliveryId ||
+    proofHash(row.resultsJson?.receipt) !== input.expectedDigest
+  )
+    throw proofError("international_preparation_changed", 409);
+  return {
+    ok: true,
+    historical: true,
+    replayed: true,
+    runId: row.id,
+    status: row.status,
+    saleReady: false,
+  };
+}
 
 export async function readDeploymentSurfaceEvidence(
   tx,
@@ -102,32 +133,62 @@ export function createInternationalProofCommands({
   return {
     async prepare(request, input) {
       const actor = await identity(request, "RELEASE_MANAGER");
-      shape(input, ["artifactId", "receipt"], 32000);
+      shape(input, ["deliveryId", "expectedDigest", "requestKey"], 32000);
+      if (
+        !/^[a-f0-9-]{36}$/.test(input.requestKey || "") ||
+        !/^[a-f0-9]{64}$/.test(input.expectedDigest || "")
+      )
+        throw proofError("international_input_invalid", 422);
+      const replay = await preparationReplay(prismaClient, actor, input);
+      if (replay) return replay;
       const time = new Date();
-      verifyProofSignature(input.receipt, "publisher", time, trust);
+      const budget = internationalProofBudget(github, graphQL, time);
+      const delivery = await readInternationalDelivery(
+        prismaClient,
+        actor.shopDomain,
+        input.deliveryId,
+        time,
+        input.expectedDigest,
+      );
+      const signedReceipt = delivery.receiptJson;
+      verifyProofSignature(signedReceipt, "publisher", time, trust);
       const artifact = await verifyInternationalProofArtifact({
-        artifactId: input.artifactId,
+        artifactId: delivery.artifactId,
         now: time,
-        github,
+        github: budget.github,
       });
-      const receipt = validateReceipt(input.receipt, {
+      const receipt = validateReceipt(signedReceipt, {
         manifest: artifact.manifest,
         archiveHash: artifact.archiveHash,
         ...actor,
         now: time,
         trust,
       });
-      if (receipt.artifactId !== input.artifactId) throw proofError();
+      if (
+        receipt.artifactId !== delivery.artifactId ||
+        receipt.appId !== delivery.appId
+      )
+        throw proofError();
       const runtime = await inspectRuntime({
         ...actor,
         manifest: artifact.manifest,
         receipt,
-        graphQL,
+        graphQL: budget.graphQL,
         env,
       });
       return internationalAuthorizationTransaction(
         prismaClient,
         async (tx, now) => {
+          budget.check();
+          const replay = await preparationReplay(tx, actor, input);
+          if (replay) return replay;
+          await readInternationalDelivery(
+            tx,
+            actor.shopDomain,
+            delivery.id,
+            now,
+            input.expectedDigest,
+          );
           const surface = await readDeploymentSurfaceEvidence(
             tx,
             actor.shopDomain,
@@ -148,7 +209,7 @@ export function createInternationalProofCommands({
             })
           )
             throw proofError("international_run_still_active", 409);
-          if (now - time > 60000 || new Date(receipt.allowedUseUntil) <= now)
+          if (now - time > 45000 || new Date(receipt.allowedUseUntil) <= now)
             throw proofError("international_deployment_unverified");
           const { generation } = await stopInternationalGateInTransaction(tx, {
             ...actor,
@@ -160,6 +221,8 @@ export function createInternationalProofCommands({
               shopDomain: actor.shopDomain,
               kind: "DEPLOYMENT",
               initiatedBy: actor.actorKey,
+              proofDeliveryId: delivery.id,
+              preparationRequestKey: input.requestKey,
               scenarioVersion: "international-deployment-v1",
               verifierVersion: PROOF_VERSION,
               scopeHash: proofHash({
@@ -183,7 +246,7 @@ export function createInternationalProofCommands({
               resultsJson: {
                 v: PROOF_VERSION,
                 manifest: artifact.manifest,
-                receipt: input.receipt,
+                receipt: signedReceipt,
                 runtime: runtime.dto,
                 surface: ref(surface),
               },
@@ -230,7 +293,7 @@ export function createInternationalProofCommands({
               revocationReason: "international_proof_revoked",
             },
           });
-          let affected = false;
+          let affected = ["QUEUED", "RUNNING", "CLOSING"].includes(run.status);
           for (const row of rows)
             if (
               row.metadataJson?.runId === run.id ||
@@ -255,7 +318,7 @@ export function createInternationalProofCommands({
   };
 }
 
-function assertDeploymentLease(
+export function assertDeploymentLease(
   run,
   state,
   { shopDomain, executorId, leaseToken },
@@ -303,6 +366,7 @@ export async function claimInternationalDeploymentRun({
       state.desiredGeneration !== run.startGeneration
     )
       throw proofError("international_run_unavailable", 409);
+    await assertInternationalRunDelivery(tx, run, now);
     await tx.internationalCheckoutVerificationRun.update({
       where: { id: run.id },
       data: {
@@ -324,7 +388,9 @@ export async function completeInternationalDeploymentRun(
   args,
   {
     trust = INTERNATIONAL_PROOF_TRUST,
-    github = createInternationalProofGitHub(),
+    github = createInternationalProofGitHub({
+      token: process.env.INTERNATIONAL_PROOF_GITHUB_READ_TOKEN,
+    }),
     graphQL = internationalGraphQL,
     inspectRuntime = inspectInternationalProofRuntime,
     env = process.env,
@@ -332,6 +398,7 @@ export async function completeInternationalDeploymentRun(
 ) {
   const { prismaClient, shopDomain, runId, observation } = args;
   assertInternationalShop(shopDomain);
+  shape(observation, ["keyId", "payload", "signature"], 32768);
   const run = await prismaClient.internationalCheckoutVerificationRun.findFirst(
     { where: { id: runId, shopDomain } },
   );
@@ -339,6 +406,7 @@ export async function completeInternationalDeploymentRun(
     where: { shopDomain },
   });
   const time = new Date();
+  const budget = internationalProofBudget(github, graphQL, time);
   if (
     run?.status === "PASSED" &&
     !run.revokedAt &&
@@ -353,6 +421,7 @@ export async function completeInternationalDeploymentRun(
       saleReady: false,
     };
   assertDeploymentLease(run, state, args, time);
+  await assertInternationalRunDelivery(prismaClient, run, time);
   const { manifest, receipt: signedReceipt } = run.resultsJson;
   const receipt = validateReceipt(signedReceipt, {
     manifest,
@@ -368,21 +437,27 @@ export async function completeInternationalDeploymentRun(
     now: time,
     trust,
   });
-  if (new Date(observed.observedAt) < run.observationRequestedAt)
+  if (
+    !run.observationRequestedAt ||
+    time - run.observationRequestedAt > 60000 ||
+    observed.sequence !== 1 ||
+    new Date(observed.observedAt) < run.observationRequestedAt
+  )
     throw proofError("international_deployment_unverified");
   const metadata = await inspectProofArtifactMetadata({
     artifactId: receipt.artifactId,
     manifest,
     now: time,
-    github,
+    github: budget.github,
   });
   if (
     metadata.archiveHash !== run.artifactHash ||
     metadata.reference !== run.artifactReference
   )
     throw proofError();
-  const assertCurrent = async () =>
-    assertDeploymentLease(
+  const assertCurrent = async () => {
+    budget.check();
+    return assertDeploymentLease(
       await prismaClient.internationalCheckoutVerificationRun.findUnique({
         where: { id: runId },
       }),
@@ -392,15 +467,16 @@ export async function completeInternationalDeploymentRun(
       args,
       new Date(),
     );
+  };
   const shop = await readInternationalMetafield({
     shopDomain,
     targetType: "SHOP",
-    graphQL,
+    graphQL: budget.graphQL,
   });
   await writeInternationalMetafield({
     shopDomain,
     targetType: "SHOP",
-    graphQL,
+    graphQL: budget.graphQL,
     assertCurrent,
     projection: closedInternationalGate(
       run.startGeneration,
@@ -414,7 +490,7 @@ export async function completeInternationalDeploymentRun(
     receipt,
     generation: run.startGeneration,
     closed: true,
-    graphQL,
+    graphQL: budget.graphQL,
     env,
   });
   if (
@@ -426,6 +502,7 @@ export async function completeInternationalDeploymentRun(
   return internationalAuthorizationTransaction(
     prismaClient,
     async (tx, now) => {
+      budget.check();
       const current = await tx.internationalCheckoutVerificationRun.findUnique({
         where: { id: runId },
       });
@@ -433,8 +510,10 @@ export async function completeInternationalDeploymentRun(
         where: { shopDomain },
       });
       assertDeploymentLease(current, liveState, args, now);
+      await assertInternationalRunDelivery(tx, current, now);
       if (
-        now - time > 60000 ||
+        now - time > 45000 ||
+        now - current.observationRequestedAt > 60000 ||
         proofHash(current.resultsJson) !== proofHash(run.resultsJson)
       )
         throw proofError("international_deployment_unverified");

@@ -67,6 +67,15 @@ try {
     "--file",
     "prisma/migrations/20261016140000_international_proof_issuance/migration.sql",
   ]);
+  run([
+    prismaCli,
+    "db",
+    "execute",
+    "--url",
+    databaseUrl,
+    "--file",
+    "prisma/migrations/20261017000000_international_runner_interface/migration.sql",
+  ]);
   run(["--test", "tests/postgres/internationalAuthorization.test.js"]);
   run([
     prismaCli,
@@ -79,6 +88,7 @@ try {
     "--exit-code",
   ]);
   run(["--test", "tests/postgres/internationalProofIssuance.test.js"]);
+  run(["--test", "tests/postgres/internationalRunnerInterface.test.js"]);
 } finally {
   // schema is generated above, not taken from the supplied URL.
   await client.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);

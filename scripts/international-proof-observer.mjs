@@ -165,17 +165,32 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    if (process.argv.length !== 3 || fs.statSync(process.argv[2]).size > 32000)
-      throw proofError();
+    if (process.argv.length !== 3) throw proofError();
+    const input =
+      process.argv[2] === "--stdin"
+        ? await (async () => {
+            const chunks = [];
+            let size = 0;
+            for await (const chunk of process.stdin) {
+              size += chunk.length;
+              if (size > 32000) throw proofError();
+              chunks.push(chunk);
+            }
+            return Buffer.concat(chunks).toString("utf8");
+          })()
+        : fs.statSync(process.argv[2]).size <= 32000
+          ? fs.readFileSync(process.argv[2], "utf8")
+          : null;
+    if (!input) throw proofError();
     console.log(
-      JSON.stringify(
-        await observeInternationalProof(
-          JSON.parse(fs.readFileSync(process.argv[2], "utf8")),
-        ),
-      ),
+      JSON.stringify(await observeInternationalProof(JSON.parse(input))),
     );
-  } catch {
-    console.error("international_proof_observation_failed");
+  } catch (error) {
+    console.error(
+      error?.code === "international_deployment_changed"
+        ? error.code
+        : "international_proof_observation_failed",
+    );
     process.exitCode = 1;
   }
 }

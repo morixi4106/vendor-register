@@ -1495,7 +1495,7 @@ export async function recordOperationalReadinessAttestation(
   { prismaClient = prisma, now = new Date(), env = process.env } = {},
 ) {
   const normalizedKey = normalizeUpper(checkKey);
-  if (INTERNATIONAL_SYSTEM_EVIDENCE_KEYS.includes(normalizedKey)) return { ok: false, reason: "international_dedicated_verifier_required" };
+  if (INTERNATIONAL_SYSTEM_EVIDENCE_KEYS.includes(normalizedKey) || (normalizedKey === "UNSUPPORTED_SALES_SURFACES_DISABLED" && normalizeUpper(scopeType) === "SHOP")) return { ok: false, reason: "international_dedicated_verifier_required" };
   const definition = ATTESTATION_DEFINITIONS.get(normalizedKey);
   const normalizedStatus = normalizeUpper(status);
   const normalizedReference = normalizeText(evidenceReference);

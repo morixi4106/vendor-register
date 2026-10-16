@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { receiveInternationalProofDelivery } from "../../app/services/internationalProofDelivery.server.js";
 import { PrismaClient } from "@prisma/client";
 import { internationalProofFixture } from "../helpers/internationalProofFixture.js";
 import {
@@ -64,9 +65,20 @@ test(
         }),
       };
       const commands = createInternationalProofCommands(deps);
+      const delivery = await receiveInternationalProofDelivery(
+        db,
+        {
+          shopDomain,
+          appId: f.payload.appId,
+          principalId: "system:international-publisher",
+        },
+        f.receipt,
+        f,
+      );
       const prepared = await commands.prepare(post(), {
-        artifactId: 200,
-        receipt: f.receipt,
+        deliveryId: delivery.deliveryId,
+        expectedDigest: proofHash(f.receipt),
+        requestKey: randomUUID(),
       });
       const claim = await claimInternationalDeploymentRun({
         prismaClient: db,
@@ -339,6 +351,10 @@ test(
         const f = await fixture();
         await completeInternationalDeploymentRun(f.args, f.deps);
         const before = await f.proof();
+        await db.internationalCheckoutVerificationRun.update({
+          where: { id: f.prepared.runId },
+          data: { observationRefreshRequestedAt: new Date() },
+        });
         const request = await requestInternationalProofObservation({
           prismaClient: db,
           shopDomain: f.shopDomain,
@@ -364,16 +380,19 @@ test(
           before.expiresAt.toISOString(),
         );
         assert.equal((await f.read()).ready, true);
-        await assert.rejects(
-          recordInternationalProofObservation(
-            {
-              prismaClient: db,
-              shopDomain: f.shopDomain,
-              runId: request.runId,
-              observation,
-            },
-            f,
-          ),
+        assert.equal(
+          (
+            await recordInternationalProofObservation(
+              {
+                prismaClient: db,
+                shopDomain: f.shopDomain,
+                runId: request.runId,
+                observation,
+              },
+              f,
+            )
+          ).replayed,
+          true,
         );
       },
     );

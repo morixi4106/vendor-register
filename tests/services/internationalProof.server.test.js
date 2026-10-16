@@ -335,7 +335,7 @@ test("4C and unsigned/unconfigured proof paths remain closed without network or 
       artifactId: 200,
       receipt: f.receipt,
     }),
-    /receipt_untrusted/,
+    /artifact_untrusted/,
   );
   assert.deepEqual(roles, ["RELEASE_MANAGER"]);
   await assert.rejects(

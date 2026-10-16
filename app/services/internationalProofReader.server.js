@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { assertInternationalRunDelivery } from "./internationalProofDeliveryState.server.js";
 import {
   INTERNATIONAL_DEPLOYMENT_EVIDENCE_KEY,
   INTERNATIONAL_RELEASE_EVIDENCE_KEY,
@@ -92,6 +93,9 @@ export async function inspectInternationalAuthorizationProof(
     )
       return { ready: false, reason: "international_proof_revoked" };
     const { manifest, receipt: signedReceipt, runtime } = result;
+    await assertInternationalRunDelivery(prismaClient, run, now);
+    if (run.observationFailureCode === "international_deployment_changed")
+      return { ready: false, reason: "international_deployment_changed" };
     const receipt = validateReceipt(signedReceipt, {
       manifest,
       archiveHash: run.artifactHash,
