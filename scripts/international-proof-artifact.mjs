@@ -213,8 +213,29 @@ if (
 ) {
   try {
     console.log(JSON.stringify(await exportInternationalProofArtifact()));
-  } catch {
-    console.error("international_proof_artifact_export_failed");
+  } catch (error) {
+    const code = /^[a-z][a-z0-9_]{1,100}$/.test(error?.message || "")
+      ? error.message
+      : "international_proof_artifact_export_failed";
+    console.error(code);
+    const reportPath = path.resolve(
+      ".audit/international-prebuilt-results.json",
+    );
+    if (fs.existsSync(reportPath) && fs.statSync(reportPath).size < 262144) {
+      const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+      console.error(
+        JSON.stringify({
+          success: report.success,
+          passed: report.numPassedTests,
+          failed: report.numFailedTests,
+          pending: report.numPendingTests,
+          failedCases: report.testResults
+            .flatMap((r) => r.assertionResults)
+            .filter((r) => r.status !== "passed")
+            .map((r) => r.fullName),
+        }),
+      );
+    }
     process.exitCode = 1;
   }
 }
