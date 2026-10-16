@@ -2,7 +2,7 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4B-1を候補実装・ローカル検証、4B-2/3と4Cは未実装、本番未反映**。基準は4A候補 `5a0d632` と文書追記 `255b6f5`、[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)。4B-1は `agent/international-authorization` で作業する。本番の最後の独立観測は2026-10-15 11:35 JSTであり、現在の稼働状態を再確認した文書ではない。
+状態: **4B-1は下書きPR #55で候補実装・CI成功、4B-2/3と4Cは未実装、本番未反映**。基準は4A候補 `5a0d632` と文書追記 `255b6f5`、[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)。4B-1は `agent/international-authorization` の[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)。本番の最後の独立観測は2026-10-15 11:35 JSTであり、現在の稼働状態を再確認した文書ではない。
 
 [4A-4C全体設計](international-release-verification-design.md)の4Bを実装単位まで具体化する。既存の適格性・国別証拠・閉鎖後同期を再利用し、別の販売許可エンジンは作らない。設計の採用は公開・配備・scope追加・海外有効化・実決済・返金・通知再開の承認ではない。
 
@@ -14,6 +14,7 @@
 - proof adapterと4C capabilityの既定は未対応として拒否。汎用attestationで国際2キーを作れない。内部claim/heartbeat/終了はあるが、runner HTTP認証/API、成功結果受付、証拠発行、管理UIは4B-2/3・4Cに残る。B1のrun終了だけではPASSEDを発行しない。
 - ローカル全体1244件中1239成功、既存Windows依存skip4と専用PG試験の未設定skip1。専用の隔離PostgreSQL試験は別実行で11件成功。Function/WASM77件、Prisma validate、lint/text/architecture、アプリbuildと隔離runtimeも成功。通常モードのproduction auditはartifact/build審査情報の更新を要求して拒否し、例外は緩和していない。
 - 新規空DBへの旧migration通し適用には既存の `Product` テーブル名不整合がある。前commitのschemaを隔離DBに作り、今回のmigrationを適用して制約と競合を検証した。CIにも同じ専用PostgreSQL試験を追加。既存migrationの全履歴修復や、本番migration成功の証明ではない。
+- 候補 `7ca46de` の[Quality checks 38900277480](https://github.com/morixi4106/vendor-register/actions/runs/38900277480)はSUCCESS。Linux1242件成功・skip2、WASM77件、拡張/アプリbuild、隔離runtime、既存条件付き審査でのproduction auditも成功。[独立PG試験 38900277332](https://github.com/morixi4106/vendor-register/actions/runs/38900277332)は11件成功。初回のbuild control fingerprint不一致は、PG試験を独立workflowへ分離して修正した。品質workflow、package/lockfileと既存の例外条件は変更前と同一。
 
 ## 1. 決定事項
 

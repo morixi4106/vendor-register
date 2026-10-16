@@ -1,6 +1,6 @@
 # 公開準備の進捗と次の作業
 
-更新日時: 2026-10-16 21:18 JST
+更新日時: 2026-10-16 21:27 JST
 
 公開準備に関するCodexの引き継ぎと進捗管理の入口です。作業開始時に読み、進捗があった作業の終了前に更新します。会話履歴だけを根拠に完了扱いにしないでください。
 
@@ -100,11 +100,11 @@
 
 ## 次に行う3つ
 
-1. **4B-1のCI確認、次は4B-2**: `agent/international-authorization` に2モデル/単回preview-confirm/永続停止を候補実装。ローカル全体1239成功・専用隔離PG11件成功。既存CIで検証し、次は固定CI artifactと承認された配備記録から専用proofを発行する。通常モードのproduction auditの拒否を、例外緩和や偽の証拠で解消しない。
+1. **次は4B-2**: [下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55) の4B-1候補 `7ca46de` は[Quality checks 38900277480](https://github.com/morixi4106/vendor-register/actions/runs/38900277480) と[独立PG試験 38900277332](https://github.com/morixi4106/vendor-register/actions/runs/38900277332)が成功。次は固定CI artifactと承認された配備記録から専用proofを発行する。試験fixtureや自己申告を本番証拠へ流用しない。
 2. **4B-3と4Cへ接続**: 既存UI、runner用HTTP認証/APIと実機/金融照合を追加する。今は内部lifecycleのみで成功証拠は発行できない。4Cの通貨制限・国/商品/checkout由来の照合が揃うまで有効化は拒否、初期はJPY。R06は別変更、prelaunch通知抑止を維持する。
 3. **外部証拠とPR連鎖を別管理**: P01-P28、固定runner/非公開証拠保管先、実scope・native実店舗・国内ガード停止影響を確認する。#54のOPEN/DRAFT、head `255b6f5`、base #53ブランチは今回再確認。新候補は#54を土台とし、反映前に依存PRの再確認・retarget/rebase・CIが必要。既存の空DB migration通し適用不整合も残す。資金・MFA・実入金を仮データで代用せず、本番・実取引・通知再開は別承認。
 
-ユーザーの最新依頼は「実装どうぞ」。4B-1の候補実装とローカル検証を実施し、CI用の隔離PG jobも追加。4B-2/3・4Cがないため有効化は拒否し、main反映・本番migration・scope追加・Shopify release・実決済/返金・通知再開はしていない。PR/CI結果は以下へ追記する。本番の最新観測日は引き続き2026-10-15 11:35 JSTまでで、販売開始可能という意味ではない。
+ユーザーの最新依頼は「実装どうぞ」。4B-1の候補を下書きPR #55へ実装し、Quality checksと独立PG試験の成功を確認。4B-2/3・4Cがないため有効化は拒否し、main反映・本番migration・scope追加・Shopify release・実決済/返金・通知再開はしていない。本番の最新観測日は引き続き2026-10-15 11:35 JSTまでで、販売開始可能という意味ではない。
 
 調査結果が既存の確認と変わらない場合は同じ監査を繰り返すだけで終えず、残作業の実装・検証か、必要な外部証拠の特定へ進む。ユーザーが新しい指示をした場合はそちらを優先する。
 
@@ -195,6 +195,8 @@
 - 専用隔離PostgreSQLは11件成功。二重confirm・STOP競合・source変更・別shop/actor・nonce/期限・DB rollback・復旧ロール・lease/閉鎖・proof取消を試験。native/proofの外部取得は試験用adapterであり、実Shopifyや法務の証拠ではない。CIへ専用PG jobを追加し、通常全体テストでの未設定skipとは分離する。
 - ローカル全体1244件中1239成功、既存Windows依存skip4と専用PG wrapperの未設定skip1。Function/WASM77件、Prisma format/generate/validate、lint/text/architecture、アプリbuild、隔離runtimeが成功。既存Polaris CSS/chunk警告は継続。UI/Function sourceは変更せず新しいPlaywright画面検証はしていない。
 - 通常モードのproduction auditは `artifact_set_changed_since_review` / `build_control_evidence_failed` / `risk_not_accepted` で拒否。runtime単独監査・artifact reachabilityは成功。例外や必須検査を緩めず、既存の条件付き審査を含むCIで確認する。
+- [下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)、実装 `10bef31` とCI分離修正 `7ca46dee4fc80a9982d244b1c0d9c18a0af38a88`。baseはPR #54の `agent/checkout-native-scope`。初回CI `38899742093` は品質workflow/package追記によるbuild control fingerprint不一致で拒否した。専用PG試験を別workflowへ移し、品質workflow・package/lockfile・受容済み例外は元の内容を維持した。
+- `7ca46de` の[Quality checks 38900277480](https://github.com/morixi4106/vendor-register/actions/runs/38900277480)はSUCCESS。Linux1244件中1242成功・既存skip1と専用PG wrapper未設定skip1、監査coverage、WASM77件、拡張/アプリbuild、隔離runtime、production audit、生成差分なしを確認。[独立PG試験 38900277332](https://github.com/morixi4106/vendor-register/actions/runs/38900277332)も11件成功・skip0。mainへは未反映。ローカルPGは停止済み。
 - 本番/Shopify再監査・設定変更・実取引・メール送信なし。既存AWAITING_ORDER、国内ガード、prelaunch通知停止を維持。4B-1は候補であり、海外販売可能の証明ではない。
 
 ## 更新ルール
@@ -224,7 +226,7 @@
 
 | 日付 | 内容 | 検証と残作業 |
 | --- | --- | --- |
-| 2026-10-16 | 4B-1の単回承認・2モデル・永続停止を候補実装 | ローカル全体1239成功、隔離PG11件、WASM77件、build/隔離runtime成功。通常auditは再審査を要求。4B-2/3・4C・本番は未完了 |
+| 2026-10-16 | 4B-1の単回承認・2モデル・永続停止を下書きPR #55へ実装 | 7ca46deのQuality checks 38900277480と独立PG 38900277332が成功。Linux1242成功・skip2、PG11成功、WASM77成功、production audit成功。4B-2/3・4C・本番は未完了 |
 | 2026-10-16 | 4Bの単回承認・証拠発行・runner停止の詳細設計を作成 | 既存コード/CIと公式artifact・App Version仕様を確認。文書のみローカル更新、4B/4Cは未実装。次は4B-1、4C不在時の有効化は禁止 |
 | 2026-10-16 | 4Aのnative共通判定と国内例外/監視/probeへの接続候補をPR #54へ実装 | 5a0d632のverify 38893113799成功、Linux1232件成功・既存skip1、Function/隔離runtime/production audit成功。4B/4C・R06・本番反映は未完了 |
 | 2026-10-16 | 後続4A-4Cの詳細設計を作成 | コードと公式2026-04仕様を確認。文書のみローカル保存、コード/schema/本番は未変更。実装・R06・外部証拠は未完了 |

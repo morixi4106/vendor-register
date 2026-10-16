@@ -4,7 +4,7 @@
 
 状態: R01・R04は[PR #52](https://github.com/morixi4106/vendor-register/pull/52)でCI成功。2026-10-16にR02とR03基盤を[下書きPR #53](https://github.com/morixi4106/vendor-register/pull/53)として実装し、cc8276eのCI成功を確認。4Aのnative共通判定は[下書きPR #54](https://github.com/morixi4106/vendor-register/pull/54)、5a0d632のCI成功。R03の承認UI/証拠発行、R05・R06は後続。本番再監査・設定変更・実取引は未実施。
 
-次段階の詳細は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。4Aのnative共通判定は候補を実装・CI検証した。4Bの検証用/一般販売用承認と4Cの国・商品・通貨付き取引証拠は設計のみで、初回有効化の証拠循環と通貨制限を補う。R06は別変更とする。4Aではschema・本番は変更していない。
+次段階の詳細は[海外販売の実設定・承認・取引検証](international-release-verification-design.md)。4Aのnative共通判定に続き、4B-1の単回承認/永続停止は[下書きPR #55](https://github.com/morixi4106/vendor-register/pull/55)で候補実装・CI成功。4B-2/3の証拠発行・UIと4Cの国・商品・通貨付き取引証拠は未実装。R06は別変更とする。4B-1のschema/migrationも本番未適用。
 
 4Bの実装仕様は[承認と検証証拠の詳細設計](international-authorization-design.md)。単回承認/永続停止の4B-1は候補実装と隔離PostgreSQL検証を実施。信頼済み証拠発行の4B-2、既存UI/runner接続の4B-3は後続。4Cの通貨制限・実機照合が未実装の間は、承認実行をサーバー側で拒否する。P21/P22は未完了のまま。
 
