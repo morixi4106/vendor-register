@@ -2,7 +2,7 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4B-3は候補実装・ローカル検証済み。PR/CI確認中、本番未反映**。基準は4B-2候補 `bc20c0849b22a3b1c3baa8a2a65a7559c9c6491c`、[下書きPR #56](https://github.com/morixi4106/vendor-register/pull/56)。本番の最後の独立観測は2026-10-15 11:35 JSTで、今回再監査していない。
+状態: **4B-3は候補実装・ローカル検証済み。CI3本成功、本番未反映**。基準は4B-2候補 `bc20c0849b22a3b1c3baa8a2a65a7559c9c6491c`、[下書きPR #56](https://github.com/morixi4106/vendor-register/pull/56)。本番の最後の独立観測は2026-10-15 11:35 JSTで、今回再監査していない。
 
 2026-10-17の候補実装は `agent/international-runner-interface`、[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)。専用認証/受信箱/店舗別P03、closed runner/観測配送、既存UIへ接続し、PG計40件、画面21ケース、全体1272件成功を確認した。capability固定false/空鍵registry/本番未設定は維持。検証の正本は[進捗メモ](launch-progress.md)。以下は契約を記した設計であり、実運用済みという意味ではない。
 
@@ -183,7 +183,7 @@ UIで確認項目の証拠が揃っても、それだけでは配備検査合格
 
 ## 10. 残る本番条件
 
-4B-3の候補実装はローカル検証済み、PR/CIは確認中。4C、P01-P28、R06、本番反映は未完了。専用credential/公開鍵registry、読取り可能な実token、固定executorのscheduler/稼働記録、実scope/Validation/query、対象国/商品と外部証拠は別の確認対象である。
+4B-3の候補実装はローカル検証とQuality/PG/artifact CIが成功。4C、P01-P28、R06、本番反映は未完了。専用credential/公開鍵registry、読取り可能な実token、固定executorのscheduler/稼働記録、実scope/Validation/query、対象国/商品と外部証拠は別の確認対象である。
 
 受信箱は有効な未使用100件/店舗を上限とし、取消/期限切れは選択・利用対象外にする。履歴原本の自動削除は実装せず保持する。仮データ用previewはloopback限定で、実Shopify認証/本番APIを呼ばない。実埋込み画面の再認証、読取り権限、scheduler稼働は外部確認に残す。
 

@@ -6,7 +6,7 @@
 
 [承認の詳細設計](international-authorization-design.md)の4B-2を具体化する。4B-1の単回承認・永続停止・世代付き同期を再利用する。設計の採用はmain反映、migration、credential追加、Shopify配備/release、scope追加、実決済/返金、通知再開の承認ではない。
 
-後続4B-3の管理画面、専用認証/API、receipt配送、観測nonceの競合/再送対策は[管理操作とrunner接続設計](international-runner-interface-design.md)を参照。4B-2候補 `bc20c08` を基準に候補実装・ローカル検証済みで、CI確認中。本番未反映、4Cの販売証拠発行は未実装。
+後続4B-3の管理画面、専用認証/API、receipt配送、観測nonceの競合/再送対策は[管理操作とrunner接続設計](international-runner-interface-design.md)を参照。4B-2候補 `bc20c08` を基準に下書きPR #57で候補実装・CI3本成功。本番未反映、4Cの販売証拠発行は未実装。
 
 ## 候補実装 2026-10-16
 

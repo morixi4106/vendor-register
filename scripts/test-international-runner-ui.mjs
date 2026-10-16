@@ -24,6 +24,15 @@ const browser = await chromium.launch({
 });
 const results = [];
 try {
+  const response = await fetch(
+    `${base.origin}/.audit/international-runner-preview/results.json`,
+  );
+  assert.equal(
+    response.status,
+    403,
+    "Fixture server must not expose local evidence files",
+  );
+  assert.ok(!(await response.text()).includes('"fixtureOnly"'));
   for (const width of [320, 375, 1440]) {
     for (const [role, phase] of [
       ["admin", "EMPTY"],

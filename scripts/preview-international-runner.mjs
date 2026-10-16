@@ -64,6 +64,19 @@ const server = await createServer({
   server: {
     host: "127.0.0.1",
     port: Number(process.env.INTERNATIONAL_PREVIEW_PORT || 4179),
+    cors: false,
+    fs: {
+      strict: true,
+      allow: [root],
+      deny: [
+        "**/.env*",
+        "**/*.{crt,pem}",
+        "**/.git/**",
+        "**/.npmrc",
+        "**/.codex-temp/**",
+        "**/.audit/**",
+      ],
+    },
   },
   plugins: [
     {
