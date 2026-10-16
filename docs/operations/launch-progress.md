@@ -1,6 +1,6 @@
 # 公開準備の進捗と次の作業
 
-更新日時: 2026-10-17 03:10 JST
+更新日時: 2026-10-17 03:14 JST
 
 公開準備に関するCodexの引き継ぎと進捗管理の入口です。作業開始時に読み、進捗があった作業の終了前に更新します。会話履歴だけを根拠に完了扱いにしないでください。
 
@@ -77,7 +77,7 @@
 | P18 | Shopify Markets・通貨・言語 | 未確認 | 国、表示通貨、言語、商品、送料を整合。現在は海外販売無効 |
 | P19 | 税・関税・輸入費用 | 未確認 | 対象国別に最新確認し、徴収方法・負担者・分類・原産国等を確定。アプリに独自税額計算を追加しない |
 | P20 | 国別の法務・商品要件 | 未確認 | 消費者保護、包装EPR、個人情報移転、化粧品等の該当条件を最新の一次資料と証拠で確認。EU・GB・US等を一括で合格にしない |
-| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | 4A/4Bは候補CI成功。4C-1のshop v3/JPY強制、厳密snapshot、case/coverage・成果物束縛をローカル実装。4C-2/3・本番/実機は未完了で有効化ロックを維持 |
+| P21 | 国際販売ゲートと迂回防止 | 一部実装・実地未確認 | 4A/4Bと4C-1 #58は候補CI成功。shop v3/JPY強制、厳密snapshot、case/coverage・成果物束縛まで実装。4C-2/3・本番/実機は未完了で有効化ロックを維持 |
 | P22 | Shopify反映と国際取引の通し確認 | 未確認 | 国/variant/JPY/経路のsnapshot/scope照合と計画helperは候補実装。実金融probe接続/署名済みWebhookとのcheckout対応は4C-3に残り、実権限・実取引・返金・台帳・外貨対応は未確認 |
 
 北アイルランドはGBの確認を流用せず、別条件を満たすまで対象外。対象国の法令・制度は実行時に最新確認する。このメモは法的適合を認定しない。国内限定の期限付き公開や既存の国内承認を海外販売の証拠として流用しない。
@@ -102,9 +102,9 @@
 
 1. **次は4C-2**: [国際購入の通し検証設計](international-checkout-verification-design.md)のcase子モデル、計画の保存/必要な実機負例、専用非課金runner/結果受付、正常終了→実閉鎖→PASSEDを実装する。4C-1は候補実装済みだが、通常VERIFY開始/SALE/capabilityはまだ解除しない。
 2. **実runnerと外部条件を確認**: 署名鍵/専用credential、scheduler、実scope/native、実埋込み認証、checkout識別子の両側取得、金融の同時注文を含む露出制御、P01-P28の証拠は未確認。fixtureや監視メールで代用せず、課金制御が不十分なら本番FINANCIAL VERIFYは開始しない。R06/prelaunch通知は別管理。
-3. **依存PRの反映準備**: #57は#56、#56は#55をbaseとする候補。#51以降のretarget/rebase・CI、migration/実権限・国内ガード停止影響を確認してから本番操作を別承認する。空DBの旧migration履歴不整合、AWAITING_ORDER、公開/実決済/返金/通知再開の境界は維持する。
+3. **依存PRの反映準備**: #58は#57、#57は#56をbaseとする候補。#51以降のretarget/rebase・CI、migration/実権限・国内ガード停止影響を確認してから本番操作を別承認する。空DBの旧migration履歴不整合、AWAITING_ORDER、公開/実決済/返金/通知再開の境界は維持する。
 
-ユーザーの最新依頼は「実装どうぞ」。`agent/international-currency-contract` へ4C-1を候補実装し、全体1320件、PG40件、WASM/prebuilt各92件とbuild/runtimeを検証。4C-2/3、本番の鍵/credential・実scope・実配備は未完了で、有効化ロックを維持。本番の最新観測日は引き続き2026-10-15 11:35 JSTまで。本番migration・設定・実決済/返金・メール送信・main反映は行っていない。
+ユーザーの最新依頼は「実装どうぞ」。4C-1を[下書きPR #58](https://github.com/morixi4106/vendor-register/pull/58)へ実装。`e6d21b2` のCI3本成功、実artifact26ファイル/contract5ソースのdigest一致を独立確認した。4C-2/3、本番の鍵/credential・実scope・実配備は未完了で、有効化ロックを維持。本番の最新観測日は引き続き2026-10-15 11:35 JSTまで。本番migration・設定・実決済/返金・メール送信・main反映は行っていない。
 
 調査結果が既存の確認と変わらない場合は同じ監査を繰り返すだけで終えず、残作業の実装・検証か、必要な外部証拠の特定へ進む。ユーザーが新しい指示をした場合はそちらを優先する。
 
@@ -260,7 +260,9 @@
 - manifestへ固定5ソースのdigestとCONTRACT_ONLY descriptorを追加し、同commitのGitHub sourceと照合。旧policy/versionの交差組合せや現在runtimeでの旧policyを拒否。checkoutVerifier鍵registryは空、source capability=false、SALE reader未対応を維持する。新規DB migration、Function query/schema、package/lockfile、品質workflow/ビルド例外変更はない。
 - ローカル全体1327件中1320成功、既存Windows依存skip4と専用PG wrapper skip3。専用loopback PG17で既存delta/競合試験40件成功、schema差分0。Function/WASMとexact prebuiltは各92件成功。大量cartは入力75655bytes/6509058命令、国内大量cartは102855bytes/10430162命令で既存上限内。
 - lint/text/architecture、拡張/アプリbuild、隔離runtime(196packages、forbiddenなし、auditOk=true)成功。通常local production auditはartifact_set_changed_since_review/build_control_evidence_failed/risk_not_acceptedで拒否し、既存の例外条件を緩めていない。新しいread-only APIの実店舗可用性や実取引の証明ではない。
-- 隔離PGは停止済み、schemaはharnessが削除、前回の初期化directoryは残存。既存 `.codex-temp` は変更せず、前回design文書を引き継いだ。本番/Markets/鍵/scope/通知/Shopify stage-release/課金/返金/メール送信の変更なし。下書きPRとCIはこの後に確認する。
+- [下書きPR #58](https://github.com/morixi4106/vendor-register/pull/58)は#57をbaseとし、実装 `e6d21b2a701841abefac6b419d0598dd677611af` の[Quality 38945276846](https://github.com/morixi4106/vendor-register/actions/runs/38945276846)、[独立PG 38945276849](https://github.com/morixi4106/vendor-register/actions/runs/38945276849)、[artifact 38945276889](https://github.com/morixi4106/vendor-register/actions/runs/38945276889)が全てSUCCESS。Linux1327件中1323成功・既存skip4、PG40/schema差分0、既存条件のproduction auditも成功。通常local auditの拒否とCIの成功条件を混同しない。
+- 実CI artifactはPR merge commit `93fa898cc466e697d97385e2a0ffe22b953ddcfe` に対するcandidate。manifestのv2/v3・92case・CONTRACT_ONLYを確認し、成果物26ファイルとGitHub同commitの固定5contractソースの実bytes/size/hash一致を独立確認。これはproduction用の配備証拠ではなく、候補を本番承認へ流用しない。ローカル参照はGit管理外の `.audit/international-currency-ci-artifact`。
+- 隔離PGは停止済み、schemaはharnessが削除、前回の初期化directoryは残存。既存 `.codex-temp` は変更せず、前回design文書を引き継いだ。本番/Markets/鍵/scope/通知/Shopify stage-release/課金/返金/メール送信、main反映はなし。
 
 ## 更新ルール
 
@@ -292,7 +294,7 @@
 
 | 日付 | 内容 | 検証と残作業 |
 | --- | --- | --- |
-| 2026-10-17 | 4C-1のJPY購入制御・厳密snapshot・case/coverage契約・成果物束縛を候補実装 | 全体1320成功/skip7、PG40/schema差分0、WASM/prebuilt各92、build/runtime成功。4C-2/3・本番/実機は未完了、capability=false維持 |
+| 2026-10-17 | 4C-1を下書きPR #58へ実装しCI3本と実artifactを検証 | e6d21b2のQuality/PG/artifact成功、Linux1323成功/skip4、PG40、WASM/prebuilt各92。実成果物26/contract5ファイル一致。4C-2/3・本番は未完了 |
 | 2026-10-17 | 4Cの通貨制御・非課金runner・金融照合/最終proofを詳細設計 | 候補960024eと公式2026-04仕様を確認し文書のみ保存。GraphQL checkoutToken前提を修正。4C未実装、実識別子/金融露出制御/本番は未確認 |
 | 2026-10-17 | 4B-3の専用認証・配送・runner・管理画面をローカル実装 | 全体1272成功/skip7、PG計40件/schema差分0、画面21ケース、WASM77、build/runtime成功。下書きPR #57のCI3本成功、本番/4Cは未完了 |
 | 2026-10-16 | 4B-3の管理画面・専用認証/配送・観測競合を設計 | 4B-2候補bc20c08の実コードを静的確認。文書のみローカル保存。3A/B/Cと4C・本番は未完了。有効化/通知ロックを維持 |

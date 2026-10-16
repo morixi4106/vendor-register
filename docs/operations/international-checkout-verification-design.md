@@ -2,7 +2,7 @@
 
 作成日: 2026-10-17 JST
 
-状態: **4C-1は候補実装・ローカル検証済み。4C-2/3は未実装、本番未反映・実取引未確認**。基準は4B-3候補 `960024ebb747180c9c4630d7747504b8ed940356`、[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)。本番の最後の観測は2026-10-15 11:35 JSTで、今回再監査していない。最新の候補PR/CIは[進捗メモ](launch-progress.md)を参照する。
+状態: **4C-1は下書きPR #58で候補CI成功。4C-2/3は未実装、本番未反映・実取引未確認**。基準は4B-3候補 `960024ebb747180c9c4630d7747504b8ed940356`、[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)。本番の最後の観測は2026-10-15 11:35 JSTで、今回再監査していない。最新の候補PR/CIは[進捗メモ](launch-progress.md)を参照する。
 
 [4A-4Cの全体設計](international-release-verification-design.md)、[単回承認](international-authorization-design.md)、[配備証拠](international-proof-issuance-design.md)、[管理操作とrunner](international-runner-interface-design.md)を引き継ぐ。ここでは4Cの具体的な契約と実装順を定める。文書の採用は公開・配備・migration・権限/設定変更・課金・返金・メール送信の承認ではない。
 
@@ -169,3 +169,5 @@ native readerの既存の単一physical variant制限を維持し、JPY固定mar
 proof manifestへ固定5ソースファイルのhashと `CONTRACT_ONLY` descriptorを追加し、同commitのGitHub sourceを独立照合する。ブラウザ実行済みとは表示せず、checkoutVerifier鍵registryも空、source capabilityはfalse、SALE readerは未対応のまま。Function query/schema、DB schema/migration、package/lockfile、品質workflow/既存の例外条件は変更していない。
 
 ローカル全体1327件中1320成功・既存skip7、専用PG40件成功/schema差分0、Function/WASMとexact prebuilt各92件成功、lint/text/architecture、拡張/アプリbuild、隔離runtime成功。通常local production auditは既存の審査不足3codeで拒否し、例外を広げて通していない。実GraphQL権限/フィールド可用性・checkout対応・決済上限・本番の成功証拠ではない。
+
+[下書きPR #58](https://github.com/morixi4106/vendor-register/pull/58)の実装e6d21b2はQuality/PG/artifactの3本がSUCCESS。Linux1323成功・skip4、既存の条件付きproduction auditも成功。candidate artifactの26ファイルと同commitのcontract 5ソースを独立照合した。PR merge commitに対する候補で、production証拠としては使えない。具体的なrun/commit/digest確認は進捗メモに記録する。
