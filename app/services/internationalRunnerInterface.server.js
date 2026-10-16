@@ -73,7 +73,12 @@ export function createInternationalRunnerInterface({
             proofDeps,
           ),
         );
-      const fields = FIELDS[purpose]?.[input.intent];
+      const fields =
+        input &&
+        typeof input.intent === "string" &&
+        Object.hasOwn(FIELDS[purpose] || {}, input.intent)
+          ? FIELDS[purpose][input.intent]
+          : null;
       if (!fields) throw proofError("international_intent_invalid", 400);
       shape(input, ["intent", ...fields], 32000);
       if (fields.includes("runId") && !ID.test(input.runId || ""))

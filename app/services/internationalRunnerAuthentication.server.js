@@ -70,6 +70,13 @@ export async function limitInternationalRequests(
   purpose,
   limit = 60,
 ) {
+  // Keep polling quotas bounded without pruning other endpoints' records.
+  await prismaClient.publicEndpointRateLimit.deleteMany({
+    where: {
+      endpoint: `international:${purpose}`,
+      expiresAt: { lt: new Date() },
+    },
+  });
   const result = await consumePublicEndpointRateLimit({
     prismaClient,
     endpoint: `international:${purpose}`,

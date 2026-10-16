@@ -272,6 +272,14 @@ test(
       },
     );
     await t.test(
+      "inherited object keys cannot select an internal operation",
+      async () => {
+        const f = await fixture();
+        for (const intent of ["__proto__", "toString", "constructor"])
+          assert.equal((await f.call("observer", { intent })).status, 400);
+      },
+    );
+    await t.test(
       "authenticated closed deployment completes without granting VERIFY or SALE",
       async () => {
         const f = await fixture();

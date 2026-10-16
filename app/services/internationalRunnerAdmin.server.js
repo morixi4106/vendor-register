@@ -50,7 +50,7 @@ export async function dispatchInternationalRunnerAdmin({
   env = process.env,
 }) {
   const intent = formData.get("intent");
-  const fields = FIELDS[intent];
+  const fields = Object.hasOwn(FIELDS, intent) ? FIELDS[intent] : null;
   if (!fields) return null;
   if ([...formData.keys()].some((key) => !["intent", ...fields].includes(key)))
     throw proofError("international_input_invalid", 400);

@@ -4,7 +4,7 @@
 
 状態: **4B-3は候補実装・ローカル検証済み。PR/CI確認中、本番未反映**。基準は4B-2候補 `bc20c0849b22a3b1c3baa8a2a65a7559c9c6491c`、[下書きPR #56](https://github.com/morixi4106/vendor-register/pull/56)。本番の最後の独立観測は2026-10-15 11:35 JSTで、今回再監査していない。
 
-2026-10-17の候補実装は `agent/international-runner-interface`。専用認証/受信箱/店舗別P03、closed runner/観測配送、既存UIへ接続し、PG計39件、画面21ケース、全体1271件成功を確認した。capability固定false/空鍵registry/本番未設定は維持。検証の正本は[進捗メモ](launch-progress.md)。以下は契約を記した設計であり、実運用済みという意味ではない。
+2026-10-17の候補実装は `agent/international-runner-interface`、[下書きPR #57](https://github.com/morixi4106/vendor-register/pull/57)。専用認証/受信箱/店舗別P03、closed runner/観測配送、既存UIへ接続し、PG計40件、画面21ケース、全体1272件成功を確認した。capability固定false/空鍵registry/本番未設定は維持。検証の正本は[進捗メモ](launch-progress.md)。以下は契約を記した設計であり、実運用済みという意味ではない。
 
 [承認設計](international-authorization-design.md)の4B-3を具体化する。[4B-2の証拠発行](international-proof-issuance-design.md)を再利用し、別の販売許可エンジンは作らない。文書の採用はmain反映、migration、credential導入、scope追加、Shopify配備/release、実決済・返金、海外有効化、通知再開の承認ではない。
 

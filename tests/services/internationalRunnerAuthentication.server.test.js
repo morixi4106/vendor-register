@@ -5,6 +5,7 @@ import {
   readInternationalRunnerJson,
   requireInternationalAdminMutation,
   internationalErrorResponse,
+  limitInternationalRequests,
 } from "../../app/services/internationalRunnerAuthentication.server.js";
 import { canonicalProof } from "../../app/utils/internationalProofContract.js";
 
@@ -91,6 +92,31 @@ test("admin writes require header session token plus canonical origin, never coo
     }),
   ])
     assert.throws(() => requireInternationalAdminMutation(request, env));
+});
+test("polling quota cleanup is scoped and excess requests are rejected with retry timing", async () => {
+  const deletes = [];
+  const db = {
+    publicEndpointRateLimit: {
+      deleteMany: async (query) => {
+        deletes.push(query);
+        return { count: 1 };
+      },
+      upsert: async () => ({ count: 61 }),
+    },
+  };
+  await assert.rejects(
+    limitInternationalRequests(
+      db,
+      {
+        shopDomain: env.SHOPIFY_PRIMARY_SHOP_DOMAIN,
+        principalId: "system:international-observer",
+      },
+      "observer",
+    ),
+    (error) => error.status === 429 && error.retryAfter > 0,
+  );
+  assert.equal(deletes[0].where.endpoint, "international:observer");
+  assert.ok(deletes[0].where.expiresAt.lt instanceof Date);
 });
 test("API failures never disclose external exception text or credentials", async () => {
   const response = internationalErrorResponse(
