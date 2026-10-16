@@ -4,6 +4,8 @@ import { describe, beforeAll, test, expect } from "vitest";
 import { buildFunction, getFunctionInfo, loadSchema, loadInputQuery, loadFixture, validateTestAssets, runFunction } from "@shopify/shopify-function-test-helpers";
 import { cartValidationsGenerateRun } from "../src/cart_validations_generate_run.js";
 
+let wasmContext;
+
 describe("Default Integration Test", () => {
   let schema;
   let functionDir;
@@ -19,9 +21,21 @@ describe("Default Integration Test", () => {
     functionInfo = await getFunctionInfo(functionDir);
     ({ schemaPath, functionRunnerPath, wasmPath, targeting } = functionInfo);
     schema = await loadSchema(schemaPath);
+    wasmContext = { schema, schemaPath, targeting, functionRunnerPath, wasmPath };
   }, 90000);
 
   const fixturesDir = path.join(__dirname, "fixtures");
+  test("input query stays within Shopify's byte and cost limits", async () => {
+    const queryPath = targeting["cart.validations.generate.run"].inputQueryPath;
+    const document = await loadInputQuery(queryPath);
+    const cost = (set) => set.selections.reduce((sum, node) => {
+      if (node.kind === "InlineFragment") return sum + cost(node.selectionSet);
+      if (node.name.value === "metafield") return sum + 3;
+      return sum + (node.selectionSet ? cost(node.selectionSet) : node.name.value === "__typename" ? 0 : 1);
+    }, 0);
+    expect(cost(document.definitions[0].selectionSet)).toBeLessThanOrEqual(30);
+    expect(Buffer.byteLength(fs.readFileSync(queryPath, "utf8"))).toBeLessThanOrEqual(3000);
+  });
   const fixtureFiles = fs
     .readdirSync(fixturesDir)
     .filter((file) => file.endsWith(".json"))
@@ -71,10 +85,11 @@ function buildDirectInput({
   cartAmount = "100.0",
   productId = "gid://shopify/Product/1",
   destinationCountry = "JP",
-  provinceCode = null,
   postalCode = null,
   deliveryAddresses = null,
   internationalSaleGate = null,
+  internationalSaleEligibility = undefined,
+  journeyStep = "CHECKOUT_COMPLETION",
 } = {}) {
   const defaultProjection = JSON.stringify({
     v: 2,
@@ -91,9 +106,15 @@ function buildDirectInput({
     quantity: 1,
     merchandise: {
       id: "gid://shopify/ProductVariant/1",
+      requiresShipping: true,
       product: {
         id: productId,
-        marketplaceCheckoutPolicy: { value: "PLATFORM_DIRECT" },
+        internationalSaleEligibility: internationalSaleEligibility === null ? null : {
+          value: JSON.stringify(internationalSaleEligibility ?? {
+            v: 1, p: "international-sale-2026-10-v1", g: 1, r: 1, i: productId,
+            d: evaluatedOn, e: expiresOnExclusive, c: ["FR"], h: "c".repeat(64),
+          }),
+        },
         saleEligibilityProjection: {
           value: projectionValue ?? defaultProjection,
         },
@@ -106,12 +127,12 @@ function buildDirectInput({
       ? [
           {
             countryCode: destinationCountry,
-            provinceCode,
             zip: postalCode,
           },
         ]
       : [];
   return {
+    buyerJourney: { step: journeyStep },
     shop: {
       localTime: { date: currentDate },
       operationalPurchaseControl: { value: operationalState },
@@ -131,16 +152,26 @@ function buildDirectInput({
       },
       deliveryGroups: addresses.map((deliveryAddress) => ({
         deliveryAddress,
+        cartLines: Array.from({ length: lineCount }, (_, index) => ({ id: `gid://shopify/CartLine/${index}` })),
       })),
-      lines: Array.from({ length: lineCount }, () => line),
+      lines: Array.from({ length: lineCount }, (_, index) => ({ ...line, id: `gid://shopify/CartLine/${index}` })),
     },
   };
 }
 
 describe("international destination gate", () => {
+  beforeAll(async () => {
+    if (wasmContext) return;
+    const functionDir = path.dirname(__dirname);
+    await buildFunction(functionDir);
+    const info = await getFunctionInfo(functionDir);
+    wasmContext = { ...info, schema: await loadSchema(info.schemaPath) };
+  }, 90000);
   const validFranceGate = {
-    v: 1,
-    r: 1,
+    v: 2,
+    p: "international-sale-2026-10-v1",
+    g: 1,
+    s: "ACTIVE",
     d: "2026-07-24",
     e: "2026-07-25",
     c: ["FR"],
@@ -221,10 +252,95 @@ describe("international destination gate", () => {
 
   test("does not block before a delivery address is available", () => {
     const result = cartValidationsGenerateRun(
-      buildDirectInput({ destinationCountry: null }),
+      buildDirectInput({ destinationCountry: null, journeyStep: "CART_INTERACTION" }),
     );
     expect(result.operations[0].validationAdd.errors).toEqual([]);
   });
+
+  test("requires product-specific permission even with a valid shop gate", () => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: validFranceGate, internationalSaleEligibility: null });
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each(["g", "i", "p", "v", "e", "c"])("rejects mismatched product %s", (field) => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: validFranceGate });
+    const projection = JSON.parse(input.cart.lines[0].merchandise.product.internationalSaleEligibility.value);
+    projection[field] = { g: 2, i: "gid://shopify/Product/999", p: "future", v: 9, e: "2026-07-24", c: ["US"] }[field];
+    input.cart.lines[0].merchandise.product.internationalSaleEligibility.value = JSON.stringify(projection);
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("rejects a mixed cart when only one product has permission", () => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: validFranceGate, lineCount: 2 });
+    input.cart.lines[1] = { ...input.cart.lines[1], merchandise: { ...input.cart.lines[1].merchandise, product: {
+      ...input.cart.lines[1].merchandise.product, id: "gid://shopify/Product/2", internationalSaleEligibility: null,
+    } } };
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each(["CHECKOUT_COMPLETION", "UNKNOWN", null])("rejects absent destination at %s", (journeyStep) => {
+    const input = buildDirectInput({ destinationCountry: null, journeyStep });
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each(["missingGroup", "unknownLine", "partialAddress", "duplicateLine", "legacyGate", "ambiguousGb"])("fails closed for %s", (scenario) => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: validFranceGate });
+    if (scenario === "missingGroup") input.cart.deliveryGroups = [];
+    if (scenario === "unknownLine") input.cart.deliveryGroups[0].cartLines = [{ id: "unknown" }];
+    if (scenario === "partialAddress") input.cart.deliveryGroups.push({ cartLines: [{ id: input.cart.lines[0].id }], deliveryAddress: null });
+    if (scenario === "duplicateLine") input.cart.lines.push(input.cart.lines[0]);
+    if (scenario === "legacyGate") input.shop.internationalSaleGate.value = JSON.stringify({ ...validFranceGate, v: 1 });
+    if (scenario === "ambiguousGb") input.cart.deliveryGroups[0].deliveryAddress.countryCode = "GB";
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  for (const scenario of ["allowed", "mixed", "twoCountries", "missingGroup", "generationMismatch", "largestCart", "largestDomestic", "distinctProducts"]) {
+    test(`WASM international ${scenario}`, async () => {
+      const { schema, schemaPath, targeting, functionRunnerPath, wasmPath } = wasmContext;
+      const gate = { v: 2, p: "international-sale-2026-10-v1", g: 1, s: "ACTIVE", d: "2026-07-24", e: "2026-07-25", c: ["FR", "US"], h: "b".repeat(64) };
+      const input = buildDirectInput({ destinationCountry: scenario === "largestDomestic" ? "JP" : "FR", internationalSaleGate: gate,
+        internationalSaleEligibility: scenario === "largestDomestic" ? null : undefined,
+        lineCount: scenario === "largestCart" ? 100 : scenario === "largestDomestic" ? 200 : scenario === "distinctProducts" ? 12 : 2 });
+      if (scenario === "distinctProducts") {
+        input.cart.lines = input.cart.lines.map((line, index) => {
+          const item = structuredClone(line);
+          item.merchandise.product.id = `gid://shopify/Product/${index + 100}`;
+          item.merchandise.product.internationalSaleEligibility.value = JSON.stringify({
+            ...JSON.parse(item.merchandise.product.internationalSaleEligibility.value), i: item.merchandise.product.id,
+          });
+          item.merchandise.product.saleEligibilityProjection.value = JSON.stringify({
+            ...JSON.parse(item.merchandise.product.saleEligibilityProjection.value), h: index.toString(16).padStart(64, "0"),
+          });
+          return item;
+        });
+      }
+      for (const group of input.cart.deliveryGroups) delete group.deliveryAddress.provinceCode;
+      if (scenario === "mixed") input.cart.lines[1].merchandise = { ...input.cart.lines[1].merchandise, product: { ...input.cart.lines[1].merchandise.product, internationalSaleEligibility: null } };
+      if (scenario === "twoCountries") {
+        const second = structuredClone(input.cart.deliveryGroups[0]);
+        second.deliveryAddress.countryCode = "US";
+        input.cart.deliveryGroups.push(second);
+        for (const line of input.cart.lines) {
+          line.merchandise.product.internationalSaleEligibility.value = JSON.stringify({ ...JSON.parse(line.merchandise.product.internationalSaleEligibility.value), c: ["FR", "US"] });
+        }
+      }
+      if (scenario === "missingGroup") input.cart.deliveryGroups = [];
+      if (scenario === "generationMismatch") input.shop.internationalSaleGate.value = JSON.stringify({ ...gate, g: 2 });
+      const fixture = { export: "cart-validations-generate-run", target: "cart.validations.generate.run", input,
+        expectedOutput: cartValidationsGenerateRun(input) };
+      expect(fixture.expectedOutput.operations[0].validationAdd.errors).toHaveLength(["allowed", "twoCountries", "distinctProducts"].includes(scenario) ? 0 : 1);
+      const query = targeting[fixture.target].inputQueryPath;
+      const validation = await validateTestAssets({ schema, fixture, inputQueryAST: await loadInputQuery(query) });
+      expect(validation.inputFixture.errors).toEqual([]);
+      const result = await runFunction(fixture, functionRunnerPath, wasmPath, query, schemaPath);
+      expect(result.error).toBeNull();
+      expect(result.result.output).toEqual(fixture.expectedOutput);
+      expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(128000);
+      expect(result.metadata.instructionCount).toBeLessThanOrEqual(11000000);
+      expect(result.metadata.memoryUsageKiB).toBeLessThanOrEqual(10000);
+      if (scenario.startsWith("largest")) console.info(scenario, { inputBytes: Buffer.byteLength(JSON.stringify(input)), ...result.metadata });
+    }, 20000);
+  }
 });
 
 describe("fail-closed operational and calendar boundaries", () => {
@@ -280,11 +396,11 @@ describe("fail-closed operational and calendar boundaries", () => {
     expect(result.operations[0].validationAdd.errors).toHaveLength(1);
   });
 
-  test("allows a 200-line cart with compact projections", () => {
+  test("rejects a 200-line cart above the projection work budget", () => {
     const result = cartValidationsGenerateRun(
       buildDirectInput({ lineCount: 200 }),
     );
-    expect(result.operations[0].validationAdd.errors).toEqual([]);
+    expect(result.operations[0].validationAdd.errors).toHaveLength(1);
   });
 
   test("returns one cart-level error for 200 blocked lines", () => {

@@ -172,6 +172,7 @@ model InternationalShippingCountryAvailability {
   checkedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  revision    Int       @default(0)
 
   @@unique([countryCode, service])
   @@index([service, status, checkedAt])
@@ -889,6 +890,7 @@ model OperationalReadinessAttestation {
   metadataJson      Json?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  revision          Int       @default(0)
 
   @@unique([checkKey, scopeType, scopeId])
   @@index([status, expiresAt])
@@ -2483,4 +2485,57 @@ model FxRate {
   updatedAt DateTime @updatedAt
 
   @@unique([base, quote])
+}
+
+model InternationalGateSyncState {
+  shopDomain             String                     @id
+  mode                   String                     @default("DISABLED")
+  desiredGeneration      Int                        @default(0)
+  appliedGeneration      Int                        @default(0)
+  phase                  String                     @default("UNCONFIGURED")
+  authorizedScopeJson    Json                       @default("[]")
+  authorizedScopeHash    String?
+  releaseBinding         String?
+  authorizationExpiresAt DateTime?
+  nativeConfigHash       String?
+  shopTimezone           String?
+  snapshotComplete       Boolean                    @default(false)
+  sourceHash             String?
+  expectedShopJson       Json?
+  expectedShopHash       String?
+  observedShopHash       String?
+  expectedProductCount   Int                        @default(0)
+  verifiedProductCount   Int                        @default(0)
+  protectedAt            DateTime?
+  verifiedAt             DateTime?
+  nextExpiryAt           DateTime?
+  lastErrorCode          String?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  jobs                   InternationalGateSyncJob[]
+
+  @@index([mode, nextExpiryAt])
+}
+
+model InternationalGateSyncJob {
+  id            String                     @id @default(cuid())
+  shopDomain    String
+  generation    Int
+  targetType    String
+  targetId      String
+  payloadJson   Json?
+  expectedHash  String?
+  status        String                     @default("PENDING")
+  attempts      Int                        @default(0)
+  nextAttemptAt DateTime                   @default(now())
+  leaseToken    String?
+  leaseUntil    DateTime?
+  verifiedAt    DateTime?
+  lastErrorCode String?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  state         InternationalGateSyncState @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+
+  @@unique([shopDomain, generation, targetType, targetId], map: "InternationalGateSyncJob_target_key")
+  @@index([shopDomain, generation, status, nextAttemptAt], map: "InternationalGateSyncJob_pending_idx")
 }

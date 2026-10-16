@@ -1,4 +1,5 @@
 // @ts-check
+import { getInternationalDestinationError } from "./international_validation.js";
 
 /**
  * @typedef {import("../generated/api").CartValidationsGenerateRunInput} CartValidationsGenerateRunInput
@@ -12,6 +13,7 @@
 const POLICY_VERSION = "sale-eligibility-2026-07-v1";
 const ALLOWED_STATUSES = new Set(["ELIGIBLE", "LEGACY_REVIEW_REQUIRED"]);
 const MAX_SUPPORTED_CART_LINES = 200;
+const MAX_PROJECTION_WORK_CHARACTERS = 10000;
 
 function parseProjection(value) {
   if (!value) return null;
@@ -46,84 +48,6 @@ function parseLimitedLaunchControl(value) {
       typeof control.c === "string",
   );
   return { present: true, valid, control: valid ? control : null };
-}
-
-function parseInternationalSaleGate(value) {
-  if (!value) return { present: false, valid: false, gate: null };
-  const gate = parseProjection(value);
-  const countries = Array.isArray(gate?.c) ? gate.c.map(String) : [];
-  const valid = Boolean(
-    gate &&
-      Number(gate.v) === 1 &&
-      Number.isInteger(gate.r) &&
-      gate.r >= 1 &&
-      /^\d{4}-\d{2}-\d{2}$/.test(String(gate.d || "")) &&
-      /^\d{4}-\d{2}-\d{2}$/.test(String(gate.e || "")) &&
-      /^[a-f0-9]{64}$/.test(String(gate.h || "")) &&
-      countries.every((country) => /^[A-Z]{2}$/.test(country)),
-  );
-  return {
-    present: true,
-    valid,
-    gate: valid ? { ...gate, c: countries } : null,
-  };
-}
-
-function isNorthernIrelandAddress(address) {
-  const countryCode = String(address?.countryCode || "").toUpperCase();
-  if (countryCode !== "GB") return false;
-  const provinceCode = String(address?.provinceCode || "")
-    .toUpperCase()
-    .replace(/^GB-/, "");
-  const postalCode = String(address?.zip || "")
-    .toUpperCase()
-    .replace(/\s+/g, "");
-  return (
-    provinceCode === "NIR" ||
-    provinceCode === "NI" ||
-    postalCode.startsWith("BT")
-  );
-}
-
-function getInternationalDestinationError(input, currentDate) {
-  const deliveryGroups = Array.isArray(input.cart?.deliveryGroups)
-    ? input.cart.deliveryGroups
-    : [];
-  const addresses = deliveryGroups
-    .map((group) => group?.deliveryAddress)
-    .filter((address) => address?.countryCode);
-  const internationalAddresses = addresses.filter(
-    (address) => String(address.countryCode).toUpperCase() !== "JP",
-  );
-  if (internationalAddresses.length === 0) return null;
-  if (internationalAddresses.some(isNorthernIrelandAddress)) {
-    return "現在、北アイルランドへの配送は受け付けていません。";
-  }
-
-  const parsed = parseInternationalSaleGate(
-    input.shop?.internationalSaleGate?.value,
-  );
-  if (!parsed.present || !parsed.valid) {
-    return "海外販売条件を確認できないため、この配送先への注文を受け付けられません。";
-  }
-  const gate = parsed.gate;
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(currentDate) ||
-    gate.d > currentDate ||
-    currentDate >= gate.e
-  ) {
-    return "海外販売条件の有効期限を確認できないため、この配送先への注文を受け付けられません。";
-  }
-  const allowedCountries = new Set(gate.c);
-  if (
-    internationalAddresses.some(
-      (address) =>
-        !allowedCountries.has(String(address.countryCode).toUpperCase()),
-    )
-  ) {
-    return "現在、この国・地域への販売は受け付けていません。";
-  }
-  return null;
 }
 
 function getCartAmount(input) {
@@ -186,11 +110,10 @@ function getLimitedLaunchError(input, currentDate) {
   return null;
 }
 
-function isValidDirectProjection({ policy, projectionValue, currentDate }) {
-  if (policy !== "PLATFORM_DIRECT") return false;
+function isValidDirectProjection({ projectionValue, currentDate }) {
   const projection = parseProjection(projectionValue);
   if (!projection) return false;
-  const compact = Number(projection.v) === 2;
+  const compact = projection.v === 2 || projection.v === 3;
   const routingClass = compact ? projection.c : projection.routingClass;
   const allowed = compact ? projection.a : projection.allowed;
   const status = compact ? projection.s : projection.status;
@@ -214,7 +137,9 @@ function isValidDirectProjection({ policy, projectionValue, currentDate }) {
   if (!ALLOWED_STATUSES.has(String(status || "").toUpperCase())) {
     return false;
   }
-  if (policyVersion !== POLICY_VERSION) return false;
+  if (projection.v === 3
+    ? policyVersion !== "sale-eligibility-2026-09-v2"
+    : policyVersion !== POLICY_VERSION || (projection.v != null && projection.v !== 2)) return false;
   if (!/^[a-f0-9]{64}$/.test(String(inputHash || ""))) {
     return false;
   }
@@ -246,25 +171,32 @@ export function cartValidationsGenerateRun(input) {
   const purchaseStopActive =
     operationalState !== "ALLOWED" || watchdogStopActive;
   const currentDate = String(input.shop?.localTime?.date || "");
+  const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
+  let projectionWork = 0;
+  for (const line of cartLines) {
+    const product = line.merchandise?.product;
+    for (const value of [product?.saleEligibilityProjection?.value, product?.internationalSaleEligibility?.value]) {
+      if (typeof value === "string") projectionWork += value.length;
+    }
+    if (projectionWork > MAX_PROJECTION_WORK_CHARACTERS) break;
+  }
+  // Bound work before parsing projections, including carts with distinct products.
+  if (cartLines.length > MAX_SUPPORTED_CART_LINES || projectionWork > MAX_PROJECTION_WORK_CHARACTERS) {
+    return { operations: [{ validationAdd: { errors: [{
+      message: "一度に確認できる商品情報の上限を超えています。カートを分けてお試しください。", target: "$.cart",
+    }] } }] };
+  }
   const limitedLaunchError = getLimitedLaunchError(input, currentDate);
   const internationalDestinationError = getInternationalDestinationError(
     input,
     currentDate,
   );
-  const cartLines = Array.isArray(input.cart?.lines) ? input.cart.lines : [];
   const unsupportedCartSize = cartLines.length > MAX_SUPPORTED_CART_LINES;
+  const projectionResults = new Map();
   const invalidProductPresent = cartLines.some((line) => {
-    const policy = String(
-      line.merchandise?.product?.marketplaceCheckoutPolicy?.value || "",
-    )
-      .trim()
-      .toUpperCase();
-    return !isValidDirectProjection({
-      policy,
-      projectionValue:
-        line.merchandise?.product?.saleEligibilityProjection?.value || "",
-      currentDate,
-    });
+    const value = line.merchandise?.product?.saleEligibilityProjection?.value || "";
+    if (!projectionResults.has(value)) projectionResults.set(value, isValidDirectProjection({ projectionValue: value, currentDate }));
+    return !projectionResults.get(value);
   });
   const errors = purchaseStopActive
     ? [

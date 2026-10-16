@@ -134,6 +134,7 @@ export async function getProductionReadiness({
     releaseMonitoring,
     checkoutMode,
     checkoutScopeCheck,
+    internationalChecks,
     productShippingProfiles,
   } = await inspectReadinessOperations({ prismaClient, now, env });
   const marketplaceSellerRows = sellerRows.filter(isMarketplaceSeller);
@@ -235,6 +236,7 @@ export async function getProductionReadiness({
     }),
     ...buildShopifyProductSyncChecks(shopifyProductSync),
     checkoutScopeCheck,
+    ...internationalChecks,
     ...buildProductShippingProfileChecks(productShippingProfiles),
     ...buildMarketplaceGovernanceChecks({
       governance: marketplaceGovernance,

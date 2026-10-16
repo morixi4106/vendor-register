@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import prisma from "../db.server.js";
+import { withInternationalGateInvalidation } from "./internationalGateQueue.server.js";
 import {
   isSingleOperatorPayoutReadinessAllowed,
   SINGLE_OPERATOR_PAYOUT_SCOPE,
@@ -311,7 +312,7 @@ async function setPlatformOperationalHold(
     metadataJson: nextMetadata,
   };
 
-  const control = await prismaClient.platformOperationalControl.upsert({
+  const persistControl = (client) => client.platformOperationalControl.upsert({
     where: { key: PLATFORM_OPERATIONAL_CONTROL_KEY },
     create: {
       key: PLATFORM_OPERATIONAL_CONTROL_KEY,
@@ -319,6 +320,9 @@ async function setPlatformOperationalHold(
     },
     update: values,
   });
+  const control = ["internationalShippingHold", "checkoutHold"].includes(field)
+    ? await withInternationalGateInvalidation(prismaClient, persistControl, { now })
+    : await persistControl(prismaClient);
 
   return { ok: true, control };
 }
