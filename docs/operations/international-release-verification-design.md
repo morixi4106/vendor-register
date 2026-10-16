@@ -2,9 +2,11 @@
 
 作成日: 2026-10-16 JST
 
-状態: **4AはPR #54、4B-1はPR #55、4B-2はPR #56で候補CI成功。4B-3/4Cは未実装、本番未反映**。設計の基準は `156f393`、第3弾の実装は `cc8276e`。本番状態は再監査していない。最新のPR/CIと最後の本番観測は[進捗メモ](launch-progress.md)を参照する。
+状態: **4A/4Bは候補CI成功。4C-1はローカル候補実装・検証済み、4C-2/3と本番は未完了**。当初設計の基準は `156f393`、第3弾の実装は `cc8276e`。本番状態は再監査していない。最新のPR/CIと最後の本番観測は[進捗メモ](launch-progress.md)を参照する。
 
 4Bの単回承認は[承認の詳細設計](international-authorization-design.md)、4B-2の候補実装は[システム証拠発行設計](international-proof-issuance-design.md)を参照する。後者は試験済み成果物と配備receipt、初回閉鎖検査、専用発行/取消を追加した。本番未反映で、4C不在時の有効化拒否は維持する。
+
+2026-10-17追記: 4B-3の契約は[管理操作/runner設計](international-runner-interface-design.md)、4Cの具体的な実装仕様は[国際購入の通し検証設計](international-checkout-verification-design.md)を正本とする。以下の実装状況は各段階の履歴を含む。4Cは通貨/対象契約、非課金runner/正常閉鎖、金融照合/最終proofの3単位とし、実証拠なしでcapabilityを解除しない。
 
 ## 4Aの実装状況 2026-10-16
 
@@ -166,7 +168,7 @@ nonceの二重消費、別actor/shop、旧generation、取消された証拠は4
 
 注文紐付け前に実店舗・実ゲート・対象商品を再取得する。注文作成時刻が承認期間内で、対象国・商品・variant・数量・providerが一致し、取得が完全であることを確認する。国内注文、別国、未確認の商品、テスト決済、混合/不明な配送先を合格にしない。
 
-さらに注文の `app` / `sourceName` 等で採用したチェックアウト由来かを確認し、runnerが操作したcheckoutとの対応を検証する。時刻・金額・商品が似ているだけの注文を自動採用しない。候補は `Order.checkoutToken` とrunner側の同一識別子をrun単位のHMACで照合する方法だが、実環境で対応関係と取得権限を確認するまでは利用可能と仮定しない。対応を取得できなければ未確認とし、任意注文IDの入力だけで代用しない。token原文をDB・URL・ログへ追加保存しない。[注文の識別フィールド](https://shopify.dev/docs/api/admin-graphql/2026-04/objects/Order)
+さらに注文の `app` / `sourceName` 等で採用したチェックアウト由来かを確認し、runnerが操作したcheckoutとの対応を検証する。時刻・金額・商品が似ているだけの注文を自動採用しない。**2026-10-17修正: GraphQL `Order.checkoutToken` は公開2026-04フィールドで確認できず、当初の取得案は採用しない**。署名検証済み注文Webhookの `checkout_token` と注文前runner識別子の対応を候補とし、詳細は[4C設計](international-checkout-verification-design.md)に従う。null/欠損や実環境の対応を確認できなければ未確認で、任意注文IDや属性の自己申告へfallbackしない。token原文をDB・URL・ログへ追加保存しない。[注文の識別フィールド](https://shopify.dev/docs/api/admin-graphql/2026-04/objects/Order)、[注文Webhook](https://shopify.dev/docs/api/webhooks/2026-04?reference=toml)
 
 開始から紐付けまでに世代が変わった場合は自動紐付けせず再確認を要求する。紐付け後の支払/返金履歴は世代変更で消さない。通常の期限更新だけで再課金を求めず、公開判定では同じrelease/承認範囲/native構成に対する過去の取引結果と、**現世代の**実値・適格性の両方を要求する。範囲拡大・経路/通貨変更・配備差替えには新しい対象別証拠が必要。
 

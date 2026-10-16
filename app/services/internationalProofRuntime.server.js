@@ -4,6 +4,7 @@ import {
   readInternationalMetafield,
 } from "./internationalGateTransport.server.js";
 import { internationalHash } from "./internationalGateProjection.server.js";
+import { INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION } from "../utils/internationalCurrencyPolicy.js";
 import {
   proofError,
   proofHash,
@@ -22,6 +23,8 @@ export async function inspectInternationalProofRuntime({
   graphQL = internationalGraphQL,
 }) {
   if (
+    manifest.function.policy !== INTERNATIONAL_CURRENCY_POLICY ||
+    manifest.function.projectionVersion !== INTERNATIONAL_SHOP_PROJECTION_VERSION ||
     env.SHOPIFY_API_KEY !== receipt.appId ||
     (env.RENDER_GIT_COMMIT || env.GIT_COMMIT) !== receipt.headSha ||
     env.SHOPIFY_APP_VERSION !== receipt.versionTag ||
@@ -81,6 +84,7 @@ export async function inspectInternationalProofRuntime({
       value.s !== "PREPARING" ||
       value.p !== manifest.function.policy ||
       value.v !== manifest.function.projectionVersion ||
+      !Array.isArray(value.u) || value.u.length !== 1 || value.u[0] !== "JPY" ||
       !Array.isArray(value.c) ||
       value.c.length
     )

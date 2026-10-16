@@ -211,7 +211,7 @@ export function syncFixture() {
         targetId: "gid://shopify/Product/1",
         projection: sealInternationalProjection({
           v: 1,
-          p: "international-sale-2026-10-v1",
+          p: "international-sale-2026-10-v2",
           i: "gid://shopify/Product/1",
           g: state.desiredGeneration,
           r: 1,
@@ -222,13 +222,14 @@ export function syncFixture() {
       },
     ],
     shop: sealInternationalProjection({
-      v: 2,
-      p: "international-sale-2026-10-v1",
+      v: 3,
+      p: "international-sale-2026-10-v2",
       g: state.desiredGeneration,
       s: "ACTIVE",
       d,
       e,
       c: ["US"],
+      u: ["JPY"],
     }),
     nextExpiryAt: new Date(now.getTime() + 86400000),
   });

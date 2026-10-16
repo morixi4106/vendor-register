@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION } from "../utils/internationalCurrencyPolicy.js";
 import {
   buildInternationalGateSnapshot,
   internationalHash,
@@ -76,8 +77,9 @@ export async function inspectInternationalCheckoutGate(
     });
     const closed =
       validHash &&
-      gate.v === 2 &&
-      gate.p === "international-sale-2026-10-v1" &&
+      gate.v === INTERNATIONAL_SHOP_PROJECTION_VERSION &&
+      gate.p === INTERNATIONAL_CURRENCY_POLICY &&
+      Array.isArray(gate.u) && gate.u.length === 1 && gate.u[0] === "JPY" &&
       ["PREPARING", "BLOCKED"].includes(gate.s) &&
       Array.isArray(gate.c) &&
       gate.c.length === 0;
@@ -121,7 +123,8 @@ export async function inspectInternationalCheckoutGate(
     });
     if (
       fresh.sourceHash !== state.sourceHash ||
-      JSON.stringify(fresh.shop.c) !== JSON.stringify(gate.c)
+      JSON.stringify(fresh.shop.c) !== JSON.stringify(gate.c) ||
+      JSON.stringify(fresh.shop.u) !== JSON.stringify(gate.u)
     )
       return base;
     const targets = await prismaClient.internationalGateSyncJob.findMany({

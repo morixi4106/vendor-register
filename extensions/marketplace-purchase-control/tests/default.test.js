@@ -112,7 +112,7 @@ function buildDirectInput({
         id: productId,
         internationalSaleEligibility: internationalSaleEligibility === null ? null : {
           value: JSON.stringify(internationalSaleEligibility ?? {
-            v: 1, p: "international-sale-2026-10-v1", g: 1, r: 1, i: productId,
+            v: 1, p: "international-sale-2026-10-v2", g: 1, r: 1, i: productId,
             d: evaluatedOn, e: expiresOnExclusive, c: ["FR"], h: "c".repeat(64),
           }),
         },
@@ -169,13 +169,14 @@ describe("international destination gate", () => {
     wasmContext = { ...info, schema: await loadSchema(info.schemaPath) };
   }, 90000);
   const validFranceGate = {
-    v: 2,
-    p: "international-sale-2026-10-v1",
+    v: 3,
+    p: "international-sale-2026-10-v2",
     g: 1,
     s: "ACTIVE",
     d: "2026-07-24",
     e: "2026-07-25",
     c: ["FR"],
+    u: ["JPY"],
     h: "b".repeat(64),
   };
 
@@ -295,10 +296,27 @@ describe("international destination gate", () => {
     expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
   });
 
-  for (const scenario of ["allowed", "mixed", "twoCountries", "missingGroup", "generationMismatch", "largestCart", "largestDomestic", "distinctProducts"]) {
+  test.each(["USD", "jpy", "", null, undefined])("rejects unapproved presentment currency %s even at zero amount", (currency) => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: validFranceGate, cartAmount: "0" });
+    input.cart.cost.totalAmount.currencyCode = currency;
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test.each([null, [], ["USD"], ["JPY", "USD"], ["JPY", "JPY"]])("rejects malformed currency allowlist %#", (u) => {
+    const input = buildDirectInput({ destinationCountry: "FR", internationalSaleGate: { ...validFranceGate, u } });
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toHaveLength(1);
+  });
+
+  test("domestic-only checkout does not acquire the international currency restriction", () => {
+    const input = buildDirectInput();
+    input.cart.cost.totalAmount.currencyCode = "USD";
+    expect(cartValidationsGenerateRun(input).operations[0].validationAdd.errors).toEqual([]);
+  });
+
+  for (const scenario of ["allowed", "mixed", "twoCountries", "missingGroup", "generationMismatch", "largestCart", "largestDomestic", "distinctProducts", "foreignCurrency", "missingCurrencies", "legacyPolicy", "zeroForeignCurrency"]) {
     test(`WASM international ${scenario}`, async () => {
       const { schema, schemaPath, targeting, functionRunnerPath, wasmPath } = wasmContext;
-      const gate = { v: 2, p: "international-sale-2026-10-v1", g: 1, s: "ACTIVE", d: "2026-07-24", e: "2026-07-25", c: ["FR", "US"], h: "b".repeat(64) };
+      const gate = { v: 3, p: "international-sale-2026-10-v2", g: 1, s: "ACTIVE", d: "2026-07-24", e: "2026-07-25", c: ["FR", "US"], u: ["JPY"], h: "b".repeat(64) };
       const input = buildDirectInput({ destinationCountry: scenario === "largestDomestic" ? "JP" : "FR", internationalSaleGate: gate,
         internationalSaleEligibility: scenario === "largestDomestic" ? null : undefined,
         lineCount: scenario === "largestCart" ? 100 : scenario === "largestDomestic" ? 200 : scenario === "distinctProducts" ? 12 : 2 });
@@ -327,6 +345,10 @@ describe("international destination gate", () => {
       }
       if (scenario === "missingGroup") input.cart.deliveryGroups = [];
       if (scenario === "generationMismatch") input.shop.internationalSaleGate.value = JSON.stringify({ ...gate, g: 2 });
+      if (["foreignCurrency", "zeroForeignCurrency"].includes(scenario)) input.cart.cost.totalAmount.currencyCode = "USD";
+      if (scenario === "zeroForeignCurrency") input.cart.cost.totalAmount.amount = "0";
+      if (scenario === "missingCurrencies") input.shop.internationalSaleGate.value = JSON.stringify({ ...gate, u: undefined });
+      if (scenario === "legacyPolicy") input.shop.internationalSaleGate.value = JSON.stringify({ ...gate, v: 2, p: "international-sale-2026-10-v1" });
       const fixture = { export: "cart-validations-generate-run", target: "cart.validations.generate.run", input,
         expectedOutput: cartValidationsGenerateRun(input) };
       expect(fixture.expectedOutput.operations[0].validationAdd.errors).toHaveLength(["allowed", "twoCountries", "distinctProducts"].includes(scenario) ? 0 : 1);
