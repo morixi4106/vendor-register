@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "role": "function-runner",
+  "version": "9.2.2+oja.1",
+  "source": {
+    "repository": "Shopify/function-runner",
+    "commit": "47dca499b04de5158822cc451cd4daf61dfd0fd0",
+    "sha256": "a2dfd20a60b94cee353dfd1e82bcafc452ceca74650cdabdc418db6332a32b53"
+  },
+  "patch": {
+    "path": "vendor/native/function-runner/runner.patch",
+    "sha256": "45587980b12cbbb2c5a77fa68a245daf5583b8e8d0adb99c9fbdb0e83f837a35"
+  },
+  "lockfile": {
+    "path": "vendor/native/function-runner/Cargo.lock",
+    "sha256": "4c33a62fcebc4181dd83bda74a4be148420a202be1c636aafba9c6084baf0286"
+  },
+  "overrides": [
+    {
+      "name": "wasmtime-internal-cache",
+      "upstreamVersion": "36.0.19",
+      "version": "36.0.19+oja.1",
+      "sha256": "4108e1964b3a02b4b5604ea1a2918a0cbcab512e5de0ccf4c062fc6c06b2eb8e",
+      "patch": {
+        "path": "vendor/native/function-runner/cache.patch",
+        "sha256": "38d091ca4a28c2b5f5328a9ba7288d12b74cb96921c4f8494e8f6a3ed2b971e1"
+      }
+    },
+    {
+      "name": "fxprof-processed-profile",
+      "upstreamVersion": "0.6.0",
+      "version": "0.6.0+oja.1",
+      "sha256": "27d12c0aed7f1e24276a241aadc4cb8ea9f83000f34bc062b7cc2d51e3b0fabd",
+      "patch": {
+        "path": "vendor/native/function-runner/profiler.patch",
+        "sha256": "0219dcd0929c5fb19309e4c6541c513569663e9f3e7ac462d163cc65cb34f919"
+      }
+    }
+  ]
+}

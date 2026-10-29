@@ -1,0 +1,29 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 444aaff..f1d877a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -13,7 +13,7 @@
+ edition = "2024"
+ rust-version = "1.86.0"
+ name = "wasmtime-internal-cache"
+-version = "36.0.19"
++version = "36.0.19+oja.1"
+ authors = ["The Wasmtime Project Developers"]
+ build = "build.rs"
+ autolib = false
+@@ -65,13 +65,13 @@ default-features = false
+ version = "1.0.188"
+ 
+ [dependencies.sha2]
+-version = "0.10.2"
++version = "0.11.1"
+ 
+ [dependencies.toml]
+ version = "0.8.10"
+ 
+ [dependencies.zstd]
+-version = "0.13.0"
++version = "0.14.3"
+ default-features = false
+ 
+ [dev-dependencies.env_logger]

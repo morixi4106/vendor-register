@@ -1,0 +1,39 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 2b69892..3df2d16 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -13,7 +13,7 @@ members = [
+ 
+ [package]
+ name = "function-runner"
+-version = "9.2.2"
++version = "9.2.2+oja.1"
+ edition = "2021"
+ 
+ 
+@@ -27,7 +27,7 @@ lto = true
+ opt-level = 3
+ 
+ [dependencies]
+-wasmtime = { version = "=36.0.14", default-features = false, features = [
++wasmtime = { version = "=36.0.19", default-features = false, features = [
+   "addr2line",
+   "all-arch",
+   "async",
+@@ -46,7 +46,7 @@ wasmtime = { version = "=36.0.14", default-features = false, features = [
+   "wat",
+   "winch",
+ ] }
+-wasmtime-wasi = "=36.0.14"
++wasmtime-wasi = "=36.0.19"
+ deterministic-wasi-ctx = "=3.0.1"
+ anyhow = "1.0"
+ clap = { version = "4.5", features = ["derive"] }
+@@ -69,3 +69,7 @@ assert_cmd = "2.1"
+ predicates = "3.1"
+ assert_fs = "1.1.3"
+ test-utils = { path = "test-utils" }
++
++[patch.crates-io]
++wasmtime-internal-cache = { path = "vendor/wasmtime-internal-cache" }
++fxprof-processed-profile = { path = "vendor/fxprof-processed-profile" }

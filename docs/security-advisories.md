@@ -1,5 +1,24 @@
 # Production dependency advisories
 
+## Function Runner source rebuild candidate: 2026-10-29
+
+The follow-up recipe pins official Rust 1.99.1 compiler/Cargo/std archives and
+rebuilds Shopify's fixed source with Wasmtime 36.0.19. Cache/profiler features
+are retained using two explicit source overrides: sha2 0.11 / zstd 0.14.3 and
+rustc-hash 2.1.3. The generated lock has 413 registry packages, no advisory
+matches in the observed OSV response and no git dependencies. Source, original
+crate archives, patches and lock bytes are hash-bound; custom versions use
+`+oja.1`. This is not an upstream release and not an advisory exclusion.
+
+Source-only resolution has been reproduced locally with sanitized credentials
+and verified tools. CI builds the native executable on Windows/Linux, tests
+both modified components, then exercises WASI JSON I/O, stable nonzero fuel,
+traps, environment isolation and profiling. Receipts explicitly retain
+`artifactStatus=NOT_VERIFIED` / `productionApproved=false`: complete extension
+ABI/fuel fixtures, embedded-provider provenance and native approval remain
+separate. No existing native gate/approval was weakened. Prisma/Javy and live
+runtime verification remain unresolved. PC-wide Rust installation is not used.
+
 ## Native remediation and authorized workstation updates: 2026-10-29
 
 Follow-up to draft #59. This is still not a deployable, incident-closed release.

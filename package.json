@@ -11,6 +11,7 @@
     "runtime:version": "node scripts/security/node-runtime.mjs",
     "native:esbuild": "node scripts/security/rebuild-esbuild.mjs",
     "native:rust-audit": "node scripts/security/rust-source-audit.mjs",
+    "native:runner": "node scripts/security/rebuild-function-runner.mjs",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
