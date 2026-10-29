@@ -7,6 +7,7 @@ import { loadRiskDefinition } from "../audit-production-dependencies.mjs";
 import { buildControlFingerprint } from "./build-control-evidence.mjs";
 import { readRuntimePlan, prepareRuntimePackage } from "./runtime-package.mjs";
 import { isConditionBoundRisk } from "./toolchain-risk-scope.mjs";
+import { auditIncident, writeIncidentEvidence } from "./incident-audit.mjs";
 import {
   assertBuildInputs,
   buildCommand,
@@ -50,6 +51,9 @@ if (
   try {
     if (process.argv.length > 2)
       throw new Error("unexpected_production_build_arguments");
+    const incident = auditIncident(ROOT);
+    writeIncidentEvidence(ROOT, incident);
+    if (!incident.ok) throw new Error("production_build_incident_unresolved");
     assertProductionBuildAdmission();
     assertBuildInputs();
     runSafeBuildCommand(buildCommand("generate"));

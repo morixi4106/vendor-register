@@ -1,0 +1,310 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 307dd8c..f22919a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,5 +1,6 @@
+ [workspace]
+ resolver = "2"
++exclude = ["vendor/mongodb"]
+ members = [
+     "schema-engine/cli",
+     "schema-engine/commands",
+@@ -84,14 +85,14 @@ indexmap = "2"
+ itertools = "0.13"
+ jsonrpc-core = "17"
+ log = "0.4"
+-lru = "0.7"
++lru = "=0.18.2"
+ lru-cache = "0.1"
+ lsp-types = "0.95"
+ metrics = "0.23.0"
+ metrics-util = "0.17.0"
+ metrics-exporter-prometheus = { version = "0.15.3", default-features = false }
+ mobc = "0.8"
+-mongodb = { version = "3", features = [
++mongodb = { path = "vendor/mongodb", version = "=3.9.1+oja.1", features = [
+     "zstd-compression",
+     "zlib-compression",
+     "snappy-compression",
+@@ -124,7 +125,7 @@ rand = "0.8"
+ regex = "1"
+ reqwest = "0.11"
+ rusqlite = "0.32"
+-sha2 = "0.10"
++sha2 = "=0.11.1"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = { version = "1", features = [
+     "float_roundtrip",
+@@ -256,3 +257,6 @@ opt-level = 's'   # Optimize for size.
+ [profile.profiling]
+ inherits = "release"
+ debug = true
++
++[patch.crates-io]
++mongodb = { path = "vendor/mongodb" }
+diff --git a/query-engine/core/src/interactive_transactions/mod.rs b/query-engine/core/src/interactive_transactions/mod.rs
+index 36f4bb9..8afb2f8 100644
+--- a/query-engine/core/src/interactive_transactions/mod.rs
++++ b/query-engine/core/src/interactive_transactions/mod.rs
+@@ -1,6 +1,7 @@
+ use derive_more::Display;
+ use serde::{Deserialize, Serialize};
+ 
++mod cache_capacity;
+ mod error;
+ mod manager;
+ mod transaction;
+diff --git a/query-engine/core/src/interactive_transactions/manager.rs b/query-engine/core/src/interactive_transactions/manager.rs
+index 997871f..0caf1ac 100644
+--- a/query-engine/core/src/interactive_transactions/manager.rs
++++ b/query-engine/core/src/interactive_transactions/manager.rs
+@@ -21,7 +21,7 @@ use crate::metrics::MetricsInstrumentationStub;
+ #[cfg(feature = "metrics")]
+ use prisma_metrics::WithMetricsInstrumentation;
+ 
+-use super::{TransactionError, TxId};
++use super::{TransactionError, TxId, cache_capacity::closed_transaction_cache};
+ 
+ pub static CLOSED_TX_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| match std::env::var("CLOSED_TX_CACHE_SIZE") {
+     Ok(size) => size.parse().unwrap_or(100),
+@@ -60,7 +60,7 @@ pub struct ItxManager {
+ impl ItxManager {
+     pub fn new() -> Self {
+         let transactions = Arc::new(RwLock::new(HashMap::<_, Arc<Mutex<InteractiveTransaction>>>::default()));
+-        let closed_txs = Arc::new(RwLock::new(LruCache::new(*CLOSED_TX_CACHE_SIZE)));
++        let closed_txs = Arc::new(RwLock::new(closed_transaction_cache(*CLOSED_TX_CACHE_SIZE)));
+         let (timeout_sender, mut timeout_receiver) = unbounded_channel();
+ 
+         // This task rollbacks and removes any open transactions with expired timeouts from the
+diff --git a/query-engine/core/src/interactive_transactions/cache_capacity.rs b/query-engine/core/src/interactive_transactions/cache_capacity.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/core/src/interactive_transactions/cache_capacity.rs
+@@ -0,0 +1,60 @@
++use lru::LruCache;
++use std::{hash::Hash, num::NonZeroUsize};
++
++pub(super) fn closed_transaction_cache<K: Hash + Eq, V>(configured: usize) -> LruCache<K, V> {
++    // LRU requires a nonzero capacity; a zero setting uses Prisma's existing default.
++    let capacity = NonZeroUsize::new(configured).unwrap_or(NonZeroUsize::new(100).unwrap());
++    LruCache::new(capacity)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn zero_uses_the_existing_default() {
++        assert_eq!(closed_transaction_cache::<u32, u32>(0).cap().get(), 100);
++    }
++
++    #[test]
++    fn positive_capacities_are_preserved() {
++        for capacity in [1, 2, 100, 1024] {
++            assert_eq!(closed_transaction_cache::<u32, u32>(capacity).cap().get(), capacity);
++        }
++    }
++
++    #[test]
++    fn eviction_keeps_the_most_recently_used_transaction() {
++        let mut cache = closed_transaction_cache(2);
++        cache.put("first", 1);
++        cache.put("second", 2);
++        assert_eq!(cache.get("first"), Some(&1));
++        cache.put("third", 3);
++        assert_eq!(cache.len(), 2);
++        assert_eq!(cache.peek("first"), Some(&1));
++        assert_eq!(cache.peek("second"), None);
++        assert_eq!(cache.peek("third"), Some(&3));
++    }
++
++    #[test]
++    fn looking_up_a_closed_transaction_does_not_refresh_its_lifetime() {
++        let mut cache = closed_transaction_cache(2);
++        cache.put("first", 1);
++        cache.put("second", 2);
++        assert_eq!(cache.peek("first"), Some(&1));
++        cache.put("third", 3);
++        assert_eq!(cache.peek("first"), None);
++        assert_eq!(cache.peek("second"), Some(&2));
++    }
++
++    #[test]
++    fn replacement_and_removal_leave_the_cache_usable() {
++        let mut cache = closed_transaction_cache(1);
++        assert_eq!(cache.put("tx", 1), None);
++        assert_eq!(cache.put("tx", 2), Some(1));
++        assert_eq!(cache.pop("tx"), Some(2));
++        cache.put("new", 3);
++        assert_eq!(cache.peek("new"), Some(&3));
++        assert_eq!(cache.len(), 1);
++    }
++}
+diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/Cargo.toml
+@@ -0,0 +1,12 @@
++[package]
++name = "oja-prisma-source-contracts"
++version = "0.1.0+oja.1"
++edition = "2024"
++publish = false
++
++[workspace]
++
++[dependencies]
++lru = "=0.18.2"
++sha2 = "=0.11.1"
++mongodb = { path = "../vendor/mongodb", features = ["zstd-compression", "zlib-compression", "snappy-compression", "oja-security-contracts"] }
+diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/lib.rs
+@@ -0,0 +1,41 @@
++#![deny(unsafe_code)]
++#![allow(dead_code)]
++
++// Compile the actual patched engine modules, not copies of their implementations.
++#[path = "../../query-engine/core/src/interactive_transactions/cache_capacity.rs"]
++mod cache_capacity;
++#[path = "../../schema-engine/connectors/schema-connector/src/checksum.rs"]
++mod checksum;
++
++#[cfg(test)]
++mod mongodb_compression;
++
++#[cfg(test)]
++mod tests {
++    use super::checksum;
++
++    #[test]
++    fn empty_migration_keeps_its_sha256() {
++        assert_eq!(checksum::render_checksum(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
++    }
++
++    #[test]
++    fn an_existing_checksum_is_accepted_but_changed_sql_is_not() {
++        let script = "CREATE TABLE example (id INTEGER);\n";
++        let digest = checksum::render_checksum(script);
++        assert!(checksum::script_matches_checksum(script, &digest));
++        assert!(!checksum::script_matches_checksum("DROP TABLE example;\n", &digest));
++        assert!(checksum::script_matches_checksum(&script.replace('\n', "\r\n"), &digest));
++    }
++
++    #[test]
++    fn legacy_unpadded_checksums_remain_readable() {
++        let script = "hello";
++        let digest = checksum::render_checksum(script);
++        let legacy: String = digest.as_bytes().chunks_exact(2).map(|pair| {
++            let pair = std::str::from_utf8(pair).unwrap();
++            format!("{:x}", u8::from_str_radix(pair, 16).unwrap())
++        }).collect();
++        assert!(checksum::script_matches_checksum(script, &legacy));
++    }
++}
+diff --git a/query-engine/core/Cargo.toml b/query-engine/core/Cargo.toml
+index df34d76..51a3f37 100644
+--- a/query-engine/core/Cargo.toml
++++ b/query-engine/core/Cargo.toml
+@@ -17,7 +17,7 @@ connector = { path = "../connectors/query-connector", package = "query-connector
+ crossbeam-channel.workspace = true
+ psl.workspace = true
+ futures.workspace = true
+-indexmap.workspace = true
++indexmap = { workspace = true, features = ["serde"] }
+ itertools.workspace = true
+ petgraph.workspace = true
+ query-builder.workspace = true
+diff --git a/security-contracts/src/mongodb_compression.rs b/security-contracts/src/mongodb_compression.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mongodb_compression.rs
+@@ -0,0 +1,86 @@
++use mongodb::{oja_security_contracts::{compress, decompress}, options::Compressor};
++
++const FLAGS: &[u8] = &[0, 0, 0, 0];
++const SECTION: &[u8] = b"\0synthetic BSON-like wire payload\0\xff\x80";
++
++fn roundtrip(compressor: Compressor, id: u8, flags: &[u8], section: &[u8]) {
++    let compressed = compress(&compressor, flags, section).unwrap();
++    let expected = [flags, section].concat();
++    assert_eq!(decompress(&compressed, id).unwrap(), expected);
++}
++
++#[test]
++fn zstd_preserves_wire_flags_and_section() {
++    roundtrip(Compressor::Zstd { level: None }, 3, FLAGS, SECTION);
++}
++
++#[test]
++fn zstd_handles_empty_message() {
++    roundtrip(Compressor::Zstd { level: None }, 3, &[], &[]);
++}
++
++#[test]
++fn zstd_handles_multiple_stream_buffer_lengths() {
++    let section: Vec<u8> = (0..300_000).map(|i| (i % 251) as u8).collect();
++    roundtrip(Compressor::Zstd { level: None }, 3, FLAGS, &section);
++}
++
++#[test]
++fn zstd_explicit_levels_remain_supported() {
++    for level in [-3, 1, 9] {
++        roundtrip(Compressor::Zstd { level: Some(level) }, 3, FLAGS, SECTION);
++    }
++}
++
++#[test]
++fn zstd_rejects_invalid_frame() {
++    assert!(decompress(b"not a zstd frame", 3).is_err());
++}
++
++#[test]
++fn zstd_rejects_truncated_frame() {
++    let frame = compress(&Compressor::Zstd { level: None }, FLAGS, SECTION).unwrap();
++    assert!(decompress(&frame[..frame.len() - 1], 3).is_err());
++}
++
++#[test]
++fn zstd_corrupt_legacy_frame_returns_error() {
++    // Corrupt v0.4 legacy magic; exercise the driver's real read-decoder path.
++    assert!(decompress(&[0x24, 0xb5, 0x2f, 0xfd, 0, 0], 3).is_err());
++}
++
++#[test]
++fn noop_preserves_every_byte() {
++    assert_eq!(decompress(SECTION, 0).unwrap(), SECTION);
++}
++
++#[test]
++fn unsupported_compressor_is_rejected() {
++    assert!(decompress(SECTION, 255).is_err());
++}
++
++#[test]
++fn zlib_preserves_wire_format() {
++    roundtrip(Compressor::Zlib { level: None }, 2, FLAGS, SECTION);
++}
++
++#[test]
++fn snappy_preserves_wire_format() {
++    roundtrip(Compressor::Snappy, 1, FLAGS, SECTION);
++}
++
++#[test]
++fn other_compressors_reject_corrupt_input() {
++    for id in [1, 2] {
++        assert!(decompress(b"invalid compressed message", id).is_err());
++    }
++}
++
++#[test]
++fn compressor_names_are_unchanged() {
++    use std::str::FromStr;
++    assert!(matches!(Compressor::from_str("zstd").unwrap(), Compressor::Zstd { level: None }));
++    assert!(matches!(Compressor::from_str("zlib").unwrap(), Compressor::Zlib { level: None }));
++    assert_eq!(Compressor::from_str("snappy").unwrap(), Compressor::Snappy);
++    assert!(Compressor::from_str("unknown").is_err());
++}

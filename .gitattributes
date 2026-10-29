@@ -1,1 +1,17 @@
 security/risk-decisions/*.approved-paths.txt text eol=lf
+vendor/deepmerge/*.cjs text eol=lf
+vendor/deepmerge/*.json text eol=lf
+vendor/deepmerge/*.ts text eol=lf
+vendor/deepmerge/*.txt text eol=lf
+vendor/deepmerge/*.tgz binary
+security/node-runtime.json text eol=lf
+security/vendor-patches.json text eol=lf
+security/native-artifacts.json text eol=lf
+security/esbuild-rebuild.json text eol=lf
+security/native-sbom/*.json text eol=lf
+security/rust-toolchain.json text eol=lf
+security/function-runner-rebuild.json text eol=lf
+vendor/native/function-runner/* text eol=lf
+tests/fixtures/native-runner/* text eol=lf
+security/prisma-source-contracts.json text eol=lf
+vendor/native/prisma/* text eol=lf

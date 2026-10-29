@@ -1,12 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TOOLCHAIN_TARGETS } from "./toolchain-targets.mjs";
+import { assertNodeRuntime } from "./node-runtime.mjs";
+import { verifyPatchedMergePackage } from "./vendor-patches.mjs";
 
 const FORBIDDEN = new Set([
   ...TOOLCHAIN_TARGETS,
   "@shopify/cli",
   "@shopify/shopify_function",
   "@shopify/ui-extensions",
+  "vite",
+  "vite-tsconfig-paths",
+  "esbuild",
+  "rollup",
 ]);
 
 export function inspectRuntimeToolchain(root, { checkAncestors = true } = {}) {
@@ -44,6 +50,8 @@ export function inspectRuntimeToolchain(root, { checkAncestors = true } = {}) {
       )
         throw new Error("unsafe_runtime_dependency_tree");
       const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+      if (metadata.name === "@oja/deepmerge" || entry.name === "deepmerge")
+        verifyPatchedMergePackage(location, metadata);
       if (FORBIDDEN.has(metadata.name) || FORBIDDEN.has(entry.name))
         findings.add(metadata.name || entry.name);
       walk(path.join(location, "node_modules"), depth + 1);
@@ -63,6 +71,7 @@ export function inspectRuntimeToolchain(root, { checkAncestors = true } = {}) {
 }
 
 export function assertRuntimeToolchain(root, options) {
+  assertNodeRuntime();
   if (process.env.NODE_PATH) throw new Error("runtime_node_path_not_allowed");
   const report = inspectRuntimeToolchain(root, options);
   if (!report.ok) throw new Error("runtime_toolchain_not_clean");

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "advisory": "GHSA-gcqx-w48m-w2h4",
+  "upstreamCommit": "5b87756a5671635679001cbac72aa42f23472c81",
+  "packageName": "@oja/deepmerge",
+  "version": "4.3.1-oja.1",
+  "source": "vendor/deepmerge/index.cjs",
+  "sourceSha256": "07611473ccb1deabf03aef4b00a52721fab536d63b5a28e7b5ad046de04e51f8",
+  "packageSha256": "2bc86ca56202c252bf78c94f54b6c1b145b8b4c80c93a023bf715c841332c5a9",
+  "provenanceSha256": "8eaff02581698341a99c66814bd378006ca1624e88cd4c3f4d4d915b6236a054",
+  "tarball": "vendor/deepmerge/oja-deepmerge-4.3.1-oja.1.tgz",
+  "tarballSha256": "3c0709ed3e743106b7e14c62069b87b47468187639580af1aab88d55d0b9b939"
+}

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "role": "prisma-source-contracts",
+  "prismaVersion": "6.19.3",
+  "source": {
+    "repository": "prisma/prisma-engines",
+    "commit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+    "sha256": "588e7a91d67996daf75009a6f684685045d8579eeff1841b8b0aa0c640556708"
+  },
+  "patch": {
+    "path": "vendor/native/prisma/engine.patch",
+    "sha256": "3dfe30407cd81419b1fe1c204e96acbc2551646fa4524cbafe0df3eee4066ebb"
+  },
+  "lockfile": {
+    "path": "vendor/native/prisma/Cargo.lock",
+    "sha256": "fa9c00a7fa66a1de42c22d981f1e509c6c6073812245b047575c2dee0a8ca00f"
+  },
+  "contractLockfile": {
+    "path": "vendor/native/prisma/contracts.Cargo.lock",
+    "sha256": "5f6b69cc7b02c732b8a2a5511aca456a522e69e4e5a23dfd2526a4297550c3fd"
+  },
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e45ec116a54b2e678c2aaad6b99aa8cd564e706ba18dd361a178ea41d63168d9"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/mod.rs",
+      "sha256": "b1706381f70f2166b4d0c68f1b146cacefb564de4f30d130b40b5c6e2890a1c6"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/manager.rs",
+      "sha256": "16fb9835cb93f054d096b3fa4bf80a8964a78a59c07c4b0b82aeac26d3df35c8"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/cache_capacity.rs",
+      "sha256": "02002397bfaef3bed5a3f37d50418b040f683fc4bcef342daeff0d6c9a0275d4"
+    },
+    {
+      "path": "security-contracts/Cargo.toml",
+      "sha256": "871e04cca8451372abb954a921bd03995841dc0f8c56ae1c485d49669994d0fc"
+    },
+    {
+      "path": "security-contracts/src/lib.rs",
+      "sha256": "fa987ee06729108d448ffe07644c19da8e0a429b3a8d7a58f32953aaf8dc31f1"
+    },
+    {
+      "path": "query-engine/core/Cargo.toml",
+      "sha256": "e8a24a1888c3d14230bd9df513074d28e4814657eb36f2356cf7625777316ef0"
+    },
+    {
+      "path": "schema-engine/connectors/schema-connector/src/checksum.rs",
+      "sha256": "544f5a92ff8b669b3eecbbf5f8f3793af355c1c43d7bc7af45e1d580d0611341"
+    },
+    {
+      "path": "security-contracts/src/mongodb_compression.rs",
+      "sha256": "d08f1681aa055ca70177d8a8f8ea4aaf859376c52a6e72c06991b90fb8dba791"
+    }
+  ],
+  "dependencies": {
+    "lru": "0.18.2",
+    "sha2": "0.11.1"
+  },
+  "overrides": [
+    {
+      "name": "mongodb",
+      "upstreamVersion": "3.9.1",
+      "version": "3.9.1+oja.1",
+      "sha256": "af84443ae9878f59a6818686f339064479f42cdf293c4c637d8fc9c0a8c5eed6",
+      "patch": {
+        "path": "vendor/native/prisma/mongodb.patch",
+        "sha256": "be125d4bcb6c14ccac4b8357fc5363347fd00c3527c3007a56603f5fc3b8d664"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "6050c943310d515f66f520a27af01c6c30b10f0f3ae8b487e9be610a2d92e9b0"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7e075f0a7eed5f5ce1dfde39aaf7b3592997c87916a18f7f672174c13aef2e9b"
+        },
+        {
+          "path": "src/compression.rs",
+          "sha256": "6976d09aa106c80d04d5008838367cca45fb5a23146abb73449d96c718e12f48"
+        },
+        {
+          "path": "src/compression/compress.rs",
+          "sha256": "3dc90246e4dea93272457b75fcc7a73bc10f760e2801f778349aaf34f9932e3d"
+        },
+        {
+          "path": "src/compression/decompress.rs",
+          "sha256": "f939bb5c37a2f5796c25a13e895b179f33e34e99a312e051836dc30325f55392"
+        },
+        {
+          "path": "src/compression/compressors.rs",
+          "sha256": "0f6d91e6a47b27c0e7b62c29210905a630df408a2eb27d3deef4701014309793"
+        }
+      ],
+      "dependencies": {
+        "zstd": "0.14.3",
+        "zstd-safe": "8.2.0"
+      }
+    }
+  ]
+}
