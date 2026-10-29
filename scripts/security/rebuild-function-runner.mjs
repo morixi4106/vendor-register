@@ -164,8 +164,8 @@ export function writeRunnerEvidence(directory, name, bytes) {
   if (!/^[a-zA-Z0-9._-]+$/.test(name) || name === "." || name === "..")
     throw new Error("runner_evidence_path_invalid");
   const target = path.join(directory, name);
-  if (fs.existsSync(target)) {
-    const stat = fs.lstatSync(target);
+  const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (stat) {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
       throw new Error("runner_evidence_path_invalid");
   }

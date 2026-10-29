@@ -48,6 +48,24 @@ test("runner evidence refuses traversal and hard links to unrelated files", (t) 
   assert.equal(fs.readFileSync(path.join(root, "safe.json"), "utf8"), "safe");
 });
 
+test("runner evidence rejects dangling symlinks before attempting to write", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-dangling-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const outside = path.join(root, "missing.json");
+  try {
+    fs.symlinkSync(outside, path.join(root, "receipt.json"), "file");
+  } catch (error) {
+    if (process.platform === "win32" && error.code === "EPERM")
+      return t.skip("Windows file-symlink privilege is not available");
+    throw error;
+  }
+  assert.throws(
+    () => writeRunnerEvidence(root, "receipt.json", "changed"),
+    /runner_evidence_path_invalid/,
+  );
+  assert.equal(fs.existsSync(outside), false);
+});
+
 test("runner recipe binds all patches and the generated lock graph to real bytes", () => {
   assert.equal(validateRunnerPolicy(policy), policy);
   for (const input of [
