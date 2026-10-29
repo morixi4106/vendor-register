@@ -178,7 +178,7 @@ export function configureRunnerCache(home, env) {
   const config = path.join(home, "runner-cache.toml");
   fs.writeFileSync(
     config,
-    `[cache]\nenabled = true\ndirectory = ${JSON.stringify(directory.split(path.sep).join("/"))}\n`,
+    `[cache]\ndirectory = ${JSON.stringify(directory.split(path.sep).join("/"))}\n`,
     { flag: "wx" },
   );
   env.OJA_FUNCTION_RUNNER_CACHE_CONFIG = config;
@@ -437,7 +437,11 @@ export async function rebuildFunctionRunner(
       ],
       home,
       env,
-      { timeout: 30_000, allowFailure: true },
+      {
+        timeout: 30_000,
+        allowFailure: true,
+        log: path.join(out, `smoke-${extra.length ? "profile" : name}`),
+      },
     );
   let first;
   for (const name of ["json", "json", "environment"]) {

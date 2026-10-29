@@ -32,7 +32,7 @@ test("runner cache is explicit and stays inside the private build home", (t) => 
   const file = configureRunnerCache(root, env);
   const config = toml.parse(fs.readFileSync(file, "utf8"));
   assert.equal(file, env.OJA_FUNCTION_RUNNER_CACHE_CONFIG);
-  assert.equal(config.cache.enabled, true);
+  assert.deepEqual(Object.keys(config.cache), ["directory"]);
   assert.equal(
     path.resolve(config.cache.directory),
     path.join(root, "runner-cache"),
