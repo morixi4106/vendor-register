@@ -13,6 +13,20 @@ upstream Prisma release or an installed replacement.
   so library tests do not depend on feature unification from an unrelated binary.
 - Complete-engine findings and non-registry sources remain in a separate fresh
   assessment. A clean contract scan never approves or filters the engine graph.
+- MongoDB 3.9.1 is an archive/patch-bound source override, versioned 3.9.1+oja.1,
+  with zstd 0.14.3 / zstd-safe 8.2.0. All three existing compression algorithms
+  stay enabled. Metadata rejects an unused override, an old transitive zstd or
+  a diagnostic test hook enabled in the complete-engine graph.
+- The contract fixture builds the actual MongoDB library and calls its existing
+  compressor/decompressor methods through a separate, non-default diagnostic
+  feature. Tests cover flags, payloads, levels, multi-buffer and empty messages,
+  corrupt/truncated input, compressor IDs, zlib and snappy. No server or database
+  is contacted. These are compatibility/error-path checks, not proof of every
+  advisory's exploitability or memory safety.
+- The original MongoDB registry identity is separately scanned on each run, so
+  a path override does not hide later advisories against its upstream version.
+  MongoDB remains an external dependency, as in the original registry graph;
+  it is not added as a Prisma workspace member with unrelated upstream dev tests.
 
 `npm run native:prisma-contracts` compiles only the source contracts.
 `--upstream-units` additionally tests the query-core and schema-connector

@@ -1,6 +1,6 @@
 # Production dependency advisories
 
-## Prisma source-contract candidate: 2026-10-30
+## Prisma source-contract and compression candidate: 2026-10-30
 
 Draft #59 adds an explicit patch of the engine source bound to Prisma 6.19.3,
 without changing application dependencies, generated client, schema or database.
@@ -8,14 +8,24 @@ Query-core uses LRU 0.18.2 and a tested nonzero-capacity adapter. Migration
 checksums use sha2 0.11.1; the source-contract crate includes the actual engine
 modules and tests SHA-256, line endings and historical unpadded checksums.
 
-The complete frozen candidate still has 640 registry packages, 34 observed OSV
-matches and 13 unreviewed Git-sourced packages. The separate 15-package contract
-graph has no observed matches or non-registry sources; it does not certify the
-engine. Source preparation hash-binds archives, patches, both lockfiles, module
-contents and the official Rust compiler policy. Metadata checks actual resolved
-dependencies and refuses Git revisions absent from the frozen lockfile. Node
-rejection tests pass 12 cases; real Windows/Linux compilation and upstream
-library tests are a separate CI verification step, not assumed complete here.
+The follow-up adds an explicit MongoDB 3.9.1+oja.1 source override using zstd
+0.14.3 / zstd-safe 8.2.0. Its original registry archive, patch, manifests and
+unchanged compression modules are hash-bound. All three compression algorithms
+remain enabled. The contract fixture compiles the complete MongoDB library and
+uses an opt-in diagnostic feature to exercise its real methods without a server.
+That feature is rejected in complete-engine metadata. The upstream MongoDB
+identity is independently scanned, not silently omitted as a local dependency.
+
+The complete frozen candidate has 639 registry packages, 21 observed OSV matches
+and 13 unreviewed Git-sourced packages. The separate 243-package contract graph
+has no observed matches or non-registry sources. The 34-to-21 raw-match reduction
+includes aliases/maintenance information, not 13 independently confirmed CVEs.
+The contract graph does not certify the engine. Source preparation hash-binds
+archives, patches, both lockfiles, module contents and the official Rust compiler
+policy. Metadata checks actual resolved dependencies and refuses Git revisions
+absent from the frozen lockfile. Node rejection tests pass 14 cases. The previous
+stage's Windows/Linux result was 11 contract and 18 library tests per OS; new
+compression compilation/tests require a new CI run, not reuse of that evidence.
 
 `native:prisma-contracts -- --upstream-units` tests query-core/schema-connector
 libraries in an isolated build home without database or production credentials.

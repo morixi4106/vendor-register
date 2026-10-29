@@ -33,6 +33,15 @@ const SOURCE_FILES = [
   "security-contracts/src/lib.rs",
   "query-engine/core/Cargo.toml",
   "schema-engine/connectors/schema-connector/src/checksum.rs",
+  "security-contracts/src/mongodb_compression.rs",
+];
+const MONGODB_FILES = [
+  "Cargo.toml",
+  "src/lib.rs",
+  "src/compression.rs",
+  "src/compression/compress.rs",
+  "src/compression/decompress.rs",
+  "src/compression/compressors.rs",
 ];
 const exact = (value, names) =>
   value &&
@@ -52,6 +61,7 @@ export function validatePrismaSourcePolicy(policy) {
       "contractLockfile",
       "sourceFiles",
       "dependencies",
+      "overrides",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
@@ -64,7 +74,9 @@ export function validatePrismaSourcePolicy(policy) {
     policy.dependencies.lru !== "0.18.2" ||
     policy.dependencies.sha2 !== "0.11.1" ||
     !Array.isArray(policy.sourceFiles) ||
-    policy.sourceFiles.length !== SOURCE_FILES.length
+    policy.sourceFiles.length !== SOURCE_FILES.length ||
+    !Array.isArray(policy.overrides) ||
+    policy.overrides.length !== 1
   )
     throw new Error("prisma_source_policy_invalid");
   for (const [item, name] of [
@@ -83,6 +95,39 @@ export function validatePrismaSourcePolicy(policy) {
     if (
       !exact(item, ["path", "sha256"]) ||
       item.path !== SOURCE_FILES[index] ||
+      !HASH.test(item.sha256 || "")
+    )
+      throw new Error("prisma_source_policy_invalid");
+  });
+  const override = policy.overrides[0];
+  if (
+    !exact(override, [
+      "name",
+      "upstreamVersion",
+      "version",
+      "sha256",
+      "patch",
+      "sourceFiles",
+      "dependencies",
+    ]) ||
+    override.name !== "mongodb" ||
+    override.upstreamVersion !== "3.9.1" ||
+    override.version !== "3.9.1+oja.1" ||
+    !HASH.test(override.sha256 || "") ||
+    !exact(override.patch, ["path", "sha256"]) ||
+    override.patch.path !== "vendor/native/prisma/mongodb.patch" ||
+    !HASH.test(override.patch.sha256 || "") ||
+    !exact(override.dependencies, ["zstd", "zstd-safe"]) ||
+    override.dependencies.zstd !== "0.14.3" ||
+    override.dependencies["zstd-safe"] !== "8.2.0" ||
+    !Array.isArray(override.sourceFiles) ||
+    override.sourceFiles.length !== MONGODB_FILES.length
+  )
+    throw new Error("prisma_source_policy_invalid");
+  override.sourceFiles.forEach((item, index) => {
+    if (
+      !exact(item, ["path", "sha256"]) ||
+      item.path !== MONGODB_FILES[index] ||
       !HASH.test(item.sha256 || "")
     )
       throw new Error("prisma_source_policy_invalid");
@@ -135,6 +180,41 @@ export function checkPrismaSourceWiring(source, policy) {
   const core = toml.parse(
     fs.readFileSync(path.join(source, "query-engine/core/Cargo.toml"), "utf8"),
   );
+  const override = policy.overrides[0];
+  const vendor = path.join(source, "vendor", override.name);
+  for (const item of override.sourceFiles) prismaSourceInput(vendor, item);
+  const mongo = toml.parse(
+    fs.readFileSync(path.join(vendor, "Cargo.toml"), "utf8"),
+  );
+  const features = [
+    "zstd-compression",
+    "zlib-compression",
+    "snappy-compression",
+  ];
+  if (
+    manifest.patch?.["crates-io"]?.mongodb?.path !== "vendor/mongodb" ||
+    manifest.workspace.dependencies.mongodb.path !== "vendor/mongodb" ||
+    manifest.workspace.dependencies.mongodb.version !==
+      `=${override.version}` ||
+    !manifest.workspace.exclude?.includes("vendor/mongodb") ||
+    mongo.package.name !== override.name ||
+    mongo.package.version !== override.version ||
+    mongo.dependencies.zstd.version !== `=${override.dependencies.zstd}` ||
+    !features.every((feature) =>
+      manifest.workspace.dependencies.mongodb.features.includes(feature),
+    ) ||
+    manifest.workspace.dependencies.mongodb.features.includes(
+      "oja-security-contracts",
+    ) ||
+    mongo.features.default.includes("oja-security-contracts") ||
+    !Array.isArray(mongo.features["oja-security-contracts"]) ||
+    mongo.features["oja-security-contracts"].length !== 0 ||
+    contract.dependencies.mongodb.path !== "../vendor/mongodb" ||
+    ![...features, "oja-security-contracts"].every((feature) =>
+      contract.dependencies.mongodb.features.includes(feature),
+    )
+  )
+    throw new Error("prisma_override_wiring_invalid");
   if (!core.dependencies.indexmap.features.includes("serde"))
     throw new Error("prisma_dependency_wiring_invalid");
   for (const [name, version] of Object.entries(policy.dependencies)) {
@@ -204,13 +284,47 @@ export function checkPrismaMetadata(
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
-      locals.length !== 1 ||
-      locals[0].name !== "oja-prisma-source-contracts" ||
-      path.dirname(fs.realpathSync(locals[0].manifest_path)) !==
-        path.join(base, "security-contracts")
+      locals.length !== 2 ||
+      !rootFor("oja-prisma-source-contracts") ||
+      path.dirname(
+        fs.realpathSync(rootFor("oja-prisma-source-contracts").manifest_path),
+      ) !== path.join(base, "security-contracts")
     )
       throw new Error("prisma_contract_root_invalid");
   }
+  const override = policy.overrides[0];
+  const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
+  const node = nodes.get(mongo[0]?.id);
+  if (
+    mongo.length !== 1 ||
+    mongo[0].source ||
+    mongo[0].version !== override.version ||
+    path.dirname(fs.realpathSync(mongo[0].manifest_path)) !==
+      path.join(base, "vendor", override.name) ||
+    !["zstd-compression", "zlib-compression", "snappy-compression"].every(
+      (feature) => node?.features?.includes(feature),
+    ) ||
+    Boolean(node?.features?.includes("oja-security-contracts")) !== contracts
+  )
+    throw new Error("prisma_override_unbound");
+  const zstd = packages.get(node.deps.find((dep) => dep.name === "zstd")?.pkg);
+  const safe = packages.get(
+    nodes.get(zstd?.id)?.deps.find((dep) => dep.name === "zstd_safe")?.pkg,
+  );
+  if (
+    zstd?.version !== override.dependencies.zstd ||
+    safe?.version !== override.dependencies["zstd-safe"] ||
+    [zstd, safe].some(
+      (pkg) =>
+        pkg?.source !== "registry+https://github.com/rust-lang/crates.io-index",
+    ) ||
+    metadata.packages.some(
+      (pkg) =>
+        Object.hasOwn(override.dependencies, pkg.name) &&
+        pkg.version !== override.dependencies[pkg.name],
+    )
+  )
+    throw new Error("prisma_compression_resolution_invalid");
   for (const [owner, name] of contracts
     ? [
         ["oja-prisma-source-contracts", "lru"],
@@ -273,6 +387,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     wholeEngineVerified: false,
     source: policy.source,
     patchSha256: policy.patch.sha256,
+    overrides: policy.overrides,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length,
@@ -299,6 +414,8 @@ export async function testPrismaSource(
   const patch = prismaSourceInput(root, policy.patch);
   const lock = prismaSourceInput(root, policy.lockfile);
   const contractLock = prismaSourceInput(root, policy.contractLockfile);
+  for (const override of policy.overrides)
+    prismaSourceInput(root, override.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -333,6 +450,48 @@ export async function testPrismaSource(
   execute("tar", ["-xf", archive, "-C", home], root, "extract");
   const source = path.join(home, `prisma-engines-${policy.source.commit}`);
   checkRustSourceTree(source);
+  const vendor = path.join(source, "vendor");
+  if (fs.existsSync(vendor))
+    throw new Error("prisma_unexpected_vendor_directory");
+  fs.mkdirSync(vendor);
+  for (const override of policy.overrides) {
+    const name = `${override.name}-${override.upstreamVersion}`;
+    const archive = path.join(cache, `${name}.crate`);
+    await downloadRustInput(
+      `https://static.crates.io/crates/${override.name}/${name}.crate`,
+      archive,
+      override.sha256,
+    );
+    execute("tar", ["-xf", archive, "-C", vendor], root, "override-extract");
+    const unpacked = path.join(vendor, name);
+    checkRustSourceTree(unpacked);
+    const target = path.join(vendor, override.name);
+    // Fixed children of a newly created private directory, never an existing cache.
+    fs.renameSync(unpacked, target);
+    execute(
+      "git",
+      [
+        "-c",
+        "core.autocrlf=false",
+        "apply",
+        "--check",
+        path.join(root, override.patch.path),
+      ],
+      target,
+      "override-patch-check",
+    );
+    execute(
+      "git",
+      [
+        "-c",
+        "core.autocrlf=false",
+        "apply",
+        path.join(root, override.patch.path),
+      ],
+      target,
+      "override-patch",
+    );
+  }
   execute(
     "git",
     [
@@ -360,10 +519,19 @@ export async function testPrismaSource(
   );
   const engine = await scanRustLockfile(lock.toString("utf8"));
   const contracts = await scanRustLockfile(contractLock.toString("utf8"));
+  // Path overrides must not conceal new advisories against their original crate.
+  const overrideLock = policy.overrides
+    .map(
+      (entry) =>
+        `[[package]]\nname = ${JSON.stringify(entry.name)}\nversion = ${JSON.stringify(entry.upstreamVersion)}\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = ${JSON.stringify(entry.sha256)}\n`,
+    )
+    .join("\n");
+  const overrides = await scanRustLockfile(overrideLock);
   json("engine-source-assessment.json", engine);
   json("contract-source-assessment.json", contracts);
+  json("override-source-assessment.json", overrides);
   // A clean small test graph is not an approval of the complete engine graph.
-  if (!contracts.sourceAuditOk)
+  if (!contracts.sourceAuditOk || !overrides.sourceAuditOk)
     throw new Error("prisma_contract_advisories_unresolved");
   const common = [
     "metadata",
@@ -408,7 +576,7 @@ export async function testPrismaSource(
         "contracts",
         900_000,
       ),
-      11,
+      24,
     );
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
@@ -445,6 +613,7 @@ export async function testPrismaSource(
     engineLockfileSha256: digest(lock),
     contractLockfileSha256: digest(contractLock),
     sourceFiles: policy.sourceFiles,
+    overrideSourceAuditOk: overrides.sourceAuditOk,
     testScope:
       "source modules; not NAPI, migrations, database or production approval",
     upstreamUnitFeatures: upstreamUnits && !assessOnly ? UNIT_FEATURES : [],

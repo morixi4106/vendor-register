@@ -35,7 +35,12 @@ const fixture = (t) => {
 
 test("Prisma recipe binds the source patch and both complete lock graphs", () => {
   assert.equal(validatePrismaSourcePolicy(policy), policy);
-  for (const input of [policy.patch, policy.lockfile, policy.contractLockfile])
+  for (const input of [
+    policy.patch,
+    policy.lockfile,
+    policy.contractLockfile,
+    ...policy.overrides.map((entry) => entry.patch),
+  ])
     assert.ok(prismaSourceInput(ROOT, input).length);
   const whole = rustRegistryPackages(
     prismaSourceInput(ROOT, policy.lockfile).toString("utf8"),
@@ -48,7 +53,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     undefined,
   );
   assert.equal(whole.unresolved.length, 13);
-  assert.equal(contracts.packages.length, 15);
+  assert.equal(contracts.packages.length, 243);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -56,6 +61,22 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
         (pkg) => pkg.name === name && pkg.version === version,
       ),
     );
+  for (const graph of [whole, contracts]) {
+    for (const [name, version] of Object.entries(
+      policy.overrides[0].dependencies,
+    )) {
+      assert.deepEqual(
+        graph.packages
+          .filter((pkg) => pkg.name === name)
+          .map((pkg) => pkg.version),
+        [version],
+      );
+    }
+    assert.equal(
+      graph.packages.some((pkg) => pkg.name === "mongodb"),
+      false,
+    );
+  }
 });
 
 test("Prisma client and CLI must match the patched engine recipe without version ranges", () => {
@@ -100,6 +121,24 @@ test("Prisma recipe rejects version drift, path changes, added settings and miss
     },
     (p) => {
       p.productionApproved = true;
+    },
+    (p) => {
+      p.overrides = [];
+    },
+    (p) => {
+      p.overrides[0].upstreamVersion = "3.9.0";
+    },
+    (p) => {
+      p.overrides[0].dependencies.zstd = "0.13.3";
+    },
+    (p) => {
+      p.overrides[0].patch.path = "../mongodb.patch";
+    },
+    (p) => {
+      p.overrides[0].sourceFiles[0].path = "../Cargo.toml";
+    },
+    (p) => {
+      p.overrides[0].sourceFiles.pop();
     },
   ]) {
     const changed = structuredClone(policy);
@@ -164,6 +203,37 @@ const metadataFixture = (t, contracts) => {
     });
     nodes[contracts ? 0 : index].deps.push({ name, pkg: name });
   }
+  const vendor = path.join(source, "vendor", "mongodb");
+  fs.mkdirSync(vendor, { recursive: true });
+  fs.writeFileSync(path.join(vendor, "Cargo.toml"), "[package]\n");
+  packages.push({
+    id: "mongodb",
+    name: "mongodb",
+    version: policy.overrides[0].version,
+    source: null,
+    manifest_path: path.join(vendor, "Cargo.toml"),
+  });
+  nodes.push({
+    id: "mongodb",
+    features: [
+      "zstd-compression",
+      "zlib-compression",
+      "snappy-compression",
+      ...(contracts ? ["oja-security-contracts"] : []),
+    ],
+    deps: [{ name: "zstd", pkg: "zstd" }],
+  });
+  for (const [name, version] of Object.entries(
+    policy.overrides[0].dependencies,
+  )) {
+    packages.push({
+      id: name,
+      name,
+      version,
+      source: "registry+https://github.com/rust-lang/crates.io-index",
+    });
+  }
+  nodes.push({ id: "zstd", deps: [{ name: "zstd_safe", pkg: "zstd-safe" }] });
   return { source, metadata: { packages, resolve: { nodes } } };
 };
 
@@ -174,6 +244,66 @@ test("metadata checks actual query-core and migration checksum dependency resolu
   assert.throws(
     () => checkPrismaMetadata(metadata, source, policy),
     /prisma_dependency_resolution_invalid/,
+  );
+});
+
+test("compression metadata rejects unused overrides, old libraries, detached paths and production test hooks", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "mongodb").source =
+        "registry+https://github.com/rust-lang/crates.io-index";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "mongodb").version = "3.9.1";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "mongodb").manifest_path =
+        m.packages[0].manifest_path;
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "mongodb")
+        .features.push("oja-security-contracts");
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "mongodb").features = [
+        "zstd-compression",
+      ];
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "zstd-safe").version = "7.3.0";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "zstd").version = "0.13.3";
+    },
+    (m) => {
+      m.packages.push({
+        id: "old-zstd",
+        name: "zstd",
+        version: "0.13.3",
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    },
+  ]) {
+    const { source, metadata } = metadataFixture(t, false);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMetadata(metadata, source, policy),
+      /prisma_(override_unbound|compression_resolution_invalid)/,
+    );
+  }
+});
+
+test("contracts must compile the actual MongoDB library with its explicit test feature", (t) => {
+  const { source, metadata } = metadataFixture(t, true);
+  assert.equal(
+    checkPrismaMetadata(metadata, source, policy, { contracts: true }),
+    true,
+  );
+  metadata.resolve.nodes.find((n) => n.id === "mongodb").features.pop();
+  assert.throws(
+    () => checkPrismaMetadata(metadata, source, policy, { contracts: true }),
+    /prisma_override_unbound/,
   );
 });
 
