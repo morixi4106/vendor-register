@@ -16,6 +16,14 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
   crypto.createHash("sha256").update(bytes).digest("hex");
 const HASH = /^[a-f0-9]{64}$/;
+const UNIT_FEATURES = [
+  "query-core/metrics",
+  "schema-connector/postgresql",
+  "schema-connector/mysql",
+  "schema-connector/mssql",
+  "schema-connector/sqlite",
+  "schema-connector/cockroachdb",
+];
 const SOURCE_FILES = [
   "Cargo.toml",
   "query-engine/core/src/interactive_transactions/mod.rs",
@@ -236,6 +244,20 @@ export function rustTestTotals(output, minimum) {
   return total;
 }
 
+export function prismaUnitArguments() {
+  return [
+    "test",
+    "--locked",
+    "--package",
+    "query-core",
+    "--package",
+    "schema-connector",
+    "--features",
+    UNIT_FEATURES.join(","),
+    "--lib",
+  ];
+}
+
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
   return {
     schemaVersion: 1,
@@ -387,15 +409,7 @@ export async function testPrismaSource(
       tests.upstreamUnits = rustTestTotals(
         execute(
           cargo,
-          [
-            "test",
-            "--locked",
-            "--package",
-            "query-core",
-            "--package",
-            "schema-connector",
-            "--lib",
-          ],
+          prismaUnitArguments(),
           source,
           "upstream-units",
           1_800_000,
@@ -427,6 +441,7 @@ export async function testPrismaSource(
     sourceFiles: policy.sourceFiles,
     testScope:
       "source modules; not NAPI, migrations, database or production approval",
+    upstreamUnitFeatures: upstreamUnits && !assessOnly ? UNIT_FEATURES : [],
   };
   json("receipt.json", receipt);
   return {

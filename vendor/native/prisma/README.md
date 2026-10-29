@@ -14,7 +14,9 @@ upstream Prisma release or an installed replacement.
 
 `npm run native:prisma-contracts` compiles only the source contracts.
 `--upstream-units` additionally tests the query-core and schema-connector
-libraries. `--assess-only` resolves and scans without compiling tests.
+libraries with all logical SQL dialects and metrics enabled. This is a unit-test
+feature selection, not removal of native connectors from the complete engine
+graph. `--assess-only` resolves and scans without compiling tests.
 All outputs remain under ignored `.audit/native-prisma/`; no application
 dependencies, schema, generated client, engine binaries or databases are changed.
 

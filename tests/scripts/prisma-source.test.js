@@ -11,6 +11,7 @@ import {
   checkPrismaSourceWiring,
   checkPrismaMetadata,
   rustTestTotals,
+  prismaUnitArguments,
   prismaSourceReceipt,
 } from "../../scripts/security/test-prisma-source.mjs";
 import { rustRegistryPackages } from "../../scripts/security/rust-source-audit.mjs";
@@ -264,6 +265,26 @@ test("Rust test receipts reject incomplete, ignored and failed tests", () => {
       () => rustTestTotals(output, 11),
       /prisma_source_tests_incomplete/,
     );
+});
+
+test("upstream units cover every logical SQL dialect without changing the engine lock or enabling a database", () => {
+  const args = prismaUnitArguments();
+  assert.ok(args.includes("--locked"));
+  assert.ok(args.includes("--lib"));
+  const features = args[args.indexOf("--features") + 1].split(",");
+  for (const dialect of [
+    "postgresql",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "cockroachdb",
+  ])
+    assert.ok(features.includes(`schema-connector/${dialect}`));
+  assert.ok(features.includes("query-core/metrics"));
+  assert.equal(
+    features.some((feature) => feature.includes("native")),
+    false,
+  );
 });
 
 test("clean small contract scans never approve the whole engine or erase its findings", () => {
