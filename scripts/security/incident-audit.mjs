@@ -10,6 +10,7 @@ import {
   evaluateNativeInventory,
 } from "./native-inventory.mjs";
 import { runSafeBuildCommand } from "./safe-build.mjs";
+import { verifyRebuiltEsbuild } from "./rebuild-esbuild.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -107,6 +108,7 @@ export function auditIncident(root = ROOT) {
   });
   const audit = JSON.parse(result.stdout);
   const npm = validateRegistryAudit(audit);
+  const go = verifyRebuiltEsbuild(root);
   const policyBytes = fs.readFileSync(
     path.join(root, "security/native-artifacts.json"),
   );
@@ -123,6 +125,7 @@ export function auditIncident(root = ROOT) {
     scope: "candidate-build-and-dependencies",
     ok: native.ok,
     incidentClosed: false,
+    go,
     source: sourceBinding(root),
     lockfileSha256: hash(fs.readFileSync(path.join(root, "package-lock.json"))),
     nodePolicySha256: hash(

@@ -1,5 +1,61 @@
 # Production dependency advisories
 
+## Native remediation and authorized workstation updates: 2026-10-29
+
+Follow-up to draft #59. This is still not a deployable, incident-closed release.
+
+- Rebuild the existing esbuild 0.25.12 source commit
+  `208f539945b145e7c9d6d844290f81c3fe5af320` with official Go 1.27.3.
+  Source and compiler archives are digest-pinned; build processes receive no
+  production credentials, module checksum verification stays enabled and CGO
+  is disabled. Windows and Linux x64 outputs are byte-digest pinned. The
+  upstream JavaScript API/protocol version remains 0.25.12, while the SBOM and
+  installed `oja-rebuild-receipt.json` explicitly identify the local rebuild.
+  This is not an unmodified npm binary or an upstream esbuild release.
+- Fresh `native:esbuild` rebuilds both target binaries, inspects Go build
+  metadata and scans each actual binary with pinned govulncheck v1.9.0 against
+  the official database. All severities block; absent/malformed results fail.
+  Locally both binaries scan clean and repeated Windows-host builds reproduce
+  the expected hashes. The installed Windows binary uses Go 1.27.3. Current
+  source, policy, binary, SBOM and scan hashes plus a 24-hour receipt are checked
+  by the incident gate. No Javy, Runner or Prisma approval was invented.
+- CI now performs these rebuilds on fresh Linux/Windows workers and uploads
+  outputs and provenance; a source-only Rust advisory job captures complete
+  upstream Cargo.lock graphs. Source audit success never certifies a binary.
+  The local Rust assessment still fails. Prisma has 595 registry packages and
+  12 non-registry sources needing review; examined Runner/Javy source graphs
+  have 432/491 registry packages. Advisory matches include aliases, development
+  dependencies and maintenance notices, not independent exploited CVEs.
+- The current Prisma 6.19.3 source graph includes rustls 0.23.34,
+  rustls-webpki 0.103.7 and webpki-roots 1.0.3. Actual target features, linked
+  binaries and certificate stores still require verification. The updated
+  assessment finds October certificate distrust advisories, including
+  [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381.html) and
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html).
+  Do not treat the 0.26.11 compatibility wrapper as safe when its resolved 1.x
+  parent is old. Upstream main alone is not clean: the examined Runner source
+  still selects Wasmtime 36.0.14; Javy's full lock graph includes older Wasmtime
+  entries despite newer workspace constraints. Resolve complete build graphs
+  and compatibility before promoting custom Rust binaries.
+- After explicit user approval for PC-wide updates, the signed official Node
+  MSI and .NET installers completed with exit 0 and no restart. Default Node is
+  24.22.1 with the approved executable hash. x64 Core/Desktop are 8.0.33/9.0.22;
+  the previously missed x86 Core/ASP.NET Core/Desktop families are now 8.0.33.
+  Installer hashes match signed Node checksums / Microsoft's release metadata,
+  and Authenticode was Valid for OpenJS Foundation/Microsoft. The installers'
+  normal upgrade behavior replaced some old patches; no separate manual
+  uninstall or forced application restart was performed. x64 Core 8.0.14
+  remains. Old-version-pinned and self-contained apps are not certified merely
+  by installing current shared runtimes.
+
+Local follow-up checks: 1,153 tests pass, four existing Windows skips; app build
+with rebuilt esbuild, lint, text/architecture and unchanged audit coverage
+thresholds pass. The incident inventory now recognizes the rebuilt esbuild,
+but 24 other local native artifacts remain unreviewed and Javy/Runner are
+missing from the fresh install. New CI results must be checked separately.
+The actual native/package findings remain blockers; no main merge, production
+deployment, Shopify release, migration or notification restart was performed.
+
 ## October incident candidate implementation: 2026-10-29
 
 This is an **incomplete, non-deployable security candidate**, on

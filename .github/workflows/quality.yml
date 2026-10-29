@@ -74,6 +74,9 @@ jobs:
       - name: Verify exact patched Node executable
         run: npm run runtime:version
 
+      - name: Rebuild esbuild with the reviewed patched Go toolchain
+        run: npm run native:esbuild
+
       - name: Remove stale build artifacts
         run: node scripts/security/clean-audit-artifacts.mjs --all --apply
 
@@ -175,7 +178,45 @@ jobs:
         run: npm run runtime:version
       - name: Install without lifecycle scripts
         run: npm ci --ignore-scripts
+      - name: Rebuild and scan esbuild binaries for both target platforms
+        run: npm run native:esbuild
       - name: Verify Node and patched dependencies
         run: |
           npm run runtime:version
-          node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js
+          node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js
+      - name: Upload reproducible esbuild and vulnerability evidence
+        if: always() && hashFiles('.audit/native-esbuild/*.receipt.json') != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: esbuild-patched-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/native-esbuild/
+          if-no-files-found: error
+          retention-days: 45
+
+  rust-source-assessment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify exact Node executable
+        run: npm run runtime:version
+      - name: Install parsers without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Assess complete source lock graphs against current Rust advisories
+        run: npm run native:rust-audit
+      - name: Upload source assessment without treating it as binary approval
+        if: always() && hashFiles('.audit/rust-source/*-assessment.json') != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: rust-source-assessment-${{ github.run_id }}
+          path: .audit/rust-source/
+          if-no-files-found: error
+          retention-days: 45

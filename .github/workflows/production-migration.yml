@@ -50,7 +50,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Block migrations with unresolved incident dependencies
-        run: npm run audit:incident
+        run: |
+          npm run native:esbuild
+          npm run audit:incident
 
       - name: Validate Prisma schema
         run: npx prisma validate

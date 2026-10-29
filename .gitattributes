@@ -7,3 +7,5 @@ vendor/deepmerge/*.tgz binary
 security/node-runtime.json text eol=lf
 security/vendor-patches.json text eol=lf
 security/native-artifacts.json text eol=lf
+security/esbuild-rebuild.json text eol=lf
+security/native-sbom/*.json text eol=lf

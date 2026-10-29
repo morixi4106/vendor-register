@@ -9,6 +9,8 @@
     "build:production": "node scripts/security/production-build.mjs",
     "runtime:check": "node scripts/security/runtime-package.mjs",
     "runtime:version": "node scripts/security/node-runtime.mjs",
+    "native:esbuild": "node scripts/security/rebuild-esbuild.mjs",
+    "native:rust-audit": "node scripts/security/rust-source-audit.mjs",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

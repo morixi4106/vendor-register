@@ -10,6 +10,7 @@ COPY . .
 
 RUN node scripts/security/node-runtime.mjs \
     && npm ci --ignore-scripts \
+    && npm run native:esbuild \
     && npm run build:production \
     && npm cache clean --force
 
