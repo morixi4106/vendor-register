@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "role": "prisma-source-contracts",
+  "prismaVersion": "6.19.3",
+  "source": {
+    "repository": "prisma/prisma-engines",
+    "commit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+    "sha256": "588e7a91d67996daf75009a6f684685045d8579eeff1841b8b0aa0c640556708"
+  },
+  "patch": {
+    "path": "vendor/native/prisma/engine.patch",
+    "sha256": "bad3587dc21720f8fa1751a0d273c34b99f892d65d6405dd1abaf8606ad29583"
+  },
+  "lockfile": {
+    "path": "vendor/native/prisma/Cargo.lock",
+    "sha256": "b240f62dc86bc1a5d318a49e3059fc2f7f622463be9fadd4dfd5f41aecf35765"
+  },
+  "contractLockfile": {
+    "path": "vendor/native/prisma/contracts.Cargo.lock",
+    "sha256": "1955956b17b5c3fe4f6386426e51d6871a1a2156b82af4d3bb2a236420f99828"
+  },
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3fcdf01fbd6783c46c1a51d45591194d05ad300f75f178475dcee2544b8d7cd1"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/mod.rs",
+      "sha256": "b1706381f70f2166b4d0c68f1b146cacefb564de4f30d130b40b5c6e2890a1c6"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/manager.rs",
+      "sha256": "16fb9835cb93f054d096b3fa4bf80a8964a78a59c07c4b0b82aeac26d3df35c8"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/cache_capacity.rs",
+      "sha256": "02002397bfaef3bed5a3f37d50418b040f683fc4bcef342daeff0d6c9a0275d4"
+    },
+    {
+      "path": "security-contracts/Cargo.toml",
+      "sha256": "9a7cf9d859a5c5bebce88c1d6b8e60ee623bfb76bc6fc074b2ced37de6027896"
+    },
+    {
+      "path": "security-contracts/src/lib.rs",
+      "sha256": "21f7fdba2ffff1d3297e8d53fe1f82226d377df07c7d0783353ece9d3baf57aa"
+    },
+    {
+      "path": "schema-engine/connectors/schema-connector/src/checksum.rs",
+      "sha256": "544f5a92ff8b669b3eecbbf5f8f3793af355c1c43d7bc7af45e1d580d0611341"
+    }
+  ],
+  "dependencies": {
+    "lru": "0.18.2",
+    "sha2": "0.11.1"
+  }
+}

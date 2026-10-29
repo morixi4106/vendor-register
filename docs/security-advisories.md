@@ -1,5 +1,30 @@
 # Production dependency advisories
 
+## Prisma source-contract candidate: 2026-10-30
+
+Draft #59 adds an explicit patch of the engine source bound to Prisma 6.19.3,
+without changing application dependencies, generated client, schema or database.
+Query-core uses LRU 0.18.2 and a tested nonzero-capacity adapter. Migration
+checksums use sha2 0.11.1; the source-contract crate includes the actual engine
+modules and tests SHA-256, line endings and historical unpadded checksums.
+
+The complete frozen candidate still has 640 registry packages, 34 observed OSV
+matches and 13 unreviewed Git-sourced packages. The separate 15-package contract
+graph has no observed matches or non-registry sources; it does not certify the
+engine. Source preparation hash-binds archives, patches, both lockfiles, module
+contents and the official Rust compiler policy. Metadata checks actual resolved
+dependencies and refuses Git revisions absent from the frozen lockfile. Node
+rejection tests pass 11 cases; real Windows/Linux compilation and upstream
+library tests are a separate CI verification step, not assumed complete here.
+
+`native:prisma-contracts -- --upstream-units` tests query-core/schema-connector
+libraries in an isolated build home without database or production credentials.
+The full source findings stay in uploaded evidence. Every receipt retains
+NOT_VERIFIED, wholeEngineVerified=false and productionApproved=false, even if
+all source tests pass. NAPI, isolated PostgreSQL/migration tests and remaining
+engine dependencies are still required. Existing native/build/migration gates,
+approval tables and production configuration are unchanged.
+
 ## Function Runner source rebuild candidate: 2026-10-29
 
 The follow-up recipe pins official Rust 1.99.1 compiler/Cargo/std archives and

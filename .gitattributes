@@ -13,3 +13,5 @@ security/rust-toolchain.json text eol=lf
 security/function-runner-rebuild.json text eol=lf
 vendor/native/function-runner/* text eol=lf
 tests/fixtures/native-runner/* text eol=lf
+security/prisma-source-contracts.json text eol=lf
+vendor/native/prisma/* text eol=lf
