@@ -23,15 +23,15 @@ jobs:
       SCOPES: read_products
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Use Node.js 24
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
 
       - name: Require trusted review source
@@ -50,7 +50,7 @@ jobs:
 
       - name: Download reviewed production audit evidence
         if: steps.risk-acceptance.outputs.download_reviewed == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
         with:
           name: ${{ steps.risk-acceptance.outputs.reviewed_artifact_name }}
           path: .audit/reviewed
@@ -69,7 +69,10 @@ jobs:
         run: node scripts/security/risk-acceptance-provenance.mjs verify
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Verify exact patched Node executable
+        run: npm run runtime:version
 
       - name: Remove stale build artifacts
         run: node scripts/security/clean-audit-artifacts.mjs --all --apply
@@ -98,6 +101,9 @@ jobs:
 
       - name: Enforce production audit coverage
         run: npm run audit:production:test
+
+      - name: Require reviewed native tools and current incident audit
+        run: npm run audit:incident
 
       - name: Test checkout validation function
         run: |
@@ -132,9 +138,44 @@ jobs:
 
       - name: Upload production audit review evidence
         if: always() && hashFiles('.audit/production-audit-review-evidence.json') != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
         with:
           name: production-audit-review-evidence-${{ github.run_id }}
           path: .audit/production-audit-review-evidence.json
           if-no-files-found: error
           retention-days: 45
+
+      - name: Upload incident inventory even when promotion is blocked
+        if: always() && hashFiles('.audit/october-incident.json') != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: october-incident-${{ github.run_id }}
+          path: .audit/october-incident.json
+          if-no-files-found: error
+          retention-days: 45
+
+  runtime-integrity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify exact Node executable before installation
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Verify Node and patched dependencies
+        run: |
+          npm run runtime:version
+          node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js

@@ -1,0 +1,11 @@
+{
+  "name": "@oja/deepmerge",
+  "version": "4.3.1-oja.1",
+  "description": "Explicit security backport of deepmerge 4.3.1 for GHSA-gcqx-w48m-w2h4",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "license": "MIT",
+  "private": true,
+  "files": ["index.cjs", "index.d.ts", "license.txt", "provenance.json"],
+  "dependencies": { "is-mergeable-object": "1.1.1" }
+}

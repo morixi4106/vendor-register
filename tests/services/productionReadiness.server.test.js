@@ -53,10 +53,12 @@ const TEST_RELEASE_ENV = {
   LAUNCH_MONITOR_ENABLED: "true",
   SALE_ELIGIBILITY_WATCHDOG_TOKEN: "w".repeat(32),
 };
+const TEST_NOW = new Date("2026-09-18T00:00:00.000Z");
 
 function getProductionReadiness(options = {}) {
   return getProductionReadinessImpl({
     shopDomain: "example.myshopify.com",
+    now: TEST_NOW,
     ...options,
     env: {
       ...TEST_RELEASE_ENV,
@@ -119,38 +121,38 @@ function createFakePrisma({
         where?.scopeType === INTERNATIONAL_MARKET_EVIDENCE_SCOPE
           ? internationalMarketAttestations
           : OPERATIONAL_READINESS_DEFINITIONS.map((definition) => ({
-          checkKey: definition.key,
-          status: "CONFIRMED",
-          evidenceReference:
-            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
-              ? "production-transaction-probe:probe_1"
-              : `test:${definition.key}`,
-          evidenceHash:
-            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
-              ? "b".repeat(64)
-              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
-                ? "d".repeat(64)
-                : null,
-          confirmedBy:
-            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
-              ? "system:production-transaction-probe"
-              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
-                ? "shopify_user:reviewer"
-                : "test_operator",
-          confirmedAt: new Date("2026-07-23T00:00:00Z"),
-          expiresAt: new Date("2099-01-01T00:00:00Z"),
-          metadataJson:
-            definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
-              ? {
-                  verificationSource: "production_transaction_probe",
-                  probeId: "probe_1",
-                  releaseId: "aaaaaaaaaaaa:app-v1",
-                  releaseFingerprint: "c".repeat(64),
-                  completedAt: "2026-07-23T00:00:00.000Z",
-                }
-              : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
-                ? buildPayoutEvidenceMetadata()
-                : null,
+              checkKey: definition.key,
+              status: "CONFIRMED",
+              evidenceReference:
+                definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+                  ? "production-transaction-probe:probe_1"
+                  : `test:${definition.key}`,
+              evidenceHash:
+                definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+                  ? "b".repeat(64)
+                  : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                    ? "d".repeat(64)
+                    : null,
+              confirmedBy:
+                definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+                  ? "system:production-transaction-probe"
+                  : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                    ? "shopify_user:reviewer"
+                    : "test_operator",
+              confirmedAt: new Date("2026-07-23T00:00:00Z"),
+              expiresAt: new Date("2099-01-01T00:00:00Z"),
+              metadataJson:
+                definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY
+                  ? {
+                      verificationSource: "production_transaction_probe",
+                      probeId: "probe_1",
+                      releaseId: "aaaaaaaaaaaa:app-v1",
+                      releaseFingerprint: "c".repeat(64),
+                      completedAt: "2026-07-23T00:00:00.000Z",
+                    }
+                  : definition.key === SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY
+                    ? buildPayoutEvidenceMetadata()
+                    : null,
             })),
     },
     shopifyPayoutEvidence: {
@@ -512,7 +514,7 @@ test("getProductionReadiness accepts a valid Air Packet profile", async () => {
         {
           countryCode: "FR",
           status: "ACTIVE",
-          checkedAt: new Date(),
+          checkedAt: new Date("2026-09-17T00:00:00.000Z"),
         },
       ],
     }),
@@ -1003,6 +1005,22 @@ test("getProductionReadiness does not block missing Stripe live keys for Shopify
     "manual",
   );
   assert.equal(checksById.get("connected_accounts_ready").status, "manual");
+});
+
+test("getProductionReadiness still rejects payout evidence older than 90 days", async () => {
+  const result = await getProductionReadiness({
+    now: new Date("2026-10-29T00:00:00.000Z"),
+    prismaClient: createFakePrisma({ sellerRows: [createActiveSeller()] }),
+    env: { NODE_ENV: "production", SCOPES: REQUIRED_SCOPE_STRING },
+  });
+  const payoutCheck = result.checks.find(
+    (check) =>
+      check.id ===
+      `operational_attestation_${SHOPIFY_PAYMENTS_PAYOUT_CHECK_KEY.toLowerCase()}`,
+  );
+  assert.equal(payoutCheck.status, "fail");
+  assert.equal(payoutCheck.releaseBlocking, true);
+  assert.equal(result.canGoLive, false);
 });
 
 test("getProductionReadiness allows manual payout flow without seller Stripe accounts", async () => {

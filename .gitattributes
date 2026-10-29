@@ -1,1 +1,9 @@
 security/risk-decisions/*.approved-paths.txt text eol=lf
+vendor/deepmerge/*.cjs text eol=lf
+vendor/deepmerge/*.json text eol=lf
+vendor/deepmerge/*.ts text eol=lf
+vendor/deepmerge/*.txt text eol=lf
+vendor/deepmerge/*.tgz binary
+security/node-runtime.json text eol=lf
+security/vendor-patches.json text eol=lf
+security/native-artifacts.json text eol=lf

@@ -1,6 +1,108 @@
 # Production dependency advisories
 
-## Current status
+## October incident candidate implementation: 2026-10-29
+
+This is an **incomplete, non-deployable security candidate**, on
+`agent/october-runtime-security`, based on main `3c3c527`. It does not include
+the unfinished international feature/migration stack. Nothing in this change
+authorizes deployment, Shopify release, transactions, notifications, global
+workstation installation, or new vulnerability exceptions.
+
+### Implemented and locally verified
+
+- Pin Node `24.22.1` using `.node-version`, package engine minimum, and CI.
+  `security/node-runtime.json` binds the official Linux/Windows x64 executable
+  digests to the release archives. `runtime:version`, guarded builds and server
+  startup reject old, unknown or substituted executables. The local test/build
+  Node was unpacked separately; the PC's global Node installation is unchanged.
+- The official release archive checksums were verified against the detached
+  signature using Node release key
+  `5BE8A3F6C8A5C01D106C0AD820B1A390B168D356`. Windows Authenticode was Valid
+  (OpenJS Foundation). Brotli's `1.2.0` version string is not proof of missing
+  fixes: the Node security release contains a backport. See the
+  [official release](https://nodejs.org/en/blog/release/v24.22.1/) and
+  [release keys](https://github.com/nodejs/release-keys).
+- Update body-parser `1.20.9`, qs `6.17.1`, Vite `6.4.5`, Vitest `4.1.12` and
+  TOML `5.0.1`, preserving unrelated application/Shopify/Prisma pins.
+- Backport the deepmerge prototype-key guard explicitly as
+  `@oja/deepmerge@4.3.1-oja.1`. MIT source, license, upstream commit and advisory
+  provenance are in `vendor/deepmerge`. This is **not** an upstream fixed
+  release. The root override uses the vendored tarball for every consumer.
+  Tests and digest checks verify source, manifest, provenance, tarball and the
+  physically installed Polaris consumer. Do not rename unpatched code or treat
+  its absence from the npm advisory index as patch verification. See
+  [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
+- Move vite-tsconfig-paths to development dependencies. The isolated runtime
+  has 172 installed packages with no Vite, esbuild, Rollup or Shopify compiler.
+  Patched-fork staging, lockfile identity and physical runtime inspection pass.
+- Pin Node-24-based GitHub action revisions and verify the job Node executable
+  separately. Action-internal runtime binaries and provider infrastructure are
+  **not** proven patched merely by their `node24` metadata.
+- Replace the floating Alpine Docker base with the official
+  `24.22.1-bookworm-slim` manifest digest. Route its build through the production
+  gate and exclude local secrets/evidence. Docker is unavailable on this PC;
+  this image and its OS packages have **not** been built or security-scanned.
+
+### Gates and remaining work
+
+`npm run audit:incident` runs a fresh all-dependency registry audit, verifies
+the actual patched fork and Node executable, and inventories native bytes.
+The report binds the observed Git commit/dirty state, lockfile and policy
+digests, platform and artifact hashes. Version strings are only hints, not
+proof that a compiler, enabled feature set or bundled library is safe.
+
+The local registry audit reports zero advisories at all severities. This does
+**not** resolve native or provider findings. The incident command exits 1:
+25 native artifacts remain unreviewed, and a fresh ignore-scripts install has
+no downloaded Javy/Function Runner. Missing tools are blockers, not exemptions.
+`security/native-artifacts.json` intentionally has no fabricated approvals.
+A future approval requires an exact binary digest and source-commit-bound SBOM;
+the SBOM also needs actual RustSec/Go/feature/applicability review. A structured
+SBOM alone is not a vulnerability scan or a trusted production attestation.
+
+The local esbuild binary still identifies Go `1.23.12`; Prisma binary hints
+include rustls `0.23.34`/`0.26.4`. Their complete native SBOMs/applicability are
+not verified. The examined CLI `5.0.0` still selects Function Runner `9.2.2`,
+whose source Cargo.lock includes Wasmtime `39.0.1`. Therefore a CLI upgrade is
+not claimed as remediation. Obtain or reproducibly build reviewed patched
+native tools, then verify ABI, fuel accounting and all Function/WASM fixtures.
+Do not manufacture approvals or extend the old build exception to unblock it.
+
+CI blocks before Function execution/build; `build:production` and the production
+migration workflow also reject unresolved incident inventory. A separate CI
+matrix checks the pinned Node/backport/inventory tests on Linux and Windows.
+These workflow edits are candidates,
+not evidence that Linux/Windows CI has run. Existing main protection, audit
+coverage thresholds, quiet prelaunch notifications and auto-merge settings are
+unchanged. `incidentClosed` remains false; production, workstation and provider
+verification are separate NOT_VERIFIED fields.
+
+Local verification with the signed portable Node: 1,144 application tests pass
+(four existing Windows skips),
+lint, text/architecture checks, audit-test coverage thresholds, app build,
+Function GraphQL type generation (no generated diff), and isolated runtime
+check pass. The payout fixture clock is deterministic, with a regression that
+still rejects evidence older than 90 days. Function execution/extension rebuild
+and a container build are not certified. The full production dependency/artifact
+audit was run and fails: prior build-control evidence no longer matches, and
+extension/WASM bundles and source-map evidence are missing. Its independent npm
+tree check passes (138 production SBOM components). No old acceptance was
+extended to bypass those failures. Fresh Linux/Windows CI still needs results;
+the native incident gate deliberately fails and this branch must not be merged
+or deployed yet.
+
+### Next Three Actions
+
+1. Resolve actual native tools and Prisma SBOM/applicability, including all
+   applicable Wasmtime advisories, not just the npm graph.
+2. Verify fresh Linux/Windows CI, Function/WASM, container/OS and production
+   artifact audits with the reviewed native tools. Preserve the failing gate
+   until evidence is complete; do not copy prior exception acceptance.
+3. Separately obtain approved workstation/.NET changes and authenticated live
+   Web/Cron runtime/provider evidence. Deployment and post-deployment validation
+   require their own approval; keep notifications suppressed.
+
+## Historical dependency refresh: 2026-10-08
 
 2026-10-08: the dependency refresh on `agent/shopify-centered-privacy` pins
 `proxy-addr` to `2.0.8`, `brace-expansion` to `2.1.7`, `@fastify/busboy` to
