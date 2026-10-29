@@ -9,7 +9,7 @@
   },
   "patch": {
     "path": "vendor/native/function-runner/runner.patch",
-    "sha256": "7a6de9734f991bc50900b1c10c306e7d1c953fbda5d21b7d9724d716b77bcaf3"
+    "sha256": "f76222cd058ea40a3f1c6bd71a23fa9269d234c31d5793fe16f8765c67e0ae1a"
   },
   "lockfile": {
     "path": "vendor/native/function-runner/Cargo.lock",

@@ -6,6 +6,7 @@ import test from "node:test";
 import toml from "toml";
 import {
   writeRunnerEvidence,
+  configureRunnerCache,
   validateRunnerPolicy,
   runnerInput,
   validateRunnerMetadata,
@@ -23,6 +24,31 @@ const policy = JSON.parse(
     "utf8",
   ),
 );
+
+test("runner cache is explicit and stays inside the private build home", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-cache-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = {};
+  const file = configureRunnerCache(root, env);
+  const config = toml.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(file, env.OJA_FUNCTION_RUNNER_CACHE_CONFIG);
+  assert.equal(config.cache.enabled, true);
+  assert.equal(
+    path.resolve(config.cache.directory),
+    path.join(root, "runner-cache"),
+  );
+  const additions = runnerInput(ROOT, policy.patch)
+    .toString("utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"));
+  assert.ok(
+    additions.some((line) => line.includes("OJA_FUNCTION_RUNNER_CACHE_CONFIG")),
+  );
+  assert.equal(
+    additions.some((line) => line.includes("Cache::from_file(None)")),
+    false,
+  );
+});
 
 test("runner evidence refuses traversal and hard links to unrelated files", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-evidence-test-"));

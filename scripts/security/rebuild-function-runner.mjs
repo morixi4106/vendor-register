@@ -172,6 +172,19 @@ export function writeRunnerEvidence(directory, name, bytes) {
   fs.writeFileSync(target, bytes);
 }
 
+export function configureRunnerCache(home, env) {
+  const directory = path.join(home, "runner-cache");
+  fs.mkdirSync(directory);
+  const config = path.join(home, "runner-cache.toml");
+  fs.writeFileSync(
+    config,
+    `[cache]\nenabled = true\ndirectory = ${JSON.stringify(directory.split(path.sep).join("/"))}\n`,
+    { flag: "wx" },
+  );
+  env.OJA_FUNCTION_RUNNER_CACHE_CONFIG = config;
+  return config;
+}
+
 function execute(
   command,
   args,
@@ -222,6 +235,7 @@ export async function rebuildFunctionRunner(
   for (const entry of policy.overrides) runnerInput(root, entry.patch);
   const tools = await prepareRustToolchain(root);
   const { home, env, cargo } = tools;
+  configureRunnerCache(home, env);
   const out = checkedNativeDirectory(root, ".audit/native-runner");
   const cache = checkedNativeDirectory(root, ".audit/rust-cache");
   const sourceArchive = path.join(cache, "function-runner-source.tar.gz");
@@ -436,6 +450,22 @@ export async function rebuildFunctionRunner(
   const trapped = smoke("trap");
   if (trapped.status !== 1 || JSON.parse(trapped.stdout).success !== false)
     throw new Error("runner_trap_not_isolated");
+  const uncachedEnv = { ...env };
+  delete uncachedEnv.OJA_FUNCTION_RUNNER_CACHE_CONFIG;
+  const uncached = execute(
+    binary,
+    [
+      "--function",
+      path.join(fixture, "json.wat"),
+      "--input",
+      path.join(fixture, "input.json"),
+      "--json",
+    ],
+    home,
+    uncachedEnv,
+    { timeout: 30_000 },
+  );
+  validateRunnerSmoke(JSON.parse(uncached.stdout), first);
   const profiled = smoke("json", [
     "--profile",
     "--profile-out",
@@ -510,6 +540,7 @@ export async function rebuildFunctionRunner(
     deterministicFuel: first.instructions,
     overrideTestsPassed: true,
     componentTestScope: "all-targets",
+    explicitCacheAndUncachedExecutionPassed: true,
     productionApproved: false,
   };
   writeRunnerEvidence(out, path.basename(binary), binaryBytes);

@@ -45,3 +45,23 @@ index 2b69892..fc8b401 100644
 +[patch.crates-io]
 +wasmtime-internal-cache = { path = "vendor/wasmtime-internal-cache" }
 +fxprof-processed-profile = { path = "vendor/fxprof-processed-profile" }
+diff --git a/src/engine.rs b/src/engine.rs
+index 9185552..fd09756 100644
+--- a/src/engine.rs
++++ b/src/engine.rs
+@@ -201,8 +201,13 @@ pub fn new_engine() -> Result<Engine> {
+         .wasm_multi_memory(true)
+         .wasm_threads(false)
+         .consume_fuel(true)
+-        .epoch_interruption(true)
+-        .cache(Some(Cache::from_file(None)?));
++        .epoch_interruption(true);
++    // Windows known folders can bypass HOME; only use an explicitly isolated cache.
++    if let Some(cache_config) = std::env::var_os("OJA_FUNCTION_RUNNER_CACHE_CONFIG") {
++        config.cache(Some(Cache::from_file(Some(std::path::Path::new(
++            &cache_config,
++        )))?));
++    }
+     Engine::new(&config)
+ }
+ 

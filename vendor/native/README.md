@@ -19,6 +19,12 @@ fxprof-processed-profile is MIT OR Apache-2.0. The recipe downloads source rathe
 than redistributing renamed upstream binaries. Patch files and the generated
 lockfile are hash-bound in `security/function-runner-rebuild.json`.
 
+The runner only enables persistent caching when
+`OJA_FUNCTION_RUNNER_CACHE_CONFIG` names an explicit configuration. The rebuild
+wrapper creates that file and cache under its private home. Without it the
+runner still works with caching disabled; it never loads the user's default
+Wasmtime configuration. Windows Known Folder APIs can ignore a redirected HOME.
+
 Upstream references:
 
 - https://github.com/Shopify/function-runner/commit/47dca499b04de5158822cc451cd4daf61dfd0fd0
