@@ -403,7 +403,7 @@ export async function rebuildFunctionRunner(
       "wasmtime-internal-cache",
       "--package",
       "fxprof-processed-profile",
-      "--lib",
+      "--all-targets",
     ],
     source,
     env,
@@ -509,6 +509,7 @@ export async function rebuildFunctionRunner(
     abiSmokePassed: true,
     deterministicFuel: first.instructions,
     overrideTestsPassed: true,
+    componentTestScope: "all-targets",
     productionApproved: false,
   };
   writeRunnerEvidence(out, path.basename(binary), binaryBytes);
