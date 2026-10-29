@@ -9,11 +9,11 @@
   },
   "patch": {
     "path": "vendor/native/function-runner/runner.patch",
-    "sha256": "45587980b12cbbb2c5a77fa68a245daf5583b8e8d0adb99c9fbdb0e83f837a35"
+    "sha256": "7a6de9734f991bc50900b1c10c306e7d1c953fbda5d21b7d9724d716b77bcaf3"
   },
   "lockfile": {
     "path": "vendor/native/function-runner/Cargo.lock",
-    "sha256": "4c33a62fcebc4181dd83bda74a4be148420a202be1c636aafba9c6084baf0286"
+    "sha256": "d97e89d3612542a6c3c5720e2d2b0ce7fb4e836d7fcf2ca26aa686f71399060c"
   },
   "overrides": [
     {

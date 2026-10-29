@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import toml from "toml";
 import {
+  writeRunnerEvidence,
   validateRunnerPolicy,
   runnerInput,
   validateRunnerMetadata,
@@ -22,6 +23,30 @@ const policy = JSON.parse(
     "utf8",
   ),
 );
+
+test("runner evidence refuses traversal and hard links to unrelated files", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-evidence-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "original.json"), "original");
+  fs.linkSync(
+    path.join(root, "original.json"),
+    path.join(root, "receipt.json"),
+  );
+  assert.throws(
+    () => writeRunnerEvidence(root, "receipt.json", "changed"),
+    /runner_evidence_path_invalid/,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(root, "original.json"), "utf8"),
+    "original",
+  );
+  assert.throws(
+    () => writeRunnerEvidence(root, "../outside", "changed"),
+    /runner_evidence_path_invalid/,
+  );
+  writeRunnerEvidence(root, "safe.json", "safe");
+  assert.equal(fs.readFileSync(path.join(root, "safe.json"), "utf8"), "safe");
+});
 
 test("runner recipe binds all patches and the generated lock graph to real bytes", () => {
   assert.equal(validateRunnerPolicy(policy), policy);

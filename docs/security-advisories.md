@@ -5,7 +5,8 @@
 The follow-up recipe pins official Rust 1.99.1 compiler/Cargo/std archives and
 rebuilds Shopify's fixed source with Wasmtime 36.0.19. Cache/profiler features
 are retained using two explicit source overrides: sha2 0.11 / zstd 0.14.3 and
-rustc-hash 2.1.3. The generated lock has 413 registry packages, no advisory
+rustc-hash 2.1.3. The generated lock has 426 registry packages including the
+overrides' test dependencies, no advisory
 matches in the observed OSV response and no git dependencies. Source, original
 crate archives, patches and lock bytes are hash-bound; custom versions use
 `+oja.1`. This is not an upstream release and not an advisory exclusion.

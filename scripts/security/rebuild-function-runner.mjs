@@ -160,6 +160,18 @@ export function validateRunnerSmoke(result, previous) {
   return true;
 }
 
+export function writeRunnerEvidence(directory, name, bytes) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(name) || name === "." || name === "..")
+    throw new Error("runner_evidence_path_invalid");
+  const target = path.join(directory, name);
+  if (fs.existsSync(target)) {
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+      throw new Error("runner_evidence_path_invalid");
+  }
+  fs.writeFileSync(target, bytes);
+}
+
 function execute(
   command,
   args,
@@ -177,8 +189,16 @@ function execute(
     shell: false,
   });
   if (log) {
-    fs.writeFileSync(`${log}.stdout.log`, result.stdout || "");
-    fs.writeFileSync(`${log}.stderr.log`, result.stderr || "");
+    writeRunnerEvidence(
+      path.dirname(log),
+      `${path.basename(log)}.stdout.log`,
+      result.stdout || "",
+    );
+    writeRunnerEvidence(
+      path.dirname(log),
+      `${path.basename(log)}.stderr.log`,
+      result.stderr || "",
+    );
   }
   if (result.error || (!allowFailure && result.status !== 0))
     throw new Error(
@@ -265,8 +285,9 @@ export async function rebuildFunctionRunner(
   }
   fs.writeFileSync(path.join(source, "Cargo.lock"), lock);
   const report = await scanRustLockfile(lock.toString("utf8"));
-  fs.writeFileSync(
-    path.join(out, "source-assessment.json"),
+  writeRunnerEvidence(
+    out,
+    "source-assessment.json",
     JSON.stringify(
       {
         ...report,
@@ -297,8 +318,9 @@ export async function rebuildFunctionRunner(
     ).stdout,
   );
   validateRunnerMetadata(metadata, source, policy);
-  fs.writeFileSync(
-    path.join(out, "metadata.json"),
+  writeRunnerEvidence(
+    out,
+    "metadata.json",
     JSON.stringify(metadata, null, 2) + "\n",
   );
   const baseReceipt = {
@@ -317,8 +339,9 @@ export async function rebuildFunctionRunner(
     observedAt: new Date().toISOString(),
   };
   if (!build) {
-    fs.writeFileSync(
-      path.join(out, "resolution.json"),
+    writeRunnerEvidence(
+      out,
+      "resolution.json",
       JSON.stringify(baseReceipt, null, 2) + "\n",
     );
     return {
@@ -445,15 +468,35 @@ export async function rebuildFunctionRunner(
         ],
       },
     },
-    components: rustRegistryPackages(lock.toString("utf8")).packages.map(
-      (pkg) => ({
+    components: [
+      ...rustRegistryPackages(lock.toString("utf8")).packages.map((pkg) => ({
         type: "library",
         name: pkg.name,
         version: pkg.version,
         purl: `pkg:cargo/${pkg.name}@${pkg.version}`,
         hashes: [{ alg: "SHA-256", content: pkg.checksum }],
-      }),
-    ),
+      })),
+      ...policy.overrides.map((entry) => ({
+        type: "library",
+        name: entry.name,
+        version: entry.version,
+        properties: [
+          { name: "oja:original-crate-sha256", value: entry.sha256 },
+          { name: "oja:source-patch-sha256", value: entry.patch.sha256 },
+        ],
+      })),
+      {
+        type: "library",
+        name: "rust-stdlib",
+        version: tools.receipt.version,
+        properties: [
+          {
+            name: "oja:toolchain-policy-sha256",
+            value: tools.receipt.policySha256,
+          },
+        ],
+      },
+    ],
     properties: [
       { name: "oja:scope", value: "complete-lock-graph-not-linker-proof" },
     ],
@@ -468,10 +511,11 @@ export async function rebuildFunctionRunner(
     overrideTestsPassed: true,
     productionApproved: false,
   };
-  fs.writeFileSync(path.join(out, path.basename(binary)), binaryBytes);
-  fs.writeFileSync(path.join(out, "function-runner.cdx.json"), sbomBytes);
-  fs.writeFileSync(
-    path.join(out, "receipt.json"),
+  writeRunnerEvidence(out, path.basename(binary), binaryBytes);
+  writeRunnerEvidence(out, "function-runner.cdx.json", sbomBytes);
+  writeRunnerEvidence(
+    out,
+    "receipt.json",
     JSON.stringify(receipt, null, 2) + "\n",
   );
   return {

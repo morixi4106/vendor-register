@@ -1,8 +1,16 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 2b69892..3df2d16 100644
+index 2b69892..fc8b401 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -13,7 +13,7 @@ members = [
+@@ -1,5 +1,7 @@
+ [workspace]
+ members = [
++  "vendor/wasmtime-internal-cache",
++  "vendor/fxprof-processed-profile",
+   "test-utils",
+   "tests/fixtures/exit_code",
+   "tests/fixtures/log_truncation_function",
+@@ -13,7 +15,7 @@ members = [
  
  [package]
  name = "function-runner"
@@ -11,7 +19,7 @@ index 2b69892..3df2d16 100644
  edition = "2021"
  
  
-@@ -27,7 +27,7 @@ lto = true
+@@ -27,7 +29,7 @@ lto = true
  opt-level = 3
  
  [dependencies]
@@ -20,7 +28,7 @@ index 2b69892..3df2d16 100644
    "addr2line",
    "all-arch",
    "async",
-@@ -46,7 +46,7 @@ wasmtime = { version = "=36.0.14", default-features = false, features = [
+@@ -46,7 +48,7 @@ wasmtime = { version = "=36.0.14", default-features = false, features = [
    "wat",
    "winch",
  ] }
@@ -29,7 +37,7 @@ index 2b69892..3df2d16 100644
  deterministic-wasi-ctx = "=3.0.1"
  anyhow = "1.0"
  clap = { version = "4.5", features = ["derive"] }
-@@ -69,3 +69,7 @@ assert_cmd = "2.1"
+@@ -69,3 +71,7 @@ assert_cmd = "2.1"
  predicates = "3.1"
  assert_fs = "1.1.3"
  test-utils = { path = "test-utils" }
