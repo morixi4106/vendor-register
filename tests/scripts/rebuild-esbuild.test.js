@@ -46,7 +46,7 @@ test("native compiler processes receive no production credentials or override fl
   assert.equal(env.DATABASE_URL, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
   assert.equal(env.NODE_OPTIONS, undefined);
-  assert.equal(env.GOFLAGS, "");
+  assert.equal(env.GOFLAGS, "-modcacherw");
   assert.equal(env.GOTOOLCHAIN, "local");
   assert.equal(env.GOSUMDB, "sum.golang.org");
   assert.equal(env.GOPROXY, "https://proxy.golang.org");

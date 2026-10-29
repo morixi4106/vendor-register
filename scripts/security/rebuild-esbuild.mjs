@@ -139,7 +139,8 @@ export function nativeBuildEnvironment(home, source = process.env) {
     GOWORK: "off",
     GOAMD64: "v1",
     GOEXPERIMENT: "",
-    GOFLAGS: "",
+    // This cache is disposable; writable module directories allow safe cleanup on Linux.
+    GOFLAGS: "-modcacherw",
     GODEBUG: "",
     GOTELEMETRY: "off",
     GOPROXY: "https://proxy.golang.org",
