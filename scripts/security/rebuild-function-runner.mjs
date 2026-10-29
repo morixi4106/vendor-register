@@ -466,6 +466,7 @@ export async function rebuildFunctionRunner(
     { timeout: 30_000 },
   );
   validateRunnerSmoke(JSON.parse(uncached.stdout), first);
+  writeRunnerEvidence(out, "profile.txt", "");
   const profiled = smoke("json", [
     "--profile",
     "--profile-out",
