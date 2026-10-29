@@ -31,6 +31,7 @@ const SOURCE_FILES = [
   "query-engine/core/src/interactive_transactions/cache_capacity.rs",
   "security-contracts/Cargo.toml",
   "security-contracts/src/lib.rs",
+  "query-engine/core/Cargo.toml",
   "schema-engine/connectors/schema-connector/src/checksum.rs",
 ];
 const exact = (value, names) =>
@@ -131,6 +132,11 @@ export function checkPrismaSourceWiring(source, policy) {
   const contract = toml.parse(
     fs.readFileSync(path.join(source, "security-contracts/Cargo.toml"), "utf8"),
   );
+  const core = toml.parse(
+    fs.readFileSync(path.join(source, "query-engine/core/Cargo.toml"), "utf8"),
+  );
+  if (!core.dependencies.indexmap.features.includes("serde"))
+    throw new Error("prisma_dependency_wiring_invalid");
   for (const [name, version] of Object.entries(policy.dependencies)) {
     if (
       manifest.workspace.dependencies[name] !== `=${version}` ||

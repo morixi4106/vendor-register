@@ -9,6 +9,8 @@ upstream Prisma release or an installed replacement.
   and historical unpadded-checksum behavior.
 - The small Rust contract crate includes the actual patched engine modules.
   Node tests bind source, patch, compiler policy and both frozen lockfiles.
+- Query-core explicitly declares its existing IndexMap serialization requirement
+  so library tests do not depend on feature unification from an unrelated binary.
 - Complete-engine findings and non-registry sources remain in a separate fresh
   assessment. A clean contract scan never approves or filters the engine graph.
 

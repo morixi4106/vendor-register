@@ -178,3 +178,16 @@ new file mode 100644
 +        assert!(checksum::script_matches_checksum(script, &legacy));
 +    }
 +}
+diff --git a/query-engine/core/Cargo.toml b/query-engine/core/Cargo.toml
+index df34d76..51a3f37 100644
+--- a/query-engine/core/Cargo.toml
++++ b/query-engine/core/Cargo.toml
+@@ -17,7 +17,7 @@ connector = { path = "../connectors/query-connector", package = "query-connector
+ crossbeam-channel.workspace = true
+ psl.workspace = true
+ futures.workspace = true
+-indexmap.workspace = true
++indexmap = { workspace = true, features = ["serde"] }
+ itertools.workspace = true
+ petgraph.workspace = true
+ query-builder.workspace = true

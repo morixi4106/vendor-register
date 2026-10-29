@@ -14,7 +14,7 @@ graph has no observed matches or non-registry sources; it does not certify the
 engine. Source preparation hash-binds archives, patches, both lockfiles, module
 contents and the official Rust compiler policy. Metadata checks actual resolved
 dependencies and refuses Git revisions absent from the frozen lockfile. Node
-rejection tests pass 11 cases; real Windows/Linux compilation and upstream
+rejection tests pass 12 cases; real Windows/Linux compilation and upstream
 library tests are a separate CI verification step, not assumed complete here.
 
 `native:prisma-contracts -- --upstream-units` tests query-core/schema-connector
@@ -23,7 +23,8 @@ The full source findings stay in uploaded evidence. Every receipt retains
 NOT_VERIFIED, wholeEngineVerified=false and productionApproved=false, even if
 all source tests pass. NAPI, isolated PostgreSQL/migration tests and remaining
 engine dependencies are still required. Existing native/build/migration gates,
-approval tables and production configuration are unchanged.
+approval tables and production configuration are unchanged. Query-core declares
+its existing IndexMap serde requirement explicitly for standalone library tests.
 
 ## Function Runner source rebuild candidate: 2026-10-29
 
