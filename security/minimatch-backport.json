@@ -12,7 +12,7 @@
   },
   "tarball": {
     "path": "vendor/minimatch/oja-minimatch-9.0.9-oja.1.tgz",
-    "sha256": "8b7c7d03c571761d4bd21d98ea3ca49b3b536ed33c60dd3c58a657e57e2eb49e"
+    "sha256": "176449acee01bab4c3096be71c22f89220c9eef2bbb2664b8dad43eece3cb334"
   },
   "files": [
     {
@@ -29,7 +29,7 @@
     },
     {
       "path": "dist/commonjs/ast.js",
-      "sha256": "9e9517ef1fc084cb47b9b0dfed282a22c886959e25e4d97c2eb4de6725c395ba"
+      "sha256": "156774a991f0bb4cf555c24898a535bd5d48a7dd89a5bdacbe15a6f94fee4d7d"
     },
     {
       "path": "dist/commonjs/brace-expressions.d.ts",
@@ -81,7 +81,7 @@
     },
     {
       "path": "dist/esm/ast.js",
-      "sha256": "414b908efc226d65f67f77a57ae4a91dc3bca7141ba106f55604df7662065810"
+      "sha256": "6dbf484be1ea33f355984d9f2c0473444dad47882b6552bad6809eaf9c02032a"
     },
     {
       "path": "dist/esm/brace-expressions.d.ts",
@@ -129,11 +129,11 @@
     },
     {
       "path": "provenance.json",
-      "sha256": "ca195affc754aac5f6457dc1ca32c6764ba1de7fa62b9ec9299fb7979a74940f"
+      "sha256": "562ac28970dd77fae950199a731c3f85543e3225431d701112a92662c8061bf0"
     },
     {
       "path": "README.md",
-      "sha256": "0fdcaebbffdb02f3a1ee60b3dbcced79256d87e3c8952bbf9e94043a164221f1"
+      "sha256": "117bb0b9d95661086d6a0fb04cc6984c1bf97b2f4ce0f58a7eb74a07afe5334e"
     }
   ]
 }
