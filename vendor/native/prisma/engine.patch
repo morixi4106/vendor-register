@@ -1,14 +1,23 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..9346df8 100644
+index 307dd8c..2800b67 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid"]
  members = [
      "schema-engine/cli",
      "schema-engine/commands",
+@@ -67,7 +68,7 @@ connection-string = "0.2"
+ convert_case = "0.8"
+ crossbeam-channel = "0.5"
+ cruet = "0.15"
+-cuid = { git = "https://github.com/prisma/cuid-rust", branch = "v1.3.3-wasm32-unknown-unknown" }
++cuid = { path = "vendor/cuid/crates/cuid", version = "=1.3.3+oja.1" }
+ derive_more = "0.99"
+ either = "1"
+ enumflags2 = "0.7"
 @@ -84,19 +85,19 @@ indexmap = "2"
  itertools = "0.13"
  jsonrpc-core = "17"
@@ -152,7 +161,7 @@ diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/Cargo.toml
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,22 @@
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
@@ -173,11 +182,13 @@ new file mode 100644
 +rand = "0.8"
 +regex = "1"
 +sha1 = "=0.11.0"
++cuid = { path = "../vendor/cuid/crates/cuid", version = "=1.3.3+oja.1" }
++cuid-util = { path = "../vendor/cuid/crates/cuid-util", version = "=0.1.1+oja.1" }
 diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,50 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -195,6 +206,9 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod mysql_crypto;
++
++#[cfg(test)]
++mod cuid_contracts;
 +
 +#[cfg(test)]
 +mod tests {
@@ -465,3 +479,129 @@ new file mode 100644
 +mod der;
 +#[path = "../../vendor/mysql_common/src/crypto/rsa.rs"]
 +mod rsa;
+diff --git a/security-contracts/src/cuid_contracts.rs b/security-contracts/src/cuid_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/cuid_contracts.rs
+@@ -0,0 +1,121 @@
++use std::collections::HashSet;
++
++fn assert_v1(value: &str) {
++    assert!((25..=26).contains(&value.len()));
++    assert!(value.starts_with('c'));
++    assert!(value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
++    assert!(cuid::is_cuid1(value));
++}
++
++fn assert_v2(value: &str, length: usize) {
++    assert_eq!(value.len(), length);
++    assert!(value.as_bytes()[0].is_ascii_lowercase());
++    assert!(value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
++    assert!(cuid::is_cuid2(value));
++}
++
++#[test]
++fn base36_known_boundaries_preserve_the_existing_alphabet() {
++    for (number, expected) in [(0u128,"0"),(9,"9"),(10,"a"),(24,"o"),(25,"p"),(26,"q"),(35,"z"),(36,"10"),(1295,"zz"),(1296,"100")] {
++        assert_eq!(cuid_util::to_base_36(number), expected);
++    }
++}
++
++#[test]
++fn base36_full_width_round_trips_without_truncation() {
++    for number in [0u128,1,u32::MAX as u128,u64::MAX as u128,1u128 << 64,1u128 << 127,u128::MAX] {
++        assert_eq!(u128::from_str_radix(&cuid_util::to_base_36(number),36).unwrap(),number);
++    }
++}
++
++#[test]
++fn base36_trait_and_function_remain_identical() {
++    use cuid_util::ToBase36;
++    for number in 0u128..4096 {
++        assert_eq!(number.to_base_36(),cuid_util::to_base_36(number));
++    }
++}
++
++#[test]
++fn existing_v1_order_identifiers_are_still_accepted() {
++    assert_v1("cabcdefghijklmnopqrstuvwx");
++    assert!(!cuid::is_cuid1(""));
++    assert!(!cuid::is_cuid1("too-short"));
++}
++
++#[test]
++fn v1_generation_keeps_the_engine_format() {
++    for _ in 0..128 { assert_v1(&cuid::cuid1()); }
++}
++
++#[test]
++fn v1_small_batch_has_no_duplicate_ids() {
++    let ids: HashSet<_> = (0..1024).map(|_| cuid::cuid1()).collect();
++    assert_eq!(ids.len(),1024);
++}
++
++#[test]
++fn v1_slug_keeps_its_length() {
++    for _ in 0..128 {
++        let slug = cuid::cuid1_slug();
++        assert_eq!(slug.len(),10);
++        assert!(cuid::is_cuid1_slug(&slug));
++    }
++}
++
++#[test]
++fn v2_generation_keeps_the_engine_format() {
++    for _ in 0..128 { assert_v2(&cuid::cuid2(),24); }
++}
++
++#[test]
++fn v2_small_batch_has_no_duplicate_ids() {
++    let ids: HashSet<_> = (0..256).map(|_| cuid::cuid2()).collect();
++    assert_eq!(ids.len(),256);
++}
++
++#[test]
++fn v2_slug_keeps_its_length() {
++    for _ in 0..32 {
++        let slug = cuid::cuid2_slug();
++        assert_v2(&slug,10);
++        assert!(cuid::is_cuid2_slug(&slug));
++    }
++}
++
++#[test]
++fn v2_custom_lengths_and_callbacks_remain_usable() {
++    for length in [2u16,8,16,32] {
++        let generator = cuid::Cuid2Constructor::new().with_length(length)
++            .with_counter(|| 42).with_fingerprinter(|| "synthetic-fingerprint".to_owned());
++        assert_v2(&generator.create_id(),length as usize);
++    }
++    let mut generator = cuid::Cuid2Constructor::default();
++    generator.set_length(16);
++    generator.set_counter(|| 7);
++    generator.set_fingerprinter(|| "synthetic-fingerprint".to_owned());
++    assert_v2(&generator.create_id(),16);
++}
++
++#[test]
++fn v2_rejects_lengths_below_two() {
++    for length in [0u16,1] {
++        assert!(std::panic::catch_unwind(|| cuid::Cuid2Constructor::new().with_length(length)).is_err());
++    }
++}
++
++#[test]
++fn v1_small_multithreaded_batch_has_no_duplicates() {
++    let handles: Vec<_> = (0..8).map(|_| std::thread::spawn(|| (0..128).map(|_| cuid::cuid1()).collect::<Vec<_>>())).collect();
++    let ids: Vec<_> = handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
++    for id in &ids { assert_v1(id); }
++    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),1024);
++}
++
++#[test]
++fn v2_small_multithreaded_batch_has_no_duplicates() {
++    let handles: Vec<_> = (0..8).map(|_| std::thread::spawn(|| (0..32).map(|_| cuid::cuid2()).collect::<Vec<_>>())).collect();
++    let ids: Vec<_> = handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
++    for id in &ids { assert_v2(id,24); }
++    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),256);
++}

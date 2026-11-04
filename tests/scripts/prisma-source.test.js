@@ -16,6 +16,10 @@ import {
   prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
 import { rustRegistryPackages } from "../../scripts/security/rust-source-audit.mjs";
+import {
+  validatePrismaCuidSource,
+  checkPrismaCuidWiring,
+} from "../../scripts/security/prisma-cuid-source.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const policy = JSON.parse(
@@ -42,6 +46,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     policy.contractLockfile,
     ...policy.overrides.map((entry) => entry.patch),
     ...policy.mysqlSources.map((entry) => entry.patch),
+    policy.cuidSource.patch,
   ])
     assert.ok(prismaSourceInput(ROOT, input).length);
   const whole = rustRegistryPackages(
@@ -54,13 +59,14 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     whole.packages.find((pkg) => pkg.name === "lru" && pkg.version === "0.7.8"),
     undefined,
   );
-  assert.equal(whole.unresolved.length, 12);
+  assert.equal(whole.unresolved.length, 8);
   assert.equal(
     whole.unresolved.length +
-      policy.mysqlSources.filter((entry) => entry.gitSource).length,
+      policy.mysqlSources.filter((entry) => entry.gitSource).length +
+      policy.cuidSource.packages.length,
     13,
   );
-  assert.equal(contracts.packages.length, 338);
+  assert.equal(contracts.packages.length, 351);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -69,6 +75,11 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
       ),
     );
   for (const graph of [whole, contracts]) {
+    for (const name of ["base36", "base-x", "failure", "failure_derive"])
+      assert.equal(
+        graph.packages.some((pkg) => pkg.name === name),
+        false,
+      );
     for (const [name, version] of Object.entries(
       policy.overrides[0].dependencies,
     )) {
@@ -197,7 +208,7 @@ const metadataFixture = (t, contracts) => {
   const source = fixture(t);
   const owners = contracts
     ? ["oja-prisma-source-contracts"]
-    : ["query-core", "schema-connector"];
+    : ["query-core", "schema-connector", "query-structure"];
   const packages = owners.map((name) => {
     const directory = path.join(
       source,
@@ -291,6 +302,38 @@ const metadataFixture = (t, contracts) => {
       });
     }
   }
+  for (const pkg of policy.cuidSource.packages) {
+    const directory = path.join(source, "vendor/cuid/crates", pkg.name);
+    fs.mkdirSync(directory, { recursive: true });
+    const manifest = path.join(directory, "Cargo.toml");
+    fs.writeFileSync(manifest, "[package]\n");
+    packages.push({
+      id: pkg.name,
+      name: pkg.name,
+      version: pkg.version,
+      source: null,
+      manifest_path: manifest,
+    });
+    const names =
+      pkg.name === "cuid"
+        ? ["cuid1", "cuid2"]
+        : pkg.name === "cuid-util"
+          ? []
+          : ["cuid-util"];
+    nodes.push({
+      id: pkg.name,
+      deps: names.map((name) => ({
+        name: name.replaceAll("-", "_"),
+        pkg: name,
+      })),
+    });
+  }
+  for (const name of contracts
+    ? ["oja-prisma-source-contracts"]
+    : ["query-core", "query-structure"])
+    nodes
+      .find((node) => node.id === name)
+      .deps.push({ name: "cuid", pkg: "cuid" });
   return { source, metadata: { packages, resolve: { nodes } } };
 };
 
@@ -478,7 +521,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   const engine = {
     packageCount: 640,
     findings: Array(34).fill({}),
-    unresolved: Array(12).fill({}),
+    unresolved: Array(8).fill({}),
     sourceAuditOk: false,
   };
   const contracts = {
@@ -495,8 +538,8 @@ test("clean contract registry scans never approve a path-converted Git source or
   assert.equal(receipt.artifactStatus, "NOT_VERIFIED");
   assert.equal(receipt.engineAdvisoryMatches, 34);
   assert.equal(receipt.unreviewedGitSources, 13);
-  assert.equal(receipt.unreviewedPatchedGitSources, 1);
-  assert.equal(receipt.contractUnreviewedGitSources, 1);
+  assert.equal(receipt.unreviewedPatchedGitSources, 5);
+  assert.equal(receipt.contractUnreviewedGitSources, 5);
   assert.equal(receipt.contractSourceReviewed, false);
   assert.equal(receipt.engineSourceAuditOk, false);
   assert.equal(receipt.contractSourceAuditOk, false);
@@ -510,7 +553,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).unreviewedGitSources,
-    1,
+    5,
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).productionApproved,
@@ -524,7 +567,7 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
   assert.equal(original.unresolved.length, 0);
   assert.equal(report.registryAuditOk, true);
   assert.equal(report.sourceAuditOk, false);
-  assert.equal(report.unresolved.length, 1);
+  assert.equal(report.unresolved.length, 5);
   assert.equal(
     report.unresolved[0].reason,
     "git_derived_override_requires_review",
@@ -538,6 +581,170 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
     policy.mysqlSources[0].sha256,
   );
   assert.deepEqual(report.findings, []);
+  assert.deepEqual(
+    report.unresolved.slice(1).map((entry) => entry.name),
+    ["cuid", "cuid-util", "cuid1", "cuid2"],
+  );
+  for (const entry of report.unresolved.slice(1)) {
+    assert.equal(entry.commit, policy.cuidSource.commit);
+    assert.equal(entry.archiveSha256, policy.cuidSource.sha256);
+  }
+});
+
+test("CUID policy binds all four original Git packages without granting source review", () => {
+  for (const change of [
+    (p) => {
+      delete p.cuidSource;
+    },
+    (p) => {
+      p.cuidSource.reviewStatus = "REVIEWED";
+    },
+    (p) => {
+      p.cuidSource.commit = "0".repeat(40);
+    },
+    (p) => {
+      p.cuidSource.repository = "unreviewed/cuid-rust";
+    },
+    (p) => {
+      p.cuidSource.packages.pop();
+    },
+    (p) => {
+      p.cuidSource.packages[0].version = "1.3.3";
+    },
+    (p) => {
+      p.cuidSource.patch.path = "../cuid.patch";
+    },
+    (p) => {
+      p.cuidSource.sourceFiles[0].path = "../Cargo.toml";
+    },
+    (p) => {
+      p.cuidSource.sourceFiles.pop();
+    },
+  ]) {
+    const changed = structuredClone(policy);
+    change(changed);
+    assert.throws(
+      () => validatePrismaCuidSource(changed.cuidSource),
+      /prisma_cuid_policy_invalid/,
+    );
+  }
+});
+
+test("CUID metadata rejects unused, mismatched, detached and obsolete dependency graphs", (t) => {
+  for (const contracts of [false, true]) {
+    for (const change of [
+      (m) => {
+        m.packages.find((p) => p.name === "cuid").source =
+          "registry+https://github.com/rust-lang/crates.io-index";
+      },
+      (m) => {
+        m.packages.find((p) => p.name === "cuid1").version = "0.1.0";
+      },
+      (m) => {
+        m.packages.find((p) => p.name === "cuid2").manifest_path =
+          m.packages[0].manifest_path;
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "cuid").deps.pop();
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "cuid1").deps[0].pkg = "cuid2";
+      },
+      (m) => {
+        m.resolve.nodes
+          .find(
+            (n) =>
+              n.id ===
+              (contracts ? "oja-prisma-source-contracts" : "query-structure"),
+          )
+          .deps.find((d) => d.name === "cuid").pkg = "cuid1";
+      },
+      (m) => {
+        m.packages.push({
+          id: "old-failure",
+          name: "failure",
+          version: "0.1.8",
+          source: "registry+https://github.com/rust-lang/crates.io-index",
+        });
+      },
+      (m) => {
+        m.packages.push({
+          id: "old-base36",
+          name: "base36",
+          version: "0.0.1",
+          source: "registry+https://github.com/rust-lang/crates.io-index",
+        });
+      },
+    ]) {
+      const { source, metadata } = metadataFixture(t, contracts);
+      change(metadata);
+      assert.throws(
+        () => checkPrismaMetadata(metadata, source, policy, { contracts }),
+        /prisma_(cuid_(override_unbound|resolution_invalid|obsolete_dependency)|contract_root_invalid)/,
+      );
+    }
+  }
+});
+
+test("CUID manifest wiring preserves the pinned WASM entropy backend and refuses unused overrides", (t) => {
+  const source = fixture(t);
+  const write = (file, value) => {
+    const target = path.join(source, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, value);
+  };
+  const root =
+    '[workspace]\nexclude=["vendor/cuid"]\n[workspace.dependencies]\ncuid={path="vendor/cuid/crates/cuid",version="=1.3.3+oja.1"}\n';
+  write("Cargo.toml", root);
+  write(
+    "security-contracts/Cargo.toml",
+    '[dependencies]\ncuid={path="../vendor/cuid/crates/cuid",version="=1.3.3+oja.1"}\ncuid-util={path="../vendor/cuid/crates/cuid-util",version="=0.1.1+oja.1"}\n',
+  );
+  write(
+    "vendor/cuid/Cargo.toml",
+    "[workspace.dependencies]\n" +
+      policy.cuidSource.packages
+        .filter((p) => p.name !== "cuid")
+        .map(
+          (p) =>
+            `${p.name}={path="./crates/${p.name}",version="=${p.version}"}\n`,
+        )
+        .join(""),
+  );
+  let original;
+  for (const pkg of policy.cuidSource.packages) {
+    const value =
+      `[package]\nname="${pkg.name}"\nversion="${pkg.version}"\n[dependencies]\n` +
+      (pkg.name === "cuid-util"
+        ? ""
+        : '[target.\'cfg(target_arch = "wasm32")\'.dependencies]\ngetrandom={version="=0.2.17",features=["js"]}\n');
+    write(`vendor/cuid/crates/${pkg.name}/Cargo.toml`, value);
+    if (pkg.name === "cuid1") original = value;
+  }
+  assert.equal(
+    checkPrismaCuidWiring(source, policy.cuidSource, () => {}),
+    true,
+  );
+  for (const value of [
+    original.replace('version="=0.2.17"', 'version="0"'),
+    original.replace('features=["js"]', "features=[]"),
+    original.replace("[dependencies]", '[dependencies]\nbase36="0.0.1"'),
+  ]) {
+    write("vendor/cuid/crates/cuid1/Cargo.toml", value);
+    assert.throws(
+      () => checkPrismaCuidWiring(source, policy.cuidSource, () => {}),
+      /prisma_cuid_wiring_invalid/,
+    );
+  }
+  write("vendor/cuid/crates/cuid1/Cargo.toml", original);
+  write(
+    "Cargo.toml",
+    root.replace('path="vendor/cuid/crates/cuid"', 'path="unused/cuid"'),
+  );
+  assert.throws(
+    () => checkPrismaCuidWiring(source, policy.cuidSource, () => {}),
+    /prisma_cuid_wiring_invalid/,
+  );
 });
 
 test("MySQL source policy never marks the original Git revision reviewed by changing its location", () => {

@@ -3,6 +3,22 @@
 This is an explicit patch of the engine source used by Prisma 6.19.3, not an
 upstream Prisma release or an installed replacement.
 
+The CUID follow-up uses Prisma's exact cuid-rust revision, with all four
+packages archive/patch/hash-bound and versioned +oja.1. Only manifests change:
+remove cuid1's unused base36 dependency (which pulled in failure), and pin the
+existing WASM getrandom 0.2.17/js resolution instead of the broad version "0".
+Every ID-generation source module remains unchanged. No ID algorithm, format,
+randomness source, existing row, client, schema or database is migrated.
+The contract fixture adds 14 tests of the actual CUID libraries: base36
+boundaries/full-width round trips, v1/v2 formats, small batches/threads, slugs,
+custom lengths/callbacks and invalid lengths. Finite noncollision samples are
+compatibility evidence, not proof of global uniqueness or cryptographic safety.
+The four Git-derived package identities remain UNREVIEWED in assessments and
+receipts, alongside mysql_async and the eight remaining Cargo Git entries.
+Moving those packages to paths does not reduce the total unreviewed count13.
+Registry graph623/matches11 and contract registry351/matches0 do not establish
+full-source review, NAPI, database, WASM or production compatibility.
+
 The MySQL follow-up retains Prisma's exact mysql_async Git revision as an
 archive/patch-bound 0.31.3+oja.1 source, plus mysql_common 0.29.2+oja.1. Both use
 lexical 7.0.5; the driver uses LRU 0.18.2 and common uses sha1 0.11.0 / sha2

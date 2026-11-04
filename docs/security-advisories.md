@@ -1,5 +1,43 @@
 # Production dependency advisories
 
+## Prisma CUID Source Follow-Up: 2026-11-04
+
+Add an explicit archive/patch-bound override of Prisma's existing cuid-rust
+revision dc68c4f47a3dbcd511f605135ac7c948775a3ab9. The source archive matches
+the existing pinned Cargo checkout for all23 Rust/manifest files. All four
+packages are marked +oja.1; only five manifests change. Remove cuid1's unused
+base36 dependency, which transitively selected failure/failure_derive. Its real
+conversion already uses cuid-util, not base36. Pin the existing WASM
+getrandom0.2.17/js resolution rather than changing the entropy backend or
+removing WASM support. No ID-generation implementation, app/client/schema,
+installed engine, database or existing identifier changes.
+
+Full frozen graph: **623 registry packages /11 observed OSV matches** versus
+the preceding same-day633/15. Four raw matches disappear with the obsolete
+failure dependency, not four unique proven exploits. Eight Cargo Git entries
+plus five explicitly UNREVIEWED Git-derived path packages still total13.
+Contract registry351 has zero observed matches, but its five unresolved
+Git-derived identities retain sourceAuditOk=false, contractSourceReviewed=false,
+NOT_VERIFIED and productionApproved=false. Original MongoDB/mysql_common
+identities remain separately scanned. No ignores, native approval or gate change.
+
+The fixture adds14 CUID compatibility tests, bringing its minimum to56.
+It compiles actual CUID libraries and covers base36 known boundaries/full-width
+round trips, v1/v2 formats, slugs, small serial/threaded batches, constructors,
+callbacks and invalid lengths. Sample noncollisions do not prove uniqueness,
+cryptographic security or expose real customer IDs. Hashes and actual Cargo
+metadata bind the unchanged generator modules, query-core/query-structure
+consumers and all four local packages. Node rejection tests refuse unused/mixed
+overrides, old failure/base36 graphs, missing source hashes, false source-review
+status and loss of the pinned WASM entropy feature. Fresh native CI remains
+required; previous42-test runs do not certify these changed inputs.
+
+Native engine/NAPI/schema, isolated DB/migrations, remaining CLI/HTTP/source
+review, Javy/Function/provider and live-runtime evidence remain incomplete.
+No main merge, deployment/settings/Shopify release, financial action or mail restart.
+
+The MySQL/Runner section below records the preceding candidate, not the CUID CI.
+
 ## Prisma MySQL source follow-up: 2026-11-04
 
 Draft #59 adds explicit source overrides preserving Prisma's mysql_async

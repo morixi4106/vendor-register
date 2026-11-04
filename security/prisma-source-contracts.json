@@ -9,20 +9,20 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "e2fb2c86568c17ba1f70bfd85952741b6f31a6f86f7e39f6880f955a7c1d185e"
+    "sha256": "0093791d99376307d3b99eb2d9065e77aed8a45ec6bedb8f9c6412afbcb92a1e"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "5aa81919de67279246a72da9d0d7f4061fb9e9f500bbb401c4e35299b92a0253"
+    "sha256": "1b414fe3fee9a488513afb4a034003d93d0caa9476a9ebf081c7850d7cf2e40f"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "10dcf2f60629263566ab4263b96b16194cbac6c1b28e6f20ab90f5ddb9960715"
+    "sha256": "8d69c60ab84ed49cb3f8e3dc93cfc6aa46e11fd5ebb37e65e60c3ed64605ed95"
   },
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "8430aac487b4a0dcc8728d57a528d0e86e8960a97a01df209b7e8ac6f3a034e7"
+      "sha256": "5a4ee804459f4118fc41007dc91fd51df87bad4a6ef86f708c02739f0ec6ea5f"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -38,11 +38,11 @@
     },
     {
       "path": "security-contracts/Cargo.toml",
-      "sha256": "6ce58c649d7c88973cec14735e91b9abae22dae44e9d09e002a75c26b4d51af0"
+      "sha256": "6c34e9ad89cb1bd5bc60703dcd40a0daccf8999ae77cadeda8ee94b8bae54c91"
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "3ac17307a2f185e9694d2c0a802591b951a34c5582e05ccb763938f2e375aa6e"
+      "sha256": "7aa4d59e8a4ebbd1efb279b05508b5aa29c5c9c773a4cfa6c98832bc6ed282f4"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -63,6 +63,18 @@
     {
       "path": "security-contracts/src/mysql_crypto.rs",
       "sha256": "7cc6cb390cd4aa21850c8b714c84ddc62597c066e05eec8361571d7a737a0197"
+    },
+    {
+      "path": "security-contracts/src/cuid_contracts.rs",
+      "sha256": "a07144e25a84ced3d3ddbcd1cb9f093fd67d11c7328ae3b346da01bc003b35d0"
+    },
+    {
+      "path": "query-engine/query-structure/Cargo.toml",
+      "sha256": "2ea509734b9d62d0d3fe6a90317d20d33ba87882fea4da5dc68dc8761a5d5cc7"
+    },
+    {
+      "path": "query-engine/query-structure/src/default_value.rs",
+      "sha256": "9020b9565f603a17f22e70705da0298d35c3c8bfded90108e917b8e7f9017cd3"
     }
   ],
   "dependencies": {
@@ -208,5 +220,107 @@
         "bindgen": "0.72.1"
       }
     }
-  ]
+  ],
+  "cuidSource": {
+    "repository": "prisma/cuid-rust",
+    "commit": "dc68c4f47a3dbcd511f605135ac7c948775a3ab9",
+    "sha256": "ee0c0f0a235bfd09e3fc42407ef0966759a7ef869dc2df01c8a57b54edd1afc5",
+    "reviewStatus": "UNREVIEWED",
+    "patch": {
+      "path": "vendor/native/prisma/cuid.patch",
+      "sha256": "add7b4f8da2c17de751874016004e30cb5d417d13591e62b6708df571a9f6b8f"
+    },
+    "packages": [
+      {
+        "name": "cuid",
+        "upstreamVersion": "1.3.3",
+        "version": "1.3.3+oja.1"
+      },
+      {
+        "name": "cuid-util",
+        "upstreamVersion": "0.1.1",
+        "version": "0.1.1+oja.1"
+      },
+      {
+        "name": "cuid1",
+        "upstreamVersion": "0.1.0",
+        "version": "0.1.0+oja.1"
+      },
+      {
+        "name": "cuid2",
+        "upstreamVersion": "0.1.3",
+        "version": "0.1.3+oja.1"
+      }
+    ],
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "cf586e4348d0faf91c7b8843c66ebf63dfbe4487f60ffe3f78180870509a27ac"
+      },
+      {
+        "path": "crates/cuid/Cargo.toml",
+        "sha256": "99ae2103f754b96a9c3b3535b1748591336d5cecf74f2823c329d1e12485ec79"
+      },
+      {
+        "path": "crates/cuid/src/bin.rs",
+        "sha256": "6a3aa405dabb5e326ccaf9120293ed79c7345dc7acaefecf7dce7761f81763a9"
+      },
+      {
+        "path": "crates/cuid/src/lib.rs",
+        "sha256": "e8ac013a0952f497c9cf8035c705bfaae466b30af8156ba5bec37d8dc5b05b58"
+      },
+      {
+        "path": "crates/cuid-util/Cargo.toml",
+        "sha256": "f7915417be85997449c97565470e53e22bbc00b708b735200b84889376fc2dac"
+      },
+      {
+        "path": "crates/cuid-util/src/lib.rs",
+        "sha256": "8cb49bfe916563ce0ef63a5d5d16f23ca5de33f5762b878a171107fd917cedab"
+      },
+      {
+        "path": "crates/cuid1/Cargo.toml",
+        "sha256": "49f7724f48fd97fad564ab9bd20ef08dd74c40e5be671c56b522a4915651ca04"
+      },
+      {
+        "path": "crates/cuid1/src/bin.rs",
+        "sha256": "e5ea114bae3a88a5230a10cd11f19744d642b1f46460d5e8ee0219112ec7dc16"
+      },
+      {
+        "path": "crates/cuid1/src/counter.rs",
+        "sha256": "df08469d51d6e29c6b00b3f0b739e4889a50b688d5db0b5e439ff8d7056c7c92"
+      },
+      {
+        "path": "crates/cuid1/src/fingerprint.rs",
+        "sha256": "8824a9d5cd53bd7f26e48cf389777e11c2c0a35101cd20b38853ac842fb01581"
+      },
+      {
+        "path": "crates/cuid1/src/lib.rs",
+        "sha256": "72e9fa78f13eb214c0bd0574506393ca2fb5f26023b94f412990dde7c541011b"
+      },
+      {
+        "path": "crates/cuid1/src/random.rs",
+        "sha256": "202a0a3421a22611eaab2fb1a4b1df56064311a22a5e85da066570da7f9a9b05"
+      },
+      {
+        "path": "crates/cuid1/src/text.rs",
+        "sha256": "37b3825419aa13de7f85308d67ed09646b60b0906b0b65f2a714804d06d22ca1"
+      },
+      {
+        "path": "crates/cuid1/src/time.rs",
+        "sha256": "ada621a6096af8a27d38e91a28922fd2b24a02bc2529fec9fc701100521b70e1"
+      },
+      {
+        "path": "crates/cuid2/Cargo.toml",
+        "sha256": "9c35deeed068d9dd4ca9b396d8ccc97a41dee52f9adb5a856081b7b44b6e7c5b"
+      },
+      {
+        "path": "crates/cuid2/src/bin.rs",
+        "sha256": "84489450b62bfa35f8f91f91b134e763b261fc76a91b1a69e53800f2239dfeff"
+      },
+      {
+        "path": "crates/cuid2/src/lib.rs",
+        "sha256": "9cc80a26a3148fc321883647be9ed7757a9c8e3d9cb3cb5d0ea6549db48f4654"
+      }
+    ]
+  }
 }

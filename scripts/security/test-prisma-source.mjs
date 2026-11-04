@@ -17,6 +17,13 @@ import {
   checkPrismaMysqlWiring,
   checkPrismaMysqlMetadata,
 } from "./prisma-mysql-source.mjs";
+import {
+  validatePrismaCuidSource,
+  preparePrismaCuidSource,
+  checkPrismaCuidWiring,
+  checkPrismaCuidMetadata,
+  prismaPatchedGitSources,
+} from "./prisma-cuid-source.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -42,6 +49,9 @@ const SOURCE_FILES = [
   "security-contracts/src/mongodb_compression.rs",
   "security-contracts/src/mysql_contracts.rs",
   "security-contracts/src/mysql_crypto.rs",
+  "security-contracts/src/cuid_contracts.rs",
+  "query-engine/query-structure/Cargo.toml",
+  "query-engine/query-structure/src/default_value.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -71,6 +81,7 @@ export function validatePrismaSourcePolicy(policy) {
       "dependencies",
       "overrides",
       "mysqlSources",
+      "cuidSource",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
@@ -142,6 +153,7 @@ export function validatePrismaSourcePolicy(policy) {
       throw new Error("prisma_source_policy_invalid");
   });
   validatePrismaMysqlSources(policy.mysqlSources);
+  validatePrismaCuidSource(policy.cuidSource);
   return policy;
 }
 
@@ -182,6 +194,7 @@ export function checkPrismaClientVersion(manifest, policy) {
 export function checkPrismaSourceWiring(source, policy) {
   for (const item of policy.sourceFiles) prismaSourceInput(source, item);
   checkPrismaMysqlWiring(source, policy.mysqlSources, prismaSourceInput);
+  checkPrismaCuidWiring(source, policy.cuidSource, prismaSourceInput);
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
@@ -295,7 +308,7 @@ export function checkPrismaMetadata(
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
-      locals.length !== 4 ||
+      locals.length !== 8 ||
       !rootFor("oja-prisma-source-contracts") ||
       path.dirname(
         fs.realpathSync(rootFor("oja-prisma-source-contracts").manifest_path),
@@ -306,6 +319,7 @@ export function checkPrismaMetadata(
   checkPrismaMysqlMetadata(metadata, source, policy.mysqlSources, {
     contracts,
   });
+  checkPrismaCuidMetadata(metadata, source, policy.cuidSource, { contracts });
   const override = policy.overrides[0];
   const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
   const node = nodes.get(mongo[0]?.id);
@@ -393,16 +407,7 @@ export function prismaUnitArguments() {
 }
 
 export function prismaContractAssessment(policy, report) {
-  const gitSources = policy.mysqlSources
-    .filter((entry) => entry.gitSource)
-    .map((entry) => ({
-      name: entry.name,
-      version: entry.version,
-      reason: "git_derived_override_requires_review",
-      repository: entry.gitSource.repository,
-      commit: entry.gitSource.commit,
-      archiveSha256: entry.sha256,
-    }));
+  const gitSources = prismaPatchedGitSources(policy);
   return {
     ...report,
     registryAuditOk: report.sourceAuditOk,
@@ -412,9 +417,7 @@ export function prismaContractAssessment(policy, report) {
 }
 
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
-  const patchedGitSources = policy.mysqlSources.filter(
-    (entry) => entry.gitSource,
-  ).length;
+  const patchedGitSources = prismaPatchedGitSources(policy).length;
   return {
     schemaVersion: 1,
     role: policy.role,
@@ -425,6 +428,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     patchSha256: policy.patch.sha256,
     overrides: policy.overrides,
     mysqlSources: policy.mysqlSources,
+    cuidSource: policy.cuidSource,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length + patchedGitSources,
@@ -459,6 +463,7 @@ export async function testPrismaSource(
   for (const override of policy.overrides)
     prismaSourceInput(root, override.patch);
   for (const entry of policy.mysqlSources) prismaSourceInput(root, entry.patch);
+  prismaSourceInput(root, policy.cuidSource.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -540,6 +545,14 @@ export async function testPrismaSource(
     source,
     cache,
     policy.mysqlSources,
+    execute,
+    prismaSourceInput,
+  );
+  await preparePrismaCuidSource(
+    root,
+    source,
+    cache,
+    policy.cuidSource,
     execute,
     prismaSourceInput,
   );
@@ -633,7 +646,7 @@ export async function testPrismaSource(
         "contracts",
         900_000,
       ),
-      42,
+      56,
     );
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
