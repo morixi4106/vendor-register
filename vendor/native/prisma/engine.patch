@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..42b1675 100644
+index 307dd8c..4b291cf 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
@@ -50,6 +50,15 @@ index 307dd8c..42b1675 100644
  names = { version = "0.11", default-features = false }
  nanoid = "0.4"
  napi = { version = "2", default-features = false, features = [
+@@ -110,7 +113,7 @@ nom = "7"
+ num_cpus = "1"
+ parking_lot = "0.12"
+ parse-hyperlinks = "0.23"
+-paste = "1"
++paste = { package = "pastey", version = "=0.2.3" }
+ percent-encoding = "2"
+ pest = "2"
+ pest_derive = "2"
 @@ -122,9 +125,9 @@ pretty = "0.12"
  rustc-hash = "2"
  rand = "0.8"
@@ -71,6 +80,15 @@ index 307dd8c..42b1675 100644
  sqlformat = "0.2"
  sqlparser = "0.32"
  sqlx-core = "0.8"
+@@ -174,7 +177,7 @@ quote = "1"
+ syn = "2"
+
+ # dev dependencies
+-codspeed-criterion-compat = "1"
++codspeed-criterion-compat = "=6.0.0"
+ dissimilar = "1"
+ expect-test = "1"
+ flate2 = "1"
 @@ -256,3 +259,8 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
@@ -183,7 +201,7 @@ diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/Cargo.toml
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,24 @@
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
@@ -193,6 +211,7 @@ new file mode 100644
 +[workspace]
 +
 +[dependencies]
++paste = { package = "pastey", version = "=0.2.3" }
 +winauth = { path = "../vendor/winauth", features = ["oja-security-contracts"] }
 +lru = "=0.18.2"
 +sha2 = "=0.11.1"
@@ -211,7 +230,7 @@ diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,59 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -238,6 +257,9 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod winauth_parser_contracts;
++
++#[cfg(test)]
++mod paste_contracts;
 +
 +#[cfg(test)]
 +mod tests {
@@ -2137,3 +2159,102 @@ new file mode 100644
 +    oversized_response_rejected,
 +    failed_challenges_do_not_accumulate,
 +);
+diff --git a/security-contracts/src/paste_contracts.rs b/security-contracts/src/paste_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/paste_contracts.rs
+@@ -0,0 +1,94 @@
++use paste::paste;
++
++#[test]
++fn item_alias_keeps_quaint_generated_type_test_names() {
++    paste::item! {
++        fn [<test_type_ scalar _round_trip>]() -> u32 { 17 }
++    }
++    assert_eq!(test_type_scalar_round_trip(), 17);
++}
++
++#[test]
++fn expr_alias_keeps_identifier_expressions() {
++    let column_type = 23;
++    assert_eq!(paste::expr! { [<column _type>] }, 23);
++}
++
++#[test]
++fn nested_repetitions_keep_generated_test_names_and_calls() {
++    macro_rules! cases {
++        ($($db:ident),+) => {
++            paste! {
++                $(fn [<$db _test_api>]() -> &'static str { stringify!($db) })+
++                fn generated() -> Vec<&'static str> { vec![$([<$db _test_api>]()),+] }
++            }
++        };
++    }
++    cases!(postgres, mysql, sqlite, mssql);
++    assert_eq!(generated(), ["postgres", "mysql", "sqlite", "mssql"]);
++}
++
++#[test]
++fn case_modifiers_keep_introspection_identifiers() {
++    macro_rules! names {
++        ($name:ident) => {
++            paste! {
++                struct [<$name:camel>];
++                impl [<$name:camel>] {
++                    fn [<$name:snake>]() -> &'static str { stringify!([<$name:upper>]) }
++                }
++            }
++        };
++    }
++    names!(query_engine);
++    assert_eq!(QueryEngine::query_engine(), "QUERY_ENGINE");
++}
++
++#[test]
++fn composed_modifiers_keep_upper_snake_case() {
++    macro_rules! constant {
++        ($name:ident) => {
++            paste! { const [<$name:snake:upper>]: &str = stringify!($name); }
++        };
++    }
++    constant!(RelationLoadStrategy);
++    assert_eq!(RELATION_LOAD_STRATEGY, "RelationLoadStrategy");
++}
++
++#[test]
++fn lifetime_and_field_generation_keep_accessors() {
++    macro_rules! accessor {
++        ($field:ident) => {
++            paste! {
++                fn [<get_ $field>]<[<'value>]>(value: &[<'value>] str) -> &[<'value>] str { value }
++            }
++        };
++    }
++    accessor!(name);
++    assert_eq!(get_name("example"), "example");
++}
++
++#[test]
++fn documentation_and_attributes_expand_with_items() {
++    macro_rules! documented {
++        ($field:ident) => {
++            paste! {
++                #[doc = "Read " $field " value."]
++                #[allow(non_snake_case)]
++                fn [<read_ $field>]() -> bool { true }
++            }
++        };
++    }
++    documented!(ID);
++    assert!(read_ID());
++}
++
++#[test]
++fn string_literal_segments_keep_relation_strategy_names() {
++    paste! {
++        fn [<"relation_" join "_strategy">]() -> &'static str { "join" }
++        fn [<"relation_" query "_strategy">]() -> &'static str { "query" }
++    }
++    assert_eq!(relation_join_strategy(), "join");
++    assert_eq!(relation_query_strategy(), "query");
++}

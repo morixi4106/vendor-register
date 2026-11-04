@@ -13,6 +13,11 @@ import {
   rustTestTotals,
   prismaUnitArguments,
   prismaParserTestTotals,
+  checkPrismaMaintenanceMetadata,
+  prismaPasteTestTotals,
+  prismaBenchmarkArguments,
+  prismaBenchmarkTotals,
+  prismaPasteConsumerArguments,
   prismaCliArguments,
   prismaHttpClientArguments,
   prismaHttpClientCheckArguments,
@@ -223,7 +228,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
       policy.cuidSource.packages.length,
     13,
   );
-  assert.equal(contracts.packages.length, 353);
+  assert.equal(contracts.packages.length, 354);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -389,6 +394,11 @@ const metadataFixture = (t, contracts) => {
         "prisma-fmt",
         "black-box-tests",
         "query-tests-setup",
+        "schema",
+        "request-handlers",
+        "quaint",
+        "query-engine-tests",
+        "sql-migration-tests",
       ];
   const packages = owners.map((name) => {
     const directory = path.join(
@@ -399,6 +409,11 @@ const metadataFixture = (t, contracts) => {
             "query-engine": "query-engine/query-engine",
             "schema-engine-cli": "schema-engine/cli",
             "black-box-tests": "query-engine/black-box-tests",
+            schema: "query-engine/schema",
+            "request-handlers": "query-engine/request-handlers",
+            "query-engine-tests":
+              "query-engine/connector-test-kit-rs/query-engine-tests",
+            "sql-migration-tests": "schema-engine/sql-migration-tests",
           }[name] || name,
     );
     fs.mkdirSync(directory, { recursive: true });
@@ -413,6 +428,50 @@ const metadataFixture = (t, contracts) => {
     };
   });
   const nodes = owners.map((name) => ({ id: name, deps: [] }));
+  const registry = "registry+https://github.com/rust-lang/crates.io-index";
+  packages.push({
+    id: "pastey",
+    name: "pastey",
+    version: "0.2.3",
+    source: registry,
+  });
+  nodes.push({ id: "pastey", features: [], deps: [] });
+  for (const name of contracts
+    ? ["oja-prisma-source-contracts"]
+    : ["quaint", "query-engine-tests", "sql-migration-tests"])
+    nodes
+      .find((n) => n.id === name)
+      .deps.push({ name: "paste", pkg: "pastey" });
+  if (!contracts) {
+    for (const name of [
+      "codspeed",
+      "codspeed-criterion-compat",
+      "codspeed-criterion-compat-walltime",
+    ])
+      packages.push({ id: name, name, version: "6.0.0", source: registry });
+    nodes.push({
+      id: "codspeed-criterion-compat",
+      features: ["plotters", "rayon", "cargo_bench_support"],
+      deps: [
+        { name: "codspeed", pkg: "codspeed" },
+        { name: "criterion", pkg: "codspeed-criterion-compat-walltime" },
+      ],
+    });
+    for (const [name, bench] of [
+      ["schema", "schema_builder_bench"],
+      ["request-handlers", "query_planning_bench"],
+    ]) {
+      packages.find((p) => p.name === name).targets = [
+        { name: bench, kind: ["bench"] },
+      ];
+      nodes
+        .find((n) => n.id === name)
+        .deps.push({
+          name: "codspeed_criterion_compat",
+          pkg: "codspeed-criterion-compat",
+        });
+    }
+  }
   if (!contracts) {
     packages.push({
       id: "tiberius",
@@ -823,6 +882,198 @@ test("winauth wiring binds the workspace, consumer features, license and offline
     );
     fs.writeFileSync(path.join(source, file), content);
   }
+});
+
+test("maintenance policy binds exact maintained packages and all original consumers", () => {
+  assert.equal(validatePrismaSourcePolicy(policy), policy);
+  for (const change of [
+    (p) => {
+      delete p.maintenanceDependencies;
+    },
+    (p) => {
+      p.maintenanceDependencies.pastey = "*";
+    },
+    (p) => {
+      p.maintenanceDependencies["codspeed-criterion-compat"] = "1.1.0";
+    },
+    (p) => {
+      p.maintenanceDependencies["codspeed-criterion-compat-walltime"] = "5.0.3";
+    },
+    (p) => {
+      p.maintenanceDependencies.atty = "0.2.14";
+    },
+    (p) => {
+      p.sourceFiles.pop();
+    },
+  ]) {
+    const changed = structuredClone(policy);
+    change(changed);
+    assert.throws(
+      () => validatePrismaSourcePolicy(changed),
+      /prisma_source_policy_invalid/,
+    );
+  }
+  for (const name of ["atty", "paste"]) {
+    assert.equal(
+      rustRegistryPackages(
+        prismaSourceInput(ROOT, policy.lockfile).toString(),
+      ).packages.some((p) => p.name === name),
+      false,
+    );
+  }
+  const enginePatch = prismaSourceInput(ROOT, policy.patch).toString();
+  assert.ok(
+    enginePatch.includes('+paste = { package = "pastey", version = "=0.2.3" }'),
+  );
+  assert.ok(enginePatch.includes('+codspeed-criterion-compat = "=6.0.0"'));
+  for (const file of [
+    "quaint/src/macros.rs",
+    "query-engine/schema/benches/schema_builder_bench.rs",
+    "query-engine/request-handlers/benches/query_planning_bench.rs",
+  ])
+    assert.ok(policy.sourceFiles.some((entry) => entry.path === file));
+});
+
+test("maintenance metadata rejects removed consumers, old resolutions and feature stripping", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "pastey").name = "paste";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "pastey").version = "0.1.0";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "pastey").source = null;
+    },
+    (m) => {
+      m.packages.push({ id: "atty", name: "atty", version: "0.2.14" });
+    },
+    (m) => {
+      m.packages.push({ id: "criterion", name: "criterion", version: "0.4.0" });
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "codspeed-criterion-compat")
+        .features.pop();
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "codspeed-criterion-compat")
+        .deps.pop();
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "codspeed").version = "1.1.0";
+    },
+    ...[
+      "quaint",
+      "query-engine-tests",
+      "sql-migration-tests",
+      "schema",
+      "request-handlers",
+    ].map((name) => (m) => {
+      m.resolve.nodes.find((n) => n.id === name).deps = [];
+    }),
+    (m) => {
+      m.packages.find((p) => p.name === "schema").targets = [];
+    },
+  ]) {
+    const { metadata } = metadataFixture(t, false);
+    assert.equal(checkPrismaMaintenanceMetadata(metadata, policy), true);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMaintenanceMetadata(metadata, policy),
+      /prisma_maintenance_resolution_invalid/,
+    );
+  }
+});
+
+test("paste contracts bind the registry implementation under the existing import alias", (t) => {
+  for (const contracts of [false, true]) {
+    const { metadata } = metadataFixture(t, contracts);
+    assert.equal(
+      checkPrismaMaintenanceMetadata(metadata, policy, { contracts }),
+      true,
+    );
+    const consumer = contracts
+      ? "oja-prisma-source-contracts"
+      : "query-engine-tests";
+    metadata.resolve.nodes
+      .find((n) => n.id === consumer)
+      .deps.find((d) => d.name === "paste").name = "pastey";
+    assert.throws(
+      () => checkPrismaMaintenanceMetadata(metadata, policy, { contracts }),
+      /prisma_maintenance_resolution_invalid/,
+    );
+  }
+});
+
+test("paste receipts require eight distinct successful macro regressions", () => {
+  const lines = Array.from(
+    { length: 8 },
+    (_, i) => `test paste_contracts::case_${i} ... ok`,
+  );
+  assert.deepEqual(prismaPasteTestTotals(lines.join("\n")), {
+    passed: 8,
+    failed: 0,
+    ignored: 0,
+  });
+  for (const invalid of [
+    lines.slice(1),
+    [...lines.slice(1), lines[1]],
+    [...lines.slice(1), lines[0].replace("ok", "ignored")],
+    [...lines, lines[0]],
+    ["test unrelated::case ... ok"],
+  ])
+    assert.throws(
+      () => prismaPasteTestTotals(invalid.join("\n")),
+      /prisma_paste_tests_incomplete/,
+    );
+});
+
+test("benchmark smoke receipts require every original case and reject duplicates or missing successes", () => {
+  const commands = prismaBenchmarkArguments();
+  assert.equal(commands.length, 2);
+  for (const command of commands) {
+    assert.ok(command.args.includes("--locked"));
+    assert.deepEqual(command.args.slice(-2), ["--", "--test"]);
+    const output = command.cases
+      .map((name) => `Testing ${name}\nSuccess\n`)
+      .join("\n");
+    assert.equal(
+      prismaBenchmarkTotals(output, command.cases).passed,
+      command.cases.length,
+    );
+    assert.equal(
+      prismaBenchmarkTotals(output.replaceAll("\n", "\r\n"), command.cases)
+        .passed,
+      command.cases.length,
+    );
+    for (const invalid of [
+      "",
+      output.replace("Success", "Failed"),
+      output + output,
+      output.replace(command.cases[0], command.cases[1]),
+    ])
+      assert.throws(
+        () => prismaBenchmarkTotals(invalid, command.cases),
+        /prisma_benchmark_tests_incomplete/,
+      );
+  }
+});
+
+test("macro consumer compilation checks all original tests and native dialects without executing database tests", () => {
+  const args = prismaPasteConsumerArguments();
+  assert.equal(args[0], "check");
+  assert.ok(args.includes("--locked"));
+  assert.ok(args.includes("--tests"));
+  for (const name of [
+    "quaint",
+    "query-engine-tests",
+    "sql-migration-tests",
+    "quaint/all-native",
+  ])
+    assert.ok(args.includes(name));
+  assert.equal(args.includes("--no-default-features"), false);
 });
 
 test("metadata checks actual query-core and migration checksum dependency resolution", (t) => {

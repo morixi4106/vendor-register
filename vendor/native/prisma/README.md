@@ -10,8 +10,25 @@ Database commands are only parsed in the new CLI contract namespace, never
 executed. Flags, environment precedence, JSON/base64/file inputs and legacy
 argument-error exit1/help-version exit0 are checked separately from full engine
 or database approval. Help/error formatting is not byte-identical to clap2.
-The complete graph still retains benchmark/HTTP/crypto notices and unreviewed
-Git sources. Native, migration and production approval remain false.
+The complete graph still retains unreviewed Git sources. A registry scan without
+matches does not establish native, migration or production approval.
+
+The maintenance follow-up retains the `paste` import alias but resolves it to
+the official pastey 0.2.3 registry package. All three original macro consumers
+and their test sources remain present. Eight additional contracts cover the
+existing item/expr aliases, generated names, nested repetitions, case modifiers,
+lifetimes, documentation and literal segments. The actual quaint, query-engine
+and migration test consumers are also compiled with all native SQL dialects;
+their database-dependent tests are not executed by this source-only workflow.
+
+Both original benchmarks use official codspeed-criterion-compat 6.0.0 with its
+matching CodSpeed and walltime packages, keeping default plotting, parallelism
+and cargo-bench features. All original benchmark bodies and names are unchanged.
+They run in correctness-only test mode: six schema cases and five query-planning
+cases must each succeed. This is not a timing, instrumentation-service or live
+database benchmark approval. Fixed locks and actual metadata reject legacy
+atty/paste/criterion0.4, detached aliases/consumers and disabled benchmark features.
+The original upstream source scan remains separate and is not suppressed.
 
 Full CLI compilation also checks the existing MSSQL numeric boundary. Tiberius
 uses BigDecimal0.4 while the engine retains0.3. Convert exact integer mantissa

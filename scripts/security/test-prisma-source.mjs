@@ -78,6 +78,31 @@ const SOURCE_FILES = [
   "quaint/Cargo.toml",
   "security-contracts/src/winauth_contracts.rs",
   "security-contracts/src/winauth_parser_contracts.rs",
+  "security-contracts/src/paste_contracts.rs",
+  "query-engine/schema/Cargo.toml",
+  "query-engine/schema/benches/schema_builder_bench.rs",
+  "query-engine/request-handlers/Cargo.toml",
+  "query-engine/request-handlers/benches/query_planning_bench.rs",
+  "query-engine/connector-test-kit-rs/query-engine-tests/Cargo.toml",
+  "schema-engine/sql-migration-tests/Cargo.toml",
+  "quaint/src/macros.rs",
+];
+const PASTE_CONSUMERS = [
+  ["quaint", "quaint/Cargo.toml", "dev-dependencies"],
+  [
+    "query-engine-tests",
+    "query-engine/connector-test-kit-rs/query-engine-tests/Cargo.toml",
+    "dependencies",
+  ],
+  [
+    "sql-migration-tests",
+    "schema-engine/sql-migration-tests/Cargo.toml",
+    "dev-dependencies",
+  ],
+];
+const BENCHMARKS = [
+  ["schema", "schema_builder_bench", "query-engine/schema"],
+  ["request-handlers", "query_planning_bench", "query-engine/request-handlers"],
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -112,6 +137,7 @@ export function validatePrismaSourcePolicy(policy) {
       "cliVersion",
       "httpClientVersion",
       "httpServerDependencies",
+      "maintenanceDependencies",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
@@ -128,6 +154,15 @@ export function validatePrismaSourcePolicy(policy) {
     policy.httpServerDependencies["hyper-util"] !== "0.1.21" ||
     policy.httpServerDependencies["http-body-util"] !== "0.1.5" ||
     policy.httpServerDependencies.h2 !== "0.4.20" ||
+    !exact(policy.maintenanceDependencies, [
+      "pastey",
+      "codspeed-criterion-compat",
+      "codspeed-criterion-compat-walltime",
+    ]) ||
+    policy.maintenanceDependencies.pastey !== "0.2.3" ||
+    policy.maintenanceDependencies["codspeed-criterion-compat"] !== "6.0.0" ||
+    policy.maintenanceDependencies["codspeed-criterion-compat-walltime"] !==
+      "6.0.0" ||
     !exact(policy.source, ["repository", "commit", "sha256"]) ||
     policy.source.repository !== "prisma/prisma-engines" ||
     policy.source.commit !== "c2990dca591cba766e3b7ef5d9e8a84796e47ab7" ||
@@ -340,6 +375,36 @@ export function checkPrismaSourceWiring(source, policy) {
   const contract = toml.parse(
     fs.readFileSync(path.join(source, "security-contracts/Cargo.toml"), "utf8"),
   );
+  const readManifest = (relative) =>
+    toml.parse(fs.readFileSync(path.join(source, relative), "utf8"));
+  const paste = manifest.workspace.dependencies.paste;
+  if (
+    !exact(paste, ["package", "version"]) ||
+    paste.package !== "pastey" ||
+    paste.version !== `=${policy.maintenanceDependencies.pastey}` ||
+    JSON.stringify(contract.dependencies.paste) !== JSON.stringify(paste) ||
+    manifest.workspace.dependencies["codspeed-criterion-compat"] !==
+      `=${policy.maintenanceDependencies["codspeed-criterion-compat"]}` ||
+    !fs
+      .readFileSync(path.join(source, "security-contracts/src/lib.rs"), "utf8")
+      .includes("#[cfg(test)]\nmod paste_contracts;")
+  )
+    throw new Error("prisma_maintenance_wiring_invalid");
+  for (const [, relative, kind] of PASTE_CONSUMERS) {
+    if (readManifest(relative)[kind]?.paste?.workspace !== true)
+      throw new Error("prisma_maintenance_wiring_invalid");
+  }
+  for (const [, bench, relative] of BENCHMARKS) {
+    const consumer = readManifest(`${relative}/Cargo.toml`);
+    if (
+      consumer["dev-dependencies"]?.["codspeed-criterion-compat"]?.workspace !==
+        true ||
+      !consumer.bench?.some(
+        (target) => target.name === bench && target.harness === false,
+      )
+    )
+      throw new Error("prisma_maintenance_wiring_invalid");
+  }
   const core = toml.parse(
     fs.readFileSync(path.join(source, "query-engine/core/Cargo.toml"), "utf8"),
   );
@@ -568,6 +633,7 @@ export function checkPrismaMetadata(
     contracts,
     target,
   });
+  checkPrismaMaintenanceMetadata(metadata, policy, { contracts });
   const override = policy.overrides[0];
   const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
   const node = nodes.get(mongo[0]?.id);
@@ -665,6 +731,152 @@ export function prismaParserTestTotals(output) {
   )
     throw new Error("prisma_parser_tests_incomplete");
   return { passed: 24, failed: 0, ignored: 0 };
+}
+
+export function checkPrismaMaintenanceMetadata(
+  metadata,
+  policy,
+  { contracts = false } = {},
+) {
+  const registry = "registry+https://github.com/rust-lang/crates.io-index";
+  const packages = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
+  const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
+  const owner = (name) =>
+    metadata.packages.find((pkg) => pkg.name === name && !pkg.source);
+  const dependency = (pkg, name) =>
+    packages.get(
+      nodes.get(pkg?.id)?.deps.find((dep) => dep.name === name)?.pkg,
+    );
+  for (const pkg of metadata.packages) {
+    if (
+      ["atty", "paste"].includes(pkg.name) ||
+      (pkg.name === "criterion" && pkg.version === "0.4.0") ||
+      (Object.hasOwn(policy.maintenanceDependencies, pkg.name) &&
+        (pkg.version !== policy.maintenanceDependencies[pkg.name] ||
+          pkg.source !== registry))
+    )
+      throw new Error("prisma_maintenance_resolution_invalid");
+  }
+  const macro = metadata.packages.filter((pkg) => pkg.name === "pastey");
+  if (macro.length !== 1)
+    throw new Error("prisma_maintenance_resolution_invalid");
+  for (const name of contracts
+    ? ["oja-prisma-source-contracts"]
+    : PASTE_CONSUMERS.map(([name]) => name)) {
+    if (dependency(owner(name), "paste")?.id !== macro[0].id)
+      throw new Error("prisma_maintenance_resolution_invalid");
+  }
+  if (contracts) return true;
+  const compat = metadata.packages.filter(
+    (pkg) => pkg.name === "codspeed-criterion-compat",
+  );
+  const walltime = metadata.packages.filter(
+    (pkg) => pkg.name === "codspeed-criterion-compat-walltime",
+  );
+  const speed = dependency(compat[0], "codspeed");
+  if (
+    compat.length !== 1 ||
+    walltime.length !== 1 ||
+    dependency(compat[0], "criterion")?.id !== walltime[0].id ||
+    speed?.name !== "codspeed" ||
+    speed.version !== "6.0.0" ||
+    speed.source !== registry ||
+    !["rayon", "plotters", "cargo_bench_support"].every((f) =>
+      nodes.get(compat[0]?.id)?.features?.includes(f),
+    )
+  )
+    throw new Error("prisma_maintenance_resolution_invalid");
+  for (const [name, bench] of BENCHMARKS) {
+    const consumer = owner(name);
+    if (
+      dependency(consumer, "codspeed_criterion_compat")?.id !== compat[0].id ||
+      !consumer?.targets?.some(
+        (target) => target.name === bench && target.kind.includes("bench"),
+      )
+    )
+      throw new Error("prisma_maintenance_resolution_invalid");
+  }
+  return true;
+}
+
+export function prismaPasteTestTotals(output) {
+  const cases = [
+    ...output.matchAll(/^test paste_contracts::(\S+) \.\.\. (.+)$/gm),
+  ];
+  if (
+    cases.length !== 8 ||
+    new Set(cases.map((item) => item[1])).size !== 8 ||
+    cases.some((item) => item[2].trim() !== "ok")
+  )
+    throw new Error("prisma_paste_tests_incomplete");
+  return { passed: 8, failed: 0, ignored: 0 };
+}
+
+export function prismaBenchmarkArguments() {
+  return BENCHMARKS.map(([name, bench]) => ({
+    label: `benchmark-${name}`,
+    args: [
+      "test",
+      "--locked",
+      "--package",
+      name,
+      "--bench",
+      bench,
+      "--",
+      "--test",
+    ],
+    cases:
+      name === "schema"
+        ? [
+            "psl::validate (small)",
+            "schema_builder::build (small)",
+            "psl::validate (medium)",
+            "schema_builder::build (medium)",
+            "psl::validate (large)",
+            "schema_builder::build (large)",
+          ]
+        : [
+            "small_read",
+            "medium_read",
+            "large_read",
+            "deep_read_query",
+            "mutation",
+          ],
+  }));
+}
+
+export function prismaBenchmarkTotals(output, cases) {
+  const successes = [...output.matchAll(/^Testing (.+)\r?\nSuccess\r?$/gm)].map(
+    (match) => match[1],
+  );
+  if (
+    successes.length !== cases.length ||
+    new Set(successes).size !== cases.length ||
+    cases.some((name) => !successes.includes(name))
+  )
+    throw new Error("prisma_benchmark_tests_incomplete");
+  return {
+    passed: cases.length,
+    failed: 0,
+    scope:
+      "existing benchmark correctness smoke; not timing or instrumentation approval",
+  };
+}
+
+export function prismaPasteConsumerArguments() {
+  return [
+    "check",
+    "--locked",
+    "--package",
+    "quaint",
+    "--package",
+    "query-engine-tests",
+    "--package",
+    "sql-migration-tests",
+    "--features",
+    "quaint/all-native",
+    "--tests",
+  ];
 }
 
 export function prismaCliArguments() {
@@ -779,6 +991,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
     httpServerDependencies: policy.httpServerDependencies,
+    maintenanceDependencies: policy.maintenanceDependencies,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length + patchedGitSources,
@@ -1011,8 +1224,9 @@ export async function testPrismaSource(
       "contracts",
       900_000,
     );
-    tests.contracts = rustTestTotals(contractOutput, 88);
+    tests.contracts = rustTestTotals(contractOutput, 96);
     tests.ntlmParser = prismaParserTestTotals(contractOutput);
+    tests.paste = prismaPasteTestTotals(contractOutput);
     env.GIT_HASH = policy.source.commit;
     tests.cli = {};
     for (const command of prismaCliArguments()) {
@@ -1062,6 +1276,21 @@ export async function testPrismaSource(
         8,
       );
     }
+    tests.benchmarks = {};
+    for (const command of prismaBenchmarkArguments()) {
+      tests.benchmarks[command.label] = prismaBenchmarkTotals(
+        execute(cargo, command.args, source, command.label, 1_800_000),
+        command.cases,
+      );
+    }
+    execute(
+      cargo,
+      prismaPasteConsumerArguments(),
+      source,
+      "paste-consumers",
+      1_800_000,
+    );
+    tests.pasteConsumersChecked = true;
   }
   if (
     digest(fs.readFileSync(path.join(source, "Cargo.lock"))) !==

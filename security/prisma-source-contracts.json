@@ -9,20 +9,20 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "70f18392faf18ffca479b63f316c205e2de2ffc43c530502f0aab02df6aec133"
+    "sha256": "123c91fc703481aea4a66cb753313cc97982af202f643ce855be32c7bd101237"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "45014d90a6b84e511e364c4e35b6bb06778211dc3c533e6472b0b72d526e4d60"
+    "sha256": "2fc4173457903c98773100f574196d9a220cebedda3ecc668bbafa64585406d4"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "1f9ef5d0ab03742ec98ccc7e5bca8cf5022fafeb6e5c65718788220d7a211494"
+    "sha256": "6e7871e7e690151790b82bb4c6cfec10086d0c3c1667194800e9fa77ee8f08bc"
   },
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "c0e9850f3a10848b04fb5276fe7b58fd071044f5ee4219c8b91481965013bb30"
+      "sha256": "b4cd8706a8b4bf5edd5da9911a4fdb0cbd842005ffae07c560ad890590ca0e1b"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -38,11 +38,11 @@
     },
     {
       "path": "security-contracts/Cargo.toml",
-      "sha256": "9568e78065dd9442072dccf6403d2f2025f7b1201dd24a2cc7ec183a5e79cee9"
+      "sha256": "7379e66313932abe95e5b456adb0340e058ec85452e10d4d38a4a8208484e81e"
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "68abc1db71131f22ea8d9c8c8cd094d7bf3bc9be112932f33275d2d4007f3676"
+      "sha256": "61d64f210f6d29f8c7ea22a6840e0d89ef94fea82f8978b785d136aecf9cc294"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -155,6 +155,38 @@
     {
       "path": "security-contracts/src/winauth_parser_contracts.rs",
       "sha256": "9d8d1e878994abe365422cf32540baa8f9bf41f868359b40db86f0e6c532d9d0"
+    },
+    {
+      "path": "security-contracts/src/paste_contracts.rs",
+      "sha256": "e7dd83e32cd8d0d6dc892a55fb2f8997d7044b3403693578919ad4343902c40c"
+    },
+    {
+      "path": "query-engine/schema/Cargo.toml",
+      "sha256": "4e7700f9ad2f7048f01ddf022d967ef015ab9c78efdb2d588a5da48b4213c2f5"
+    },
+    {
+      "path": "query-engine/schema/benches/schema_builder_bench.rs",
+      "sha256": "2c9c29bf15cad086db0e4dbebdc76e154cd2dace0bb4ce29711746359fd3d024"
+    },
+    {
+      "path": "query-engine/request-handlers/Cargo.toml",
+      "sha256": "6b46fb4e40a6cd68af93c8c4832ed06cd67bfc703d72f2e32f047628c37bab5c"
+    },
+    {
+      "path": "query-engine/request-handlers/benches/query_planning_bench.rs",
+      "sha256": "acf6c74a79aa5db7b07d1615745bf477df16e2cc81ec5404a31fa9bbdd9cce97"
+    },
+    {
+      "path": "query-engine/connector-test-kit-rs/query-engine-tests/Cargo.toml",
+      "sha256": "42bc4b82c56779309cc03cc718e5b3275ac033800c3fd4b70b7fee36cd4e3588"
+    },
+    {
+      "path": "schema-engine/sql-migration-tests/Cargo.toml",
+      "sha256": "0a7eb33a7faac14bf6d3a5d9958521e427a81d35e7632acb118a59e2bbc6f501"
+    },
+    {
+      "path": "quaint/src/macros.rs",
+      "sha256": "b3a1c0d566f42cb7dea3ee2f91d54e37702371d7072e5d1dc55be813837cb8dd"
     }
   ],
   "dependencies": {
@@ -463,5 +495,10 @@
       }
     ],
     "randVersion": "0.8.8"
+  },
+  "maintenanceDependencies": {
+    "pastey": "0.2.3",
+    "codspeed-criterion-compat": "6.0.0",
+    "codspeed-criterion-compat-walltime": "6.0.0"
   }
 }
