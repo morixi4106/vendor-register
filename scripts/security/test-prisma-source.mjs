@@ -820,6 +820,10 @@ export function prismaBenchmarkArguments() {
       "--locked",
       "--package",
       name,
+      // The planning benchmark imports connector types through request-handlers.
+      ...(name === "request-handlers"
+        ? ["--features", "request-handlers/all"]
+        : []),
       "--bench",
       bench,
       "--",

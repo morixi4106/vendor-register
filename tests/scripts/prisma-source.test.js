@@ -1033,6 +1033,11 @@ test("paste receipts require eight distinct successful macro regressions", () =>
 test("benchmark smoke receipts require every original case and reject duplicates or missing successes", () => {
   const commands = prismaBenchmarkArguments();
   assert.equal(commands.length, 2);
+  assert.ok(
+    commands
+      .find((command) => command.label === "benchmark-request-handlers")
+      .args.includes("request-handlers/all"),
+  );
   for (const command of commands) {
     assert.ok(command.args.includes("--locked"));
     assert.deepEqual(command.args.slice(-2), ["--", "--test"]);
