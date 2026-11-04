@@ -52,6 +52,14 @@ const SOURCE_FILES = [
   "security-contracts/src/cuid_contracts.rs",
   "query-engine/query-structure/Cargo.toml",
   "query-engine/query-structure/src/default_value.rs",
+  "query-engine/query-engine/Cargo.toml",
+  "query-engine/query-engine/src/main.rs",
+  "query-engine/query-engine/src/opt.rs",
+  "schema-engine/cli/Cargo.toml",
+  "schema-engine/cli/src/main.rs",
+  "schema-engine/cli/src/commands.rs",
+  "prisma-fmt/Cargo.toml",
+  "prisma-fmt/src/main.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -82,10 +90,12 @@ export function validatePrismaSourcePolicy(policy) {
       "overrides",
       "mysqlSources",
       "cuidSource",
+      "cliVersion",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
     policy.prismaVersion !== "6.19.3" ||
+    policy.cliVersion !== "4.6.7" ||
     !exact(policy.source, ["repository", "commit", "sha256"]) ||
     policy.source.repository !== "prisma/prisma-engines" ||
     policy.source.commit !== "c2990dca591cba766e3b7ef5d9e8a84796e47ab7" ||
@@ -198,6 +208,29 @@ export function checkPrismaSourceWiring(source, policy) {
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
+  const clap = manifest.workspace.dependencies.clap;
+  if (
+    !exact(clap, ["version", "features"]) ||
+    clap.version !== `=${policy.cliVersion}` ||
+    !Array.isArray(clap.features) ||
+    [...clap.features].sort().join() !== "derive,env" ||
+    manifest.workspace.dependencies.structopt
+  )
+    throw new Error("prisma_cli_wiring_invalid");
+  for (const relative of [
+    "query-engine/query-engine/Cargo.toml",
+    "schema-engine/cli/Cargo.toml",
+    "prisma-fmt/Cargo.toml",
+  ]) {
+    const consumer = toml.parse(
+      fs.readFileSync(path.join(source, relative), "utf8"),
+    );
+    const dependencies = relative.startsWith("prisma-fmt/")
+      ? consumer.target['cfg(not(target_arch = "wasm32"))'].dependencies
+      : consumer.dependencies;
+    if (dependencies.clap?.workspace !== true || dependencies.structopt)
+      throw new Error("prisma_cli_wiring_invalid");
+  }
   const contract = toml.parse(
     fs.readFileSync(path.join(source, "security-contracts/Cargo.toml"), "utf8"),
   );
@@ -305,6 +338,42 @@ export function checkPrismaMetadata(
   }
   const rootFor = (name) =>
     metadata.packages.find((pkg) => pkg.name === name && !pkg.source);
+  if (!contracts) {
+    if (
+      metadata.packages.some((pkg) =>
+        [
+          "structopt",
+          "structopt-derive",
+          "ansi_term",
+          "proc-macro-error",
+        ].includes(pkg.name),
+      )
+    )
+      throw new Error("prisma_cli_legacy_resolution");
+    for (const [name, relative] of [
+      ["query-engine", "query-engine/query-engine"],
+      ["schema-engine-cli", "schema-engine/cli"],
+      ["prisma-fmt", "prisma-fmt"],
+    ]) {
+      const owner = rootFor(name);
+      const dependency = nodes
+        .get(owner?.id)
+        ?.deps.find((dep) => dep.name === "clap");
+      const resolved = packages.get(dependency?.pkg);
+      const features = nodes.get(resolved?.id)?.features || [];
+      if (
+        !owner ||
+        path.dirname(fs.realpathSync(owner.manifest_path)) !==
+          path.join(base, relative) ||
+        resolved?.name !== "clap" ||
+        resolved.version !== policy.cliVersion ||
+        resolved.source !==
+          "registry+https://github.com/rust-lang/crates.io-index" ||
+        !["derive", "env"].every((feature) => features.includes(feature))
+      )
+        throw new Error("prisma_cli_resolution_invalid");
+    }
+  }
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
@@ -406,6 +475,51 @@ export function prismaUnitArguments() {
   ];
 }
 
+export function prismaCliArguments() {
+  return [
+    {
+      label: "cli-query",
+      minimum: 9,
+      args: [
+        "test",
+        "--locked",
+        "--package",
+        "query-engine",
+        "--lib",
+        "--bin",
+        "query-engine",
+        "oja_cli_contracts",
+      ],
+    },
+    {
+      label: "cli-schema",
+      minimum: 9,
+      args: [
+        "test",
+        "--locked",
+        "--package",
+        "schema-engine-cli",
+        "--bin",
+        "schema-engine",
+        "oja_cli_contracts",
+      ],
+    },
+    {
+      label: "cli-fmt",
+      minimum: 5,
+      args: [
+        "test",
+        "--locked",
+        "--package",
+        "prisma-fmt",
+        "--bin",
+        "prisma-fmt",
+        "oja_cli_contracts",
+      ],
+    },
+  ];
+}
+
 export function prismaContractAssessment(policy, report) {
   const gitSources = prismaPatchedGitSources(policy);
   return {
@@ -429,6 +543,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     overrides: policy.overrides,
     mysqlSources: policy.mysqlSources,
     cuidSource: policy.cuidSource,
+    cliVersion: policy.cliVersion,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length + patchedGitSources,
@@ -648,6 +763,14 @@ export async function testPrismaSource(
       ),
       56,
     );
+    env.GIT_HASH = policy.source.commit;
+    tests.cli = {};
+    for (const command of prismaCliArguments()) {
+      tests.cli[command.label] = rustTestTotals(
+        execute(cargo, command.args, source, command.label, 1_800_000),
+        command.minimum,
+      );
+    }
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
       tests.upstreamUnits = rustTestTotals(

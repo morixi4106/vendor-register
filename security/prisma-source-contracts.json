@@ -9,11 +9,11 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "0093791d99376307d3b99eb2d9065e77aed8a45ec6bedb8f9c6412afbcb92a1e"
+    "sha256": "25eaf974b779bdee07762459352eafbd90328981d845344d2462440ee8ef19ba"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "1b414fe3fee9a488513afb4a034003d93d0caa9476a9ebf081c7850d7cf2e40f"
+    "sha256": "196326f413a6a78969672f81bb384ba244e839b71fbbff4fa81275d9f141de10"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
@@ -22,7 +22,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "5a4ee804459f4118fc41007dc91fd51df87bad4a6ef86f708c02739f0ec6ea5f"
+      "sha256": "2fb53433db8a5b85f60c370a2e921f40c89bab9cec0a7f18f876476ac3666771"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -75,6 +75,38 @@
     {
       "path": "query-engine/query-structure/src/default_value.rs",
       "sha256": "9020b9565f603a17f22e70705da0298d35c3c8bfded90108e917b8e7f9017cd3"
+    },
+    {
+      "path": "query-engine/query-engine/Cargo.toml",
+      "sha256": "dc41ba1f1d6342683ff6b496b068faddd57e1c8a5d83680d396cba78e05b5af4"
+    },
+    {
+      "path": "query-engine/query-engine/src/main.rs",
+      "sha256": "4b2599b2a1be2066292b2319e4f26824050520dc7b42131f033c2f1b58bfa006"
+    },
+    {
+      "path": "query-engine/query-engine/src/opt.rs",
+      "sha256": "40893244e52bb8f207ccc1a9abd010809bb235e1b3a77b3c05f8a5e25d3a1929"
+    },
+    {
+      "path": "schema-engine/cli/Cargo.toml",
+      "sha256": "1c238952a7d6211ab9415e50d2e8fca10c1ec8fdc78309403abd49972175d286"
+    },
+    {
+      "path": "schema-engine/cli/src/main.rs",
+      "sha256": "8e0da61345a643ca7f53cb1e38484089b9f9eca4ffb585f47e5f6490e9447705"
+    },
+    {
+      "path": "schema-engine/cli/src/commands.rs",
+      "sha256": "d2c67e2b5c02ee1827cb81368cff55ab9317e05abdf8cdce4df06df81cc33cc4"
+    },
+    {
+      "path": "prisma-fmt/Cargo.toml",
+      "sha256": "7ae787c75779259be66778d84aa26d6b492ff23448f1aa6387c6f99ea125cbdf"
+    },
+    {
+      "path": "prisma-fmt/src/main.rs",
+      "sha256": "abc987f911fcca363bddfccf6447633e44730b1f680f08649830f7c849dd1b80"
     }
   ],
   "dependencies": {
@@ -322,5 +354,6 @@
         "sha256": "9cc80a26a3148fc321883647be9ed7757a9c8e3d9cb3cb5d0ea6549db48f4654"
       }
     ]
-  }
+  },
+  "cliVersion": "4.6.7"
 }

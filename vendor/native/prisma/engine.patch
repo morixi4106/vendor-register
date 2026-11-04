@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..2800b67 100644
+index 307dd8c..2b1d261 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
@@ -50,6 +50,15 @@ index 307dd8c..2800b67 100644
  serde = { version = "1", features = ["derive"] }
  serde_json = { version = "1", features = [
      "float_roundtrip",
+@@ -135,7 +136,7 @@ serde_repr = "0.1"
+ serde-wasm-bindgen = "0.6"
+ smallvec = "1"
+ strip-ansi-escapes = "0.1"
+-structopt = "0.3"
++clap = { version = "=4.6.7", features = ["derive", "env"] }
+ sqlformat = "0.2"
+ sqlparser = "0.32"
+ sqlx-core = "0.8"
 @@ -256,3 +257,7 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
@@ -65,7 +74,7 @@ index 36f4bb9..8afb2f8 100644
 @@ -1,6 +1,7 @@
  use derive_more::Display;
  use serde::{Deserialize, Serialize};
- 
+
 +mod cache_capacity;
  mod error;
  mod manager;
@@ -77,10 +86,10 @@ index 997871f..0caf1ac 100644
 @@ -21,7 +21,7 @@ use crate::metrics::MetricsInstrumentationStub;
  #[cfg(feature = "metrics")]
  use prisma_metrics::WithMetricsInstrumentation;
- 
+
 -use super::{TransactionError, TxId};
 +use super::{TransactionError, TxId, cache_capacity::closed_transaction_cache};
- 
+
  pub static CLOSED_TX_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| match std::env::var("CLOSED_TX_CACHE_SIZE") {
      Ok(size) => size.parse().unwrap_or(100),
 @@ -60,7 +60,7 @@ pub struct ItxManager {
@@ -90,7 +99,7 @@ index 997871f..0caf1ac 100644
 -        let closed_txs = Arc::new(RwLock::new(LruCache::new(*CLOSED_TX_CACHE_SIZE)));
 +        let closed_txs = Arc::new(RwLock::new(closed_transaction_cache(*CLOSED_TX_CACHE_SIZE)));
          let (timeout_sender, mut timeout_receiver) = unbounded_channel();
- 
+
          // This task rollbacks and removes any open transactions with expired timeouts from the
 diff --git a/query-engine/core/src/interactive_transactions/cache_capacity.rs b/query-engine/core/src/interactive_transactions/cache_capacity.rs
 new file mode 100644
@@ -604,4 +613,694 @@ new file mode 100644
 +    let ids: Vec<_> = handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
 +    for id in &ids { assert_v2(id,24); }
 +    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),256);
++}
+diff --git a/query-engine/query-engine/Cargo.toml b/query-engine/query-engine/Cargo.toml
+index b33af93..630d304 100644
+--- a/query-engine/query-engine/Cargo.toml
++++ b/query-engine/query-engine/Cargo.toml
+@@ -23,7 +23,7 @@ request-handlers = { workspace = true, features = ["all"] }
+ serde.workspace = true
+ serde_json.workspace = true
+ sql-connector = { path = "../connectors/sql-query-connector", optional = true, package = "sql-query-connector" }
+-structopt.workspace = true
++clap.workspace = true
+ thiserror.workspace = true
+ url.workspace = true
+ hyper = { workspace = true, features = ["server", "http1", "http2", "runtime"] }
+diff --git a/query-engine/query-engine/src/main.rs b/query-engine/query-engine/src/main.rs
+index f8aaed3..2fed8c2 100644
+--- a/query-engine/query-engine/src/main.rs
++++ b/query-engine/query-engine/src/main.rs
+@@ -6,14 +6,13 @@ use query_engine::context;
+ use query_engine::error::PrismaError;
+ use query_engine::opt::PrismaOpt;
+ use query_engine::server;
+-use structopt::StructOpt;
+ use tokio::{select, signal};
+
+ #[tokio::main]
+ async fn main() {
+     let work = async {
+         tokio::spawn(async {
+-            let opts = PrismaOpt::from_args();
++            let opts = PrismaOpt::parse();
+
+             match CliCommand::from_opt(&opts)? {
+                 Some(cmd) => cmd.execute().await?,
+diff --git a/query-engine/query-engine/src/opt.rs b/query-engine/query-engine/src/opt.rs
+index e01ce19..a20a268 100644
+--- a/query-engine/query-engine/src/opt.rs
++++ b/query-engine/query-engine/src/opt.rs
+@@ -4,35 +4,36 @@ use psl::{SourceFile, parser_database::Files};
+ use query_core::protocol::EngineProtocol;
+ use serde::Deserialize;
+ use std::{env, ffi::OsStr, fs::File, io::Read, sync::Arc};
+-use structopt::StructOpt;
++use clap::{Args, Parser, Subcommand as ClapSubcommand, builder::TypedValueParser};
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, ClapSubcommand, Clone)]
+ pub enum Subcommand {
+     /// Doesn't start a server, but allows running specific commands against Prisma.
++    #[command(subcommand)]
+     Cli(CliOpt),
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
++#[derive(Debug, Clone, Args)]
+ pub struct ExecuteRequestInput {
+     /// GraphQL query to execute
+     pub query: String,
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
+-#[structopt(rename_all = "camelCase")]
++#[derive(Debug, Clone, Args)]
++#[command(rename_all = "camelCase")]
+ pub struct GetConfigInput {
+-    #[structopt(long)]
++    #[arg(long)]
+     pub ignore_env_var_errors: bool,
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
+-#[structopt(rename_all = "camelCase")]
++#[derive(Debug, Clone, Args)]
++#[command(rename_all = "camelCase")]
+ pub struct DebugPanicInput {
+-    #[structopt(long)]
++    #[arg(long)]
+     pub message: Option<String>,
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, ClapSubcommand, Clone)]
+ pub enum CliOpt {
+     /// Output the DMMF from the loaded data model.
+     Dmmf,
+@@ -44,77 +45,77 @@ pub enum CliOpt {
+     DebugPanic(DebugPanicInput),
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser, Clone)]
++#[command(version = env!("GIT_HASH"))]
+ pub struct PrismaOpt {
+     /// The hostname or IP the query engine should bind to.
+-    #[structopt(long, short = "H", default_value = "127.0.0.1")]
++    #[arg(long, short = 'H', default_value = "127.0.0.1")]
+     pub host: String,
+
+     /// The port the query engine should bind to.
+     // NOTE: this is mutually exclusive with path
+-    #[structopt(long, short, default_value = "4466")]
++    #[arg(long, short, default_value = "4466")]
+     pub port: u16,
+
+     /// The unix socket path to listen on
+     // NOTE: this is mutually exclusive with port.
+-    #[structopt(long, short, env)]
++    #[arg(long, short, env)]
+     pub unix_path: Option<String>,
+
+     /// Path to the Prisma datamodel file
+-    #[structopt(long, env = "PRISMA_DML_PATH", parse(from_os_str = load_datamodel_file))]
++    #[arg(long, env = "PRISMA_DML_PATH", value_parser = clap::builder::OsStringValueParser::new().map(|value| load_datamodel_file(&value)))]
+     pub datamodel_path: Option<String>,
+
+     /// Base64 encoded Prisma datamodel
+-    #[structopt(long, env = "PRISMA_DML", parse(try_from_str = parse_base64_string))]
++    #[arg(long, env = "PRISMA_DML", value_parser = parse_base64_string)]
+     pub datamodel: Option<String>,
+
+     /// Base64 encoded datasource urls, overwriting the ones in the schema
+-    #[structopt(long, env = "OVERWRITE_DATASOURCES", parse(try_from_str = parse_base64_string))]
++    #[arg(long, env = "OVERWRITE_DATASOURCES", value_parser = parse_base64_string)]
+     pub overwrite_datasources: Option<String>,
+
+     /// Enables raw SQL queries with executeRaw/queryRaw mutation
+-    #[structopt(long, short = "r")]
++    #[arg(long, short = 'r')]
+     pub enable_raw_queries: bool,
+
+     /// Enables the GraphQL playground
+-    #[structopt(long, short = "g")]
++    #[arg(long, short = 'g')]
+     pub enable_playground: bool,
+
+     /// Enables server debug features.
+-    #[structopt(long = "debug", short = "d")]
++    #[arg(long = "debug", short = 'd')]
+     pub enable_debug_mode: bool,
+
+     /// Enables the metrics endpoints
+-    #[structopt(long, short = "m")]
++    #[arg(long, short = 'm')]
+     pub enable_metrics: bool,
+
+     // Enable the metrics without having to enable the feature in the
+     // schema. Used by data proxy to count interactive transactions.
+-    #[structopt(long)]
++    #[arg(long)]
+     pub dataproxy_metric_override: bool,
+
+     /// Enable query logging [env: LOG_QUERIES=y]
+-    #[structopt(long, short = "o")]
++    #[arg(long, short = 'o')]
+     pub log_queries: bool,
+
+     /// Set the log format.
+-    #[structopt(long = "log-format", env = "RUST_LOG_FORMAT")]
++    #[arg(long = "log-format", env = "RUST_LOG_FORMAT")]
+     pub log_format: Option<String>,
+
+     /// Enable OpenTelemetry streaming from requests.
+-    #[structopt(long)]
++    #[arg(long)]
+     pub enable_open_telemetry: bool,
+
+-    #[structopt(long)]
++    #[arg(long)]
+     /// Enable tracer to capture logs and traces and return in the response
+     pub enable_telemetry_in_response: bool,
+
+     /// The protocol the Query Engine will used. Affects mostly the request and response format.
+-    #[structopt(long, env = "PRISMA_ENGINE_PROTOCOL")]
++    #[arg(long, env = "PRISMA_ENGINE_PROTOCOL")]
+     pub engine_protocol: Option<String>,
+
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     pub subcommand: Option<Subcommand>,
+ }
+
+@@ -125,6 +126,14 @@ struct SourceOverride {
+ }
+
+ impl PrismaOpt {
++    pub fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++
+     fn datamodel_str(&self) -> PrismaResult<&str> {
+         let res = self
+             .datamodel
+@@ -249,6 +258,11 @@ fn parse_base64_string(s: &str) -> PrismaResult<String> {
+     }
+ }
+
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn load_datamodel_file(path: &OsStr) -> String {
+     let mut f = File::open(path).unwrap_or_else(|_| panic!("Could not open datamodel file {path:?}"));
+     let mut datamodel = String::new();
+@@ -258,3 +272,122 @@ fn load_datamodel_file(path: &OsStr) -> String {
+
+     datamodel
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn defaults_and_command_definition_are_valid() {
++        PrismaOpt::command().debug_assert();
++        let opts = PrismaOpt::try_parse_from(["query-engine"]).unwrap();
++        assert_eq!(opts.host, "127.0.0.1");
++        assert_eq!(opts.port, 4466);
++        assert!(!opts.enable_raw_queries && !opts.enable_debug_mode && !opts.enable_metrics);
++        assert!(opts.subcommand.is_none());
++    }
++
++    #[test]
++    fn short_flags_and_socket_remain_accepted() {
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "-H", "localhost", "-p", "1234", "-u", "test.sock", "-r", "-g", "-d", "-m", "-o",
++        ]).unwrap();
++        assert_eq!(opts.host, "localhost");
++        assert_eq!(opts.port, 1234);
++        assert_eq!(opts.unix_path.as_deref(), Some("test.sock"));
++        assert!(opts.enable_raw_queries && opts.enable_playground && opts.enable_debug_mode);
++        assert!(opts.enable_metrics && opts.log_queries);
++    }
++
++    #[test]
++    fn protocol_telemetry_and_log_flags_remain_accepted() {
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "--dataproxy-metric-override", "--enable-open-telemetry",
++            "--enable-telemetry-in-response", "--engine-protocol", "json", "--log-format", "devel",
++        ]).unwrap();
++        assert!(opts.dataproxy_metric_override && opts.enable_open_telemetry && opts.enable_telemetry_in_response);
++        assert_eq!(opts.engine_protocol.as_deref(), Some("json"));
++        assert_eq!(opts.log_format.as_deref(), Some("devel"));
++    }
++
++    #[test]
++    fn nested_subcommands_keep_names_and_arguments() {
++        for name in ["dmmf", "get-config", "execute-request", "debug-panic"] {
++            let mut args = vec!["query-engine", "cli", name];
++            if name == "get-config" { args.push("--ignoreEnvVarErrors"); }
++            if name == "execute-request" { args.push("query { test }"); }
++            if name == "debug-panic" { args.extend(["--message", "parser-only"]); }
++            let opts = PrismaOpt::try_parse_from(args).unwrap();
++            assert!(opts.subcommand.is_some());
++        }
++    }
++
++    #[test]
++    fn datamodel_and_overrides_use_the_existing_decoders() {
++        let model = "model T { id Int @id }";
++        let encoded = BASE64_STANDARD.encode(model);
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "--datamodel", &encoded, "--overwrite-datasources", "[{\"name\":\"db\"}]",
++        ]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some(model));
++        assert_eq!(opts.overwrite_datasources.as_deref(), Some("[{\"name\":\"db\"}]"));
++        assert!(PrismaOpt::try_parse_from(["query-engine", "--datamodel", "/w=="]).is_err());
++    }
++
++    #[test]
++    fn invalid_arguments_and_help_do_not_execute_commands() {
++        for args in [vec!["--unknown"], vec!["--port", "65536"], vec!["--port", "invalid"], vec!["cli", "unknown"]] {
++            let error = PrismaOpt::try_parse_from(std::iter::once("query-engine").chain(args)).unwrap_err();
++            assert_eq!(legacy_cli_exit_code(&error), 1);
++        }
++        assert_eq!(PrismaOpt::try_parse_from(["query-engine", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        let version = PrismaOpt::try_parse_from(["query-engine", "--version"]).unwrap_err();
++        assert_eq!(version.kind(), ErrorKind::DisplayVersion);
++        assert_eq!(legacy_cli_exit_code(&version), 0);
++        assert!(version.to_string().contains(env!("GIT_HASH")));
++    }
++
++    #[test]
++    fn env_values_and_explicit_precedence_use_an_isolated_child() {
++        let output = std::process::Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", "opt::oja_cli_contracts::env_child", "--nocapture"])
++            .env("OJA_CLI_ENV_CHILD", "1")
++            .env("PRISMA_DML", "bW9kZWw=")
++            .env("OVERWRITE_DATASOURCES", "W10=")
++            .env("UNIX_PATH", "env.sock")
++            .env("RUST_LOG_FORMAT", "devel")
++            .env("PRISMA_ENGINE_PROTOCOL", "graphql")
++            .output().unwrap();
++        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
++        assert!(String::from_utf8_lossy(&output.stdout).contains("OJA_QUERY_ENV_OK"));
++    }
++
++    #[test]
++    fn datamodel_file_paths_keep_the_existing_loader() {
++        use std::io::Write;
++        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
++        let path = std::env::temp_dir().join(format!("oja cli {} {nonce}.prisma", std::process::id()));
++        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
++        file.write_all(b"model Example { id Int @id }").unwrap();
++        drop(file);
++        let opts = PrismaOpt::try_parse_from([OsStr::new("query-engine"), OsStr::new("--datamodel-path"), path.as_os_str()]).unwrap();
++        std::fs::remove_file(path).unwrap();
++        assert_eq!(opts.datamodel_path.as_deref(), Some("model Example { id Int @id }"));
++    }
++
++    #[test]
++    fn env_child() {
++        if std::env::var("OJA_CLI_ENV_CHILD").is_err() { return; }
++        let opts = PrismaOpt::try_parse_from(["query-engine"]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some("model"));
++        assert_eq!(opts.overwrite_datasources.as_deref(), Some("[]"));
++        assert_eq!(opts.unix_path.as_deref(), Some("env.sock"));
++        assert_eq!(opts.log_format.as_deref(), Some("devel"));
++        assert_eq!(opts.engine_protocol.as_deref(), Some("graphql"));
++        let opts = PrismaOpt::try_parse_from(["query-engine", "--datamodel", "b3ZlcnJpZGU=", "--engine-protocol", "json"]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some("override"));
++        assert_eq!(opts.engine_protocol.as_deref(), Some("json"));
++        println!("OJA_QUERY_ENV_OK");
++    }
++}
+diff --git a/schema-engine/cli/Cargo.toml b/schema-engine/cli/Cargo.toml
+index 5a91c31..fded463 100644
+--- a/schema-engine/cli/Cargo.toml
++++ b/schema-engine/cli/Cargo.toml
+@@ -12,7 +12,7 @@ panic-utils.workspace = true
+
+ base64.workspace = true
+ jsonrpc-core.workspace = true
+-structopt.workspace = true
++clap.workspace = true
+ serde_json.workspace = true
+ serde.workspace = true
+ tokio = { workspace = true, features = ["io-std", "signal"] }
+diff --git a/schema-engine/cli/src/main.rs b/schema-engine/cli/src/main.rs
+index fa71442..5d9d1a2 100644
+--- a/schema-engine/cli/src/main.rs
++++ b/schema-engine/cli/src/main.rs
+@@ -13,7 +13,7 @@ use std::{
+ use psl::DatasourceUrls;
+ use schema_connector::{BoxFuture, ConnectorHost, ConnectorResult};
+ use schema_core::{ExtensionTypeConfig, RpcApi};
+-use structopt::StructOpt;
++use clap::{Parser, Subcommand};
+ use tokio::{signal, sync::oneshot};
+ use tokio_util::sync::CancellationToken;
+
+@@ -37,30 +37,104 @@ static BLOCKING_TASKS_SHUTDOWN_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
+
+ /// When no subcommand is specified, the schema engine will default to starting as a JSON-RPC
+ /// server over stdio.
+-#[derive(Debug, StructOpt)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser)]
++#[command(version = env!("GIT_HASH"))]
+ struct SchemaEngineCli {
+     /// List of paths to the Prisma schema files.
+-    #[structopt(short = "d", long, name = "FILE")]
++    #[arg(short = 'd', long, value_name = "FILE", num_args = 1..)]
+     datamodels: Option<Vec<String>>,
+     /// Optional JSON string to override the `datasource` block's URLs in the schema.
+     /// This is derived from a Prisma Config file with `engines: 'classic'`.
+     /// TODO: in Prisma 7, this will be the only way to pass the datasource URLs.
+-    #[structopt(long = "datasource", name = "JSON", parse(try_from_str = serde_json::from_str))]
++    #[arg(long = "datasource", value_name = "JSON", value_parser = serde_json::from_str::<DatasourceUrls>)]
+     datasource_urls_override: Option<DatasourceUrls>,
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     cli_subcommand: Option<SubCommand>,
+-    #[structopt(short = "e", long, parse(try_from_str = serde_json::from_str))]
+-    extension_types: Option<ExtensionTypeConfig>,
++    #[arg(short = 'e', long, value_parser = parse_extension_types)]
++    extension_types: Option<Arc<ExtensionTypeConfig>>,
+ }
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Subcommand)]
+ enum SubCommand {
+     /// Doesn't start a server, but allows running specific commands against Prisma.
+-    #[structopt(name = "cli")]
++    #[command(name = "cli")]
+     Cli(commands::Cli),
+ }
+
++fn parse_extension_types(value: &str) -> Result<Arc<ExtensionTypeConfig>, serde_json::Error> {
++    serde_json::from_str(value).map(Arc::new)
++}
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn no_arguments_preserve_stdio_mode() {
++        SchemaEngineCli::command().debug_assert();
++        let opts = SchemaEngineCli::try_parse_from(["schema-engine"]).unwrap();
++        assert!(opts.cli_subcommand.is_none() && opts.datamodels.is_none());
++    }
++
++    #[test]
++    fn multiple_datamodel_paths_are_preserved() {
++        let opts = SchemaEngineCli::try_parse_from(["schema-engine", "-d", "schema one.prisma", "schema2.prisma"]).unwrap();
++        assert_eq!(opts.datamodels.unwrap(), ["schema one.prisma", "schema2.prisma"]);
++    }
++
++    #[test]
++    fn datasource_json_uses_real_datasource_type() {
++        let opts = SchemaEngineCli::try_parse_from([
++            "schema-engine", "--datasource", r#"{"url":"postgresql://example.test/db","directUrl":"postgresql://example.test/direct"}"#,
++        ]).unwrap();
++        let urls = opts.datasource_urls_override.unwrap();
++        assert_eq!(urls.url, "postgresql://example.test/db");
++        assert_eq!(urls.direct_url.as_deref(), Some("postgresql://example.test/direct"));
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "--datasource", "{}"]).is_err());
++    }
++
++    #[test]
++    fn extension_json_uses_real_extension_type() {
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "-e", r#"{"types":[]}"#]).unwrap().extension_types.is_some());
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "-e", "invalid"]).is_err());
++    }
++
++    #[test]
++    fn required_nested_commands_are_only_parsed() {
++        for name in ["create-database", "can-connect-to-database", "drop-database"] {
++            let opts = SchemaEngineCli::try_parse_from(["schema-engine", "cli", "-d", "postgresql://example.test/db", name]).unwrap();
++            assert!(matches!(opts.cli_subcommand, Some(SubCommand::Cli(_))));
++        }
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "cli", "create-database"]).is_err());
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "cli", "-d", "postgresql://example.test/db"]).is_err());
++    }
++
++    #[test]
++    fn help_version_and_unknown_flags_preserve_safe_exit_modes() {
++        assert_eq!(SchemaEngineCli::try_parse_from(["schema-engine", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        assert_eq!(SchemaEngineCli::try_parse_from(["schema-engine", "--version"]).unwrap_err().kind(), ErrorKind::DisplayVersion);
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "--unknown"]).is_err());
++        assert_eq!(legacy_cli_exit_code(&SchemaEngineCli::try_parse_from(["schema-engine", "--unknown"]).unwrap_err()), 1);
++        assert_eq!(legacy_cli_exit_code(&SchemaEngineCli::try_parse_from(["schema-engine", "--help"]).unwrap_err()), 0);
++    }
++}
++
++impl SchemaEngineCli {
++    fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++}
++
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn main() {
+     let rt = tokio::runtime::Builder::new_multi_thread()
+         .enable_all()
+@@ -85,14 +159,14 @@ async fn async_main() {
+     set_panic_hook();
+     logger::init_logger();
+
+-    let input = SchemaEngineCli::from_args();
++    let input = SchemaEngineCli::parse();
+     let shutdown_token = CancellationToken::new();
+     let (done_tx, done_rx) = oneshot::channel();
+
+     let work = tokio::spawn({
+         let shutdown_token = shutdown_token.clone();
+         async {
+-            let extensions = Arc::new(input.extension_types.unwrap_or_default());
++            let extensions = input.extension_types.unwrap_or_default();
+             match input.cli_subcommand {
+                 None => {
+                     start_engine(
+diff --git a/schema-engine/cli/src/commands.rs b/schema-engine/cli/src/commands.rs
+index 110fac2..cbe2682 100644
+--- a/schema-engine/cli/src/commands.rs
++++ b/schema-engine/cli/src/commands.rs
+@@ -7,16 +7,16 @@ use schema_core::{
+     ExtensionTypeConfig,
+     json_rpc::types::{DatasourceParam, UrlContainer},
+ };
+-use structopt::StructOpt;
++use clap::{Args, Subcommand};
+ use tokio_util::sync::CancellationToken;
+ use user_facing_errors::common::SchemaParserError;
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Args)]
+ pub(crate) struct Cli {
+     /// The connection string to the database
+-    #[structopt(long, short = "d", parse(try_from_str = parse_base64_string))]
++    #[arg(long, short = 'd', value_parser = parse_base64_string)]
+     datasource: String,
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     command: CliCommand,
+ }
+
+@@ -75,7 +75,7 @@ impl Cli {
+     }
+ }
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Subcommand)]
+ #[allow(clippy::enum_variant_names)] // disagee
+ enum CliCommand {
+     /// Create an empty database defined in the configuration string.
+@@ -97,3 +97,42 @@ fn parse_base64_string(s: &str) -> Result<String, ConnectorError> {
+         Err(_) => Ok(String::from(s)),
+     }
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::Parser;
++
++    #[derive(Debug, Parser)]
++    struct Arguments {
++        #[command(flatten)]
++        cli: Cli,
++    }
++
++    #[test]
++    fn plain_and_base64_datasources_use_the_real_decoder() {
++        let url = "postgresql://example.test/db";
++        for value in [url.to_owned(), BASE64_STANDARD.encode(url)] {
++            let args = Arguments::try_parse_from(["schema-engine", "--datasource", &value, "can-connect-to-database"]).unwrap();
++            assert_eq!(args.cli.datasource, url);
++            assert!(matches!(args.cli.command, CliCommand::CanConnectToDatabase));
++        }
++    }
++
++    #[test]
++    fn invalid_utf8_datasource_is_rejected_without_database_access() {
++        assert!(Arguments::try_parse_from(["schema-engine", "-d", "/w==", "drop-database"]).is_err());
++    }
++
++    #[test]
++    fn database_subcommand_names_keep_their_variants() {
++        for name in ["create-database", "can-connect-to-database", "drop-database"] {
++            let args = Arguments::try_parse_from(["schema-engine", "-d", "postgresql://example.test/db", name]).unwrap();
++            match name {
++                "create-database" => assert!(matches!(args.cli.command, CliCommand::CreateDatabase)),
++                "drop-database" => assert!(matches!(args.cli.command, CliCommand::DropDatabase)),
++                _ => assert!(matches!(args.cli.command, CliCommand::CanConnectToDatabase)),
++            }
++        }
++    }
++}
+diff --git a/prisma-fmt/Cargo.toml b/prisma-fmt/Cargo.toml
+index c53e362..691fa97 100644
+--- a/prisma-fmt/Cargo.toml
++++ b/prisma-fmt/Cargo.toml
+@@ -16,7 +16,7 @@ log.workspace = true
+ enumflags2.workspace = true
+
+ [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+-structopt.workspace = true
++clap.workspace = true
+
+ [dev-dependencies]
+ dissimilar.workspace = true
+diff --git a/prisma-fmt/src/main.rs b/prisma-fmt/src/main.rs
+index 57d27e3..ba3091c 100644
+--- a/prisma-fmt/src/main.rs
++++ b/prisma-fmt/src/main.rs
+@@ -8,25 +8,25 @@ use std::{
+     io::{self, Read},
+     path::PathBuf,
+ };
+-use structopt::StructOpt;
++use clap::{Args, Parser};
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, Args, Clone)]
+ pub struct FormatOpts {
+     /// Specifies the input file to use. If none is given, the input is read
+     /// from STDIN
+-    #[structopt(short = "i", long)]
++    #[arg(short = 'i', long)]
+     input: Option<PathBuf>,
+     /// Specifies the output file to use. If none is given, the output is
+     /// written to STDOUT
+-    #[structopt(short = "o", long)]
++    #[arg(short = 'o', long)]
+     output: Option<PathBuf>,
+     /// Specifies which tab width to use when formatting
+-    #[structopt(short = "s", long, default_value = "2")]
++    #[arg(short = 's', long, default_value = "2")]
+     tabwidth: usize,
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser, Clone)]
++#[command(version = env!("GIT_HASH"))]
+ /// Prisma Datamodel v2 formatter
+ pub enum FmtOpts {
+     /// Specifies linter mode
+@@ -43,8 +43,23 @@ pub enum FmtOpts {
+     DebugPanic,
+ }
+
++impl FmtOpts {
++    fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++}
++
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn main() {
+-    match FmtOpts::from_args() {
++    match FmtOpts::parse() {
+         FmtOpts::DebugPanic => panic!("This is the debugPanic artificial panic"),
+         // FmtOpts::Lint => plug(lint::run),
+         FmtOpts::Format(opts) => format::run(opts),
+@@ -63,3 +78,49 @@ fn plug<F: Fn(&str) -> String>(f: F) {
+
+     print!("{}", f(&datamodel_string))
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn default_format_options_preserve_stdio_and_width() {
++        FmtOpts::command().debug_assert();
++        let FmtOpts::Format(opts) = FmtOpts::try_parse_from(["prisma-fmt", "format"]).unwrap() else { panic!("wrong subcommand") };
++        assert!(opts.input.is_none() && opts.output.is_none());
++        assert_eq!(opts.tabwidth, 2);
++    }
++
++    #[test]
++    fn paths_and_short_flags_are_preserved_without_opening_files() {
++        let FmtOpts::Format(opts) = FmtOpts::try_parse_from(["prisma-fmt", "format", "-i", "schema one.prisma", "-o", "out.prisma", "-s", "4"]).unwrap() else { panic!("wrong subcommand") };
++        assert_eq!(opts.input, Some(PathBuf::from("schema one.prisma")));
++        assert_eq!(opts.output, Some(PathBuf::from("out.prisma")));
++        assert_eq!(opts.tabwidth, 4);
++    }
++
++    #[test]
++    fn all_subcommand_names_keep_their_variants() {
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "native-types"]).unwrap(), FmtOpts::NativeTypes));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "referential-actions"]).unwrap(), FmtOpts::ReferentialActions));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "preview-features"]).unwrap(), FmtOpts::PreviewFeatures));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "debug-panic"]).unwrap(), FmtOpts::DebugPanic));
++    }
++
++    #[test]
++    fn invalid_width_unknown_flags_and_missing_command_are_rejected() {
++        for args in [vec!["fmt"], vec!["fmt", "unknown"], vec!["fmt", "format", "--tabwidth", "NaN"], vec!["fmt", "format", "--unknown"]] {
++            assert_eq!(legacy_cli_exit_code(&FmtOpts::try_parse_from(args).unwrap_err()), 1);
++        }
++    }
++
++    #[test]
++    fn help_and_version_do_not_run_formatter_or_debug_panic() {
++        assert_eq!(FmtOpts::try_parse_from(["fmt", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        let version = FmtOpts::try_parse_from(["fmt", "--version"]).unwrap_err();
++        assert_eq!(version.kind(), ErrorKind::DisplayVersion);
++        assert_eq!(legacy_cli_exit_code(&version), 0);
++        assert!(version.to_string().contains(env!("GIT_HASH")));
++    }
 +}

@@ -12,6 +12,7 @@ import {
   checkPrismaMetadata,
   rustTestTotals,
   prismaUnitArguments,
+  prismaCliArguments,
   prismaSourceReceipt,
   prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
@@ -136,6 +137,9 @@ test("Prisma recipe rejects version drift, path changes, added settings and miss
       p.prismaVersion = "7.0.0";
     },
     (p) => {
+      p.cliVersion = "3.2.25";
+    },
+    (p) => {
       p.dependencies.lru = "0.7.8";
     },
     (p) => {
@@ -208,13 +212,25 @@ const metadataFixture = (t, contracts) => {
   const source = fixture(t);
   const owners = contracts
     ? ["oja-prisma-source-contracts"]
-    : ["query-core", "schema-connector", "query-structure"];
+    : [
+        "query-core",
+        "schema-connector",
+        "query-structure",
+        "query-engine",
+        "schema-engine-cli",
+        "prisma-fmt",
+      ];
   const packages = owners.map((name) => {
     const directory = path.join(
       source,
-      contracts ? "security-contracts" : name,
+      contracts
+        ? "security-contracts"
+        : {
+            "query-engine": "query-engine/query-engine",
+            "schema-engine-cli": "schema-engine/cli",
+          }[name] || name,
     );
-    fs.mkdirSync(directory);
+    fs.mkdirSync(directory, { recursive: true });
     const manifest = path.join(directory, "Cargo.toml");
     fs.writeFileSync(manifest, "[package]\n");
     return {
@@ -226,6 +242,19 @@ const metadataFixture = (t, contracts) => {
     };
   });
   const nodes = owners.map((name) => ({ id: name, deps: [] }));
+  if (!contracts) {
+    packages.push({
+      id: "clap",
+      name: "clap",
+      version: policy.cliVersion,
+      source: "registry+https://github.com/rust-lang/crates.io-index",
+    });
+    nodes.push({ id: "clap", features: ["derive", "env"], deps: [] });
+    for (const name of ["query-engine", "schema-engine-cli", "prisma-fmt"])
+      nodes
+        .find((node) => node.id === name)
+        .deps.push({ name: "clap", pkg: "clap" });
+  }
   for (const [index, [name, version]] of Object.entries(
     policy.dependencies,
   ).entries()) {
@@ -515,6 +544,66 @@ test("upstream units cover every logical SQL dialect without changing the engine
     features.some((feature) => feature.includes("native")),
     false,
   );
+});
+
+test("CLI metadata binds every real consumer and rejects legacy or detached parser dependencies", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "clap").version = "3.2.25";
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "clap").features = ["derive"];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "schema-engine-cli").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "query-engine").deps[0].pkg = "lru";
+    },
+    (m) => {
+      m.packages.push({
+        id: "old",
+        name: "structopt",
+        version: "0.3.26",
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "prisma-fmt").manifest_path =
+        m.packages[0].manifest_path;
+    },
+  ]) {
+    const { source, metadata } = metadataFixture(t, false);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMetadata(metadata, source, policy),
+      /prisma_cli_(resolution_invalid|legacy_resolution)/,
+    );
+  }
+});
+
+test("CLI contracts compile the actual three entry points without selecting database tests", () => {
+  const commands = prismaCliArguments();
+  assert.deepEqual(
+    commands.map((c) => c.minimum),
+    [9, 9, 5],
+  );
+  assert.deepEqual(
+    commands.map((c) => c.label),
+    ["cli-query", "cli-schema", "cli-fmt"],
+  );
+  for (const { args } of commands) {
+    assert.equal(args[0], "test");
+    assert.ok(args.includes("--locked") && args.includes("--bin"));
+    assert.equal(args.at(-1), "oja_cli_contracts");
+    assert.ok(!args.includes("--ignored") && !args.includes("--all-targets"));
+  }
+  assert.ok(commands[0].args.includes("--lib"));
+  const patch = prismaSourceInput(ROOT, policy.patch).toString("utf8");
+  assert.ok(patch.includes("SchemaEngineCli::parse()"));
+  assert.ok(patch.includes("PrismaOpt::parse()"));
+  assert.ok(patch.includes("FmtOpts::parse()"));
+  assert.ok(patch.includes("OJA_QUERY_ENV_OK"));
 });
 
 test("clean contract registry scans never approve a path-converted Git source or erase findings", () => {

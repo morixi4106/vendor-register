@@ -1,5 +1,41 @@
 # Production dependency advisories
 
+## Prisma CLI Parser Migration: 2026-11-04
+
+Replace the actual query-engine, schema-engine and prisma-fmt consumers of
+structopt/clap2 with pinned clap4.6.7/derive/env. Bind all three manifests,
+entry points and parser implementations in the source policy, and require
+their actual Cargo metadata to resolve the pinned registry parser/features.
+Legacy structopt/ansi_term/proc-macro-error reintroduction is rejected. Keep
+the Prisma client/schema and installed engines unchanged; this is a source
+candidate, not an upstream engine release or native approval.
+
+The engine graph changes from623 registry/11 raw matches to612/8. Removed
+entries include maintenance notices, not three independently exploitable CVEs.
+The remaining atty entries are reached through the existing criterion benchmark,
+with old HTTP, rand and paste entries still visible. Eight Cargo Git identities
+plus five Git-derived path identities remain UNREVIEWED. Contract graph351 is
+unchanged; its zero registry matches still do not grant source review.
+
+New contracts compile the actual three CLI entry points and exercise only the
+oja_cli_contracts namespace, never executing database commands. They cover
+flags, defaults, nested subcommands, base64/plain input, real datasource/extension
+types, datamodel files, isolated child environment/precedence and help/version.
+Retain legacy argument-error exit1/help-version exit0 rather than adopting
+clap4's changed error exit2. Help/error layout may change; output bytes are not
+claimed identical. No service/database, destructive subcommand, migration,
+installed engine or production operation is part of these tests.
+
+Minimum CLI tests are query9/schema9/fmt5, separate from56 existing contracts
+and upstream-library tests. Node binding/rejection tests22 pass. Actual local
+compilation cannot run because this PC lacks link.exe; use the existing
+Windows/Linux source-contract CI without adding a PC-wide toolchain, skipping
+tests, changing risk acceptance or weakening native admission. CI results must
+be checked before claiming this candidate's parser compatibility verified.
+
+Sources: [structopt maintenance notice](https://rustsec.org/advisories/RUSTSEC-2022-0104.html),
+[clap derive reference](https://docs.rs/clap/4.6.7/clap/_derive/index.html).
+
 ## Minimatch Distributed-JS Backport: 2026-11-04
 
 GHSA-g3hv-75wg-m249 / CVE-2026-118764 affects installed minimatch9.0.9.

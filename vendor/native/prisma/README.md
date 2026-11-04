@@ -3,6 +3,16 @@
 This is an explicit patch of the engine source used by Prisma 6.19.3, not an
 upstream Prisma release or an installed replacement.
 
+The CLI follow-up replaces structopt/clap2 at the actual query-engine,
+schema-engine and prisma-fmt consumers with pinned clap4.6.7/derive/env.
+The policy binds their manifests, parser modules and actual Cargo resolutions.
+Database commands are only parsed in the new CLI contract namespace, never
+executed. Flags, environment precedence, JSON/base64/file inputs and legacy
+argument-error exit1/help-version exit0 are checked separately from full engine
+or database approval. Help/error formatting is not byte-identical to clap2.
+The complete graph still retains benchmark/HTTP/crypto notices and unreviewed
+Git sources. Native, migration and production approval remain false.
+
 The CUID follow-up uses Prisma's exact cuid-rust revision, with all four
 packages archive/patch/hash-bound and versioned +oja.1. Only manifests change:
 remove cuid1's unused base36 dependency (which pulled in failure), and pin the
