@@ -60,6 +60,7 @@ const SOURCE_FILES = [
   "schema-engine/cli/src/commands.rs",
   "prisma-fmt/Cargo.toml",
   "prisma-fmt/src/main.rs",
+  "quaint/src/connector/mssql/native/conversion.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -514,6 +515,20 @@ export function prismaCliArguments() {
         "prisma-fmt",
         "--bin",
         "prisma-fmt",
+        "oja_cli_contracts",
+      ],
+    },
+    {
+      label: "cli-mssql-numeric",
+      minimum: 5,
+      args: [
+        "test",
+        "--locked",
+        "--package",
+        "quaint",
+        "--lib",
+        "--features",
+        "mssql-native",
         "oja_cli_contracts",
       ],
     },

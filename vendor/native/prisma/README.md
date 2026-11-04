@@ -13,6 +13,12 @@ or database approval. Help/error formatting is not byte-identical to clap2.
 The complete graph still retains benchmark/HTTP/crypto notices and unreviewed
 Git sources. Native, migration and production approval remain false.
 
+Full CLI compilation also checks the existing MSSQL numeric boundary. Tiberius
+uses BigDecimal0.4 while the engine retains0.3. Convert exact integer mantissa
+and exponent pairs only at that boundary, preserving engine representation and
+all connector/TLS features. Five real TDS conversion contracts run without a
+server; unsupported numeric ranges retain the driver's documented failure.
+
 The CUID follow-up uses Prisma's exact cuid-rust revision, with all four
 packages archive/patch/hash-bound and versioned +oja.1. Only manifests change:
 remove cuid1's unused base36 dependency (which pulled in failure), and pin the

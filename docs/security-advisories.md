@@ -27,7 +27,16 @@ claimed identical. No service/database, destructive subcommand, migration,
 installed engine or production operation is part of these tests.
 
 Minimum CLI tests are query9/schema9/fmt5, separate from56 existing contracts
-and upstream-library tests. Node binding/rejection tests22 pass. Actual local
+and upstream-library tests. The first full compilation exposed the existing
+Tiberius BigDecimal0.4 versus engine BigDecimal0.3 mismatch. Bridge only the
+MSSQL conversion boundary through exact integer mantissa/exponent pairs;
+do not change the engine-wide decimal type, downgrade the driver or remove
+MSSQL/TLS features. Bind this additional source file (23 total) and add five
+actual TDS round-trip/null/scale/range contracts without a server. The old
+driver's documented out-of-range panic is retained, not silently rounded or
+claimed fixed. The failed first CI is not compatibility evidence.
+
+Node binding/rejection tests22 pass. Actual local
 compilation cannot run because this PC lacks link.exe; use the existing
 Windows/Linux source-contract CI without adding a PC-wide toolchain, skipping
 tests, changing risk acceptance or weakening native admission. CI results must

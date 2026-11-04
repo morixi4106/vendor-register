@@ -586,19 +586,22 @@ test("CLI contracts compile the actual three entry points without selecting data
   const commands = prismaCliArguments();
   assert.deepEqual(
     commands.map((c) => c.minimum),
-    [9, 9, 5],
+    [9, 9, 5, 5],
   );
   assert.deepEqual(
     commands.map((c) => c.label),
-    ["cli-query", "cli-schema", "cli-fmt"],
+    ["cli-query", "cli-schema", "cli-fmt", "cli-mssql-numeric"],
   );
   for (const { args } of commands) {
     assert.equal(args[0], "test");
-    assert.ok(args.includes("--locked") && args.includes("--bin"));
+    assert.ok(args.includes("--locked"));
     assert.equal(args.at(-1), "oja_cli_contracts");
     assert.ok(!args.includes("--ignored") && !args.includes("--all-targets"));
   }
   assert.ok(commands[0].args.includes("--lib"));
+  for (const { args } of commands.slice(0, 3))
+    assert.ok(args.includes("--bin"));
+  assert.ok(commands[3].args.includes("mssql-native"));
   const patch = prismaSourceInput(ROOT, policy.patch).toString("utf8");
   assert.ok(patch.includes("SchemaEngineCli::parse()"));
   assert.ok(patch.includes("PrismaOpt::parse()"));

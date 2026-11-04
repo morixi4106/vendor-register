@@ -1304,3 +1304,104 @@ index 57d27e3..ba3091c 100644
 +        assert!(version.to_string().contains(env!("GIT_HASH")));
 +    }
 +}
+diff --git a/quaint/src/connector/mssql/native/conversion.rs b/quaint/src/connector/mssql/native/conversion.rs
+index 4a6f198..bc60b01 100644
+--- a/quaint/src/connector/mssql/native/conversion.rs
++++ b/quaint/src/connector/mssql/native/conversion.rs
+@@ -6,7 +6,7 @@ use crate::{
+ use bigdecimal::BigDecimal;
+ use std::{borrow::Cow, convert::TryFrom};
+
+-use tiberius::{ColumnData, FromSql, IntoSql, ToSql};
++use tiberius::{ColumnData, FromSql, IntoSql};
+
+ impl<'a> IntoSql<'a> for &'a Value<'a> {
+     fn into_sql(self) -> ColumnData<'a> {
+@@ -22,7 +22,7 @@ impl<'a> IntoSql<'a> for &'a Value<'a> {
+             ValueType::Char(val) => val.as_ref().map(|val| format!("{val}")).into_sql(),
+             ValueType::Xml(val) => val.as_deref().into_sql(),
+             ValueType::Array(_) | ValueType::EnumArray(_, _) => panic!("Arrays are not supported on SQL Server."),
+-            ValueType::Numeric(val) => (*val).to_sql(),
++            ValueType::Numeric(val) => val.as_ref().map(to_tds_decimal).into_sql(),
+             ValueType::Json(val) => val.as_ref().map(|val| serde_json::to_string(&val).unwrap()).into_sql(),
+             ValueType::Uuid(val) => val.into_sql(),
+             ValueType::DateTime(val) => val.into_sql(),
+@@ -53,7 +53,9 @@ impl TryFrom<ColumnData<'static>> for Value<'static> {
+             ColumnData::String(s) => ValueType::Text(s),
+             ColumnData::Guid(uuid) => ValueType::Uuid(uuid),
+             ColumnData::Binary(bytes) => ValueType::Bytes(bytes),
+-            numeric @ ColumnData::Numeric(_) => ValueType::Numeric(BigDecimal::from_sql(&numeric)?),
++            numeric @ ColumnData::Numeric(_) => {
++                ValueType::Numeric(tiberius::numeric::BigDecimal::from_sql(&numeric)?.map(from_tds_decimal))
++            }
+             dt @ ColumnData::DateTime(_) => {
+                 use tiberius::time::chrono::{DateTime, NaiveDateTime, Utc};
+
+@@ -93,3 +95,67 @@ impl TryFrom<ColumnData<'static>> for Value<'static> {
+         Ok(Value::from(res))
+     }
+ }
++
++// Bridge only the TDS boundary; retain the engine's BigDecimal0.3 representation.
++fn to_tds_decimal(value: &BigDecimal) -> tiberius::numeric::BigDecimal {
++    let (digits, exponent) = value.as_bigint_and_exponent();
++    tiberius::numeric::BigDecimal::new(digits, exponent)
++}
++
++fn from_tds_decimal(value: tiberius::numeric::BigDecimal) -> BigDecimal {
++    let (digits, exponent) = value.as_bigint_and_exponent();
++    BigDecimal::new(digits, exponent)
++}
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use std::str::FromStr;
++
++    fn roundtrip(value: &BigDecimal) -> BigDecimal {
++        let input = Value::numeric(value.clone());
++        let ColumnData::Numeric(numeric) = (&input).into_sql() else { panic!("not numeric") };
++        let decoded = Value::try_from(ColumnData::Numeric(numeric)).unwrap();
++        let ValueType::Numeric(Some(value)) = decoded.typed else { panic!("not numeric") };
++        value
++    }
++
++    #[test]
++    fn actual_tds_roundtrips_keep_exact_decimal_values() {
++        for text in ["0", "1", "-1", "123.4500", "-987654321.123456789", "99999999999999999999999999999999999999", "0.00000000000000000000000000000000000001"] {
++            let value = BigDecimal::from_str(text).unwrap();
++            assert_eq!(roundtrip(&value), value);
++        }
++    }
++
++    #[test]
++    fn supported_scales_preserve_mantissa_and_exponent() {
++        for exponent in [0, 2, 18, 38] {
++            let value = BigDecimal::new(123.into(), exponent);
++            assert_eq!(roundtrip(&value).as_bigint_and_exponent(), value.as_bigint_and_exponent());
++        }
++    }
++
++    #[test]
++    fn negative_exponent_uses_the_existing_tds_normalization() {
++        let value = BigDecimal::new(9.into(), -3);
++        let decoded = roundtrip(&value);
++        assert_eq!(decoded, value);
++        assert_eq!(decoded.as_bigint_and_exponent(), (9000.into(), 0));
++    }
++
++    #[test]
++    fn null_numeric_remains_null() {
++        let value: Value<'static> = ValueType::Numeric(None).into();
++        let encoded = (&value).into_sql();
++        assert!(matches!(encoded, ColumnData::Numeric(None)));
++        assert!(matches!(Value::try_from(ColumnData::Numeric(None)).unwrap().typed, ValueType::Numeric(None)));
++    }
++
++    #[test]
++    fn unsupported_numeric_ranges_are_not_silently_rounded() {
++        for value in [BigDecimal::new(1.into(), 39), BigDecimal::from_str("9999999999999999999999999999999999999999").unwrap()] {
++            assert!(std::panic::catch_unwind(|| roundtrip(&value)).is_err());
++        }
++    }
++}
