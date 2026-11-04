@@ -228,7 +228,7 @@
     "reviewStatus": "UNREVIEWED",
     "patch": {
       "path": "vendor/native/prisma/cuid.patch",
-      "sha256": "add7b4f8da2c17de751874016004e30cb5d417d13591e62b6708df571a9f6b8f"
+      "sha256": "68449e2b24fedf53d845101c853ee4a130746eb449fbbe03f568853bd4fb1cb5"
     },
     "packages": [
       {

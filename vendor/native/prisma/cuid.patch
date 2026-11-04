@@ -4,7 +4,7 @@ index a133c04..471db13 100644
 +++ b/Cargo.toml
 @@ -10,9 +10,9 @@ homepage = "https://github.com/mplanchard/cuid-rust"
  repository = "https://github.com/mplanchard/cuid-rust"
- 
+
  [workspace.dependencies]
 -cuid-util = { path = "./crates/cuid-util", version = "0.1.1" }
 -cuid1 = { path = "./crates/cuid1", version = "0.1.0" }
@@ -28,12 +28,12 @@ index 0ea190e..11f4ace 100644
  documentation = "https://docs.rs/cuid/latest/cuid/"
  resolver = "2"
 @@ -16,7 +16,7 @@ cuid2.workspace = true
- 
+
  # WASM-only deps
  [target.'cfg(target_arch = "wasm32")'.dependencies]
 -getrandom = { version = "0", features = ["js"] }
 +getrandom = { version = "=0.2.17", features = ["js"] }
- 
+
  [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
  criterion.workspace = true
 diff --git a/crates/cuid-util/Cargo.toml b/crates/cuid-util/Cargo.toml
@@ -62,19 +62,19 @@ index f10756b..44f93bd 100644
  authors.workspace = true
 @@ -9,7 +9,6 @@ homepage.workspace = true
  repository.workspace = true
- 
+
  [dependencies]
 -base36 = "0.0.1"
  cuid-util.workspace = true
  num = { version = "0.4.0", features = ["num-bigint"] }
  once_cell = "1.19.0"
 @@ -22,7 +21,7 @@ hostname = "0.4.0"
- 
+
  # WASM-only deps
  [target.'cfg(target_arch = "wasm32")'.dependencies]
 -getrandom = { version = "0", features = ["js"] }
 +getrandom = { version = "=0.2.17", features = ["js"] }
- 
+
  [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
  criterion.workspace = true
 diff --git a/crates/cuid2/Cargo.toml b/crates/cuid2/Cargo.toml
@@ -90,11 +90,11 @@ index 08e54ce..ffb21c4 100644
  documentation = "https://docs.rs/cuid/latest/cuid2/"
  resolver = "2"
 @@ -31,7 +31,7 @@ sha3 = "0.10.6"
- 
+
  # WASM-only deps
  [target.'cfg(target_arch = "wasm32")'.dependencies]
 -getrandom = { version = "0", features = ["js"] }
 +getrandom = { version = "=0.2.17", features = ["js"] }
- 
+
  [dev-dependencies]
  num_cpus = "1.15.0"
