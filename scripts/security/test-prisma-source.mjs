@@ -618,6 +618,10 @@ export function prismaHttpClientArguments() {
   ];
 }
 
+export function prismaHttpClientCheckArguments() {
+  return ["check", "--locked", "--package", "black-box-tests", "--tests"];
+}
+
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
   const patchedGitSources = prismaPatchedGitSources(policy).length;
   return {
@@ -870,6 +874,14 @@ export async function testPrismaSource(
       ),
       9,
     );
+    execute(
+      cargo,
+      prismaHttpClientCheckArguments(),
+      source,
+      "http-client-consumers",
+      1_800_000,
+    );
+    tests.httpClientConsumersChecked = true;
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
       tests.upstreamUnits = rustTestTotals(

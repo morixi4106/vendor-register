@@ -14,6 +14,7 @@ import {
   prismaUnitArguments,
   prismaCliArguments,
   prismaHttpClientArguments,
+  prismaHttpClientCheckArguments,
   prismaSourceReceipt,
   prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
@@ -675,6 +676,13 @@ test("HTTP client metadata rejects old, detached or feature-reduced dependencies
 });
 
 test("HTTP contracts select only loopback tests and keep the legacy server visible", () => {
+  assert.deepEqual(prismaHttpClientCheckArguments(), [
+    "check",
+    "--locked",
+    "--package",
+    "black-box-tests",
+    "--tests",
+  ]);
   assert.deepEqual(prismaHttpClientArguments(), [
     "test",
     "--locked",
