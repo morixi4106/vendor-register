@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   actions: read
@@ -189,13 +190,19 @@ jobs:
           node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js
           node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
           node scripts/security/minimatch-backport.mjs
+          npm run audit:npm-tree
+          npm audit --audit-level=low
+          npm run build:function:types
+          git diff --exit-code
 
       - name: Upload minimatch provenance even when promotion is blocked
         if: always() && hashFiles('.audit/minimatch-backport-receipt.json') != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
         with:
           name: minimatch-backport-${{ matrix.os }}-${{ github.run_id }}
-          path: .audit/minimatch-backport-receipt.json
+          path: |
+            .audit/minimatch-backport-receipt.json
+            .audit/minimatch-npm-tree.json
           if-no-files-found: error
           retention-days: 45
       - name: Upload reproducible esbuild and vulnerability evidence
