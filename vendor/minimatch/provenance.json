@@ -1,0 +1,19 @@
+{
+  "status": "locally-maintained-security-backport",
+  "advisory": "GHSA-g3hv-75wg-m249",
+  "upstreamVersion": "9.0.9",
+  "upstreamCommit": "8a10e473e2e0ff03c2d4de308f257093af2bce21",
+  "upstreamArchiveSha256": "7d28c9a3ef17ce542093c78ec191481503e2711d29db1bd1522062303ab40478",
+  "upstreamFixCommit": "77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8",
+  "packageName": "@oja/minimatch",
+  "version": "9.0.9-oja.1",
+  "scope": "ESM and CommonJS preprocessing bounds; preserves the v9 public API",
+  "upstreamFixUrl": "https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8",
+  "differences": [
+    "Reject first-phase amplification beyond 1000 generated alternatives with an explicit RangeError. Unlike the v11 matcher, v9 cannot leave these patterns partly optimized without changing matches.",
+    "Skip quadratic second-phase deduplication above 1000 alternatives, matching the upstream fix.",
+    "No new public option, matcher algorithm, dependency or API removal.",
+    "Remove one trailing space from each unchanged AST distribution; no semantic AST change.",
+    "Omit upstream source maps and their sourceMappingURL comments; changed distributed JavaScript is explicit, not an upstream source rebuild."
+  ]
+}

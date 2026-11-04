@@ -19,6 +19,18 @@ test("production builds and CI cannot skip the incident audit", () => {
   assert.ok(gateIndex > 0 && gateIndex < nativeBuildIndex);
   assert.equal(steps[gateIndex]["continue-on-error"], undefined);
   assert.equal(steps[gateIndex].if, undefined);
+  const minimatchStep = steps.find(
+    (step) => step.run === "node scripts/security/minimatch-backport.mjs",
+  );
+  assert.ok(minimatchStep);
+  assert.equal(minimatchStep.if, undefined);
+  assert.equal(minimatchStep["continue-on-error"], undefined);
+  const incident = read("scripts/security/incident-audit.mjs");
+  assert.ok(incident.includes('"scripts/security/minimatch-backport.mjs"'));
+  assert.ok(
+    incident.indexOf('"scripts/security/minimatch-backport.mjs"') <
+      incident.indexOf("collectNativeInventory(root)"),
+  );
   assert.ok(
     quality.jobs["runtime-integrity"].steps.some((step) =>
       step.run?.includes("tests/scripts/native-inventory.test.js"),
@@ -73,4 +85,36 @@ test("all Node setup workflows use the exact version policy and no floating acti
     /vendor\/deepmerge\/\*\.cjs text eol=lf/,
   );
   assert.match(read(".gitattributes"), /vendor\/deepmerge\/\*\.tgz binary/);
+});
+
+test("manual backport verification retains both platforms and unconditional checks", () => {
+  const workflow = yaml.load(read(".github/workflows/minimatch-backport.yml"));
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+  assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
+  const job = workflow.jobs.backport;
+  assert.deepEqual(job.strategy.matrix.os, ["ubuntu-latest", "windows-latest"]);
+  for (const command of [
+    "node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js",
+    "node scripts/security/minimatch-backport.mjs",
+    "npm run audit:npm-tree",
+    "npm audit --audit-level=low",
+    "npm run build:function:types",
+    "git diff --exit-code",
+  ]) {
+    const step = job.steps.find((item) => item.run === command);
+    assert.ok(step, command);
+    assert.equal(step.if, undefined);
+    assert.equal(step["continue-on-error"], undefined);
+  }
+  assert.equal(job.steps[0].with["persist-credentials"], false);
+  assert.match(job.steps[3].run, /npm ci --ignore-scripts/);
+  const manifest = JSON.parse(read("package.json"));
+  assert.equal(
+    manifest.scripts["audit:npm-tree"],
+    "node scripts/security/verify-npm-tree.mjs",
+  );
+  const entrypoint = read("scripts/security/verify-npm-tree.mjs");
+  assert.ok(entrypoint.includes("!process.env.npm_execpath"));
+  assert.ok(entrypoint.includes("collectNpmTreeEvidence"));
+  assert.ok(!entrypoint.includes("npm exec"));
 });

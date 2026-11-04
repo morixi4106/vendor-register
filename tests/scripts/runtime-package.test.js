@@ -42,6 +42,17 @@ test("runtime plan removes workspaces and development tools without changing pro
   );
 });
 
+test("the scoped minimatch backport cannot enter a runtime under a different folder name", (t) => {
+  const root = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "runtime-backport-"),
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  pkg(root, "disguised-helper", "@oja/minimatch", "9.0.9-oja.1");
+  const result = inspectRuntimeToolchain(root, { checkAncestors: false });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.forbiddenPackages, ["@oja/minimatch"]);
+});
+
 test("runtime plan rejects unresolved, linked, extraneous and forbidden production paths", () => {
   const manifest = {
     name: "fixture",

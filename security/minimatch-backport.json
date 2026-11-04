@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@oja/minimatch",
+  "version": "9.0.9-oja.1",
+  "advisory": "GHSA-g3hv-75wg-m249",
+  "upstream": {
+    "name": "minimatch",
+    "version": "9.0.9",
+    "commit": "8a10e473e2e0ff03c2d4de308f257093af2bce21",
+    "archiveSha256": "7d28c9a3ef17ce542093c78ec191481503e2711d29db1bd1522062303ab40478",
+    "fixCommit": "77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8"
+  },
+  "tarball": {
+    "path": "vendor/minimatch/oja-minimatch-9.0.9-oja.1.tgz",
+    "sha256": "8b7c7d03c571761d4bd21d98ea3ca49b3b536ed33c60dd3c58a657e57e2eb49e"
+  },
+  "files": [
+    {
+      "path": "dist/commonjs/assert-valid-pattern.d.ts",
+      "sha256": "335d1d00d74fcca1fa1d4e48a817b1d2714d6433e38f392749bee1cf7febccba"
+    },
+    {
+      "path": "dist/commonjs/assert-valid-pattern.js",
+      "sha256": "8f6a1adf306eee7d4188da539445759366422c2beff1e378480276416ecd5cae"
+    },
+    {
+      "path": "dist/commonjs/ast.d.ts",
+      "sha256": "7212c2d58855b8df35275180e97903a4b6093d4fbaefea863d8d028da63938c6"
+    },
+    {
+      "path": "dist/commonjs/ast.js",
+      "sha256": "9e9517ef1fc084cb47b9b0dfed282a22c886959e25e4d97c2eb4de6725c395ba"
+    },
+    {
+      "path": "dist/commonjs/brace-expressions.d.ts",
+      "sha256": "10dd70dbc86f19bbd3172723f2e09feedf11c2fa22d293e856e712bb6a1caed6"
+    },
+    {
+      "path": "dist/commonjs/brace-expressions.js",
+      "sha256": "77c52c2ef01b206d3d9daae8e15182a24f435d4f262ed0d8faa7dea08c03af01"
+    },
+    {
+      "path": "dist/commonjs/escape.d.ts",
+      "sha256": "5bd0f306b4a9dc65bccf38d9295bc52720d2fa455e06f604529d981b5eb8d9dc"
+    },
+    {
+      "path": "dist/commonjs/escape.js",
+      "sha256": "f816822710406d5dbefb359fe2c881a9bdc0cef491b8525fbd03e7fba0b9dc46"
+    },
+    {
+      "path": "dist/commonjs/index.d.ts",
+      "sha256": "65a0ce7fbc7b0d5f5bf243171d7bd7232a89a26d94b40fc66bc3605801d854df"
+    },
+    {
+      "path": "dist/commonjs/index.js",
+      "sha256": "5ebb9ecc7676d5cc8cc570274e7353e110ce747bde2c97a083d90eecc5bea6de"
+    },
+    {
+      "path": "dist/commonjs/package.json",
+      "sha256": "8005a3491db7d92f36ac66369861589f9c47123d3a7c71e643fc2c06168cd45a"
+    },
+    {
+      "path": "dist/commonjs/unescape.d.ts",
+      "sha256": "f30992084e86f4b4c223c558b187cb0a9e83071592bd830d8ff2a471ee2bf2d4"
+    },
+    {
+      "path": "dist/commonjs/unescape.js",
+      "sha256": "0df54e8d40a7aa40b5f0edec0b5701842cd73976c1050a1aca386ce849deb193"
+    },
+    {
+      "path": "dist/esm/assert-valid-pattern.d.ts",
+      "sha256": "335d1d00d74fcca1fa1d4e48a817b1d2714d6433e38f392749bee1cf7febccba"
+    },
+    {
+      "path": "dist/esm/assert-valid-pattern.js",
+      "sha256": "4a505d04755cfaea3206043244612b5f91c947ccbe09793f130ea0e0f3482eb8"
+    },
+    {
+      "path": "dist/esm/ast.d.ts",
+      "sha256": "7212c2d58855b8df35275180e97903a4b6093d4fbaefea863d8d028da63938c6"
+    },
+    {
+      "path": "dist/esm/ast.js",
+      "sha256": "414b908efc226d65f67f77a57ae4a91dc3bca7141ba106f55604df7662065810"
+    },
+    {
+      "path": "dist/esm/brace-expressions.d.ts",
+      "sha256": "10dd70dbc86f19bbd3172723f2e09feedf11c2fa22d293e856e712bb6a1caed6"
+    },
+    {
+      "path": "dist/esm/brace-expressions.js",
+      "sha256": "1f2031ca845f9fcfeaa99c533ca20cfbddbcff8dd58330fe259d318f81d9a9f2"
+    },
+    {
+      "path": "dist/esm/escape.d.ts",
+      "sha256": "5bd0f306b4a9dc65bccf38d9295bc52720d2fa455e06f604529d981b5eb8d9dc"
+    },
+    {
+      "path": "dist/esm/escape.js",
+      "sha256": "88efe9f5ffe8c59c677ac0cc13d3acdaed0970efd7d46de2d86c15c962e30c9b"
+    },
+    {
+      "path": "dist/esm/index.d.ts",
+      "sha256": "65a0ce7fbc7b0d5f5bf243171d7bd7232a89a26d94b40fc66bc3605801d854df"
+    },
+    {
+      "path": "dist/esm/index.js",
+      "sha256": "2b051cb50d296f313cd23708d1bb0cc6b9a7a05a4bd9264e2a1997e4faa59596"
+    },
+    {
+      "path": "dist/esm/package.json",
+      "sha256": "3ca9d4afd21425087cf31893b8f9f63c81b0b8408db5e343ca76e5f8aa26ab9a"
+    },
+    {
+      "path": "dist/esm/unescape.d.ts",
+      "sha256": "f30992084e86f4b4c223c558b187cb0a9e83071592bd830d8ff2a471ee2bf2d4"
+    },
+    {
+      "path": "dist/esm/unescape.js",
+      "sha256": "82ca4c0dd3bdccad12b9cb2ba1b87b1d4eaae7f940ee71615687bf0b8fd94c1a"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "d11323827fa4edeaafc437cc5b91b6971b335f0127efeeb42bf5122fe8657e8f"
+    },
+    {
+      "path": "package.json",
+      "sha256": "a72aa8575967c5b82ff80e4120ac2d928fba5c114fb49dfce399710663c8618a"
+    },
+    {
+      "path": "provenance.json",
+      "sha256": "ca195affc754aac5f6457dc1ca32c6764ba1de7fa62b9ec9299fb7979a74940f"
+    },
+    {
+      "path": "README.md",
+      "sha256": "0fdcaebbffdb02f3a1ee60b3dbcced79256d87e3c8952bbf9e94043a164221f1"
+    }
+  ]
+}

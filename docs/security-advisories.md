@@ -1,5 +1,58 @@
 # Production dependency advisories
 
+## Minimatch Distributed-JS Backport: 2026-11-04
+
+GHSA-g3hv-75wg-m249 / CVE-2026-118764 affects installed minimatch9.0.9.
+The registry reported18 affected dependency entries from one direct advisory,
+not18 independent CVEs. Upstream11.0.1 fixes it, but11 removes makeRe and other
+v9 APIs used by the installed React Router/GraphQL/ESLint toolchain. Preserve
+those consumers with the explicit, ISC-licensed local @oja/minimatch9.0.9-oja.1
+backport, installed under the minimatch alias. This is not an upstream release
+or a claimed rebuild of the upstream TypeScript source.
+
+Bind the original9.0.9 archive/revision, official fix revision, local tarball,
+both ESM/CommonJS distributions, license and provenance through30 file hashes.
+The first-phase amplifier explicitly rejects preprocessing above1000 generated
+alternatives with RangeError; it must not silently truncate or change a match.
+The second-phase pairwise deduplication is skipped above1000 alternatives while
+preserving preexisting nonamplifying sets. A naive partial-cap approach was
+rejected after differential testing found changed results. The final local
+comparison agrees with upstream9 for7153 ordinary cases and intentionally
+rejects two over-budget cases. This is bounded compatibility, not a claim that
+arbitrarily expensive patterns remain accepted. Child tests have128MiB memory
+and15-second limits in both module modes.
+
+The installed-byte gate checks all30 files and every actual consumer's resolved
+entry point, not just a manifest version. The npm tree verifier includes the
+scoped identity in query/lock/SBOM checks; the runtime packager forbids both
+names. Only four unchanged vendored distribution files disable the project's
+no-useless-escape style rule to retain upstream regex bytes; other lint rules,
+application lint, coverage and security admission rules remain enforced.
+
+Registry audit is insufficient for a renamed package. Every backport gate
+freshly queries OSV for the original minimatch9.0.9 identity. The existing
+advisory stays visible in the receipt, bound to its reviewed modification
+timestamp; a new/changed advisory, unavailable response, altered file, hidden
+lock copy or detached consumer fails closed. Production incident admission,
+Quality checks and the dedicated Windows/Linux workflow run this gate without
+continue-on-error. No historical risk acceptance, native approval, expiry or
+required-check bypass was added. Cross-platform CI results must be recorded
+separately from these local implementation checks.
+
+Local full Node tests:1200 passed,5 existing platform skips,0 failed. App build,
+actual Function GraphQL typegen and npm tree/SBOM checks pass; npm registry
+audit reports0, separately from the observed original advisory covered by the
+verified backport. A fresh isolated runtime install has172 packages, audit0,
+no forbidden build packages and activate=false. The incident audit now passes
+npm/backport checks and still refuses unresolved native artifacts. Whole-engine
+Prisma/NAPI, isolated DB/migrations, Javy/Function/provider and live-runtime
+evidence remain incomplete. No main merge, deployment/settings/Shopify release,
+financial action or monitoring-mail restart.
+
+Sources: [advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249),
+[official fix](https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8),
+[v11 API changes](https://github.com/isaacs/minimatch/blob/v11.0.4/changelog.md).
+
 ## Prisma CUID Source Follow-Up: 2026-11-04
 
 Add an explicit archive/patch-bound override of Prisma's existing cuid-rust

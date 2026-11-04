@@ -108,6 +108,14 @@ export function auditIncident(root = ROOT) {
   });
   const audit = JSON.parse(result.stdout);
   const npm = validateRegistryAudit(audit);
+  const minimatch = JSON.parse(
+    runSafeBuildCommand({
+      args: [path.join(root, "scripts/security/minimatch-backport.mjs")],
+      cwd: root,
+      stdio: "pipe",
+      timeoutMs: 60_000,
+    }).stdout,
+  );
   const go = verifyRebuiltEsbuild(root);
   const policyBytes = fs.readFileSync(
     path.join(root, "security/native-artifacts.json"),
@@ -137,6 +145,7 @@ export function auditIncident(root = ROOT) {
     nativePolicySha256: hash(policyBytes),
     node,
     backport,
+    minimatch,
     npm: {
       ...npm,
       reportSha256: hash(result.stdout),

@@ -74,6 +74,9 @@ jobs:
       - name: Verify exact patched Node executable
         run: npm run runtime:version
 
+      - name: Verify installed minimatch backport and original upstream advisories
+        run: node scripts/security/minimatch-backport.mjs
+
       - name: Rebuild esbuild with the reviewed patched Go toolchain
         run: npm run native:esbuild
 
@@ -184,6 +187,17 @@ jobs:
         run: |
           npm run runtime:version
           node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js
+          node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
+          node scripts/security/minimatch-backport.mjs
+
+      - name: Upload minimatch provenance even when promotion is blocked
+        if: always() && hashFiles('.audit/minimatch-backport-receipt.json') != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: minimatch-backport-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/minimatch-backport-receipt.json
+          if-no-files-found: error
+          retention-days: 45
       - name: Upload reproducible esbuild and vulnerability evidence
         if: always() && hashFiles('.audit/native-esbuild/*.receipt.json') != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24

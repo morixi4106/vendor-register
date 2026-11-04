@@ -1,0 +1,69 @@
+name: Minimatch security backport tests
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/minimatch-backport.yml
+      - package.json
+      - package-lock.json
+      - scripts/security/minimatch-backport.mjs
+      - scripts/security/npm-tree-verification.mjs
+      - scripts/security/verify-npm-tree.mjs
+      - security/minimatch-backport.json
+      - tests/scripts/minimatch-backport.test.js
+      - tests/scripts/npm-tree-verification.test.js
+      - tests/fixtures/minimatch/**
+      - vendor/minimatch/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backport:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node and install without lifecycle scripts
+        run: |
+          npm run runtime:version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check rejection cases and real consumers
+        run: node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
+      - name: Verify installed bytes and fresh original upstream advisories
+        run: node scripts/security/minimatch-backport.mjs
+      - name: Verify actual npm tree and production SBOM
+        run: npm run audit:npm-tree
+      - name: Audit every npm severity
+        run: npm audit --audit-level=low
+      - name: Check actual Function GraphQL type generation without release
+        run: npm run build:function:types
+      - name: Reject generated tracked changes
+        run: git diff --exit-code
+      - name: Upload limited backport evidence without approving production
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: minimatch-backport-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            .audit/minimatch-backport-receipt.json
+            .audit/minimatch-npm-tree.json
+          if-no-files-found: error
+          retention-days: 45
