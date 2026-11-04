@@ -16,6 +16,7 @@ const FILES = [
   "src/rc4.rs",
   "src/http/mod.rs",
   "src/oja_security_contracts.rs",
+  "src/oja_parser_contracts.rs",
 ];
 const exact = (value, keys) =>
   value &&
@@ -37,7 +38,7 @@ export function validatePrismaWinauthSource(entry) {
     ]) ||
     entry.name !== "winauth" ||
     entry.upstreamVersion !== "0.0.5" ||
-    entry.version !== "0.0.5+oja.1" ||
+    entry.version !== "0.0.5+oja.2" ||
     entry.randVersion !== "0.8.8" ||
     entry.sha256 !==
       "0e03c9d0fde636447315ff38695b14c85c6ccc738ade05a400a3ce568a557021" ||
@@ -141,8 +142,16 @@ export function checkPrismaWinauthWiring(source, entry, input) {
         '#[cfg(feature = "oja-security-contracts")]\npub mod oja_security_contracts;',
       ) ||
     !fs
+      .readFileSync(path.join(vendor, "src/lib.rs"), "utf8")
+      .includes(
+        '#[cfg(feature = "oja-security-contracts")]\npub mod oja_parser_contracts;',
+      ) ||
+    !fs
       .readFileSync(path.join(source, "security-contracts/src/lib.rs"), "utf8")
-      .includes("#[cfg(test)]\nmod winauth_contracts;")
+      .includes("#[cfg(test)]\nmod winauth_contracts;") ||
+    !fs
+      .readFileSync(path.join(source, "security-contracts/src/lib.rs"), "utf8")
+      .includes("#[cfg(test)]\nmod winauth_parser_contracts;")
   )
     throw new Error("prisma_winauth_wiring_invalid");
   return true;

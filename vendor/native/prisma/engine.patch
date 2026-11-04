@@ -211,7 +211,7 @@ diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,56 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -235,6 +235,9 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod winauth_contracts;
++
++#[cfg(test)]
++mod winauth_parser_contracts;
 +
 +#[cfg(test)]
 +mod tests {
@@ -2097,3 +2100,40 @@ new file mode 100644
 +fn ntlm_rejects_invalid_server_challenges() { actual::reject_challenges(); }
 +#[test]
 +fn ntlm_fake_handshake_keeps_spn_cbt_and_mic() { actual::fake_handshake(); }
+diff --git a/security-contracts/src/winauth_parser_contracts.rs b/security-contracts/src/winauth_parser_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/winauth_parser_contracts.rs
+@@ -0,0 +1,32 @@
++use winauth::oja_parser_contracts as actual;
++
++macro_rules! contracts {
++    ($($name:ident),+ $(,)?) => { $(#[test] fn $name() { actual::$name(); })+ };
++}
++
++contracts!(
++    absent_target_full_exchange,
++    absent_info_ignores_bytes,
++    absent_fields_ignore_offsets,
++    max_lengths_ignored,
++    payload_orders_and_padding,
++    version_header_boundaries,
++    truncated_header_prefixes,
++    active_offsets_rejected,
++    overlapping_fields_rejected,
++    payload_lengths_bounded,
++    unicode_name_alignment,
++    unicode_decoder_rejects_invalid,
++    av_eol_and_trailing_bytes,
++    av_cannot_escape_info_length,
++    av_scalar_lengths,
++    av_unknown_and_single_host_error,
++    av_strings_and_unaligned_info,
++    av_truncation_corpus,
++    deterministic_malformed_corpus,
++    av_unicode_wire_lengths,
++    auth_unicode_fields_and_mic,
++    outgoing_wire_length_boundaries,
++    oversized_response_rejected,
++    failed_challenges_do_not_accumulate,
++);

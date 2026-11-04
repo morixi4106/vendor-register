@@ -12,6 +12,7 @@ import {
   checkPrismaMetadata as checkMetadata,
   rustTestTotals,
   prismaUnitArguments,
+  prismaParserTestTotals,
   prismaCliArguments,
   prismaHttpClientArguments,
   prismaHttpClientCheckArguments,
@@ -68,6 +69,9 @@ test("winauth recipe rejects old random generators, source identity masking and 
       p.upstreamVersion = "0.0.6";
     },
     (p) => {
+      p.version = "0.0.5+oja.1";
+    },
+    (p) => {
       p.sha256 = "0".repeat(64);
     },
     (p) => {
@@ -92,13 +96,18 @@ test("winauth recipe rejects old random generators, source identity masking and 
   }
 });
 
-test("winauth patch changes only manifest and additive offline contract entry points", () => {
+test("winauth patch binds actual parser changes and offline contract entry points", () => {
   const patch = prismaSourceInput(ROOT, policy.winauthSource.patch).toString(
     "utf8",
   );
   assert.deepEqual(
     [...patch.matchAll(/^diff --git a\/(\S+) b\/\S+$/gm)].map((m) => m[1]),
-    ["Cargo.toml", "src/lib.rs", "src/oja_security_contracts.rs"],
+    [
+      "Cargo.toml",
+      "src/lib.rs",
+      "src/oja_security_contracts.rs",
+      "src/oja_parser_contracts.rs",
+    ],
   );
   assert.ok(patch.includes('+version = "=0.8.8"'));
   assert.equal(patch.includes('+version = "0.7"'), false);
@@ -122,6 +131,67 @@ test("winauth patch changes only manifest and additive offline contract entry po
       false,
     );
   }
+});
+
+test("parser follow-up retains the original SSPI and cryptographic source bindings", () => {
+  const expected = {
+    "src/windows.rs":
+      "1978af92e9e92ae257d7fa5fc725630c2b27462edb53271427174a42c42dafbf",
+    "src/md4.rs":
+      "82d883e09865cc2ca456cce2eedd6f4e5330470d65df09635c08d58d7c3e1c84",
+    "src/hmac.rs":
+      "412511adb6158cbae2e14cb66cf730953ba11d3885d00b012a92c67b7994fb15",
+    "src/rc4.rs":
+      "29081c5fa027418cfb239f0070c9d050996cd755fd082d3b8da30e8e0e167f0a",
+  };
+  for (const [file, digest] of Object.entries(expected))
+    assert.equal(
+      policy.winauthSource.sourceFiles.find((item) => item.path === file)
+        ?.sha256,
+      digest,
+    );
+  assert.ok(
+    policy.sourceFiles.some(
+      (item) =>
+        item.path === "security-contracts/src/winauth_parser_contracts.rs",
+    ),
+  );
+  assert.ok(
+    policy.winauthSource.sourceFiles.some(
+      (item) => item.path === "src/oja_parser_contracts.rs",
+    ),
+  );
+});
+
+test("parser receipts require 24 distinct successful actual-library regressions", () => {
+  const lines = Array.from(
+    { length: 24 },
+    (_, i) => `test winauth_parser_contracts::case_${i} ... ok`,
+  );
+  assert.deepEqual(prismaParserTestTotals(lines.join("\n")), {
+    passed: 24,
+    failed: 0,
+    ignored: 0,
+  });
+  for (const output of [
+    "",
+    lines.slice(1).join("\n"),
+    lines.concat(lines[0]).join("\n"),
+    lines
+      .map((line, i) => (i ? line : line.replace("ok", "ignored")))
+      .join("\n"),
+    lines
+      .map((line, i) => (i ? line : line.replace("ok", "FAILED")))
+      .join("\n"),
+    lines
+      .map((line) => line.replace("winauth_parser_contracts", "unrelated"))
+      .join("\n"),
+    Array(24).fill(lines[0]).join("\n"),
+  ])
+    assert.throws(
+      () => prismaParserTestTotals(output),
+      /prisma_parser_tests_incomplete/,
+    );
 });
 
 test("Prisma recipe binds the source patch and both complete lock graphs", () => {
@@ -724,13 +794,14 @@ test("winauth wiring binds the workspace, consumer features, license and offline
       '[workspace]\nexclude=["vendor/winauth"]\n[patch.crates-io]\nwinauth={path="vendor/winauth"}\n',
     "security-contracts/Cargo.toml":
       '[dependencies]\nwinauth={path="../vendor/winauth",features=["oja-security-contracts"]}\n',
-    "security-contracts/src/lib.rs": "#[cfg(test)]\nmod winauth_contracts;\n",
+    "security-contracts/src/lib.rs":
+      "#[cfg(test)]\nmod winauth_contracts;\n#[cfg(test)]\nmod winauth_parser_contracts;\n",
     "quaint/Cargo.toml":
       '[target.a.dependencies]\ntiberius={features=["winauth","bigdecimal","tds73"]}\n[target.b.dependencies]\ntiberius={features=["winauth","bigdecimal","tds73"]}\n',
     "vendor/winauth/src/lib.rs":
-      '#[cfg(feature = "oja-security-contracts")]\npub mod oja_security_contracts;\n',
+      '#[cfg(feature = "oja-security-contracts")]\npub mod oja_security_contracts;\n#[cfg(feature = "oja-security-contracts")]\npub mod oja_parser_contracts;\n',
     "vendor/winauth/Cargo.toml":
-      '[package]\nname="winauth"\nversion="0.0.5+oja.1"\nlicense="MIT/Apache-2.0"\n[dependencies.rand]\nversion="=0.8.8"\n[features]\noja-security-contracts=[]\n[target."cfg(windows)".dependencies.winapi]\nfeatures=["winerror","sspi"]\n',
+      '[package]\nname="winauth"\nversion="0.0.5+oja.2"\nlicense="MIT/Apache-2.0"\n[dependencies.rand]\nversion="=0.8.8"\n[features]\noja-security-contracts=[]\n[target."cfg(windows)".dependencies.winapi]\nfeatures=["winerror","sspi"]\n',
   };
   for (const [file, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(source, file)), { recursive: true });

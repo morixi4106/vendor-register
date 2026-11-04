@@ -9,15 +9,15 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "670502a652bc47d28cd3fcf5ea6762e7a4e4eb8cf5a138c65602b59716d3236e"
+    "sha256": "70f18392faf18ffca479b63f316c205e2de2ffc43c530502f0aab02df6aec133"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "2ff803b6660acf9eaec2fe760da1a5a40e11b957c670d8bea2dde2c9b0be8e1b"
+    "sha256": "45014d90a6b84e511e364c4e35b6bb06778211dc3c533e6472b0b72d526e4d60"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "0f392355b9e3aa3ada9efdd18a2f0686e9a56f93d16a345485662bafd8e28076"
+    "sha256": "1f9ef5d0ab03742ec98ccc7e5bca8cf5022fafeb6e5c65718788220d7a211494"
   },
   "sourceFiles": [
     {
@@ -42,7 +42,7 @@
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "26ec7fe112aad9553a652a8c68b23bb100e53d5fe33c83508637cba8fe7c6634"
+      "sha256": "68abc1db71131f22ea8d9c8c8cd094d7bf3bc9be112932f33275d2d4007f3676"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -151,6 +151,10 @@
     {
       "path": "security-contracts/src/winauth_contracts.rs",
       "sha256": "8a8ec915c2d2221091d1f9e1444997037f1e2623ac646b6fd4a5cce780181658"
+    },
+    {
+      "path": "security-contracts/src/winauth_parser_contracts.rs",
+      "sha256": "9d8d1e878994abe365422cf32540baa8f9bf41f868359b40db86f0e6c532d9d0"
     }
   ],
   "dependencies": {
@@ -410,16 +414,16 @@
   "winauthSource": {
     "name": "winauth",
     "upstreamVersion": "0.0.5",
-    "version": "0.0.5+oja.1",
+    "version": "0.0.5+oja.2",
     "sha256": "0e03c9d0fde636447315ff38695b14c85c6ccc738ade05a400a3ce568a557021",
     "patch": {
       "path": "vendor/native/prisma/winauth.patch",
-      "sha256": "7a5f0b07278aa04c26bc6716ff5965068530e520581e31a9fd99be7f1336adf2"
+      "sha256": "0ee2c329b9da590e70195c0deb205cd0469feb6259ff63b03c1567c0b96baae4"
     },
     "sourceFiles": [
       {
         "path": "Cargo.toml",
-        "sha256": "20bd5ea673856394c5db2aef04b51c2b6508c86fedaf31eb75607c112498097e"
+        "sha256": "d9fd98ad247a7c9ed3e697a5fe3963b0be22a39b0d0f905b9f01189daa77ec0e"
       },
       {
         "path": "Cargo.toml.orig",
@@ -427,7 +431,7 @@
       },
       {
         "path": "src/lib.rs",
-        "sha256": "ff5e6a988e90258a92a0adcf43e58f0eeb7768d85767cb6421e2707c2a46f86c"
+        "sha256": "09fc85013c3aaa3d03dad4394142d85b0a05e06cbfcad197963f74dbdadc4146"
       },
       {
         "path": "src/windows.rs",
@@ -452,6 +456,10 @@
       {
         "path": "src/oja_security_contracts.rs",
         "sha256": "e00851252c35fa2271dfd943ee284c99a23afb5fd90b0af35835fb234198b093"
+      },
+      {
+        "path": "src/oja_parser_contracts.rs",
+        "sha256": "bfe605809ed888babbed789c30f0de20e81973bcfac87eaf0a2a78767288ec04"
       }
     ],
     "randVersion": "0.8.8"

@@ -77,6 +77,7 @@ const SOURCE_FILES = [
   "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
   "quaint/Cargo.toml",
   "security-contracts/src/winauth_contracts.rs",
+  "security-contracts/src/winauth_parser_contracts.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -653,6 +654,19 @@ export function prismaUnitArguments() {
   ];
 }
 
+export function prismaParserTestTotals(output) {
+  const cases = [
+    ...output.matchAll(/^test winauth_parser_contracts::(\S+) \.\.\. (.+)$/gm),
+  ];
+  if (
+    cases.length !== 24 ||
+    new Set(cases.map((item) => item[1])).size !== 24 ||
+    cases.some((item) => item[2].trim() !== "ok")
+  )
+    throw new Error("prisma_parser_tests_incomplete");
+  return { passed: 24, failed: 0, ignored: 0 };
+}
+
 export function prismaCliArguments() {
   return [
     {
@@ -984,22 +998,21 @@ export async function testPrismaSource(
   json("contract-metadata.json", contractMetadata);
   const tests = {};
   if (!assessOnly) {
-    tests.contracts = rustTestTotals(
-      execute(
-        cargo,
-        [
-          "test",
-          "--locked",
-          "--manifest-path",
-          "security-contracts/Cargo.toml",
-          "--lib",
-        ],
-        source,
-        "contracts",
-        900_000,
-      ),
-      64,
+    const contractOutput = execute(
+      cargo,
+      [
+        "test",
+        "--locked",
+        "--manifest-path",
+        "security-contracts/Cargo.toml",
+        "--lib",
+      ],
+      source,
+      "contracts",
+      900_000,
     );
+    tests.contracts = rustTestTotals(contractOutput, 88);
+    tests.ntlmParser = prismaParserTestTotals(contractOutput);
     env.GIT_HASH = policy.source.commit;
     tests.cli = {};
     for (const command of prismaCliArguments()) {

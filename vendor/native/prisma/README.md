@@ -85,7 +85,7 @@ registry identities of MongoDB and mysql_common are also separately scanned.
   MongoDB remains an external dependency, as in the original registry graph;
   it is not added as a Prisma workspace member with unrelated upstream dev tests.
 
-The Windows-authentication follow-up retains winauth 0.0.5 as an explicit,
+The initial Windows-authentication follow-up retains winauth 0.0.5 as an explicit,
 archive/hash-bound 0.0.5+oja.1 override and pins rand 0.8.8, already used by the
 other engine consumers. The NTLM/crypto/Windows SSPI implementation is unchanged;
 only the manifest and additive, disabled-by-default diagnostic entry point change.
@@ -105,6 +105,28 @@ entropy-quality, complete NTLM parser or end-to-end SQL compatibility approval.
 Existing upstream credential-dependent unit tests and old HTTP example/dev
 dependencies remain intact but are not selected or certified by these graphs.
 Existing parser TODO/panic branches are not fixed by a rand dependency update.
+
+The parser follow-up versions that explicit source as 0.0.5+oja.2. Decode only
+checked slices of the supplied challenge: ignore unused/empty fields and MaxLen
+as specified by MS-NLMP, support either payload order/padding, reject overlapping
+or header/out-of-buffer ranges, and never allocate a skip buffer from an offset.
+TargetInfo is bounded by its declared length; every AV value is bounded by AvLen,
+fixed-width values require exact lengths, and EOL must end the declared sequence.
+Unsupported SingleHost AV data now returns an error instead of panicking. Unknown
+flags/AV IDs remain rejected; no new SingleHost or OEM authentication is added.
+
+Serialize Unicode lengths as actual UTF-16 bytes and reject 16-bit wire-length
+overflow instead of truncating. Keep a failed challenge out of the authentication
+transcript; only successful encoding commits it. Preserve the original SSPI,
+MD4/MD5/HMAC/RC4 implementations, randomness, SPN/CBT/MIC and required flags.
+Add 24 actual-library regressions, including the original empty-target exchange,
+offset/length/truncation/scalar/UTF-16 errors, either field order, Unicode output,
+oversized response rejection, failure/retry MIC consistency and a deterministic
+4096-input mutation corpus. Require all 24 named tests in addition to the full
+contract suite. Finite corpus/debug tests are not exhaustive fuzzing, optimized-
+binary, live SSPI/domain/SQL, complete protocol, password-zeroization or general
+DoS approval. Parsing allocations are bounded by supplied data, not proof that
+all callers impose an overall incoming-token limit.
 
 `npm run native:prisma-contracts` compiles only the source contracts.
 `--upstream-units` additionally tests the query-core and schema-connector
