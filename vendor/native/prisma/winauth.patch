@@ -1,0 +1,180 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index fabdb0c..5841459 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,7 +12,7 @@
+ [package]
+ edition = "2018"
+ name = "winauth"
+-version = "0.0.5"
++version = "0.0.5+oja.1"
+ authors = ["Steffen Butzer <steffen.butzer@outlook.com>"]
+ description = "Windows Authentication in Rust (NTLMv2)"
+ documentation = "https://docs.rs/winauth/"
+@@ -37,7 +37,10 @@ version = "1.2.0"
+ version = "0.6.1"
+
+ [dependencies.rand]
+-version = "0.7"
++version = "=0.8.8"
++
++[features]
++oja-security-contracts = []
+
+ [dev-dependencies.cfg-if]
+ version = "0.1"
+diff --git a/src/lib.rs b/src/lib.rs
+index 80eef2a..7073fd1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,6 +21,9 @@ mod hmac;
+ mod md4;
+ mod rc4;
+
++#[cfg(feature = "oja-security-contracts")]
++pub mod oja_security_contracts;
++
+ pub mod http;
+
+ #[cfg(windows)]
+diff --git a/src/oja_security_contracts.rs b/src/oja_security_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/src/oja_security_contracts.rs
+@@ -0,0 +1,136 @@
++//! Offline checks against the actual implementation. Never acquire OS credentials.
++use super::*;
++
++fn response() -> EncodedNtlmv2Response {
++    Ntlmv2Response {
++        user: "User".into(), password: "Password".into(), domain: "Domain".into(),
++        timestamp: Some(0x0123456789abcdef), server_challenge: b"12345678", av_pairs: &[],
++    }.encode().unwrap()
++}
++
++pub fn password_key() {
++    assert_eq!(ntowfv2("User", "Password", "Domain"),
++        [0x0c,0x86,0x8a,0x40,0x3b,0xfd,0x7a,0x93,0xa3,0x00,0x1e,0xf2,0x2e,0xf0,0x2e,0x3f]);
++}
++
++pub fn crypto_vectors() {
++    assert_eq!(Md4::hash(b""), [0x31,0xd6,0xcf,0xe0,0xd1,0x6a,0xe9,0x31,0xb7,0x3c,0x59,0xd7,0xe0,0xc0,0x89,0xc0]);
++    assert_eq!(Md5::hmac(b"key", b"The quick brown fox jumps over the lazy dog"),
++        [0x80,0x07,0x07,0x13,0x46,0x3e,0x77,0x49,0xb9,0x0c,0x2d,0xc2,0x49,0x11,0xe2,0x75]);
++    assert_eq!(rc4::rc4(b"Wiki", b"pedia"), [0x10,0x21,0xbf,0x04,0x20]);
++}
++
++pub fn channel_bindings() {
++    let input = b"tls-server-end-point:\xea\x05\xfe\xfe\xcc\x6b\x0b\xd5\x71\xdb\xbc\x5b\xaa\x3e\xd4\x53\x86\xd0\x44\x68\x35\xf7\xb7\x4c\x85\x62\x1b\x99\x83\x47\x5f\x95";
++    assert_eq!(NtlmV2ClientBuilder::new().channel_bindings(input).channel_bindings.unwrap(),
++        [0x65,0x86,0xe9,0x9d,0x81,0xc2,0xfc,0x98,0x4e,0x47,0x17,0x2f,0xd4,0xdd,0x03,0x10]);
++    for data in [&b""[..], &b"fake-binding"[..]] {
++        let gss = make_sec_channel_bindings(data, true);
++        let sec = make_sec_channel_bindings(data, false);
++        assert_eq!(&gss[..16], &[0;16]);
++        assert_eq!(LittleEndian::read_u32(&gss[16..]), data.len() as u32);
++        assert_eq!(&gss[20..], data);
++        assert_eq!(&sec[..24], &[0;24]);
++        assert_eq!(LittleEndian::read_u32(&sec[24..]), data.len() as u32);
++        assert_eq!(LittleEndian::read_u32(&sec[28..]), 32);
++        assert_eq!(&sec[32..], data);
++    }
++    #[cfg(windows)] {
++        // Builder-only: build() would acquire the current Windows account.
++        let _outbound = windows::NtlmSspiBuilder::new().outbound()
++            .target_spn("MSSQLSvc/fake.invalid:1433").channel_bindings(b"fake-binding");
++        let _inbound = windows::NtlmSspiBuilder::new().inbound();
++        let _build: fn(windows::NtlmSspiBuilder) -> io::Result<windows::NtlmSspi> = windows::NtlmSspiBuilder::build;
++    }
++}
++
++pub fn response_consistency() {
++    let encoded = response();
++    let (proof, blob) = encoded.response.split_at(16);
++    assert_eq!(&blob[..8], &[1,1,0,0,0,0,0,0]);
++    assert_eq!(LittleEndian::read_u64(&blob[8..]), 0x0123456789abcdef);
++    assert_eq!(blob.len(), 32);
++    assert_eq!(&blob[24..], &[0;8]);
++    let key = ntowfv2("User", "Password", "Domain");
++    let mut content = b"12345678".to_vec(); content.extend_from_slice(blob);
++    assert_eq!(proof, Md5::hmac(&key, &content));
++    let session_base = Md5::hmac(&key, proof);
++    assert_eq!(rc4::rc4(&session_base, &encoded.encrypted_random_session_key), encoded.exported_session_key);
++}
++
++pub fn fresh_randomness() {
++    // A regression check for fixed/reused outputs, not a proof of entropy quality.
++    let a = response(); let b = response();
++    assert_ne!(&a.response[32..40], &b.response[32..40]);
++    assert_ne!(a.exported_session_key, b.exported_session_key);
++}
++
++fn client() -> NtlmV2Client<'static> {
++    let mut client = NtlmV2ClientBuilder::new().target_spn("MSSQLSvc/fake.invalid:1433")
++        .channel_bindings(b"fake-binding").build(Some("Domain"), "User", "Password");
++    // Keep fixtures independent of COMPUTERNAME; never print credential material.
++    client.workstation = Some("OFFLINE_FIXTURE".into());
++    client
++}
++
++pub fn negotiate_state() {
++    let mut c = client();
++    assert_eq!(c.next_bytes(Some(b"bad")).unwrap_err().kind(), io::ErrorKind::InvalidData);
++    let negotiate = c.next_bytes(None).unwrap().unwrap();
++    assert_eq!(&negotiate[..8], SIGNATURE);
++    assert_eq!(LittleEndian::read_u32(&negotiate[8..]), 1);
++    let flags = NegotiateFlags::from_bits(LittleEndian::read_u32(&negotiate[12..])).unwrap();
++    assert!(flags.contains(NegotiateFlags::NTLMSSP_NEGOTIATE_128 | NegotiateFlags::NTLMSSP_NEGOTIATE_KEY_EXCH));
++    assert!(c.next_bytes(None).is_err());
++}
++
++fn challenge(flags: u32) -> Vec<u8> {
++    let mut av = vec![];
++    av.encode_av_pairs(&[AvItem::DnsComputerName("fake.invalid".into()), AvItem::Timestamp(42)]).unwrap();
++    let mut bytes = SIGNATURE.to_vec();
++    bytes.write_u32::<LittleEndian>(2).unwrap();
++    bytes.extend_from_slice(&[0;8]);
++    bytes.write_u32::<LittleEndian>(flags).unwrap();
++    bytes.extend_from_slice(b"12345678"); bytes.extend_from_slice(&[0;8]);
++    bytes.write_u16::<LittleEndian>(av.len() as u16).unwrap();
++    bytes.write_u16::<LittleEndian>(av.len() as u16).unwrap();
++    bytes.write_u32::<LittleEndian>(48).unwrap();
++    bytes.extend_from_slice(&av); bytes
++}
++
++pub fn reject_challenges() {
++    for bytes in [vec![], b"not-ntlm".to_vec(), challenge(0)] {
++        let mut c = client(); c.next_bytes(None).unwrap();
++        assert!(c.next_bytes(Some(&bytes)).is_err());
++    }
++}
++
++fn field(bytes: &[u8], position: usize) -> &[u8] {
++    let len = LittleEndian::read_u16(&bytes[position..]) as usize;
++    let offset = LittleEndian::read_u32(&bytes[position+4..]) as usize;
++    &bytes[offset..offset+len]
++}
++
++pub fn fake_handshake() {
++    let mut c = client();
++    let negotiate = c.next_bytes(None).unwrap().unwrap();
++    let challenge = challenge(LittleEndian::read_u32(&negotiate[12..]));
++    let auth = c.next_bytes(Some(&challenge)).unwrap().unwrap();
++    assert_eq!(&auth[..8], SIGNATURE);
++    assert_eq!(LittleEndian::read_u32(&auth[8..]), 3);
++    let nt_response = field(&auth, 20);
++    assert_eq!(LittleEndian::read_u64(&nt_response[24..]), 42);
++    let av = (&nt_response[44..]).decode_av_pairs().unwrap();
++    assert!(av.iter().any(|a| matches!(a, AvItem::AvTargetName(s) if s == "MSSQLSvc/fake.invalid:1433")));
++    assert!(av.iter().any(|a| matches!(a, AvItem::ChannelBindings(h) if Some(*h) == c.channel_bindings)));
++    assert!(av.iter().any(|a| matches!(a, AvItem::Flags(f) if f.contains(AvFlags::AVF_MIC_FIELD_POPULATED))));
++    let key = ntowfv2("User", "Password", "Domain");
++    let mut proof_input = b"12345678".to_vec(); proof_input.extend_from_slice(&nt_response[16..]);
++    assert_eq!(&nt_response[..16], Md5::hmac(&key, &proof_input));
++    let base = Md5::hmac(&key, &nt_response[..16]);
++    let exported = rc4::rc4(&base, field(&auth, 52));
++    let mut without_mic = auth.clone(); without_mic[72..88].fill(0);
++    let mut mic_input = negotiate; mic_input.extend_from_slice(&challenge); mic_input.extend_from_slice(&without_mic);
++    assert_eq!(&auth[72..88], Md5::hmac(&exported, &mic_input));
++    assert!(c.next_bytes(None).unwrap().is_none());
++}

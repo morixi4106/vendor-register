@@ -9,7 +9,7 @@ import {
   prismaSourceInput,
   checkPrismaClientVersion,
   checkPrismaSourceWiring,
-  checkPrismaMetadata,
+  checkPrismaMetadata as checkMetadata,
   rustTestTotals,
   prismaUnitArguments,
   prismaCliArguments,
@@ -24,6 +24,19 @@ import {
   validatePrismaCuidSource,
   checkPrismaCuidWiring,
 } from "../../scripts/security/prisma-cuid-source.mjs";
+import {
+  validatePrismaWinauthSource,
+  checkPrismaWinauthWiring,
+  checkPrismaWinauthMetadata,
+} from "../../scripts/security/prisma-winauth-source.mjs";
+
+const TIBERIUS =
+  "git+https://github.com/prisma/tiberius?branch=main#35605c90adb38cc107d35c3432fd2643d9d6e1e6";
+const checkPrismaMetadata = (metadata, source, recipe, options = {}) =>
+  checkMetadata(metadata, source, recipe, {
+    ...options,
+    gitSources: [TIBERIUS, ...(options.gitSources || [])],
+  });
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const policy = JSON.parse(
@@ -42,6 +55,75 @@ const fixture = (t) => {
   return directory;
 };
 
+test("winauth recipe rejects old random generators, source identity masking and unbound files", () => {
+  assert.equal(
+    validatePrismaWinauthSource(policy.winauthSource),
+    policy.winauthSource,
+  );
+  for (const change of [
+    (p) => {
+      p.randVersion = "0.7.3";
+    },
+    (p) => {
+      p.upstreamVersion = "0.0.6";
+    },
+    (p) => {
+      p.sha256 = "0".repeat(64);
+    },
+    (p) => {
+      p.patch.path = "../winauth.patch";
+    },
+    (p) => {
+      p.sourceFiles.pop();
+    },
+    (p) => {
+      p.sourceFiles[0].path = "../Cargo.toml";
+    },
+    (p) => {
+      p.productionApproved = true;
+    },
+  ]) {
+    const changed = structuredClone(policy.winauthSource);
+    change(changed);
+    assert.throws(
+      () => validatePrismaWinauthSource(changed),
+      /prisma_winauth_policy_invalid/,
+    );
+  }
+});
+
+test("winauth patch changes only manifest and additive offline contract entry points", () => {
+  const patch = prismaSourceInput(ROOT, policy.winauthSource.patch).toString(
+    "utf8",
+  );
+  assert.deepEqual(
+    [...patch.matchAll(/^diff --git a\/(\S+) b\/\S+$/gm)].map((m) => m[1]),
+    ["Cargo.toml", "src/lib.rs", "src/oja_security_contracts.rs"],
+  );
+  assert.ok(patch.includes('+version = "=0.8.8"'));
+  assert.equal(patch.includes('+version = "0.7"'), false);
+  assert.ok(
+    patch.includes(
+      "Builder-only: build() would acquire the current Windows account.",
+    ),
+  );
+  for (const graph of [policy.lockfile, policy.contractLockfile]) {
+    const resolved = rustRegistryPackages(
+      prismaSourceInput(ROOT, graph).toString("utf8"),
+    );
+    assert.equal(
+      resolved.packages.some(
+        (p) => p.name === "rand" && p.version.startsWith("0.7."),
+      ),
+      false,
+    );
+    assert.equal(
+      resolved.packages.some((p) => p.name === "winauth"),
+      false,
+    );
+  }
+});
+
 test("Prisma recipe binds the source patch and both complete lock graphs", () => {
   assert.equal(validatePrismaSourcePolicy(policy), policy);
   for (const input of [
@@ -51,6 +133,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     ...policy.overrides.map((entry) => entry.patch),
     ...policy.mysqlSources.map((entry) => entry.patch),
     policy.cuidSource.patch,
+    policy.winauthSource.patch,
   ])
     assert.ok(prismaSourceInput(ROOT, input).length);
   const whole = rustRegistryPackages(
@@ -70,7 +153,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
       policy.cuidSource.packages.length,
     13,
   );
-  assert.equal(contracts.packages.length, 351);
+  assert.equal(contracts.packages.length, 353);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -261,6 +344,48 @@ const metadataFixture = (t, contracts) => {
   });
   const nodes = owners.map((name) => ({ id: name, deps: [] }));
   if (!contracts) {
+    packages.push({
+      id: "tiberius",
+      name: "tiberius",
+      version: "0.13.0",
+      source: TIBERIUS,
+    });
+    nodes.push({
+      id: "tiberius",
+      features: ["winauth", "native-tls", "bigdecimal", "tds73"],
+      deps: [],
+    });
+  } else {
+    const directory = path.join(source, "vendor/winauth");
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, "Cargo.toml"), "[package]\n");
+    const registry = "registry+https://github.com/rust-lang/crates.io-index";
+    packages.push(
+      {
+        id: "winauth",
+        name: "winauth",
+        version: policy.winauthSource.version,
+        source: null,
+        manifest_path: path.join(directory, "Cargo.toml"),
+      },
+      {
+        id: "auth-rand",
+        name: "rand",
+        version: policy.winauthSource.randVersion,
+        source: registry,
+      },
+    );
+    nodes.push(
+      {
+        id: "winauth",
+        features: ["oja-security-contracts"],
+        deps: [{ name: "rand", pkg: "auth-rand" }],
+      },
+      { id: "auth-rand", features: ["std", "std_rng"], deps: [] },
+    );
+    nodes[0].deps.push({ name: "winauth", pkg: "winauth" });
+  }
+  if (!contracts) {
     const registry = "registry+https://github.com/rust-lang/crates.io-index";
     packages.push(
       {
@@ -428,6 +553,206 @@ const metadataFixture = (t, contracts) => {
       .deps.push({ name: "cuid", pkg: "cuid" });
   return { source, metadata: { packages, resolve: { nodes } } };
 };
+
+const authFixture = (t, { contracts = true, windows = false } = {}) => {
+  const { source, metadata } = metadataFixture(t, true);
+  const registry = "registry+https://github.com/rust-lang/crates.io-index";
+  if (!contracts) {
+    metadata.resolve.nodes.find((n) => n.id === "winauth").features = [];
+    metadata.packages.push({
+      id: "tiberius",
+      name: "tiberius",
+      version: "0.13.0",
+      source: TIBERIUS,
+    });
+    metadata.resolve.nodes.push({
+      id: "tiberius",
+      features: ["winauth", "native-tls", "tds73", "bigdecimal"],
+      deps: [{ name: "winauth", pkg: "winauth" }],
+    });
+  }
+  if (windows) {
+    metadata.packages.push({
+      id: "winapi",
+      name: "winapi",
+      version: "0.3.9",
+      source: registry,
+    });
+    metadata.resolve.nodes.push({
+      id: "winapi",
+      features: ["winerror", "sspi"],
+      deps: [],
+    });
+    metadata.resolve.nodes
+      .find((n) => n.id === "winauth")
+      .deps.push({ name: "winapi", pkg: "winapi" });
+  }
+  return {
+    source,
+    metadata,
+    options: {
+      contracts,
+      target: windows ? "x86_64-pc-windows-msvc" : "x86_64-unknown-linux-gnu",
+    },
+  };
+};
+
+test("winauth resolution rejects detached overrides, old random generators and production test hooks", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "winauth").version = "0.0.5";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "winauth").source =
+        "registry+https://github.com/rust-lang/crates.io-index";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "winauth").manifest_path =
+        m.packages[0].manifest_path;
+    },
+    (m) => {
+      m.packages.find((p) => p.id === "auth-rand").version = "0.7.3";
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "winauth").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "auth-rand").features = ["std"];
+    },
+    (m) => {
+      m.resolve.nodes[0].deps = [];
+    },
+    (m) => {
+      m.packages.push({ id: "legacy-rand", name: "rand", version: "0.7.3" });
+    },
+  ]) {
+    const { source, metadata, options } = authFixture(t);
+    assert.equal(
+      checkPrismaWinauthMetadata(
+        metadata,
+        source,
+        policy.winauthSource,
+        options,
+      ),
+      true,
+    );
+    change(metadata);
+    assert.throws(
+      () =>
+        checkPrismaWinauthMetadata(
+          metadata,
+          source,
+          policy.winauthSource,
+          options,
+        ),
+      /prisma_winauth_/,
+    );
+  }
+  const { source, metadata, options } = authFixture(t, {
+    contracts: false,
+    windows: true,
+  });
+  metadata.resolve.nodes
+    .find((n) => n.id === "winauth")
+    .features.push("oja-security-contracts");
+  assert.throws(
+    () =>
+      checkPrismaWinauthMetadata(
+        metadata,
+        source,
+        policy.winauthSource,
+        options,
+      ),
+    /prisma_winauth_resolution_invalid/,
+  );
+});
+
+test("Windows metadata requires the real Tiberius and SSPI feature chain", (t) => {
+  for (const change of [
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "tiberius").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "tiberius").features = [
+        "native-tls",
+      ];
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "tiberius").source = TIBERIUS.replace(
+        "35605c9",
+        "0000000",
+      );
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "winapi").features = ["winerror"];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "winauth").deps.pop();
+    },
+  ]) {
+    const { source, metadata, options } = authFixture(t, {
+      contracts: false,
+      windows: true,
+    });
+    assert.equal(
+      checkPrismaWinauthMetadata(
+        metadata,
+        source,
+        policy.winauthSource,
+        options,
+      ),
+      true,
+    );
+    change(metadata);
+    assert.throws(
+      () =>
+        checkPrismaWinauthMetadata(
+          metadata,
+          source,
+          policy.winauthSource,
+          options,
+        ),
+      /prisma_winauth_/,
+    );
+  }
+});
+
+test("winauth wiring binds the workspace, consumer features, license and offline test entry point", (t) => {
+  const source = fixture(t);
+  const files = {
+    "Cargo.toml":
+      '[workspace]\nexclude=["vendor/winauth"]\n[patch.crates-io]\nwinauth={path="vendor/winauth"}\n',
+    "security-contracts/Cargo.toml":
+      '[dependencies]\nwinauth={path="../vendor/winauth",features=["oja-security-contracts"]}\n',
+    "security-contracts/src/lib.rs": "#[cfg(test)]\nmod winauth_contracts;\n",
+    "quaint/Cargo.toml":
+      '[target.a.dependencies]\ntiberius={features=["winauth","bigdecimal","tds73"]}\n[target.b.dependencies]\ntiberius={features=["winauth","bigdecimal","tds73"]}\n',
+    "vendor/winauth/src/lib.rs":
+      '#[cfg(feature = "oja-security-contracts")]\npub mod oja_security_contracts;\n',
+    "vendor/winauth/Cargo.toml":
+      '[package]\nname="winauth"\nversion="0.0.5+oja.1"\nlicense="MIT/Apache-2.0"\n[dependencies.rand]\nversion="=0.8.8"\n[features]\noja-security-contracts=[]\n[target."cfg(windows)".dependencies.winapi]\nfeatures=["winerror","sspi"]\n',
+  };
+  for (const [file, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(source, file)), { recursive: true });
+    fs.writeFileSync(path.join(source, file), content);
+  }
+  assert.equal(
+    checkPrismaWinauthWiring(source, policy.winauthSource, () => {}),
+    true,
+  );
+  for (const [file, content] of Object.entries(files)) {
+    const changed = content
+      .replace(/winauth/g, "detached")
+      .replace("=0.8.8", "=0.7.3")
+      .replace(/oja_security_contracts/g, "detached_contracts");
+    fs.writeFileSync(path.join(source, file), changed);
+    assert.throws(
+      () => checkPrismaWinauthWiring(source, policy.winauthSource, () => {}),
+      /prisma_winauth_wiring_invalid/,
+    );
+    fs.writeFileSync(path.join(source, file), content);
+  }
+});
 
 test("metadata checks actual query-core and migration checksum dependency resolution", (t) => {
   const { source, metadata } = metadataFixture(t, false);

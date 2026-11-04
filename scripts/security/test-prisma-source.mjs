@@ -24,6 +24,12 @@ import {
   checkPrismaCuidMetadata,
   prismaPatchedGitSources,
 } from "./prisma-cuid-source.mjs";
+import {
+  validatePrismaWinauthSource,
+  preparePrismaWinauthSource,
+  checkPrismaWinauthWiring,
+  checkPrismaWinauthMetadata,
+} from "./prisma-winauth-source.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -69,6 +75,8 @@ const SOURCE_FILES = [
   "query-engine/query-engine/src/server/transport.rs",
   "query-engine/query-engine/src/server/oja_http_server_contracts.rs",
   "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
+  "quaint/Cargo.toml",
+  "security-contracts/src/winauth_contracts.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -99,6 +107,7 @@ export function validatePrismaSourcePolicy(policy) {
       "overrides",
       "mysqlSources",
       "cuidSource",
+      "winauthSource",
       "cliVersion",
       "httpClientVersion",
       "httpServerDependencies",
@@ -186,6 +195,7 @@ export function validatePrismaSourcePolicy(policy) {
   });
   validatePrismaMysqlSources(policy.mysqlSources);
   validatePrismaCuidSource(policy.cuidSource);
+  validatePrismaWinauthSource(policy.winauthSource);
   return policy;
 }
 
@@ -227,6 +237,7 @@ export function checkPrismaSourceWiring(source, policy) {
   for (const item of policy.sourceFiles) prismaSourceInput(source, item);
   checkPrismaMysqlWiring(source, policy.mysqlSources, prismaSourceInput);
   checkPrismaCuidWiring(source, policy.cuidSource, prismaSourceInput);
+  checkPrismaWinauthWiring(source, policy.winauthSource, prismaSourceInput);
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
@@ -400,7 +411,7 @@ export function checkPrismaMetadata(
   metadata,
   source,
   policy,
-  { contracts = false, gitSources = [] } = {},
+  { contracts = false, gitSources = [], target } = {},
 ) {
   if (
     !Array.isArray(metadata?.packages) ||
@@ -540,7 +551,7 @@ export function checkPrismaMetadata(
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
-      locals.length !== 8 ||
+      locals.length !== 9 ||
       !rootFor("oja-prisma-source-contracts") ||
       path.dirname(
         fs.realpathSync(rootFor("oja-prisma-source-contracts").manifest_path),
@@ -552,6 +563,10 @@ export function checkPrismaMetadata(
     contracts,
   });
   checkPrismaCuidMetadata(metadata, source, policy.cuidSource, { contracts });
+  checkPrismaWinauthMetadata(metadata, source, policy.winauthSource, {
+    contracts,
+    target,
+  });
   const override = policy.overrides[0];
   const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
   const node = nodes.get(mongo[0]?.id);
@@ -746,6 +761,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     overrides: policy.overrides,
     mysqlSources: policy.mysqlSources,
     cuidSource: policy.cuidSource,
+    winauthSource: policy.winauthSource,
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
     httpServerDependencies: policy.httpServerDependencies,
@@ -784,6 +800,7 @@ export async function testPrismaSource(
     prismaSourceInput(root, override.patch);
   for (const entry of policy.mysqlSources) prismaSourceInput(root, entry.patch);
   prismaSourceInput(root, policy.cuidSource.patch);
+  prismaSourceInput(root, policy.winauthSource.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -876,6 +893,14 @@ export async function testPrismaSource(
     execute,
     prismaSourceInput,
   );
+  await preparePrismaWinauthSource(
+    root,
+    source,
+    cache,
+    policy.winauthSource,
+    execute,
+    prismaSourceInput,
+  );
   execute(
     "git",
     [
@@ -910,6 +935,7 @@ export async function testPrismaSource(
   const overrideLock = [
     ...policy.overrides,
     ...policy.mysqlSources.filter((entry) => !entry.gitSource),
+    policy.winauthSource,
   ]
     .map(
       (entry) =>
@@ -946,8 +972,14 @@ export async function testPrismaSource(
     .parse(lock.toString("utf8"))
     .package.map((pkg) => pkg.source)
     .filter((value) => typeof value === "string" && value.startsWith("git+"));
-  checkPrismaMetadata(metadata, source, policy, { gitSources });
-  checkPrismaMetadata(contractMetadata, source, policy, { contracts: true });
+  checkPrismaMetadata(metadata, source, policy, {
+    gitSources,
+    target: tools.receipt.target,
+  });
+  checkPrismaMetadata(contractMetadata, source, policy, {
+    contracts: true,
+    target: tools.receipt.target,
+  });
   json("engine-metadata.json", metadata);
   json("contract-metadata.json", contractMetadata);
   const tests = {};
@@ -966,7 +998,7 @@ export async function testPrismaSource(
         "contracts",
         900_000,
       ),
-      56,
+      64,
     );
     env.GIT_HASH = policy.source.commit;
     tests.cli = {};

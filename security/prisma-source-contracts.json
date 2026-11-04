@@ -9,20 +9,20 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "90f5610148e079bcb99cc031dd639ca97a7f994a601b6996739832d38d25ee81"
+    "sha256": "670502a652bc47d28cd3fcf5ea6762e7a4e4eb8cf5a138c65602b59716d3236e"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "65e4280dbe75f4daa078eb290a5e3cc2074ecdbde151d33a69034ac5fe6d0912"
+    "sha256": "2ff803b6660acf9eaec2fe760da1a5a40e11b957c670d8bea2dde2c9b0be8e1b"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "8d69c60ab84ed49cb3f8e3dc93cfc6aa46e11fd5ebb37e65e60c3ed64605ed95"
+    "sha256": "0f392355b9e3aa3ada9efdd18a2f0686e9a56f93d16a345485662bafd8e28076"
   },
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "ba70a963e0eec7ba9a0ac3f23501a26564cd6347efb64572051afc43b1a0f248"
+      "sha256": "c0e9850f3a10848b04fb5276fe7b58fd071044f5ee4219c8b91481965013bb30"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -38,11 +38,11 @@
     },
     {
       "path": "security-contracts/Cargo.toml",
-      "sha256": "6c34e9ad89cb1bd5bc60703dcd40a0daccf8999ae77cadeda8ee94b8bae54c91"
+      "sha256": "9568e78065dd9442072dccf6403d2f2025f7b1201dd24a2cc7ec183a5e79cee9"
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "7aa4d59e8a4ebbd1efb279b05508b5aa29c5c9c773a4cfa6c98832bc6ed282f4"
+      "sha256": "26ec7fe112aad9553a652a8c68b23bb100e53d5fe33c83508637cba8fe7c6634"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -143,6 +143,14 @@
     {
       "path": "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
       "sha256": "fbb1d16f59d05b041b0da65d7d8fde1ea442033d95a3af0c83bc4d6ebd463f2d"
+    },
+    {
+      "path": "quaint/Cargo.toml",
+      "sha256": "c4b609a208923fb5ff112de9c16243704b9cda21bac8407c26542cb57d5d343e"
+    },
+    {
+      "path": "security-contracts/src/winauth_contracts.rs",
+      "sha256": "8a8ec915c2d2221091d1f9e1444997037f1e2623ac646b6fd4a5cce780181658"
     }
   ],
   "dependencies": {
@@ -398,5 +406,54 @@
     "hyper-util": "0.1.21",
     "http-body-util": "0.1.5",
     "h2": "0.4.20"
+  },
+  "winauthSource": {
+    "name": "winauth",
+    "upstreamVersion": "0.0.5",
+    "version": "0.0.5+oja.1",
+    "sha256": "0e03c9d0fde636447315ff38695b14c85c6ccc738ade05a400a3ce568a557021",
+    "patch": {
+      "path": "vendor/native/prisma/winauth.patch",
+      "sha256": "a0e9eb111fc537646dcbdbfc3b2bead146f861872032033b530efa483a96cc75"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "20bd5ea673856394c5db2aef04b51c2b6508c86fedaf31eb75607c112498097e"
+      },
+      {
+        "path": "Cargo.toml.orig",
+        "sha256": "b8268f6fd65aa8c8fe2796c1f93b06216cf6cef16cf725c2d8ba2d11440a1dec"
+      },
+      {
+        "path": "src/lib.rs",
+        "sha256": "ff5e6a988e90258a92a0adcf43e58f0eeb7768d85767cb6421e2707c2a46f86c"
+      },
+      {
+        "path": "src/windows.rs",
+        "sha256": "1978af92e9e92ae257d7fa5fc725630c2b27462edb53271427174a42c42dafbf"
+      },
+      {
+        "path": "src/md4.rs",
+        "sha256": "82d883e09865cc2ca456cce2eedd6f4e5330470d65df09635c08d58d7c3e1c84"
+      },
+      {
+        "path": "src/hmac.rs",
+        "sha256": "412511adb6158cbae2e14cb66cf730953ba11d3885d00b012a92c67b7994fb15"
+      },
+      {
+        "path": "src/rc4.rs",
+        "sha256": "29081c5fa027418cfb239f0070c9d050996cd755fd082d3b8da30e8e0e167f0a"
+      },
+      {
+        "path": "src/http/mod.rs",
+        "sha256": "817c47f0ba7dcb2b5b88b582af44eb83952dc6e003c928309d2eb4bbbfb71231"
+      },
+      {
+        "path": "src/oja_security_contracts.rs",
+        "sha256": "7878d0665532ce3e0959ce4c0f891aa109153b6ddfdd75876a3d4cb505f71173"
+      }
+    ],
+    "randVersion": "0.8.8"
   }
 }

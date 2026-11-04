@@ -1,11 +1,11 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..50619e9 100644
+index 307dd8c..42b1675 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth"]
  members = [
      "schema-engine/cli",
      "schema-engine/commands",
@@ -71,7 +71,7 @@ index 307dd8c..50619e9 100644
  sqlformat = "0.2"
  sqlparser = "0.32"
  sqlx-core = "0.8"
-@@ -256,3 +259,7 @@ opt-level = 's'   # Optimize for size.
+@@ -256,3 +259,8 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
  debug = true
@@ -79,6 +79,7 @@ index 307dd8c..50619e9 100644
 +[patch.crates-io]
 +mongodb = { path = "vendor/mongodb" }
 +mysql_common = { path = "vendor/mysql_common" }
++winauth = { path = "vendor/winauth" }
 diff --git a/query-engine/core/src/interactive_transactions/mod.rs b/query-engine/core/src/interactive_transactions/mod.rs
 index 36f4bb9..8afb2f8 100644
 --- a/query-engine/core/src/interactive_transactions/mod.rs
@@ -182,7 +183,7 @@ diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/Cargo.toml
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,23 @@
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
@@ -192,6 +193,7 @@ new file mode 100644
 +[workspace]
 +
 +[dependencies]
++winauth = { path = "../vendor/winauth", features = ["oja-security-contracts"] }
 +lru = "=0.18.2"
 +sha2 = "=0.11.1"
 +mongodb = { path = "../vendor/mongodb", features = ["zstd-compression", "zlib-compression", "snappy-compression", "oja-security-contracts"] }
@@ -209,7 +211,7 @@ diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,53 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -230,6 +232,9 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod cuid_contracts;
++
++#[cfg(test)]
++mod winauth_contracts;
 +
 +#[cfg(test)]
 +mod tests {
@@ -2069,3 +2074,26 @@ new file mode 100644
 +    }
 +    while let Some(result) = tasks.join_next().await { result.unwrap(); }
 +}
+diff --git a/security-contracts/src/winauth_contracts.rs b/security-contracts/src/winauth_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/winauth_contracts.rs
+@@ -0,0 +1,18 @@
++use winauth::oja_security_contracts as actual;
++
++#[test]
++fn ntlm_password_key_known_vector() { actual::password_key(); }
++#[test]
++fn ntlm_crypto_known_vectors() { actual::crypto_vectors(); }
++#[test]
++fn ntlm_channel_binding_layout_and_hash() { actual::channel_bindings(); }
++#[test]
++fn ntlm_real_random_response_and_session_key_consistency() { actual::response_consistency(); }
++#[test]
++fn ntlm_nonce_and_session_key_are_not_reused() { actual::fresh_randomness(); }
++#[test]
++fn ntlm_negotiate_wire_flags_and_invalid_state() { actual::negotiate_state(); }
++#[test]
++fn ntlm_rejects_invalid_server_challenges() { actual::reject_challenges(); }
++#[test]
++fn ntlm_fake_handshake_keeps_spn_cbt_and_mic() { actual::fake_handshake(); }

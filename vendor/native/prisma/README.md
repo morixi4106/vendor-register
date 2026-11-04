@@ -85,6 +85,27 @@ registry identities of MongoDB and mysql_common are also separately scanned.
   MongoDB remains an external dependency, as in the original registry graph;
   it is not added as a Prisma workspace member with unrelated upstream dev tests.
 
+The Windows-authentication follow-up retains winauth 0.0.5 as an explicit,
+archive/hash-bound 0.0.5+oja.1 override and pins rand 0.8.8, already used by the
+other engine consumers. The NTLM/crypto/Windows SSPI implementation is unchanged;
+only the manifest and additive, disabled-by-default diagnostic entry point change.
+The original declared MIT/Apache-2.0 license and source metadata are preserved.
+The original registry identity is separately scanned, not hidden by a path name.
+Windows metadata must bind the actual fixed-Git Tiberius consumer to this source,
+rand's standard entropy backend and winapi SSPI features. All existing MSSQL/TLS
+features remain enabled, and diagnostic hooks are rejected in the engine graph.
+
+Eight offline contracts check the actual password/crypto vectors, channel-binding
+layouts, real random nonce/session-key generation, response/key consistency,
+negotiate/error states and a synthetic NTLMv2 exchange with SPN/CBT/MIC verification.
+Windows builds also compile and exercise builder-only SSPI configuration, never
+calling build() or acquiring an OS account. No real credentials, SQL server or
+network authentication are used. These tests are not a live SSPI/domain-login,
+entropy-quality, complete NTLM parser or end-to-end SQL compatibility approval.
+Existing upstream credential-dependent unit tests and old HTTP example/dev
+dependencies remain intact but are not selected or certified by these graphs.
+Existing parser TODO/panic branches are not fixed by a rand dependency update.
+
 `npm run native:prisma-contracts` compiles only the source contracts.
 `--upstream-units` additionally tests the query-core and schema-connector
 libraries with all logical SQL dialects and metrics enabled. This is a unit-test
