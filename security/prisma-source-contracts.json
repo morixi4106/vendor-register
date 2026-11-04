@@ -9,20 +9,20 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "3dfe30407cd81419b1fe1c204e96acbc2551646fa4524cbafe0df3eee4066ebb"
+    "sha256": "df19fc6474b4ae1a2545402e3fe2eb35f264aae86f6061d1bb49978ac8f004bf"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "fa9c00a7fa66a1de42c22d981f1e509c6c6073812245b047575c2dee0a8ca00f"
+    "sha256": "5aa81919de67279246a72da9d0d7f4061fb9e9f500bbb401c4e35299b92a0253"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "5f6b69cc7b02c732b8a2a5511aca456a522e69e4e5a23dfd2526a4297550c3fd"
+    "sha256": "10dcf2f60629263566ab4263b96b16194cbac6c1b28e6f20ab90f5ddb9960715"
   },
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "e45ec116a54b2e678c2aaad6b99aa8cd564e706ba18dd361a178ea41d63168d9"
+      "sha256": "8430aac487b4a0dcc8728d57a528d0e86e8960a97a01df209b7e8ac6f3a034e7"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -38,11 +38,11 @@
     },
     {
       "path": "security-contracts/Cargo.toml",
-      "sha256": "871e04cca8451372abb954a921bd03995841dc0f8c56ae1c485d49669994d0fc"
+      "sha256": "fd5e2f37ae5750bd43d1f33965122cbfa2fe45ca2325af0848aa07da72ef6669"
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "fa987ee06729108d448ffe07644c19da8e0a429b3a8d7a58f32953aaf8dc31f1"
+      "sha256": "3ac17307a2f185e9694d2c0a802591b951a34c5582e05ccb763938f2e375aa6e"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -55,6 +55,14 @@
     {
       "path": "security-contracts/src/mongodb_compression.rs",
       "sha256": "d08f1681aa055ca70177d8a8f8ea4aaf859376c52a6e72c06991b90fb8dba791"
+    },
+    {
+      "path": "security-contracts/src/mysql_contracts.rs",
+      "sha256": "442cfbd264b413f7caa5d3856bd85462326d2d800c0f0892d16800f456ff78cc"
+    },
+    {
+      "path": "security-contracts/src/mysql_crypto.rs",
+      "sha256": "7cc6cb390cd4aa21850c8b714c84ddc62597c066e05eec8361571d7a737a0197"
     }
   ],
   "dependencies": {
@@ -100,6 +108,104 @@
       "dependencies": {
         "zstd": "0.14.3",
         "zstd-safe": "8.2.0"
+      }
+    }
+  ],
+  "mysqlSources": [
+    {
+      "name": "mysql_async",
+      "upstreamVersion": "0.31.3",
+      "version": "0.31.3+oja.1",
+      "sha256": "e39cdf905b1311926fb7a299c1d08fb99c4b0645bd2c196117ed50be7e156067",
+      "patch": {
+        "path": "vendor/native/prisma/mysql_async.patch",
+        "sha256": "0e73b652a5b31701fe35d06a0cff37199f74b66839f6c0a0a2fe6f27b8bac00d"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "8453c64e48d9587f2ff7adeb57ee8c2a1346ceda49703a0166752df8717892b2"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "adcbad18f86a917d74666aef5077770a84accad675152967b6ba1bca444ba565"
+        },
+        {
+          "path": "src/conn/stmt_cache.rs",
+          "sha256": "e44a098873f03f37558933789473575efee92fb16b4b630f6b1db344a56249d5"
+        },
+        {
+          "path": "src/conn/mod.rs",
+          "sha256": "5085f1878c1ccaf83fab9ca157812843c9798cdbff49d32813f24181825c912c"
+        },
+        {
+          "path": "src/queryable/stmt.rs",
+          "sha256": "9eac7d7ff851213ff386fcd2e7f88b83632a12a3c9caefeb7ccb1aba1fb75cc4"
+        },
+        {
+          "path": "src/oja_security_contracts.rs",
+          "sha256": "b0181be1e4d04d7d41c007e71ce4bc9bd028dddd3179435d291f0bd0383fe413"
+        }
+      ],
+      "dependencies": {
+        "lru": "0.18.2",
+        "lexical": "7.0.5",
+        "mysql_common": "0.29.2+oja.1"
+      },
+      "gitSource": {
+        "repository": "prisma/mysql_async",
+        "commit": "c4c841c9d03e361df7377264a075335a823534ee",
+        "reviewStatus": "UNREVIEWED"
+      }
+    },
+    {
+      "name": "mysql_common",
+      "upstreamVersion": "0.29.2",
+      "version": "0.29.2+oja.1",
+      "sha256": "9006c95034ccf7b903d955f210469119f6c3477fc9c9e7a7845ce38a3e665c2a",
+      "patch": {
+        "path": "vendor/native/prisma/mysql_common.patch",
+        "sha256": "3e36d94877d13b3a86b25898339b828929e7c51054d95bb690a5f23f05cb337e"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "0800a31b174f777b1aa2974586b2f960e73e0b349df86e99745217197030161a"
+        },
+        {
+          "path": "build.rs",
+          "sha256": "4ed07679c3262af6d16f0a22c30929fe0ecd30d1cf00f9eb9dd831cb6e56e744"
+        },
+        {
+          "path": "src/scramble.rs",
+          "sha256": "b119a9493b17ca499299817318a8d02b304db4826cac908ec852c7a83f5ea972"
+        },
+        {
+          "path": "src/crypto/rsa.rs",
+          "sha256": "ed5810ea6891ac7a5e6e9ada16e40e7d111969394c5828a802689a24dd5cf5a2"
+        },
+        {
+          "path": "src/crypto/der.rs",
+          "sha256": "74845c05a55b2f5236614c5a1aa538419b336c17a5b57753a3249c6ba1e74439"
+        },
+        {
+          "path": "src/misc/mod.rs",
+          "sha256": "8657f6d9b32cdda463802e664058887c4b7e669dde1062f866b00e7d306ef748"
+        },
+        {
+          "path": "src/value/convert/mod.rs",
+          "sha256": "53955c1cebb8dfde916b3a843f48376fd5678866c2515aba05617891efb44bae"
+        },
+        {
+          "path": "src/packets/mod.rs",
+          "sha256": "ae2b54c77b48f935d859c119e118e3751713c8c58d540c48fc849c6164e235bb"
+        }
+      ],
+      "dependencies": {
+        "lexical": "7.0.5",
+        "sha1": "0.11.0",
+        "sha2": "0.11.1",
+        "bindgen": "0.72.1"
       }
     }
   ]

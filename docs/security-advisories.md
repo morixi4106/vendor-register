@@ -1,5 +1,37 @@
 # Production dependency advisories
 
+## Prisma MySQL source follow-up: 2026-11-04
+
+Draft #59 adds explicit source overrides preserving Prisma's mysql_async
+revision c4c841c9d03e361df7377264a075335a823534ee and mysql_common 0.29.2.
+Custom versions use +oja.1; this is not an upstream release or an installed
+engine. LRU 0.18.2 and lexical 7.0.5 replace old driver/parser dependencies.
+Common uses sha1 0.11.0 / sha2 0.11.1, with unchanged algorithms and known-value
+tests. Bindgen 0.72.1 replaces the old build dependency. Default native TLS,
+vendored OpenSSL, numeric features and optional connectors are retained.
+
+The frozen full graph now has 633 registry packages / 15 observed OSV matches,
+plus 12 Cargo Git identities and one explicitly UNREVIEWED Git-derived path
+override. The previous graph had 639/21/13; these are raw matching counts with
+aliases/maintenance information, not a count of independently exploitable CVEs.
+The contract registry graph has 338 packages / zero observed matches. It still
+includes the unreviewed Git-derived source; path conversion is not source review.
+Receipts explicitly retain contractSourceReviewed=false, the original Git
+revision/review status, total unreviewed Git counts, NOT_VERIFIED and denied
+production/whole-engine approval. Original registry overrides are freshly
+scanned independently. No advisory exclusions or approval-table changes.
+
+Sixteen Node binding/rejection tests pass. The new Rust test definitions cover
+real cache behavior, numeric conversion, authentication vectors and unchanged
+DER/RSA/OAEP source tests. Compilation and execution require fresh Windows/Linux
+CI evidence; prior compression-only results are not reused. No connection or
+real database is created. Metadata refuses unsafe upstream test/nightly features
+and diagnostic hooks in the full engine. The upstream MySQL test downloader is
+retained as source, not invoked or approved. Full native/NAPI/schema/isolated
+database/migration and remaining dependency work is still incomplete. No app
+Prisma/client/schema, production configuration/deployment, financial action or
+notification changes.
+
 ## Prisma source-contract and compression candidate: 2026-10-30
 
 Draft #59 adds an explicit patch of the engine source bound to Prisma 6.19.3,

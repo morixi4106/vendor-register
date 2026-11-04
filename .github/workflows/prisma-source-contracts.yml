@@ -7,6 +7,7 @@ on:
       - security/prisma-source-contracts.json
       - security/rust-toolchain.json
       - scripts/security/test-prisma-source.mjs
+      - scripts/security/prisma-mysql-source.mjs
       - scripts/security/rust-toolchain.mjs
       - scripts/security/rust-source-audit.mjs
       - scripts/security/rebuild-esbuild.mjs

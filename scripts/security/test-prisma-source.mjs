@@ -11,6 +11,12 @@ import {
   checkRustSourceTree,
 } from "./rust-toolchain.mjs";
 import { scanRustLockfile } from "./rust-source-audit.mjs";
+import {
+  validatePrismaMysqlSources,
+  preparePrismaMysqlSources,
+  checkPrismaMysqlWiring,
+  checkPrismaMysqlMetadata,
+} from "./prisma-mysql-source.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -34,6 +40,8 @@ const SOURCE_FILES = [
   "query-engine/core/Cargo.toml",
   "schema-engine/connectors/schema-connector/src/checksum.rs",
   "security-contracts/src/mongodb_compression.rs",
+  "security-contracts/src/mysql_contracts.rs",
+  "security-contracts/src/mysql_crypto.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -62,6 +70,7 @@ export function validatePrismaSourcePolicy(policy) {
       "sourceFiles",
       "dependencies",
       "overrides",
+      "mysqlSources",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
@@ -132,6 +141,7 @@ export function validatePrismaSourcePolicy(policy) {
     )
       throw new Error("prisma_source_policy_invalid");
   });
+  validatePrismaMysqlSources(policy.mysqlSources);
   return policy;
 }
 
@@ -171,6 +181,7 @@ export function checkPrismaClientVersion(manifest, policy) {
 
 export function checkPrismaSourceWiring(source, policy) {
   for (const item of policy.sourceFiles) prismaSourceInput(source, item);
+  checkPrismaMysqlWiring(source, policy.mysqlSources, prismaSourceInput);
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
@@ -284,7 +295,7 @@ export function checkPrismaMetadata(
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
-      locals.length !== 2 ||
+      locals.length !== 4 ||
       !rootFor("oja-prisma-source-contracts") ||
       path.dirname(
         fs.realpathSync(rootFor("oja-prisma-source-contracts").manifest_path),
@@ -292,6 +303,9 @@ export function checkPrismaMetadata(
     )
       throw new Error("prisma_contract_root_invalid");
   }
+  checkPrismaMysqlMetadata(metadata, source, policy.mysqlSources, {
+    contracts,
+  });
   const override = policy.overrides[0];
   const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
   const node = nodes.get(mongo[0]?.id);
@@ -379,6 +393,9 @@ export function prismaUnitArguments() {
 }
 
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
+  const patchedGitSources = policy.mysqlSources.filter(
+    (entry) => entry.gitSource,
+  ).length;
   return {
     schemaVersion: 1,
     role: policy.role,
@@ -388,12 +405,16 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     source: policy.source,
     patchSha256: policy.patch.sha256,
     overrides: policy.overrides,
+    mysqlSources: policy.mysqlSources,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
-    unreviewedGitSources: engine.unresolved.length,
-    engineSourceAuditOk: engine.sourceAuditOk,
+    unreviewedGitSources: engine.unresolved.length + patchedGitSources,
+    unreviewedPatchedGitSources: patchedGitSources,
+    engineSourceAuditOk: engine.sourceAuditOk && patchedGitSources === 0,
     contractRegistryPackages: contracts.packageCount,
     contractSourceAuditOk: contracts.sourceAuditOk,
+    contractUnreviewedGitSources: patchedGitSources,
+    contractSourceReviewed: false,
     tests,
     observedAt: new Date().toISOString(),
   };
@@ -416,6 +437,7 @@ export async function testPrismaSource(
   const contractLock = prismaSourceInput(root, policy.contractLockfile);
   for (const override of policy.overrides)
     prismaSourceInput(root, override.patch);
+  for (const entry of policy.mysqlSources) prismaSourceInput(root, entry.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -492,6 +514,14 @@ export async function testPrismaSource(
       "override-patch",
     );
   }
+  await preparePrismaMysqlSources(
+    root,
+    source,
+    cache,
+    policy.mysqlSources,
+    execute,
+    prismaSourceInput,
+  );
   execute(
     "git",
     [
@@ -520,7 +550,10 @@ export async function testPrismaSource(
   const engine = await scanRustLockfile(lock.toString("utf8"));
   const contracts = await scanRustLockfile(contractLock.toString("utf8"));
   // Path overrides must not conceal new advisories against their original crate.
-  const overrideLock = policy.overrides
+  const overrideLock = [
+    ...policy.overrides,
+    ...policy.mysqlSources.filter((entry) => !entry.gitSource),
+  ]
     .map(
       (entry) =>
         `[[package]]\nname = ${JSON.stringify(entry.name)}\nversion = ${JSON.stringify(entry.upstreamVersion)}\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = ${JSON.stringify(entry.sha256)}\n`,
@@ -576,7 +609,7 @@ export async function testPrismaSource(
         "contracts",
         900_000,
       ),
-      24,
+      42,
     );
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;

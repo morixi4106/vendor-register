@@ -1,15 +1,15 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..f22919a 100644
+index 307dd8c..9346df8 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common"]
  members = [
      "schema-engine/cli",
      "schema-engine/commands",
-@@ -84,14 +85,14 @@ indexmap = "2"
+@@ -84,19 +85,19 @@ indexmap = "2"
  itertools = "0.13"
  jsonrpc-core = "17"
  log = "0.4"
@@ -26,6 +26,12 @@ index 307dd8c..f22919a 100644
      "zstd-compression",
      "zlib-compression",
      "snappy-compression",
+ ] }
+-mysql_async = { git = "https://github.com/prisma/mysql_async", branch = "vendored-openssl" }
++mysql_async = { path = "vendor/mysql_async", version = "=0.31.3+oja.1" }
+ names = { version = "0.11", default-features = false }
+ nanoid = "0.4"
+ napi = { version = "2", default-features = false, features = [
 @@ -124,7 +125,7 @@ rand = "0.8"
  regex = "1"
  reqwest = "0.11"
@@ -35,13 +41,14 @@ index 307dd8c..f22919a 100644
  serde = { version = "1", features = ["derive"] }
  serde_json = { version = "1", features = [
      "float_roundtrip",
-@@ -256,3 +257,6 @@ opt-level = 's'   # Optimize for size.
+@@ -256,3 +257,7 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
  debug = true
 +
 +[patch.crates-io]
 +mongodb = { path = "vendor/mongodb" }
++mysql_common = { path = "vendor/mysql_common" }
 diff --git a/query-engine/core/src/interactive_transactions/mod.rs b/query-engine/core/src/interactive_transactions/mod.rs
 index 36f4bb9..8afb2f8 100644
 --- a/query-engine/core/src/interactive_transactions/mod.rs
@@ -145,7 +152,7 @@ diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/Cargo.toml
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,20 @@
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
@@ -158,11 +165,19 @@ new file mode 100644
 +lru = "=0.18.2"
 +sha2 = "=0.11.1"
 +mongodb = { path = "../vendor/mongodb", features = ["zstd-compression", "zlib-compression", "snappy-compression", "oja-security-contracts"] }
++mysql_async = { path = "../vendor/mysql_async", features = ["oja-security-contracts"] }
++mysql_common = { path = "../vendor/mysql_common" }
++base64 = "0.13"
++byteorder = "1"
++num-bigint = "0.4"
++rand = "0.8"
++regex = "1"
++sha1 = "=0.11.0"
 diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,47 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -174,6 +189,12 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod mongodb_compression;
++
++#[cfg(test)]
++mod mysql_contracts;
++
++#[cfg(test)]
++mod mysql_crypto;
 +
 +#[cfg(test)]
 +mod tests {
@@ -308,3 +329,139 @@ new file mode 100644
 +    assert_eq!(Compressor::from_str("snappy").unwrap(), Compressor::Snappy);
 +    assert!(Compressor::from_str("unknown").is_err());
 +}
+diff --git a/security-contracts/src/mysql_contracts.rs b/security-contracts/src/mysql_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mysql_contracts.rs
+@@ -0,0 +1,121 @@
++use mysql_async::oja_security_contracts::StatementCache;
++use mysql_common::{misc::split_version, scramble::{scramble_native, scramble_sha256}, value::{Value, convert::from_value_opt}};
++
++#[test]
++fn zero_cache_capacity_remains_disabled() {
++    let mut cache = StatementCache::new(0);
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.get(b"first"), None);
++}
++
++#[test]
++fn cache_lookup_refreshes_eviction_order() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.put(3, b"third"), Some(2));
++    assert_eq!(cache.get(b"second"), None);
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.get(b"third"), Some(3));
++}
++
++#[test]
++fn capacity_one_returns_the_evicted_statement() {
++    let mut cache = StatementCache::new(1);
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.put(2, b"second"), Some(1));
++    assert_eq!(cache.get(b"first"), None);
++    assert_eq!(cache.get(b"second"), Some(2));
++}
++
++#[test]
++fn removal_clears_both_indexes() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.remove(1);
++    cache.remove(99);
++    assert_eq!(cache.get(b"first"), None);
++    cache.put(2, b"first");
++    assert_eq!(cache.get(b"first"), Some(2));
++}
++
++#[test]
++fn clear_allows_reuse_without_stale_queries() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    cache.clear();
++    assert_eq!(cache.get(b"first"), None);
++    assert_eq!(cache.get(b"second"), None);
++    assert_eq!(cache.put(3, b"third"), None);
++    assert_eq!(cache.get(b"third"), Some(3));
++}
++
++#[test]
++fn cache_treats_queries_as_bytes() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, &[0, 255, 128]);
++    assert_eq!(cache.get(&[0, 255, 128]), Some(1));
++    assert_eq!(cache.get(&[0, 255]), None);
++}
++
++#[test]
++fn replacing_the_same_statement_does_not_evict_another() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.get(b"second"), Some(2));
++}
++
++#[test]
++fn server_version_and_vendor_suffix_are_preserved() {
++    assert_eq!(split_version("8.0.36"), (8, 0, 36));
++    assert_eq!(split_version("10.11.9-MariaDB"), (10, 11, 9));
++    assert_eq!(split_version("invalid"), (0, 0, 0));
++    assert_eq!(split_version("100.200.300"), (0, 0, 0));
++}
++
++#[test]
++fn signed_numeric_boundaries_are_preserved() {
++    for n in [i64::MIN, -1, 0, i64::MAX] {
++        assert_eq!(from_value_opt::<i64>(Value::Bytes(n.to_string().into_bytes())).unwrap(), n);
++    }
++    assert!(from_value_opt::<i64>(Value::Bytes(b"9223372036854775808".to_vec())).is_err());
++}
++
++#[test]
++fn unsigned_numeric_boundaries_are_preserved() {
++    for n in [0, 1, u64::MAX] {
++        assert_eq!(from_value_opt::<u64>(Value::Bytes(n.to_string().into_bytes())).unwrap(), n);
++    }
++    assert!(from_value_opt::<u64>(Value::Bytes(b"-1".to_vec())).is_err());
++    assert!(from_value_opt::<u64>(Value::Bytes(b"18446744073709551616".to_vec())).is_err());
++}
++
++#[test]
++fn float_and_exponent_conversion_are_preserved() {
++    assert_eq!(from_value_opt::<f64>(Value::Bytes(b"-12.5".to_vec())).unwrap(), -12.5);
++    assert_eq!(from_value_opt::<f64>(Value::Bytes(b"1.25e3".to_vec())).unwrap(), 1250.0);
++    assert!(from_value_opt::<f64>(Value::Bytes(b"12.5oops".to_vec())).is_err());
++}
++
++#[test]
++fn native_password_known_vector_is_unchanged() {
++    let nonce = b"NR3HP:qIYa_9=db?Sd{`";
++    assert_eq!(scramble_native(nonce, b"G!ider27").unwrap(), [0x09,0xcf,0xf8,0x85,0x5e,0x9e,0x70,0x53,0x40,0xff,0x22,0x70,0xd8,0xfb,0x9f,0xad,0xba,0x90,0x6b,0x70]);
++}
++
++#[test]
++fn sha256_password_known_vector_is_unchanged() {
++    let nonce = b"NR3HP:qIYa_9=db?Sd{`";
++    assert_eq!(scramble_sha256(nonce, b"G!ider27").unwrap(), [0x4f,0x97,0xbb,0xfd,0x20,0x24,0x01,0xc4,0x2a,0x69,0xde,0xaa,0xe5,0x3b,0xda,0x07,0x7e,0xd7,0x57,0x85,0x63,0xc1,0xa8,0x0e,0xb8,0x16,0xc8,0x21,0x19,0xb6,0x8d,0x2e]);
++}
++
++#[test]
++fn empty_password_remains_no_auth_data() {
++    assert_eq!(scramble_native(b"public fixture nonce", b""), None);
++    assert_eq!(scramble_sha256(b"public fixture nonce", b""), None);
++}
+diff --git a/security-contracts/src/mysql_crypto.rs b/security-contracts/src/mysql_crypto.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mysql_crypto.rs
+@@ -0,0 +1,5 @@
++// Run the unchanged upstream DER, MGF1, RSA and OAEP vectors with the new SHA-1 library.
++#[path = "../../vendor/mysql_common/src/crypto/der.rs"]
++mod der;
++#[path = "../../vendor/mysql_common/src/crypto/rsa.rs"]
++mod rsa;

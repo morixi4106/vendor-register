@@ -3,6 +3,27 @@
 This is an explicit patch of the engine source used by Prisma 6.19.3, not an
 upstream Prisma release or an installed replacement.
 
+The MySQL follow-up retains Prisma's exact mysql_async Git revision as an
+archive/patch-bound 0.31.3+oja.1 source, plus mysql_common 0.29.2+oja.1. Both use
+lexical 7.0.5; the driver uses LRU 0.18.2 and common uses sha1 0.11.0 / sha2
+0.11.1. Bindgen's build dependency is updated to 0.72.1 without removing TLS,
+vendored-OpenSSL support, numeric features, algorithms or optional connectors.
+Cache and conversion implementations remain unchanged; diagnostic code invokes
+the real statement packet parser and cache without constructing a connection.
+
+The fixture adds cache eviction/zero-capacity/index cleanup, numeric boundary,
+server-version and known authentication-vector tests, and directly includes the
+unchanged DER/RSA/OAEP source tests. The diagnostic driver feature is rejected
+in complete-engine metadata. The upstream `test`/`nightly` feature, which would
+download/build an old unpinned MySQL distribution, is rejected in both graphs;
+its existing code is hash-bound but neither executed nor certified here.
+
+Moving a Git dependency to a local path does not review it: receipts retain the
+original repository/revision as UNREVIEWED, count it alongside remaining Cargo
+Git sources, set contractSourceReviewed=false and retain production denial.
+A zero registry-advisory scan is not a zero-unreviewed-source claim. The original
+registry identities of MongoDB and mysql_common are also separately scanned.
+
 - Query-core uses patched LRU 0.18.2. Zero cache capacity falls back to Prisma's
   existing default of 100; positive capacities and eviction behavior are tested.
 - Migration checksums use sha2 0.11.1, preserving existing SHA-256, line-ending

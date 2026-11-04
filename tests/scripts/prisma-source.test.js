@@ -40,6 +40,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     policy.lockfile,
     policy.contractLockfile,
     ...policy.overrides.map((entry) => entry.patch),
+    ...policy.mysqlSources.map((entry) => entry.patch),
   ])
     assert.ok(prismaSourceInput(ROOT, input).length);
   const whole = rustRegistryPackages(
@@ -52,8 +53,13 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     whole.packages.find((pkg) => pkg.name === "lru" && pkg.version === "0.7.8"),
     undefined,
   );
-  assert.equal(whole.unresolved.length, 13);
-  assert.equal(contracts.packages.length, 243);
+  assert.equal(whole.unresolved.length, 12);
+  assert.equal(
+    whole.unresolved.length +
+      policy.mysqlSources.filter((entry) => entry.gitSource).length,
+    13,
+  );
+  assert.equal(contracts.packages.length, 338);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -76,6 +82,22 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
       graph.packages.some((pkg) => pkg.name === "mongodb"),
       false,
     );
+    for (const [name, version] of Object.entries({
+      lru: "0.18.2",
+      lexical: "7.0.5",
+    })) {
+      assert.deepEqual(
+        graph.packages
+          .filter((pkg) => pkg.name === name)
+          .map((pkg) => pkg.version),
+        [version],
+      );
+    }
+    for (const name of ["mysql_async", "mysql_common"])
+      assert.equal(
+        graph.packages.some((pkg) => pkg.name === name),
+        false,
+      );
   }
 });
 
@@ -234,6 +256,40 @@ const metadataFixture = (t, contracts) => {
     });
   }
   nodes.push({ id: "zstd", deps: [{ name: "zstd_safe", pkg: "zstd-safe" }] });
+  for (const entry of policy.mysqlSources) {
+    const directory = path.join(source, "vendor", entry.name);
+    fs.mkdirSync(directory);
+    const manifest = path.join(directory, "Cargo.toml");
+    fs.writeFileSync(manifest, "[package]\n");
+    packages.push({
+      id: entry.name,
+      name: entry.name,
+      version: entry.version,
+      source: null,
+      manifest_path: manifest,
+    });
+    nodes.push({
+      id: entry.name,
+      features:
+        entry.name === "mysql_async"
+          ? ["native-tls-tls", ...(contracts ? ["oja-security-contracts"] : [])]
+          : [],
+      deps: Object.keys(entry.dependencies).map((name) => ({
+        name,
+        pkg: name,
+      })),
+    });
+    for (const [name, version] of Object.entries(entry.dependencies)) {
+      if (name === "mysql_common" || packages.some((pkg) => pkg.name === name))
+        continue;
+      packages.push({
+        id: name,
+        name,
+        version,
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    }
+  }
   return { source, metadata: { packages, resolve: { nodes } } };
 };
 
@@ -243,7 +299,7 @@ test("metadata checks actual query-core and migration checksum dependency resolu
   metadata.packages.find((pkg) => pkg.name === "lru").version = "0.8.1";
   assert.throws(
     () => checkPrismaMetadata(metadata, source, policy),
-    /prisma_dependency_resolution_invalid/,
+    /prisma_(dependency|mysql)_resolution_invalid/,
   );
 });
 
@@ -417,11 +473,11 @@ test("upstream units cover every logical SQL dialect without changing the engine
   );
 });
 
-test("clean small contract scans never approve the whole engine or erase its findings", () => {
+test("clean contract registry scans never approve a path-converted Git source or erase findings", () => {
   const engine = {
     packageCount: 640,
     findings: Array(34).fill({}),
-    unresolved: Array(13).fill({}),
+    unresolved: Array(12).fill({}),
     sourceAuditOk: false,
   };
   const contracts = {
@@ -438,11 +494,122 @@ test("clean small contract scans never approve the whole engine or erase its fin
   assert.equal(receipt.artifactStatus, "NOT_VERIFIED");
   assert.equal(receipt.engineAdvisoryMatches, 34);
   assert.equal(receipt.unreviewedGitSources, 13);
+  assert.equal(receipt.unreviewedPatchedGitSources, 1);
+  assert.equal(receipt.contractUnreviewedGitSources, 1);
+  assert.equal(receipt.contractSourceReviewed, false);
   assert.equal(receipt.engineSourceAuditOk, false);
   assert.equal(receipt.contractSourceAuditOk, true);
   engine.sourceAuditOk = true;
+  engine.unresolved = [];
+  engine.findings = [];
+  assert.equal(
+    prismaSourceReceipt(policy, engine, contracts).engineSourceAuditOk,
+    false,
+  );
+  assert.equal(
+    prismaSourceReceipt(policy, engine, contracts).unreviewedGitSources,
+    1,
+  );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).productionApproved,
     false,
+  );
+});
+
+test("MySQL source policy never marks the original Git revision reviewed by changing its location", () => {
+  for (const change of [
+    (p) => {
+      p.mysqlSources.pop();
+    },
+    (p) => {
+      p.mysqlSources[0].gitSource.reviewStatus = "REVIEWED";
+    },
+    (p) => {
+      p.mysqlSources[0].gitSource.commit = "0".repeat(40);
+    },
+    (p) => {
+      p.mysqlSources[0].dependencies.lru = "0.8.1";
+    },
+    (p) => {
+      p.mysqlSources[1].dependencies.lexical = "6.1.1";
+    },
+    (p) => {
+      p.mysqlSources[1].dependencies.bindgen = "0.59.2";
+    },
+    (p) => {
+      p.mysqlSources[0].patch.path = "../outside.patch";
+    },
+    (p) => {
+      p.mysqlSources[1].sourceFiles[0].path = "../Cargo.toml";
+    },
+    (p) => {
+      p.mysqlSources[0].sourceFiles.pop();
+    },
+  ]) {
+    const changed = structuredClone(policy);
+    change(changed);
+    assert.throws(
+      () => validatePrismaSourcePolicy(changed),
+      /prisma_mysql_policy_invalid/,
+    );
+  }
+});
+
+test("MySQL metadata refuses old dependencies, unused source overrides and unsafe test feature selection", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "mysql_async").source =
+        "registry+https://github.com/rust-lang/crates.io-index";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "mysql_async").version = "0.31.3";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "mysql_common").manifest_path =
+        m.packages[0].manifest_path;
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "lexical").version = "6.1.1";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "sha1").version = "0.10.7";
+    },
+    (m) => {
+      m.packages.find((p) => p.name === "bindgen").version = "0.59.2";
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "mysql_async")
+        .features.push("oja-security-contracts");
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "mysql_async").features = [];
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "mysql_common")
+        .features.push("test");
+    },
+    (m) => {
+      m.packages.push({
+        id: "old-lexical",
+        name: "lexical",
+        version: "6.1.1",
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    },
+  ]) {
+    const { source, metadata } = metadataFixture(t, false);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMetadata(metadata, source, policy),
+      /prisma_mysql_(override_unbound|resolution_invalid)/,
+    );
+  }
+  const { source, metadata } = metadataFixture(t, true);
+  metadata.resolve.nodes.find((n) => n.id === "mysql_async").features.pop();
+  assert.throws(
+    () => checkPrismaMetadata(metadata, source, policy, { contracts: true }),
+    /prisma_mysql_override_unbound/,
   );
 });
