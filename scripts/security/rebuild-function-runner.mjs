@@ -37,7 +37,7 @@ export function validateRunnerPolicy(policy) {
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "function-runner" ||
-    policy.version !== "9.2.2+oja.1" ||
+    policy.version !== "9.2.2+oja.2" ||
     !keys(policy.source, ["repository", "commit", "sha256"]) ||
     policy.source.repository !== "Shopify/function-runner" ||
     policy.source.commit !== "47dca499b04de5158822cc451cd4daf61dfd0fd0" ||
@@ -57,7 +57,7 @@ export function validateRunnerPolicy(policy) {
   checked(policy.patch, "runner.patch");
   checked(policy.lockfile, "Cargo.lock");
   for (const [index, name, version, file] of [
-    [0, "wasmtime-internal-cache", "36.0.19", "cache.patch"],
+    [0, "wasmtime-internal-cache", "36.0.20", "cache.patch"],
     [1, "fxprof-processed-profile", "0.6.0", "profiler.patch"],
   ]) {
     const entry = policy.overrides[index];
@@ -138,7 +138,7 @@ export function validateRunnerMetadata(metadata, source, policy) {
   );
   if (
     wasmtime.length !== 2 ||
-    wasmtime.some((pkg) => pkg.version !== "36.0.19")
+    wasmtime.some((pkg) => pkg.version !== "36.0.20")
   )
     throw new Error("runner_wasmtime_unpatched");
   return true;

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "role": "function-runner",
-  "version": "9.2.2+oja.1",
+  "version": "9.2.2+oja.2",
   "source": {
     "repository": "Shopify/function-runner",
     "commit": "47dca499b04de5158822cc451cd4daf61dfd0fd0",
@@ -9,21 +9,21 @@
   },
   "patch": {
     "path": "vendor/native/function-runner/runner.patch",
-    "sha256": "f76222cd058ea40a3f1c6bd71a23fa9269d234c31d5793fe16f8765c67e0ae1a"
+    "sha256": "4b744db8c523c4d5bef946fc0ac5f3c5b7a919caa69a832d21935bb836fc0480"
   },
   "lockfile": {
     "path": "vendor/native/function-runner/Cargo.lock",
-    "sha256": "d97e89d3612542a6c3c5720e2d2b0ce7fb4e836d7fcf2ca26aa686f71399060c"
+    "sha256": "b1e14f010d07dfbcd8a36d506805e3fa9daa8f9aaed06f0f745909e8b55df047"
   },
   "overrides": [
     {
       "name": "wasmtime-internal-cache",
-      "upstreamVersion": "36.0.19",
-      "version": "36.0.19+oja.1",
-      "sha256": "4108e1964b3a02b4b5604ea1a2918a0cbcab512e5de0ccf4c062fc6c06b2eb8e",
+      "upstreamVersion": "36.0.20",
+      "version": "36.0.20+oja.1",
+      "sha256": "65f09c789d1bb2e7ab1618ac8336d783c1ff0babc38430c7f1940d01c546722b",
       "patch": {
         "path": "vendor/native/function-runner/cache.patch",
-        "sha256": "38d091ca4a28c2b5f5328a9ba7288d12b74cb96921c4f8494e8f6a3ed2b971e1"
+        "sha256": "d32e09afe11e105e4aa50a5537da64460322eeb26ac21bc9a50a5a5fe2b6bc08"
       }
     },
     {

@@ -21,7 +21,11 @@ its existing code is hash-bound but neither executed nor certified here.
 Moving a Git dependency to a local path does not review it: receipts retain the
 original repository/revision as UNREVIEWED, count it alongside remaining Cargo
 Git sources, set contractSourceReviewed=false and retain production denial.
-A zero registry-advisory scan is not a zero-unreviewed-source claim. The original
+A zero registry-advisory scan is not a zero-unreviewed-source claim. Contract
+assessments retain the unresolved Git-derived identity and sourceAuditOk=false,
+separately from registryAuditOk=true. Rust 2021 is used for the fixture to include
+the unchanged legacy RSA tests; original engine/driver editions are unchanged.
+The original
 registry identities of MongoDB and mysql_common are also separately scanned.
 
 - Query-core uses patched LRU 0.18.2. Zero cache capacity falls back to Prisma's

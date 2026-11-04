@@ -156,7 +156,7 @@ new file mode 100644
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
-+edition = "2024"
++edition = "2021"
 +publish = false
 +
 +[workspace]

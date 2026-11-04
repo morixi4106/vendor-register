@@ -392,6 +392,25 @@ export function prismaUnitArguments() {
   ];
 }
 
+export function prismaContractAssessment(policy, report) {
+  const gitSources = policy.mysqlSources
+    .filter((entry) => entry.gitSource)
+    .map((entry) => ({
+      name: entry.name,
+      version: entry.version,
+      reason: "git_derived_override_requires_review",
+      repository: entry.gitSource.repository,
+      commit: entry.gitSource.commit,
+      archiveSha256: entry.sha256,
+    }));
+  return {
+    ...report,
+    registryAuditOk: report.sourceAuditOk,
+    sourceAuditOk: report.sourceAuditOk && gitSources.length === 0,
+    unresolved: [...report.unresolved, ...gitSources],
+  };
+}
+
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
   const patchedGitSources = policy.mysqlSources.filter(
     (entry) => entry.gitSource,
@@ -412,7 +431,9 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     unreviewedPatchedGitSources: patchedGitSources,
     engineSourceAuditOk: engine.sourceAuditOk && patchedGitSources === 0,
     contractRegistryPackages: contracts.packageCount,
-    contractSourceAuditOk: contracts.sourceAuditOk,
+    contractSourceAuditOk: contracts.sourceAuditOk && patchedGitSources === 0,
+    contractRegistryAuditOk:
+      contracts.registryAuditOk ?? contracts.sourceAuditOk,
     contractUnreviewedGitSources: patchedGitSources,
     contractSourceReviewed: false,
     tests,
@@ -548,7 +569,10 @@ export async function testPrismaSource(
     { flag: "wx" },
   );
   const engine = await scanRustLockfile(lock.toString("utf8"));
-  const contracts = await scanRustLockfile(contractLock.toString("utf8"));
+  const contracts = prismaContractAssessment(
+    policy,
+    await scanRustLockfile(contractLock.toString("utf8")),
+  );
   // Path overrides must not conceal new advisories against their original crate.
   const overrideLock = [
     ...policy.overrides,
@@ -564,7 +588,7 @@ export async function testPrismaSource(
   json("contract-source-assessment.json", contracts);
   json("override-source-assessment.json", overrides);
   // A clean small test graph is not an approval of the complete engine graph.
-  if (!contracts.sourceAuditOk || !overrides.sourceAuditOk)
+  if (!contracts.registryAuditOk || !overrides.sourceAuditOk)
     throw new Error("prisma_contract_advisories_unresolved");
   const common = [
     "metadata",

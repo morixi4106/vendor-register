@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 2b69892..fc8b401 100644
+index 2b69892..3d8f408 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -15,7 +15,7 @@ index 2b69892..fc8b401 100644
  [package]
  name = "function-runner"
 -version = "9.2.2"
-+version = "9.2.2+oja.1"
++version = "9.2.2+oja.2"
  edition = "2021"
  
  
@@ -24,7 +24,7 @@ index 2b69892..fc8b401 100644
  
  [dependencies]
 -wasmtime = { version = "=36.0.14", default-features = false, features = [
-+wasmtime = { version = "=36.0.19", default-features = false, features = [
++wasmtime = { version = "=36.0.20", default-features = false, features = [
    "addr2line",
    "all-arch",
    "async",
@@ -33,7 +33,7 @@ index 2b69892..fc8b401 100644
    "winch",
  ] }
 -wasmtime-wasi = "=36.0.14"
-+wasmtime-wasi = "=36.0.19"
++wasmtime-wasi = "=36.0.20"
  deterministic-wasi-ctx = "=3.0.1"
  anyhow = "1.0"
  clap = { version = "4.5", features = ["derive"] }

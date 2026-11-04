@@ -13,6 +13,7 @@ import {
   rustTestTotals,
   prismaUnitArguments,
   prismaSourceReceipt,
+  prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
 import { rustRegistryPackages } from "../../scripts/security/rust-source-audit.mjs";
 
@@ -498,7 +499,8 @@ test("clean contract registry scans never approve a path-converted Git source or
   assert.equal(receipt.contractUnreviewedGitSources, 1);
   assert.equal(receipt.contractSourceReviewed, false);
   assert.equal(receipt.engineSourceAuditOk, false);
-  assert.equal(receipt.contractSourceAuditOk, true);
+  assert.equal(receipt.contractSourceAuditOk, false);
+  assert.equal(receipt.contractRegistryAuditOk, true);
   engine.sourceAuditOk = true;
   engine.unresolved = [];
   engine.findings = [];
@@ -514,6 +516,28 @@ test("clean contract registry scans never approve a path-converted Git source or
     prismaSourceReceipt(policy, engine, contracts).productionApproved,
     false,
   );
+});
+
+test("contract assessments retain unresolved Git provenance even when its Cargo entry becomes a local path", () => {
+  const original = { sourceAuditOk: true, findings: [], unresolved: [] };
+  const report = prismaContractAssessment(policy, original);
+  assert.equal(original.unresolved.length, 0);
+  assert.equal(report.registryAuditOk, true);
+  assert.equal(report.sourceAuditOk, false);
+  assert.equal(report.unresolved.length, 1);
+  assert.equal(
+    report.unresolved[0].reason,
+    "git_derived_override_requires_review",
+  );
+  assert.equal(
+    report.unresolved[0].commit,
+    policy.mysqlSources[0].gitSource.commit,
+  );
+  assert.equal(
+    report.unresolved[0].archiveSha256,
+    policy.mysqlSources[0].sha256,
+  );
+  assert.deepEqual(report.findings, []);
 });
 
 test("MySQL source policy never marks the original Git revision reviewed by changing its location", () => {

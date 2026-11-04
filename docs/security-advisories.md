@@ -20,17 +20,33 @@ Receipts explicitly retain contractSourceReviewed=false, the original Git
 revision/review status, total unreviewed Git counts, NOT_VERIFIED and denied
 production/whole-engine approval. Original registry overrides are freshly
 scanned independently. No advisory exclusions or approval-table changes.
+Contract assessments explicitly retain the unresolved Git-derived identity and
+sourceAuditOk=false, separately from registryAuditOk=true; the legacy source
+success flag is not left green after path conversion.
 
-Sixteen Node binding/rejection tests pass. The new Rust test definitions cover
+Seventeen Node binding/rejection tests pass. The new Rust test definitions cover
 real cache behavior, numeric conversion, authentication vectors and unchanged
-DER/RSA/OAEP source tests. Compilation and execution require fresh Windows/Linux
-CI evidence; prior compression-only results are not reused. No connection or
+DER/RSA/OAEP source tests. The fixture uses Rust 2021 to include unchanged legacy
+RSA source syntax; original driver/engine editions are not changed. Initial CI
+compiled both real MySQL libraries but found Rust 2024's reserved `gen` keyword
+in the included RSA tests. Tests are retained, not skipped. Compilation and
+execution require fresh Windows/Linux CI evidence; prior results are not reused. No connection or
 real database is created. Metadata refuses unsafe upstream test/nightly features
 and diagnostic hooks in the full engine. The upstream MySQL test downloader is
 retained as source, not invoked or approved. Full native/NAPI/schema/isolated
 database/migration and remaining dependency work is still incomplete. No app
 Prisma/client/schema, production configuration/deployment, financial action or
 notification changes.
+
+Fresh Runner source checks on 2026-11-04 detected a new advisory against the
+previously tested Wasmtime 36.0.19: [RUSTSEC-2026-0424](https://rustsec.org/advisories/RUSTSEC-2026-0424.html),
+issued after the prior verification. The candidate now selects fixed 36.0.20,
+including the archive/patch-bound cache source, and is versioned 9.2.2+oja.2.
+All existing features and cache/profiler behavior are retained. The frozen graph
+again has 426 registry packages / zero fresh observed matches. Old 36.0.19
+receipts are historical, not current approval; full new binary/tests evidence is
+required. The existing source gate rejected the new advisory without an ignore
+or severity exception. Neither candidate has native/production approval.
 
 ## Prisma source-contract and compression candidate: 2026-10-30
 
