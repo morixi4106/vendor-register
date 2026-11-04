@@ -13,6 +13,7 @@ import {
   rustTestTotals,
   prismaUnitArguments,
   prismaCliArguments,
+  prismaHttpClientArguments,
   prismaSourceReceipt,
   prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
@@ -140,6 +141,9 @@ test("Prisma recipe rejects version drift, path changes, added settings and miss
       p.cliVersion = "3.2.25";
     },
     (p) => {
+      p.httpClientVersion = "0.11.27";
+    },
+    (p) => {
       p.dependencies.lru = "0.7.8";
     },
     (p) => {
@@ -219,6 +223,7 @@ const metadataFixture = (t, contracts) => {
         "query-engine",
         "schema-engine-cli",
         "prisma-fmt",
+        "black-box-tests",
       ];
   const packages = owners.map((name) => {
     const directory = path.join(
@@ -228,6 +233,7 @@ const metadataFixture = (t, contracts) => {
         : {
             "query-engine": "query-engine/query-engine",
             "schema-engine-cli": "schema-engine/cli",
+            "black-box-tests": "query-engine/black-box-tests",
           }[name] || name,
     );
     fs.mkdirSync(directory, { recursive: true });
@@ -243,6 +249,28 @@ const metadataFixture = (t, contracts) => {
   });
   const nodes = owners.map((name) => ({ id: name, deps: [] }));
   if (!contracts) {
+    const registry = "registry+https://github.com/rust-lang/crates.io-index";
+    packages.push(
+      {
+        id: "reqwest",
+        name: "reqwest",
+        version: policy.httpClientVersion,
+        source: registry,
+      },
+      { id: "h2-client", name: "h2", version: "0.4.20", source: registry },
+    );
+    nodes.push(
+      {
+        id: "reqwest",
+        features: ["default-tls", "charset", "http2", "system-proxy"],
+        deps: [{ name: "h2", pkg: "h2-client" }],
+      },
+      { id: "h2-client", features: [], deps: [] },
+    );
+    for (const name of ["query-engine", "black-box-tests"])
+      nodes
+        .find((n) => n.id === name)
+        .deps.push({ name: "reqwest", pkg: "reqwest" });
     packages.push({
       id: "clap",
       name: "clap",
@@ -558,7 +586,9 @@ test("CLI metadata binds every real consumer and rejects legacy or detached pars
       m.resolve.nodes.find((n) => n.id === "schema-engine-cli").deps = [];
     },
     (m) => {
-      m.resolve.nodes.find((n) => n.id === "query-engine").deps[0].pkg = "lru";
+      m.resolve.nodes
+        .find((n) => n.id === "query-engine")
+        .deps.find((d) => d.name === "clap").pkg = "lru";
     },
     (m) => {
       m.packages.push({
@@ -580,6 +610,96 @@ test("CLI metadata binds every real consumer and rejects legacy or detached pars
       /prisma_cli_(resolution_invalid|legacy_resolution)/,
     );
   }
+});
+
+test("HTTP client metadata rejects old, detached or feature-reduced dependencies", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "reqwest").version = "0.11.27";
+    },
+    (m) => {
+      m.packages.push({
+        id: "pem",
+        name: "rustls-pemfile",
+        version: "1.0.4",
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "black-box-tests").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "query-engine")
+        .deps.find((d) => d.name === "reqwest").pkg = "lru";
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "reqwest").features = [
+        "http2",
+        "charset",
+        "system-proxy",
+      ];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "reqwest").features = [
+        "default-tls",
+        "charset",
+        "system-proxy",
+      ];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "reqwest").features = [
+        "default-tls",
+        "http2",
+        "system-proxy",
+      ];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "reqwest").features = [
+        "default-tls",
+        "http2",
+        "charset",
+      ];
+    },
+    (m) => {
+      m.packages.find((p) => p.id === "h2-client").version = "0.4.15";
+    },
+  ]) {
+    const { source, metadata } = metadataFixture(t, false);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMetadata(metadata, source, policy),
+      /prisma_http_client_(resolution_invalid|legacy_resolution)/,
+    );
+  }
+});
+
+test("HTTP contracts select only loopback tests and keep the legacy server visible", () => {
+  assert.deepEqual(prismaHttpClientArguments(), [
+    "test",
+    "--locked",
+    "--package",
+    "query-engine",
+    "--lib",
+    "oja_http_client_contracts",
+  ]);
+  const graph = rustRegistryPackages(
+    prismaSourceInput(ROOT, policy.lockfile).toString("utf8"),
+  );
+  assert.deepEqual(
+    graph.packages.filter((p) => p.name === "reqwest").map((p) => p.version),
+    [policy.httpClientVersion],
+  );
+  assert.equal(
+    graph.packages.some((p) => p.name === "rustls-pemfile"),
+    false,
+  );
+  assert.ok(
+    graph.packages.some((p) => p.name === "h2" && p.version === "0.3.27"),
+  );
+  assert.ok(
+    graph.packages.some((p) => p.name === "h2" && p.version === "0.4.20"),
+  );
 });
 
 test("CLI contracts compile the actual three entry points without selecting database tests", () => {

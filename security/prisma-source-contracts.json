@@ -9,11 +9,11 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "1017e05e318d02b91a064e3cb2d2320e9d69a435e49d74cc585e58d60c38d847"
+    "sha256": "43d772e8fd1942fa054fe4cfc3a69980febbf0b7bc4a5cb57e3ebd1489728dff"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "196326f413a6a78969672f81bb384ba244e839b71fbbff4fa81275d9f141de10"
+    "sha256": "09ee7ca655c0a53558dc539b7064ab8c88c2f0d6c4de8d61b66dfd0725c959d9"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
@@ -22,7 +22,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "2fb53433db8a5b85f60c370a2e921f40c89bab9cec0a7f18f876476ac3666771"
+      "sha256": "ec3b28898a958c4efe3f1cd4ae7a4d4746d229cfb0714491fccb1c3fe7a8fc65"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -78,7 +78,7 @@
     },
     {
       "path": "query-engine/query-engine/Cargo.toml",
-      "sha256": "dc41ba1f1d6342683ff6b496b068faddd57e1c8a5d83680d396cba78e05b5af4"
+      "sha256": "bb34b419248a5b85ba1b8d1bc382b7c3ad3af80de161f07042c496d4021b03eb"
     },
     {
       "path": "query-engine/query-engine/src/main.rs",
@@ -111,6 +111,26 @@
     {
       "path": "quaint/src/connector/mssql/native/conversion.rs",
       "sha256": "5bd56d18d23e2188a19334b2251414b31a17f468ff8ec52203cc1f87f58ed33b"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/mod.rs",
+      "sha256": "23bca31cd2132ac4a79b8ed47dc4084d7eb112703c660429ac99247c7034f238"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/oja_http_client_contracts.rs",
+      "sha256": "6d23c2ddb204cfdeb88839452d3e99ba6c6f7abb0d688aaa502eb5e1aeaeff5a"
+    },
+    {
+      "path": "query-engine/black-box-tests/Cargo.toml",
+      "sha256": "d69b3812d43e4d1b494b693061a2f24b736234df2fca8f272fc919302f4716f3"
+    },
+    {
+      "path": "query-engine/black-box-tests/tests/protocols/mismatched.rs",
+      "sha256": "29b4d839c8c620ee45a524a345d9c969ae22ef0db3180e88abe03fc37137f162"
+    },
+    {
+      "path": "query-engine/black-box-tests/tests/metrics/smoke_tests.rs",
+      "sha256": "7c79f205845a2bc39751bf5e9f988d4828b3c90589393bce39c67c74f8b378fa"
     }
   ],
   "dependencies": {
@@ -359,5 +379,6 @@
       }
     ]
   },
-  "cliVersion": "4.6.7"
+  "cliVersion": "4.6.7",
+  "httpClientVersion": "0.12.28"
 }

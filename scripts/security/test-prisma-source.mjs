@@ -61,6 +61,11 @@ const SOURCE_FILES = [
   "prisma-fmt/Cargo.toml",
   "prisma-fmt/src/main.rs",
   "quaint/src/connector/mssql/native/conversion.rs",
+  "query-engine/query-engine/src/server/mod.rs",
+  "query-engine/query-engine/src/server/oja_http_client_contracts.rs",
+  "query-engine/black-box-tests/Cargo.toml",
+  "query-engine/black-box-tests/tests/protocols/mismatched.rs",
+  "query-engine/black-box-tests/tests/metrics/smoke_tests.rs",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -92,11 +97,13 @@ export function validatePrismaSourcePolicy(policy) {
       "mysqlSources",
       "cuidSource",
       "cliVersion",
+      "httpClientVersion",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
     policy.prismaVersion !== "6.19.3" ||
     policy.cliVersion !== "4.6.7" ||
+    policy.httpClientVersion !== "0.12.28" ||
     !exact(policy.source, ["repository", "commit", "sha256"]) ||
     policy.source.repository !== "prisma/prisma-engines" ||
     policy.source.commit !== "c2990dca591cba766e3b7ef5d9e8a84796e47ab7" ||
@@ -210,6 +217,33 @@ export function checkPrismaSourceWiring(source, policy) {
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
   const clap = manifest.workspace.dependencies.clap;
+  if (
+    manifest.workspace.dependencies.reqwest !== `=${policy.httpClientVersion}`
+  )
+    throw new Error("prisma_http_client_wiring_invalid");
+  const query = toml.parse(
+    fs.readFileSync(
+      path.join(source, "query-engine/query-engine/Cargo.toml"),
+      "utf8",
+    ),
+  );
+  const blackbox = toml.parse(
+    fs.readFileSync(
+      path.join(source, "query-engine/black-box-tests/Cargo.toml"),
+      "utf8",
+    ),
+  );
+  if (
+    query["dev-dependencies"].reqwest?.workspace !== true ||
+    blackbox.dependencies.reqwest?.workspace !== true ||
+    !fs
+      .readFileSync(
+        path.join(source, "query-engine/query-engine/src/server/mod.rs"),
+        "utf8",
+      )
+      .includes("#[cfg(test)]\nmod oja_http_client_contracts;")
+  )
+    throw new Error("prisma_http_client_wiring_invalid");
   if (
     !exact(clap, ["version", "features"]) ||
     clap.version !== `=${policy.cliVersion}` ||
@@ -340,6 +374,34 @@ export function checkPrismaMetadata(
   const rootFor = (name) =>
     metadata.packages.find((pkg) => pkg.name === name && !pkg.source);
   if (!contracts) {
+    if (
+      metadata.packages.some(
+        (pkg) =>
+          pkg.name === "rustls-pemfile" ||
+          (pkg.name === "reqwest" && pkg.version !== policy.httpClientVersion),
+      )
+    )
+      throw new Error("prisma_http_client_legacy_resolution");
+    for (const name of ["black-box-tests", "query-engine"]) {
+      const owner = rootFor(name);
+      const dep = nodes.get(owner?.id)?.deps.find((d) => d.name === "reqwest");
+      const client = packages.get(dep?.pkg);
+      const node = nodes.get(client?.id);
+      const h2 = packages.get(node?.deps.find((d) => d.name === "h2")?.pkg);
+      if (
+        client?.name !== "reqwest" ||
+        client.version !== policy.httpClientVersion ||
+        client.source !==
+          "registry+https://github.com/rust-lang/crates.io-index" ||
+        !["default-tls", "charset", "http2", "system-proxy"].every((f) =>
+          node?.features?.includes(f),
+        ) ||
+        h2?.name !== "h2" ||
+        h2.version !== "0.4.20" ||
+        h2.source !== "registry+https://github.com/rust-lang/crates.io-index"
+      )
+        throw new Error("prisma_http_client_resolution_invalid");
+    }
     if (
       metadata.packages.some((pkg) =>
         [
@@ -545,6 +607,17 @@ export function prismaContractAssessment(policy, report) {
   };
 }
 
+export function prismaHttpClientArguments() {
+  return [
+    "test",
+    "--locked",
+    "--package",
+    "query-engine",
+    "--lib",
+    "oja_http_client_contracts",
+  ];
+}
+
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
   const patchedGitSources = prismaPatchedGitSources(policy).length;
   return {
@@ -559,6 +632,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     mysqlSources: policy.mysqlSources,
     cuidSource: policy.cuidSource,
     cliVersion: policy.cliVersion,
+    httpClientVersion: policy.httpClientVersion,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length + patchedGitSources,
@@ -786,6 +860,16 @@ export async function testPrismaSource(
         command.minimum,
       );
     }
+    tests.httpClient = rustTestTotals(
+      execute(
+        cargo,
+        prismaHttpClientArguments(),
+        source,
+        "http-client",
+        1_800_000,
+      ),
+      9,
+    );
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
       tests.upstreamUnits = rustTestTotals(

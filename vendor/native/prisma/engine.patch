@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..2b1d261 100644
+index 307dd8c..ffbb8cf 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
@@ -41,9 +41,12 @@ index 307dd8c..2b1d261 100644
  names = { version = "0.11", default-features = false }
  nanoid = "0.4"
  napi = { version = "2", default-features = false, features = [
-@@ -124,7 +125,7 @@ rand = "0.8"
+@@ -122,9 +123,9 @@ pretty = "0.12"
+ rustc-hash = "2"
+ rand = "0.8"
  regex = "1"
- reqwest = "0.11"
+-reqwest = "0.11"
++reqwest = "=0.12.28"
  rusqlite = "0.32"
 -sha2 = "0.10"
 +sha2 = "=0.11.1"
@@ -615,7 +618,7 @@ new file mode 100644
 +    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),256);
 +}
 diff --git a/query-engine/query-engine/Cargo.toml b/query-engine/query-engine/Cargo.toml
-index b33af93..630d304 100644
+index b33af93..55fb7ac 100644
 --- a/query-engine/query-engine/Cargo.toml
 +++ b/query-engine/query-engine/Cargo.toml
 @@ -23,7 +23,7 @@ request-handlers = { workspace = true, features = ["all"] }
@@ -627,6 +630,14 @@ index b33af93..630d304 100644
  thiserror.workspace = true
  url.workspace = true
  hyper = { workspace = true, features = ["server", "http1", "http2", "runtime"] }
+@@ -36,6 +36,7 @@ user-facing-errors.workspace = true
+ telemetry.workspace = true
+
+ [dev-dependencies]
++reqwest.workspace = true
+ serial_test = "*"
+ quaint.workspace = true
+ indoc.workspace = true
 diff --git a/query-engine/query-engine/src/main.rs b/query-engine/query-engine/src/main.rs
 index f8aaed3..2fed8c2 100644
 --- a/query-engine/query-engine/src/main.rs
@@ -1408,4 +1419,154 @@ index 4a6f198..bc60b01 100644
 +            assert!(std::panic::catch_unwind(|| roundtrip(&value)).is_err());
 +        }
 +    }
++}
+diff --git a/query-engine/query-engine/src/server/mod.rs b/query-engine/query-engine/src/server/mod.rs
+index 7e8a96e..1812b12 100644
+--- a/query-engine/query-engine/src/server/mod.rs
++++ b/query-engine/query-engine/src/server/mod.rs
+@@ -16,6 +16,9 @@ use telemetry::exporter::{CaptureSettings, CaptureTarget, TraceData};
+ use telemetry::{NextId, RequestId, TraceParent};
+ use tracing::{Instrument, Span};
+
++#[cfg(test)]
++mod oja_http_client_contracts;
++
+ /// Starts up the graphql query engine server
+ pub async fn listen(cx: Arc<PrismaContext>, opts: &PrismaOpt) -> PrismaResult<()> {
+     let query_engine = make_service_fn(move |_| {
+diff --git a/query-engine/query-engine/src/server/oja_http_client_contracts.rs b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
+@@ -0,0 +1,131 @@
++use hyper::service::{make_service_fn, service_fn};
++use hyper::{Body, Request, Response, Server};
++use std::{convert::Infallible, time::Duration};
++
++// Exercise the unchanged black-box consumers' Client::new/body/send/text API
++// against loopback only. No Prisma context, database, or provider is involved.
++struct Fixture {
++    url: String,
++    task: tokio::task::JoinHandle<()>,
++}
++
++impl Drop for Fixture {
++    fn drop(&mut self) {
++        self.task.abort();
++    }
++}
++
++async fn fixture() -> Fixture {
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let url = format!("http://{}", listener.local_addr().unwrap());
++    let server = Server::from_tcp(listener).unwrap().serve(make_service_fn(|_| async {
++        Ok::<_, Infallible>(service_fn(|req: Request<Body>| async move {
++            let response = match req.uri().path() {
++                "/echo" => {
++                    assert_eq!(req.method(), hyper::Method::POST);
++                    assert_eq!(req.headers()["x-contract"], "request-value");
++                    let bytes = hyper::body::to_bytes(req.into_body()).await.unwrap();
++                    Response::builder()
++                        .header("content-type", "application/json")
++                        .header("qe-content-length", bytes.len())
++                        .body(Body::from(bytes))
++                        .unwrap()
++                }
++                "/metrics" => Response::new(Body::from("# TYPE requests counter\nrequests 1\n")),
++                "/redirect" => Response::builder().status(302).header("location", "/metrics")
++                    .body(Body::empty()).unwrap(),
++                "/error" => Response::builder().status(422)
++                    .body(Body::from(r#"{"is_panic":false,"message":"invalid protocol"}"#)).unwrap(),
++                "/malformed" => Response::new(Body::from("not-json")),
++                "/version" => Response::new(Body::from(format!("{:?}", req.version()))),
++                "/slow" => {
++                    tokio::time::sleep(Duration::from_secs(5)).await;
++                    Response::new(Body::empty())
++                }
++                "/utf8" => Response::builder().header("content-type", "text/plain; charset=utf-8")
++                    .body(Body::from("\u{65e5}\u{672c}\u{8a9e}".as_bytes())).unwrap(),
++                _ => Response::builder().status(404).body(Body::empty()).unwrap(),
++            };
++            Ok::<_, Infallible>(response)
++        }))
++    }));
++    let task = tokio::spawn(async move { server.await.unwrap(); });
++    Fixture { url, task }
++}
++
++#[tokio::test]
++async fn post_body_headers_and_response_length_are_preserved() {
++    let f = fixture().await;
++    let payload = r#"{"action":"findMany","modelName":"Person","query":{}}"#;
++    let response = reqwest::Client::new().post(format!("{}/echo", f.url))
++        .header("x-contract", "request-value").body(payload).send().await.unwrap();
++    assert_eq!(response.status(), reqwest::StatusCode::OK);
++    assert_eq!(response.headers()["content-type"], "application/json");
++    assert_eq!(response.headers()["qe-content-length"], payload.len().to_string());
++    assert_eq!(response.text().await.unwrap(), payload);
++}
++
++#[tokio::test]
++async fn metrics_text_is_not_reencoded() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/metrics", f.url)).send().await.unwrap();
++    assert_eq!(response.text().await.unwrap(), "# TYPE requests counter\nrequests 1\n");
++}
++
++#[tokio::test]
++async fn non_success_status_and_error_body_remain_available() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().post(format!("{}/error", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
++    let value: serde_json::Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
++    assert_eq!(value["is_panic"], false);
++    assert_eq!(value["message"], "invalid protocol");
++}
++
++#[tokio::test]
++async fn default_relative_redirects_are_followed() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/redirect", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++    assert_eq!(response.url().path(), "/metrics");
++}
++
++#[tokio::test]
++async fn invalid_json_remains_an_explicit_decode_error() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/malformed", f.url)).send().await.unwrap();
++    assert!(serde_json::from_str::<serde_json::Value>(&response.text().await.unwrap()).is_err());
++}
++
++#[tokio::test]
++async fn explicitly_configured_timeout_remains_an_error() {
++    let f = fixture().await;
++    let error = reqwest::Client::builder().timeout(Duration::from_millis(100)).build().unwrap()
++        .get(format!("{}/slow", f.url)).send().await.unwrap_err();
++    assert!(error.is_timeout());
++}
++
++#[tokio::test]
++async fn http1_remains_supported() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.version(), reqwest::Version::HTTP_11);
++    assert_eq!(response.text().await.unwrap(), "HTTP/1.1");
++}
++
++#[tokio::test]
++async fn http2_prior_knowledge_remains_supported() {
++    let f = fixture().await;
++    let response = reqwest::Client::builder().http2_prior_knowledge().build().unwrap()
++        .get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.version(), reqwest::Version::HTTP_2);
++    assert_eq!(response.text().await.unwrap(), "HTTP/2.0");
++}
++
++#[tokio::test]
++async fn charset_decoding_remains_enabled() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/utf8", f.url)).send().await.unwrap();
++    assert_eq!(response.text().await.unwrap(), "\u{65e5}\u{672c}\u{8a9e}");
 +}
