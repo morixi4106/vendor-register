@@ -15,6 +15,7 @@ import {
   prismaCliArguments,
   prismaHttpClientArguments,
   prismaHttpClientCheckArguments,
+  prismaHttpServerArguments,
   prismaSourceReceipt,
   prismaContractAssessment,
 } from "../../scripts/security/test-prisma-source.mjs";
@@ -145,6 +146,15 @@ test("Prisma recipe rejects version drift, path changes, added settings and miss
       p.httpClientVersion = "0.11.27";
     },
     (p) => {
+      p.httpServerDependencies.h2 = "0.3.27";
+    },
+    (p) => {
+      p.httpServerDependencies.hyper = "0.14.32";
+    },
+    (p) => {
+      delete p.httpServerDependencies["hyper-util"];
+    },
+    (p) => {
       p.dependencies.lru = "0.7.8";
     },
     (p) => {
@@ -225,6 +235,7 @@ const metadataFixture = (t, contracts) => {
         "schema-engine-cli",
         "prisma-fmt",
         "black-box-tests",
+        "query-tests-setup",
       ];
   const packages = owners.map((name) => {
     const directory = path.join(
@@ -272,6 +283,29 @@ const metadataFixture = (t, contracts) => {
       nodes
         .find((n) => n.id === name)
         .deps.push({ name: "reqwest", pkg: "reqwest" });
+    for (const [name, features] of [
+      ["hyper", ["server", "client", "http1", "http2"]],
+      ["hyper-util", ["server-auto", "tokio", "http1", "http2"]],
+      ["http-body-util", []],
+    ]) {
+      packages.push({
+        id: name,
+        name,
+        version: policy.httpServerDependencies[name],
+        source: registry,
+      });
+      nodes.push({
+        id: name,
+        features,
+        deps: name === "hyper" ? [{ name: "h2", pkg: "h2-client" }] : [],
+      });
+      nodes
+        .find((n) => n.id === "query-engine")
+        .deps.push({ name: name.replaceAll("-", "_"), pkg: name });
+    }
+    nodes
+      .find((n) => n.id === "query-tests-setup")
+      .deps.push({ name: "hyper", pkg: "hyper" });
     packages.push({
       id: "clap",
       name: "clap",
@@ -675,7 +709,7 @@ test("HTTP client metadata rejects old, detached or feature-reduced dependencies
   }
 });
 
-test("HTTP contracts select only loopback tests and keep the legacy server visible", () => {
+test("HTTP contracts select only loopback tests and reject legacy server packages", () => {
   assert.deepEqual(prismaHttpClientCheckArguments(), [
     "check",
     "--locked",
@@ -702,12 +736,74 @@ test("HTTP contracts select only loopback tests and keep the legacy server visib
     graph.packages.some((p) => p.name === "rustls-pemfile"),
     false,
   );
-  assert.ok(
+  assert.equal(
     graph.packages.some((p) => p.name === "h2" && p.version === "0.3.27"),
+    false,
   );
   assert.ok(
     graph.packages.some((p) => p.name === "h2" && p.version === "0.4.20"),
   );
+  for (const [name, version] of Object.entries(policy.httpServerDependencies)) {
+    assert.deepEqual(
+      graph.packages.filter((p) => p.name === name).map((p) => p.version),
+      [version],
+    );
+  }
+  assert.deepEqual(prismaHttpServerArguments(), [
+    "test",
+    "--locked",
+    "--package",
+    "query-engine",
+    "--lib",
+    "oja_http_server_contracts",
+  ]);
+});
+
+test("HTTP server metadata rejects legacy graphs, detached adapters and disabled protocols", (t) => {
+  for (const change of [
+    (m) => {
+      m.packages.find((p) => p.name === "hyper").version = "0.14.32";
+    },
+    (m) => {
+      m.packages.push({
+        id: "old-h2",
+        name: "h2",
+        version: "0.3.27",
+        source: "registry+https://github.com/rust-lang/crates.io-index",
+      });
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "hyper").features = [
+        "server",
+        "http1",
+      ];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "hyper-util").features = [
+        "tokio",
+        "http1",
+        "http2",
+      ];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "query-tests-setup").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes
+        .find((n) => n.id === "query-engine")
+        .deps.find((d) => d.name === "hyper_util").pkg = "hyper";
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "hyper").deps = [];
+    },
+  ]) {
+    const { source, metadata } = metadataFixture(t, false);
+    change(metadata);
+    assert.throws(
+      () => checkPrismaMetadata(metadata, source, policy),
+      /prisma_http_server_(resolution_invalid|legacy_resolution)/,
+    );
+  }
 });
 
 test("CLI contracts compile the actual three entry points without selecting database tests", () => {

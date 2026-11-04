@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..ffbb8cf 100644
+index 307dd8c..50619e9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
@@ -18,7 +18,16 @@ index 307dd8c..ffbb8cf 100644
  derive_more = "0.99"
  either = "1"
  enumflags2 = "0.7"
-@@ -84,19 +85,19 @@ indexmap = "2"
+@@ -78,25 +79,27 @@ graphql-parser = { git = "https://github.com/prisma/graphql-parser" }
+ hashbrown = "0.16"
+ heck = "0.4"
+ hex = "0.4"
+-hyper = "0.14"
++hyper = "=1.12.0"
++hyper-util = "=0.1.21"
++http-body-util = "=0.1.5"
+ indoc = "2"
+ indexmap = "2"
  itertools = "0.13"
  jsonrpc-core = "17"
  log = "0.4"
@@ -41,7 +50,7 @@ index 307dd8c..ffbb8cf 100644
  names = { version = "0.11", default-features = false }
  nanoid = "0.4"
  napi = { version = "2", default-features = false, features = [
-@@ -122,9 +123,9 @@ pretty = "0.12"
+@@ -122,9 +125,9 @@ pretty = "0.12"
  rustc-hash = "2"
  rand = "0.8"
  regex = "1"
@@ -53,7 +62,7 @@ index 307dd8c..ffbb8cf 100644
  serde = { version = "1", features = ["derive"] }
  serde_json = { version = "1", features = [
      "float_roundtrip",
-@@ -135,7 +136,7 @@ serde_repr = "0.1"
+@@ -135,7 +138,7 @@ serde_repr = "0.1"
  serde-wasm-bindgen = "0.6"
  smallvec = "1"
  strip-ansi-escapes = "0.1"
@@ -62,7 +71,7 @@ index 307dd8c..ffbb8cf 100644
  sqlformat = "0.2"
  sqlparser = "0.32"
  sqlx-core = "0.8"
-@@ -256,3 +257,7 @@ opt-level = 's'   # Optimize for size.
+@@ -256,3 +259,7 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
  debug = true
@@ -618,10 +627,19 @@ new file mode 100644
 +    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),256);
 +}
 diff --git a/query-engine/query-engine/Cargo.toml b/query-engine/query-engine/Cargo.toml
-index b33af93..55fb7ac 100644
+index b33af93..e42d86e 100644
 --- a/query-engine/query-engine/Cargo.toml
 +++ b/query-engine/query-engine/Cargo.toml
-@@ -23,7 +23,7 @@ request-handlers = { workspace = true, features = ["all"] }
+@@ -8,7 +8,7 @@ sql = ["sql-connector", "sql-connector/all-native"]
+ vendored-openssl = ["sql-connector/vendored-openssl"]
+
+ [dependencies]
+-tokio = { workspace = true, features = ["signal"] }
++tokio = { workspace = true, features = ["signal", "net", "io-util"] }
+ anyhow.workspace = true
+ async-trait.workspace = true
+ base64.workspace = true
+@@ -23,10 +23,13 @@ request-handlers = { workspace = true, features = ["all"] }
  serde.workspace = true
  serde_json.workspace = true
  sql-connector = { path = "../connectors/sql-query-connector", optional = true, package = "sql-query-connector" }
@@ -629,8 +647,15 @@ index b33af93..55fb7ac 100644
 +clap.workspace = true
  thiserror.workspace = true
  url.workspace = true
- hyper = { workspace = true, features = ["server", "http1", "http2", "runtime"] }
-@@ -36,6 +36,7 @@ user-facing-errors.workspace = true
+-hyper = { workspace = true, features = ["server", "http1", "http2", "runtime"] }
++hyper = { workspace = true, features = ["server", "http1", "http2"] }
++hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
++http-body-util.workspace = true
++bytes.workspace = true
+ tracing.workspace = true
+ tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
+ prisma-metrics.workspace = true
+@@ -36,6 +39,7 @@ user-facing-errors.workspace = true
  telemetry.workspace = true
 
  [dev-dependencies]
@@ -1421,32 +1446,273 @@ index 4a6f198..bc60b01 100644
 +    }
 +}
 diff --git a/query-engine/query-engine/src/server/mod.rs b/query-engine/query-engine/src/server/mod.rs
-index 7e8a96e..1812b12 100644
+index 7e8a96e..4e5db3c 100644
 --- a/query-engine/query-engine/src/server/mod.rs
 +++ b/query-engine/query-engine/src/server/mod.rs
-@@ -16,6 +16,9 @@ use telemetry::exporter::{CaptureSettings, CaptureTarget, TraceData};
+@@ -2,8 +2,10 @@ use crate::context::PrismaContext;
+ use crate::features::Feature;
+ use crate::logger::TracingConfig;
+ use crate::{PrismaResult, opt::PrismaOpt};
+-use hyper::service::{make_service_fn, service_fn};
+-use hyper::{Body, HeaderMap, Method, Request, Response, Server, StatusCode, header::CONTENT_TYPE};
++use bytes::Bytes;
++use http_body_util::{BodyExt, Full};
++use hyper::body::Incoming;
++use hyper::{HeaderMap, Method, Request, Response, StatusCode, header::CONTENT_TYPE};
+ use query_core::{ExtendedUserFacingError, TransactionOptions, TxId};
+ use request_handlers::{RequestBody, RequestHandler, dmmf, render_graphql_schema};
+ use serde::Serialize;
+@@ -16,35 +18,41 @@ use telemetry::exporter::{CaptureSettings, CaptureTarget, TraceData};
  use telemetry::{NextId, RequestId, TraceParent};
  use tracing::{Instrument, Span};
 
 +#[cfg(test)]
 +mod oja_http_client_contracts;
++#[cfg(test)]
++mod oja_http_server_contracts;
++mod transport;
++
++type ResponseBody = Full<Bytes>;
++
++fn response_body(value: impl Into<Bytes>) -> ResponseBody {
++    Full::new(value.into())
++}
 +
  /// Starts up the graphql query engine server
  pub async fn listen(cx: Arc<PrismaContext>, opts: &PrismaOpt) -> PrismaResult<()> {
-     let query_engine = make_service_fn(move |_| {
+-    let query_engine = make_service_fn(move |_| {
+-        let cx = cx.clone();
+-        async move { Ok::<_, hyper::Error>(service_fn(move |req| routes(cx.clone(), req))) }
+-    });
+-
+     let ip = opts.host.parse().expect("Host was not a valid IP address.");
+     let addr = SocketAddr::new(ip, opts.port);
++    let listener = tokio::net::TcpListener::bind(addr).await?;
++    let local_addr = listener.local_addr()?;
+
+-    let server = Server::bind(&addr).tcp_nodelay(true).serve(query_engine);
+-
+-    // Note: we call `server.local_addr()` instead of reusing original `addr` because it may contain port 0 to request
+-    // the OS to assign a free port automatically, and we want to print the address which is actually in use.
++    // Port zero requests an OS-assigned port; report the bound address.
+     info!(
+-        ip = %server.local_addr().ip(),
+-        port = %server.local_addr().port(),
++        ip = %local_addr.ip(),
++        port = %local_addr.port(),
+         "Started query engine http server on http://{}",
+-        server.local_addr()
++        local_addr
+     );
+
+-    if let Err(e) = server.await {
++    if let Err(e) = transport::serve(listener, move |req| routes(cx.clone(), req)).await {
+         eprintln!("server error: {e}");
+     }
+
+     Ok(())
+ }
+
+-pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let start = Instant::now();
+
+     if req.method() == Method::POST && req.uri().path().starts_with("/transaction") {
+@@ -69,7 +77,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+             Response::builder()
+                 .status(StatusCode::OK)
+                 .header(CONTENT_TYPE, "application/text")
+-                .body(Body::from(schema))
++                .body(response_body(schema))
+                 .unwrap()
+         }
+
+@@ -96,7 +104,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+
+         _ => Response::builder()
+             .status(StatusCode::NOT_FOUND)
+-            .body(Body::empty())
++            .body(ResponseBody::default())
+             .unwrap(),
+     };
+
+@@ -108,7 +116,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+
+ /// The main query handler. This handles incoming requests and passes it
+ /// to the query engine.
+-async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn request_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     // Check for debug headers if enabled.
+     if cx.enabled_features.contains(Feature::DebugMode) {
+         return Ok(handle_debug_headers(&req));
+@@ -129,7 +137,7 @@ async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+
+     let query_timeout = query_timeout(headers);
+
+-    let buffer = hyper::body::to_bytes(req.into_body()).await?;
++    let buffer = req.into_body().collect().await?.to_bytes();
+     let request_body = RequestBody::try_from_slice(buffer.as_ref(), cx.engine_protocol());
+
+     let work = {
+@@ -202,21 +210,21 @@ async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+ ///
+ /// In production exposing the playground is equivalent to exposing the database
+ /// on a port. This should never be enabled on production servers.
+-fn playground_handler() -> Response<Body> {
++fn playground_handler() -> Response<ResponseBody> {
+     let playground = include_bytes!("../../static_files/playground.html").to_vec();
+
+     Response::builder()
+         .status(StatusCode::OK)
+         .header(CONTENT_TYPE, "text/html")
+-        .body(Body::from(playground))
++        .body(response_body(playground))
+         .unwrap()
+ }
+
+-async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let requested_json = req.uri().query().map(|q| q.contains("format=json")).unwrap_or_default();
+     let body_start = req.into_body();
+     // block and buffer request until the request has completed
+-    let full_body = hyper::body::to_bytes(body_start).await?;
++    let full_body = body_start.collect().await?.to_bytes();
+
+     let global_labels: HashMap<String, String> = serde_json::from_slice(full_body.as_ref()).unwrap_or_default();
+
+@@ -230,7 +238,7 @@ async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+         Response::builder()
+             .status(StatusCode::OK)
+             .header(CONTENT_TYPE, "text/plain; version=0.0.4")
+-            .body(Body::from(metrics))
++            .body(response_body(metrics))
+             .unwrap()
+     };
+
+@@ -241,7 +249,7 @@ async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+ /// POST /transaction/start -> start a transaction
+ /// POST /transaction/{tx_id}/commit -> commit a transaction
+ /// POST /transaction/{tx_id}/rollback -> rollback a transaction
+-async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let path = req.uri().path().to_owned();
+     let sections: Vec<&str> = path.split('/').collect();
+
+@@ -259,23 +267,23 @@ async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Resu
+
+     let res = Response::builder()
+         .status(StatusCode::BAD_REQUEST)
+-        .body(Body::from(format!("wrong transaction handler path: {}", &path)))
++        .body(response_body(format!("wrong transaction handler path: {}", &path)))
+         .unwrap();
+     Ok(res)
+ }
+
+-async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let headers = req.headers().to_owned();
+
+     let body_start = req.into_body();
+-    let full_body = hyper::body::to_bytes(body_start).await?;
++    let full_body = body_start.collect().await?.to_bytes();
+
+     let tx_opts = match serde_json::from_slice::<TransactionOptions>(full_body.as_ref()) {
+         Ok(opts) => opts.with_new_transaction_id(),
+         Err(_) => {
+             return Ok(Response::builder()
+                 .status(StatusCode::BAD_REQUEST)
+-                .body(Body::from("Invalid transaction options"))
++                .body(response_body("Invalid transaction options"))
+                 .unwrap());
+         }
+     };
+@@ -328,9 +336,9 @@ async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Body>) -
+
+ async fn transaction_commit_handler(
+     cx: Arc<PrismaContext>,
+-    req: Request<Body>,
++    req: Request<Incoming>,
+     tx_id: TxId,
+-) -> Result<Response<Body>, hyper::Error> {
++) -> Result<Response<ResponseBody>, hyper::Error> {
+     let (span, request_id, _traceparent) = setup_telemetry(
+         &cx,
+         info_span!(
+@@ -358,9 +366,9 @@ async fn transaction_commit_handler(
+
+ async fn transaction_rollback_handler(
+     cx: Arc<PrismaContext>,
+-    req: Request<Body>,
++    req: Request<Incoming>,
+     tx_id: TxId,
+-) -> Result<Response<Body>, hyper::Error> {
++) -> Result<Response<ResponseBody>, hyper::Error> {
+     let (span, request_id, _traceparent) = setup_telemetry(
+         &cx,
+         info_span!(
+@@ -387,7 +395,7 @@ async fn transaction_rollback_handler(
+ }
+
+ /// Handle debug headers inside the main GraphQL endpoint.
+-fn handle_debug_headers(req: &Request<Body>) -> Response<Body> {
++fn handle_debug_headers<B>(req: &Request<B>) -> Response<ResponseBody> {
+     /// Debug header that triggers a panic in the request thread.
+     static DEBUG_NON_FATAL_HEADER: &str = "x-debug-non-fatal";
+
+@@ -404,11 +412,11 @@ fn handle_debug_headers(req: &Request<Body>) -> Response<Body> {
+
+         build_json_response(StatusCode::OK, &err)
+     } else {
+-        Response::builder().status(StatusCode::OK).body(Body::empty()).unwrap()
++        Response::builder().status(StatusCode::OK).body(ResponseBody::default()).unwrap()
+     }
+ }
+
+-fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<Body> {
++fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<ResponseBody> {
+     let result = if let Some(telemetry) = captured_telemetry {
+         json!({ "extensions": { "logs": json!(telemetry.events), "traces": json!(telemetry.spans) } })
+     } else {
+@@ -418,7 +426,7 @@ fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<Bo
+     build_json_response(StatusCode::OK, &result)
+ }
+
+-fn err_to_http_resp(err: query_core::CoreError, captured_telemetry: Option<TraceData>) -> Response<Body> {
++fn err_to_http_resp(err: query_core::CoreError, captured_telemetry: Option<TraceData>) -> Response<ResponseBody> {
+     let status = match err {
+         query_core::CoreError::TransactionError(ref err) => match err {
+             query_core::TransactionError::AcquisitionTimeout => StatusCode::GATEWAY_TIMEOUT,
+@@ -489,7 +497,7 @@ fn query_timeout(headers: &HeaderMap) -> Option<Duration> {
+         .map(Duration::from_millis)
+ }
+
+-fn build_json_response<T>(status_code: StatusCode, value: &T) -> Response<Body>
++fn build_json_response<T>(status_code: StatusCode, value: &T) -> Response<ResponseBody>
+ where
+     T: ?Sized + Serialize,
+ {
+@@ -499,6 +507,6 @@ where
+         .status(status_code)
+         .header(CONTENT_TYPE, "application/json")
+         .header("QE-Content-Length", result_bytes.len()) // this header is read by Accelerate
+-        .body(Body::from(result_bytes))
++        .body(response_body(result_bytes))
+         .unwrap()
+ }
 diff --git a/query-engine/query-engine/src/server/oja_http_client_contracts.rs b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
 new file mode 100644
 --- /dev/null
 +++ b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
-@@ -0,0 +1,131 @@
-+use hyper::service::{make_service_fn, service_fn};
-+use hyper::{Body, Request, Response, Server};
-+use std::{convert::Infallible, time::Duration};
+@@ -0,0 +1,130 @@
++use super::{ResponseBody, response_body, transport};
++use http_body_util::BodyExt;
++use hyper::{Request, Response, body::Incoming};
++use std::time::Duration;
 +
 +// Exercise the unchanged black-box consumers' Client::new/body/send/text API
 +// against loopback only. No Prisma context, database, or provider is involved.
-+struct Fixture {
-+    url: String,
++pub(super) struct Fixture {
++    pub(super) url: String,
 +    task: tokio::task::JoinHandle<()>,
 +}
 +
@@ -1456,42 +1722,40 @@ new file mode 100644
 +    }
 +}
 +
-+async fn fixture() -> Fixture {
-+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-+    listener.set_nonblocking(true).unwrap();
++pub(super) async fn fixture() -> Fixture {
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
 +    let url = format!("http://{}", listener.local_addr().unwrap());
-+    let server = Server::from_tcp(listener).unwrap().serve(make_service_fn(|_| async {
-+        Ok::<_, Infallible>(service_fn(|req: Request<Body>| async move {
++    let task = tokio::spawn(async move {
++        transport::serve(listener, |req: Request<Incoming>| async move {
 +            let response = match req.uri().path() {
 +                "/echo" => {
 +                    assert_eq!(req.method(), hyper::Method::POST);
 +                    assert_eq!(req.headers()["x-contract"], "request-value");
-+                    let bytes = hyper::body::to_bytes(req.into_body()).await.unwrap();
++                    let bytes = req.into_body().collect().await?.to_bytes();
 +                    Response::builder()
 +                        .header("content-type", "application/json")
 +                        .header("qe-content-length", bytes.len())
-+                        .body(Body::from(bytes))
++                        .body(response_body(bytes))
 +                        .unwrap()
 +                }
-+                "/metrics" => Response::new(Body::from("# TYPE requests counter\nrequests 1\n")),
++                "/metrics" => Response::new(response_body("# TYPE requests counter\nrequests 1\n")),
 +                "/redirect" => Response::builder().status(302).header("location", "/metrics")
-+                    .body(Body::empty()).unwrap(),
++                    .body(ResponseBody::default()).unwrap(),
 +                "/error" => Response::builder().status(422)
-+                    .body(Body::from(r#"{"is_panic":false,"message":"invalid protocol"}"#)).unwrap(),
-+                "/malformed" => Response::new(Body::from("not-json")),
-+                "/version" => Response::new(Body::from(format!("{:?}", req.version()))),
++                    .body(response_body(r#"{"is_panic":false,"message":"invalid protocol"}"#)).unwrap(),
++                "/malformed" => Response::new(response_body("not-json")),
++                "/version" => Response::new(response_body(format!("{:?}", req.version()))),
 +                "/slow" => {
 +                    tokio::time::sleep(Duration::from_secs(5)).await;
-+                    Response::new(Body::empty())
++                    Response::new(ResponseBody::default())
 +                }
 +                "/utf8" => Response::builder().header("content-type", "text/plain; charset=utf-8")
-+                    .body(Body::from("\u{65e5}\u{672c}\u{8a9e}".as_bytes())).unwrap(),
-+                _ => Response::builder().status(404).body(Body::empty()).unwrap(),
++                    .body(response_body("\u{65e5}\u{672c}\u{8a9e}".as_bytes())).unwrap(),
++                _ => Response::builder().status(404).body(ResponseBody::default()).unwrap(),
 +            };
-+            Ok::<_, Infallible>(response)
-+        }))
-+    }));
-+    let task = tokio::spawn(async move { server.await.unwrap(); });
++            Ok::<_, hyper::Error>(response)
++        }).await.unwrap();
++    });
 +    Fixture { url, task }
 +}
 +
@@ -1569,4 +1833,239 @@ new file mode 100644
 +    let f = fixture().await;
 +    let response = reqwest::Client::new().get(format!("{}/utf8", f.url)).send().await.unwrap();
 +    assert_eq!(response.text().await.unwrap(), "\u{65e5}\u{672c}\u{8a9e}");
++}
+diff --git a/query-engine/query-engine/src/server/transport.rs b/query-engine/query-engine/src/server/transport.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/transport.rs
+@@ -0,0 +1,50 @@
++use super::ResponseBody;
++use hyper::{Request, Response, body::Incoming, service::service_fn};
++use hyper_util::{rt::{TokioExecutor, TokioIo}, server::conn::auto::Builder};
++use std::{future::Future, io};
++use tokio::{net::TcpListener, task::JoinSet};
++
++pub(super) async fn serve<F, Fut>(listener: TcpListener, handler: F) -> io::Result<()>
++where
++    F: Fn(Request<Incoming>) -> Fut + Clone + Send + Sync + 'static,
++    Fut: Future<Output = Result<Response<ResponseBody>, hyper::Error>> + Send + 'static,
++{
++    // Own the connection tasks so cancellation also closes existing sockets.
++    let mut connections = JoinSet::new();
++    loop {
++        tokio::select! {
++            accepted = listener.accept() => {
++                let (stream, _) = match accepted {
++                    Ok(connection) => connection,
++                    Err(error) => {
++                        if matches!(error.kind(), io::ErrorKind::ConnectionRefused |
++                            io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset) {
++                            continue;
++                        }
++                        // Retain the old acceptor's backoff on resource exhaustion.
++                        tracing::warn!("http accept error: {error}");
++                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
++                        continue;
++                    }
++                };
++                if let Err(error) = stream.set_nodelay(true) {
++                    tracing::debug!("http socket configuration error: {error}");
++                    continue;
++                }
++                let handler = handler.clone();
++                connections.spawn(async move {
++                    if let Err(error) = Builder::new(TokioExecutor::new())
++                        .serve_connection(TokioIo::new(stream), service_fn(handler)).await
++                    {
++                        tracing::debug!("http connection error: {error}");
++                    }
++                });
++            }
++            Some(result) = connections.join_next(), if !connections.is_empty() => {
++                if let Err(error) = result {
++                    tracing::warn!("http connection task failed: {error}");
++                }
++            }
++        }
++    }
++}
+diff --git a/query-engine/query-engine/src/server/oja_http_server_contracts.rs b/query-engine/query-engine/src/server/oja_http_server_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/oja_http_server_contracts.rs
+@@ -0,0 +1,175 @@
++use super::*;
++use super::oja_http_client_contracts::fixture;
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++async fn bytes(response: Response<ResponseBody>) -> Bytes {
++    response.into_body().collect().await.unwrap().to_bytes()
++}
++
++#[tokio::test]
++async fn json_response_preserves_status_headers_and_byte_length() {
++    let value = json!({"value": "\u{65e5}\u{672c}\u{8a9e}"});
++    let expected = serde_json::to_vec(&value).unwrap();
++    let response = build_json_response(StatusCode::CREATED, &value);
++    assert_eq!(response.status(), StatusCode::CREATED);
++    assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
++    assert_eq!(response.headers()["qe-content-length"].to_str().unwrap(), expected.len().to_string());
++    assert_eq!(bytes(response).await.as_ref(), expected);
++}
++
++#[tokio::test]
++async fn empty_transaction_response_is_still_json_object() {
++    let response = empty_json_to_http_resp(None);
++    assert_eq!(response.status(), StatusCode::OK);
++    assert_eq!(response.headers()["qe-content-length"], "2");
++    assert_eq!(bytes(response).await.as_ref(), b"{}");
++}
++
++#[tokio::test]
++async fn transaction_and_timeout_error_statuses_are_preserved() {
++    use query_core::{CoreError, TransactionError};
++    let cases = [
++        (CoreError::TransactionError(TransactionError::AcquisitionTimeout), StatusCode::GATEWAY_TIMEOUT),
++        (CoreError::TransactionError(TransactionError::NotFound), StatusCode::NOT_FOUND),
++        (CoreError::TransactionError(TransactionError::Closed { reason: "closed".into() }), StatusCode::UNPROCESSABLE_ENTITY),
++        (CoreError::TransactionError(TransactionError::Unknown { reason: "unknown".into() }), StatusCode::INTERNAL_SERVER_ERROR),
++        (CoreError::QueryTimeout, StatusCode::REQUEST_TIMEOUT),
++    ];
++    for (error, status) in cases {
++        let response = err_to_http_resp(error, None);
++        assert_eq!(response.status(), status);
++        assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
++        let value: serde_json::Value = serde_json::from_slice(&bytes(response).await).unwrap();
++        assert_eq!(value["is_panic"], false);
++    }
++}
++
++#[tokio::test]
++async fn debug_without_headers_returns_empty_success() {
++    let request = Request::new(ResponseBody::default());
++    let response = handle_debug_headers(&request);
++    assert_eq!(response.status(), StatusCode::OK);
++    assert!(bytes(response).await.is_empty());
++}
++
++#[tokio::test]
++async fn nonfatal_debug_header_preserves_the_panic_envelope() {
++    let request = Request::builder().header("x-debug-non-fatal", "1").body(ResponseBody::default()).unwrap();
++    let response = handle_debug_headers(&request);
++    assert_eq!(response.status(), StatusCode::OK);
++    let value: serde_json::Value = serde_json::from_slice(&bytes(response).await).unwrap();
++    assert_eq!(value["is_panic"], true);
++    assert_eq!(value["message"], "Debug panic");
++}
++
++#[tokio::test]
++async fn playground_response_retains_the_exact_html_bytes() {
++    let response = playground_handler();
++    assert_eq!(response.status(), StatusCode::OK);
++    assert_eq!(response.headers()[CONTENT_TYPE], "text/html");
++    assert_eq!(bytes(response).await.as_ref(), include_bytes!("../../static_files/playground.html"));
++}
++
++#[test]
++fn transaction_header_is_case_insensitive_and_invalid_text_is_ignored() {
++    let mut headers = HeaderMap::new();
++    assert!(try_get_transaction_id(&headers).is_none());
++    headers.insert("X-Transaction-ID", "contract-transaction-id-0001".parse().unwrap());
++    assert_eq!(try_get_transaction_id(&headers).unwrap().to_string(), "contract-transaction-id-0001");
++    headers.insert("x-transaction-id", hyper::header::HeaderValue::from_bytes(&[0xff]).unwrap());
++    assert!(try_get_transaction_id(&headers).is_none());
++}
++
++#[test]
++fn query_timeout_header_preserves_optional_millisecond_parsing() {
++    let mut headers = HeaderMap::new();
++    assert_eq!(query_timeout(&headers), None);
++    for (text, expected) in [("0", Some(Duration::ZERO)), ("123", Some(Duration::from_millis(123))),
++        ("-1", None), ("invalid", None), ("18446744073709551616", None)] {
++        headers.insert("X-Query-Timeout", text.parse().unwrap());
++        assert_eq!(query_timeout(&headers), expected);
++    }
++}
++
++#[tokio::test]
++async fn chunked_request_body_and_trailers_are_collected_without_losing_bytes() {
++    let f = fixture().await;
++    let address = f.url.strip_prefix("http://").unwrap();
++    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
++    socket.write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nX-Contract: request-value\r\nTransfer-Encoding: chunked\r\nTrailer: X-End\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\nX-End: done\r\n\r\n").await.unwrap();
++    let mut response = Vec::new();
++    tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut response)).await.unwrap().unwrap();
++    assert!(response.starts_with(b"HTTP/1.1 200"));
++    assert!(response.ends_with(b"abcdef"));
++}
++
++#[tokio::test]
++async fn malformed_connection_does_not_stop_accepting_new_clients() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"not an HTTP request\r\n\r\n").await.unwrap();
++    socket.shutdown().await.unwrap();
++    let mut ignored = Vec::new();
++    let _ = tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut ignored)).await.unwrap();
++    let response = reqwest::Client::new().get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++}
++
++#[tokio::test]
++async fn disconnected_partial_body_does_not_stop_the_listener() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nX-Contract: request-value\r\nContent-Length: 100\r\n\r\nshort").await.unwrap();
++    drop(socket);
++    let response = reqwest::Client::new().get(format!("{}/metrics", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++}
++
++#[tokio::test]
++async fn http1_keepalive_serves_two_requests_on_the_same_connection() {
++    let f = fixture().await;
++    let socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    let (mut sender, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket)).await.unwrap();
++    let driver = tokio::spawn(connection);
++    for path in ["/version", "/metrics"] {
++        let request = Request::builder().uri(path).header("host", "localhost").body(ResponseBody::default()).unwrap();
++        let response = sender.send_request(request).await.unwrap();
++        assert_eq!(response.status(), StatusCode::OK);
++        assert!(!response.into_body().collect().await.unwrap().to_bytes().is_empty());
++    }
++    driver.abort();
++}
++
++#[tokio::test]
++async fn cancelling_listener_closes_its_existing_connection_tasks() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\n\r\n").await.unwrap();
++    let mut response = Vec::new();
++    let mut buffer = [0; 256];
++    while !response.ends_with(b"HTTP/1.1") {
++        let count = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buffer)).await.unwrap().unwrap();
++        assert!(count > 0);
++        response.extend_from_slice(&buffer[..count]);
++    }
++    drop(f);
++    let result = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buffer)).await.unwrap();
++    assert!(matches!(result, Ok(0) | Err(_)));
++}
++
++#[tokio::test]
++async fn http2_supports_concurrent_requests() {
++    let f = fixture().await;
++    let client = reqwest::Client::builder().http2_prior_knowledge().build().unwrap();
++    let mut tasks = tokio::task::JoinSet::new();
++    for _ in 0..16 {
++        let client = client.clone();
++        let url = format!("{}/metrics", f.url);
++        tasks.spawn(async move {
++            let response = client.get(url).send().await.unwrap();
++            assert_eq!(response.version(), reqwest::Version::HTTP_2);
++            assert_eq!(response.text().await.unwrap(), "# TYPE requests counter\nrequests 1\n");
++        });
++    }
++    while let Some(result) = tasks.join_next().await { result.unwrap(); }
 +}

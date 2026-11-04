@@ -66,6 +66,9 @@ const SOURCE_FILES = [
   "query-engine/black-box-tests/Cargo.toml",
   "query-engine/black-box-tests/tests/protocols/mismatched.rs",
   "query-engine/black-box-tests/tests/metrics/smoke_tests.rs",
+  "query-engine/query-engine/src/server/transport.rs",
+  "query-engine/query-engine/src/server/oja_http_server_contracts.rs",
+  "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
 ];
 const MONGODB_FILES = [
   "Cargo.toml",
@@ -98,12 +101,23 @@ export function validatePrismaSourcePolicy(policy) {
       "cuidSource",
       "cliVersion",
       "httpClientVersion",
+      "httpServerDependencies",
     ]) ||
     policy.schemaVersion !== 1 ||
     policy.role !== "prisma-source-contracts" ||
     policy.prismaVersion !== "6.19.3" ||
     policy.cliVersion !== "4.6.7" ||
     policy.httpClientVersion !== "0.12.28" ||
+    !exact(policy.httpServerDependencies, [
+      "hyper",
+      "hyper-util",
+      "http-body-util",
+      "h2",
+    ]) ||
+    policy.httpServerDependencies.hyper !== "1.12.0" ||
+    policy.httpServerDependencies["hyper-util"] !== "0.1.21" ||
+    policy.httpServerDependencies["http-body-util"] !== "0.1.5" ||
+    policy.httpServerDependencies.h2 !== "0.4.20" ||
     !exact(policy.source, ["repository", "commit", "sha256"]) ||
     policy.source.repository !== "prisma/prisma-engines" ||
     policy.source.commit !== "c2990dca591cba766e3b7ef5d9e8a84796e47ab7" ||
@@ -244,6 +258,51 @@ export function checkPrismaSourceWiring(source, policy) {
       .includes("#[cfg(test)]\nmod oja_http_client_contracts;")
   )
     throw new Error("prisma_http_client_wiring_invalid");
+  for (const name of ["hyper", "hyper-util", "http-body-util"]) {
+    if (
+      manifest.workspace.dependencies[name] !==
+        `=${policy.httpServerDependencies[name]}` ||
+      query.dependencies[name]?.workspace !== true
+    )
+      throw new Error("prisma_http_server_wiring_invalid");
+  }
+  const testkit = toml.parse(
+    fs.readFileSync(
+      path.join(
+        source,
+        "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
+      ),
+      "utf8",
+    ),
+  );
+  const server = fs.readFileSync(
+    path.join(source, "query-engine/query-engine/src/server/mod.rs"),
+    "utf8",
+  );
+  const clientTests = fs.readFileSync(
+    path.join(
+      source,
+      "query-engine/query-engine/src/server/oja_http_client_contracts.rs",
+    ),
+    "utf8",
+  );
+  if (
+    query.dependencies.hyper.features.slice().sort().join() !==
+      "http1,http2,server" ||
+    query.dependencies["hyper-util"].features.slice().sort().join() !==
+      "server-auto,tokio" ||
+    query.dependencies.bytes?.workspace !== true ||
+    !["signal", "net", "io-util"].every((f) =>
+      query.dependencies.tokio.features.includes(f),
+    ) ||
+    testkit.dependencies.hyper?.workspace !== true ||
+    testkit.dependencies.hyper?.features?.join() !== "full" ||
+    !server.includes("mod transport;") ||
+    !server.includes("#[cfg(test)]\nmod oja_http_server_contracts;") ||
+    !server.includes("transport::serve(listener,") ||
+    !clientTests.includes("transport::serve(listener,")
+  )
+    throw new Error("prisma_http_server_wiring_invalid");
   if (
     !exact(clap, ["version", "features"]) ||
     clap.version !== `=${policy.cliVersion}` ||
@@ -402,6 +461,47 @@ export function checkPrismaMetadata(
       )
         throw new Error("prisma_http_client_resolution_invalid");
     }
+    if (
+      metadata.packages.some(
+        (pkg) =>
+          Object.hasOwn(policy.httpServerDependencies, pkg.name) &&
+          (pkg.version !== policy.httpServerDependencies[pkg.name] ||
+            pkg.source !==
+              "registry+https://github.com/rust-lang/crates.io-index"),
+      )
+    )
+      throw new Error("prisma_http_server_legacy_resolution");
+    const query = rootFor("query-engine");
+    for (const [name, features] of [
+      ["hyper", ["server", "http1", "http2"]],
+      ["hyper-util", ["server-auto", "tokio", "http1", "http2"]],
+      ["http-body-util", []],
+    ]) {
+      const dep = nodes
+        .get(query?.id)
+        ?.deps.find((d) => d.name === name.replaceAll("-", "_"));
+      const pkg = packages.get(dep?.pkg);
+      if (
+        pkg?.name !== name ||
+        pkg.version !== policy.httpServerDependencies[name] ||
+        !features.every((f) => nodes.get(pkg?.id)?.features.includes(f))
+      )
+        throw new Error("prisma_http_server_resolution_invalid");
+    }
+    const hyper = packages.get(
+      nodes.get(query?.id)?.deps.find((d) => d.name === "hyper")?.pkg,
+    );
+    const h2 = packages.get(
+      nodes.get(hyper?.id)?.deps.find((d) => d.name === "h2")?.pkg,
+    );
+    const testkit = rootFor("query-tests-setup");
+    if (
+      h2?.name !== "h2" ||
+      h2.version !== policy.httpServerDependencies.h2 ||
+      nodes.get(testkit?.id)?.deps.find((d) => d.name === "hyper")?.pkg !==
+        hyper?.id
+    )
+      throw new Error("prisma_http_server_resolution_invalid");
     if (
       metadata.packages.some((pkg) =>
         [
@@ -622,6 +722,17 @@ export function prismaHttpClientCheckArguments() {
   return ["check", "--locked", "--package", "black-box-tests", "--tests"];
 }
 
+export function prismaHttpServerArguments() {
+  return [
+    "test",
+    "--locked",
+    "--package",
+    "query-engine",
+    "--lib",
+    "oja_http_server_contracts",
+  ];
+}
+
 export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
   const patchedGitSources = prismaPatchedGitSources(policy).length;
   return {
@@ -637,6 +748,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     cuidSource: policy.cuidSource,
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
+    httpServerDependencies: policy.httpServerDependencies,
     engineRegistryPackages: engine.packageCount,
     engineAdvisoryMatches: engine.findings.length,
     unreviewedGitSources: engine.unresolved.length + patchedGitSources,
@@ -882,6 +994,16 @@ export async function testPrismaSource(
       1_800_000,
     );
     tests.httpClientConsumersChecked = true;
+    tests.httpServer = rustTestTotals(
+      execute(
+        cargo,
+        prismaHttpServerArguments(),
+        source,
+        "http-server",
+        1_800_000,
+      ),
+      14,
+    );
     if (upstreamUnits) {
       env.GIT_HASH = policy.source.commit;
       tests.upstreamUnits = rustTestTotals(
