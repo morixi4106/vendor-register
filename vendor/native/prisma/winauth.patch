@@ -41,7 +41,7 @@ diff --git a/src/oja_security_contracts.rs b/src/oja_security_contracts.rs
 new file mode 100644
 --- /dev/null
 +++ b/src/oja_security_contracts.rs
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,138 @@
 +//! Offline checks against the actual implementation. Never acquire OS credentials.
 +use super::*;
 +
@@ -133,13 +133,15 @@ new file mode 100644
 +    av.encode_av_pairs(&[AvItem::DnsComputerName("fake.invalid".into()), AvItem::Timestamp(42)]).unwrap();
 +    let mut bytes = SIGNATURE.to_vec();
 +    bytes.write_u32::<LittleEndian>(2).unwrap();
-+    bytes.extend_from_slice(&[0;8]);
++    bytes.write_u16::<LittleEndian>(2).unwrap();
++    bytes.write_u16::<LittleEndian>(2).unwrap();
++    bytes.write_u32::<LittleEndian>(48).unwrap();
 +    bytes.write_u32::<LittleEndian>(flags).unwrap();
 +    bytes.extend_from_slice(b"12345678"); bytes.extend_from_slice(&[0;8]);
 +    bytes.write_u16::<LittleEndian>(av.len() as u16).unwrap();
 +    bytes.write_u16::<LittleEndian>(av.len() as u16).unwrap();
-+    bytes.write_u32::<LittleEndian>(48).unwrap();
-+    bytes.extend_from_slice(&av); bytes
++    bytes.write_u32::<LittleEndian>(50).unwrap();
++    bytes.extend_from_slice(b"D\0"); bytes.extend_from_slice(&av); bytes
 +}
 +
 +pub fn reject_challenges() {

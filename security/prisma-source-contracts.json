@@ -414,7 +414,7 @@
     "sha256": "0e03c9d0fde636447315ff38695b14c85c6ccc738ade05a400a3ce568a557021",
     "patch": {
       "path": "vendor/native/prisma/winauth.patch",
-      "sha256": "a0e9eb111fc537646dcbdbfc3b2bead146f861872032033b530efa483a96cc75"
+      "sha256": "7a5f0b07278aa04c26bc6716ff5965068530e520581e31a9fd99be7f1336adf2"
     },
     "sourceFiles": [
       {
@@ -451,7 +451,7 @@
       },
       {
         "path": "src/oja_security_contracts.rs",
-        "sha256": "7878d0665532ce3e0959ce4c0f891aa109153b6ddfdd75876a3d4cb505f71173"
+        "sha256": "e00851252c35fa2271dfd943ee284c99a23afb5fd90b0af35835fb234198b093"
       }
     ],
     "randVersion": "0.8.8"
