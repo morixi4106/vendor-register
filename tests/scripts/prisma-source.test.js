@@ -607,6 +607,7 @@ test("CLI contracts compile the actual three entry points without selecting data
   assert.ok(patch.includes("PrismaOpt::parse()"));
   assert.ok(patch.includes("FmtOpts::parse()"));
   assert.ok(patch.includes("OJA_QUERY_ENV_OK"));
+  assert.ok(patch.includes("value_parser = parse_datasource_urls"));
 });
 
 test("clean contract registry scans never approve a path-converted Git source or erase findings", () => {

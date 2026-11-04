@@ -959,7 +959,7 @@ index 5a91c31..fded463 100644
  serde.workspace = true
  tokio = { workspace = true, features = ["io-std", "signal"] }
 diff --git a/schema-engine/cli/src/main.rs b/schema-engine/cli/src/main.rs
-index fa71442..5d9d1a2 100644
+index fa71442..29821a4 100644
 --- a/schema-engine/cli/src/main.rs
 +++ b/schema-engine/cli/src/main.rs
 @@ -13,7 +13,7 @@ use std::{
@@ -971,7 +971,7 @@ index fa71442..5d9d1a2 100644
  use tokio::{signal, sync::oneshot};
  use tokio_util::sync::CancellationToken;
 
-@@ -37,30 +37,104 @@ static BLOCKING_TASKS_SHUTDOWN_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
+@@ -37,30 +37,108 @@ static BLOCKING_TASKS_SHUTDOWN_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
 
  /// When no subcommand is specified, the schema engine will default to starting as a JSON-RPC
  /// server over stdio.
@@ -988,7 +988,7 @@ index fa71442..5d9d1a2 100644
      /// This is derived from a Prisma Config file with `engines: 'classic'`.
      /// TODO: in Prisma 7, this will be the only way to pass the datasource URLs.
 -    #[structopt(long = "datasource", name = "JSON", parse(try_from_str = serde_json::from_str))]
-+    #[arg(long = "datasource", value_name = "JSON", value_parser = serde_json::from_str::<DatasourceUrls>)]
++    #[arg(long = "datasource", value_name = "JSON", value_parser = parse_datasource_urls)]
      datasource_urls_override: Option<DatasourceUrls>,
 -    #[structopt(subcommand)]
 +    #[command(subcommand)]
@@ -1008,6 +1008,10 @@ index fa71442..5d9d1a2 100644
      Cli(commands::Cli),
  }
 
++fn parse_datasource_urls(value: &str) -> Result<DatasourceUrls, serde_json::Error> {
++    serde_json::from_str(value)
++}
++
 +fn parse_extension_types(value: &str) -> Result<Arc<ExtensionTypeConfig>, serde_json::Error> {
 +    serde_json::from_str(value).map(Arc::new)
 +}
@@ -1085,7 +1089,7 @@ index fa71442..5d9d1a2 100644
  fn main() {
      let rt = tokio::runtime::Builder::new_multi_thread()
          .enable_all()
-@@ -85,14 +159,14 @@ async fn async_main() {
+@@ -85,14 +163,14 @@ async fn async_main() {
      set_panic_hook();
      logger::init_logger();
 
