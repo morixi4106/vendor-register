@@ -11,6 +11,7 @@ import {
   checkRustSourceTree,
 } from "./rust-toolchain.mjs";
 import { scanRustLockfile } from "./rust-source-audit.mjs";
+import { assessPrismaGitIdentities } from "./prisma-git-assessment.mjs";
 import {
   validatePrismaMysqlSources,
   preparePrismaMysqlSources,
@@ -1281,6 +1282,8 @@ export async function testPrismaSource(
   });
   json("engine-metadata.json", metadata);
   json("contract-metadata.json", contractMetadata);
+  const gitAssessment = await assessPrismaGitIdentities(policy, lock, metadata);
+  json("git-original-identity-assessment.json", gitAssessment);
   const tests = {};
   if (!assessOnly && !nativeProbe) {
     const contractOutput = execute(
@@ -1400,6 +1403,7 @@ export async function testPrismaSource(
     contractLockfileSha256: digest(contractLock),
     sourceFiles: policy.sourceFiles,
     overrideSourceAuditOk: overrides.sourceAuditOk,
+    gitIdentityAssessmentSha256: digest(JSON.stringify(gitAssessment)),
     testScope: nativeProbe
       ? "native NAPI/schema and synthetic migrations/client probes; explicit optional release/TLS evidence only; not PgBouncer, actual app migrations, whole-engine or production approval"
       : "source modules; not NAPI, migrations, database or production approval",

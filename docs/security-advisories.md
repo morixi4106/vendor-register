@@ -1,5 +1,34 @@
 # Production dependency advisories
 
+## Original Git Dependency Assessment: 2026-11-05
+
+Keep all13 Prisma Git-derived packages explicitly UNREVIEWED, including the9
+converted to patched local paths. The source/native assessment now queries
+their original declared crate versions and all6 exact Git commits using the
+[official OSV API](https://google.github.io/osv.dev/post-v1-querybatch/).
+Retain the complete advisory payloads with canonical SHA256 digests, query
+results, policy-bound lock identity, target metadata hash, resolved features,
+direct consumers and paths from both release roots. Bind the assessment digest
+in the source receipt. Fail on unavailable feeds, omitted pages, malformed or
+changed payloads, changed source commits and detached metadata.
+
+Fresh local assessments against the previously prepared locked Linux/Windows
+metadata both find6 advisory IDs against2 original PostgreSQL crate versions:
+the three known row/hstore/SCRAM issues with RustSec/GHSA aliases. Exact commit
+queries find no matches. This is not fork equivalence or a new compilation,
+source review, patch approval, or proof that the remaining packages are safe.
+Canonical payload digests agree across both assessments. Object key reordering
+does not change the digest; changes to body, references or affected ranges do.
+
+The barrel dependency has no non-dev graph path from either release root;
+graphql-parser reaches the query library; Tiberius and its procedural macro
+reach both roots. These are Cargo graph paths with unioned features and build
+dependencies, not executable reachability or permission to remove dialects.
+Existing source fixes, binary digests, locks, production controls and native
+admission gates are unchanged. sourceReviewed=false, sourceAuditOk=false,
+wholeEngineVerified=false and productionApproved=false remain. Independent CI
+artifact verification for this new assessment is still required.
+
 ## Prisma Native Probe Candidate: 2026-11-05
 
 Add a separate, non-promoting native probe workflow. Reuse the exact source
