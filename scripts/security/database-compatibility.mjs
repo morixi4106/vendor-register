@@ -267,6 +267,8 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     "migrationsApplied",
     "modelsChecked",
     "rowsRemaining",
+    "seedRowsPreserved",
+    "baselineStateSha256",
     "schemaEngineInvocations",
     "historyRegression",
     "poolers",
@@ -290,6 +292,8 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     !Number.isInteger(report.modelsChecked) ||
     report.modelsChecked < 20 ||
     report.rowsRemaining !== 0 ||
+    report.seedRowsPreserved !== 3 ||
+    !/^[a-f0-9]{64}$/.test(report.baselineStateSha256) ||
     !Number.isInteger(report.schemaEngineInvocations) ||
     report.schemaEngineInvocations < 6 ||
     report.historyRegression?.code !== "P3018" ||

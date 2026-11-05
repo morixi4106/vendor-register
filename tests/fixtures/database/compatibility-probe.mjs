@@ -43,7 +43,7 @@ command(input.project,["generate"]);
 const {PrismaClient,Prisma}=require("@prisma/client");
 assert.equal(Prisma.prismaVersion.client,"6.19.3");
 const admin=new PrismaClient({datasourceUrl:url("oja_probe"),log:[]});
-let client,modelsChecked=0,historyRegression,poolers=[];
+let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[];
 try{
   await record("native-identity",async()=>{
     await admin.$connect();assert.deepEqual([...loaded],[input.librarySha256]);assert.equal(admin._engine.versionInfo.commit,input.sourceCommit);
@@ -64,10 +64,21 @@ try{
   });
   await record("schema-drift",()=>{command(input.project,["migrate","diff","--from-url",url("oja_app_probe"),"--to-schema-datamodel",path.join(input.project,"prisma/schema.prisma"),"--exit-code"]);});
   const modelTables=Prisma.dmmf.datamodel.models.map(model=>model.dbName||model.name);
-  const empty=async()=>{
-    for(const table of modelTables){assert.match(table,/^[a-zA-Z][a-zA-Z0-9_]*$/);const [row]=await client.$queryRawUnsafe(`SELECT count(*)::int AS count FROM "${table}"`);assert.equal(row.count,0,table);}
+  const state=async()=>{
+    const result=[];
+    for(const table of modelTables){
+      assert.match(table,/^[a-zA-Z][a-zA-Z0-9_]*$/);
+      const [row]=await client.$queryRawUnsafe(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) AS rows FROM "${table}" AS t`);
+      result.push({table,count:row.rows.length,sha256:hash(JSON.stringify(row.rows))});
+    }
+    return result;
   };
-  await record("all-model-tables",async()=>{await empty();modelsChecked=modelTables.length;assert.ok(modelsChecked>20);});
+  await record("all-model-tables",async()=>{
+    baselineState=await state();modelsChecked=modelTables.length;assert.ok(modelsChecked>20);
+    for(const item of baselineState)assert.equal(item.count,["VendorStore","Vendor","sellers"].includes(item.table)?1:0,item.table);
+    assert.equal((await client.vendorStore.findUnique({where:{id:"platform_store_oja_immanuel_bacchus"}})).isPlatformStore,true);
+    fs.writeFileSync(path.join(input.project,"baseline-state.json"),JSON.stringify(baselineState));
+  });
   const foundation=fs.readFileSync(path.join(input.project,"prisma/migrations",FOUNDATION,"migration.sql"),"utf8");
   await record("foundation-existing-data-noop",async()=>{
     const store=await client.vendorStore.create({data:{ownerName:"synthetic",storeName:"synthetic",email:"probe@example.invalid",phone:"synthetic",address:"synthetic",country:"JP",category:"synthetic",ageCheck:"synthetic"}});
@@ -121,11 +132,14 @@ try{
       poolers.push({mode:pooler.mode,pgbouncerFlag:!pooler.prepared,maxPreparedStatements:pooler.prepared?100:0,clientConnections:clients.length,backendProcesses:pids.size,serverTlsVersion,checks:10,rowsRemaining:0});
     }finally{for(const probe of clients)await probe.$disconnect();}
   });
-  await record("cleanup",async()=>{await empty();});
+  await record("cleanup",async()=>{
+    const finalState=await state();assert.deepEqual(finalState,baselineState);
+    fs.writeFileSync(path.join(input.project,"final-state.json"),JSON.stringify(finalState));
+  });
 }finally{await client?.$disconnect();await admin.$disconnect();process.dlopen=dlopen;}
 assert.deepEqual(checks,DATABASE_CHECKS);
 const invocations=fs.readFileSync(path.join(input.project,"schema-engine-invocations.jsonl"),"utf8").trim().split("\n").map(JSON.parse);assert.ok(invocations.every(r=>r.sha256===input.schemaSha256));
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 console.log(JSON.stringify({checks,sourceCommit:input.sourceCommit,librarySha256:input.librarySha256,schemaSha256:input.schemaSha256,loadedLibrarySha256:[...loaded][0],
   clientVersion:Prisma.prismaVersion.client,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
-  modelsChecked,rowsRemaining:0,schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));
+  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));
