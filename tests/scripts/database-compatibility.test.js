@@ -142,6 +142,9 @@ test("private application projects retain the complete schema and all SQL unchan
     () => prepareApplicationProject(ROOT, project, inputs),
     /EEXIST/,
   );
+  assert.ok(
+    fs.existsSync(path.join(project, "node_modules/prisma/build/index.js")),
+  );
   const history = path.join(root, "history");
   prepareApplicationProject(ROOT, history, inputs, true);
   assert.equal(

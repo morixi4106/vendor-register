@@ -183,23 +183,28 @@ export function prepareApplicationProject(
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, source, { flag: "wx" });
   }
-  const client = path.join(root, "node_modules/@prisma/client");
   // Keep the complete real schema unchanged. A private generator package prevents
   // its default output from writing into the application's installed client.
-  fs.cpSync(client, path.join(project, "node_modules/@prisma/client"), {
-    recursive: true,
-    errorOnExist: true,
-    force: false,
-    filter: (source) => {
-      const stat = fs.lstatSync(source);
-      if (
-        stat.isSymbolicLink() ||
-        (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1))
-      )
-        throw new Error("application_client_input_invalid");
-      return true;
-    },
-  });
+  // The CLI and Client must resolve from the same private node_modules tree.
+  for (const name of ["@prisma/client", "prisma"])
+    fs.cpSync(
+      path.join(root, "node_modules", name),
+      path.join(project, "node_modules", name),
+      {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        filter: (source) => {
+          const stat = fs.lstatSync(source);
+          if (
+            stat.isSymbolicLink() ||
+            (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1))
+          )
+            throw new Error("application_client_input_invalid");
+          return true;
+        },
+      },
+    );
 }
 
 export function poolerConfiguration({
