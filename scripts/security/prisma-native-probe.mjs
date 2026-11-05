@@ -55,6 +55,31 @@ export function assertPrismaNativeRegistryAssessment(assessment) {
     throw new Error("prisma_native_registry_advisories_unresolved");
 }
 
+function compilerOwnedLinks(file, root) {
+  const identity = fs.lstatSync(file, { bigint: true });
+  if (identity.nlink === 1n) return [path.relative(root, file)];
+  if (identity.ino === 0n)
+    throw new Error("prisma_native_artifact_path_invalid");
+  const aliases = [];
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(candidate);
+      else if (entry.isFile()) {
+        const stat = fs.lstatSync(candidate, { bigint: true });
+        if (stat.dev === identity.dev && stat.ino === identity.ino)
+          aliases.push(path.relative(root, candidate));
+      }
+    }
+  };
+  // Cargo links deps outputs into debug/. Every alias must remain in this private target.
+  walk(root);
+  if (BigInt(aliases.length) !== identity.nlink)
+    throw new Error("prisma_native_artifact_path_invalid");
+  return aliases.sort();
+}
+
 export function selectPrismaNativeArtifacts(
   output,
   metadata,
@@ -97,7 +122,6 @@ export function selectPrismaNativeArtifacts(
         path.isAbsolute(relative) ||
         !stat.isFile() ||
         stat.isSymbolicLink() ||
-        stat.nlink !== 1 ||
         stat.size === 0 ||
         stat.size > 512 * 1024 * 1024 ||
         fs.realpathSync(file) !== file
@@ -108,6 +132,7 @@ export function selectPrismaNativeArtifacts(
         sha256: sha(fs.readFileSync(file)),
         bytes: stat.size,
         packageId: pkg.id,
+        compilerAliases: compilerOwnedLinks(file, targetRoot),
       };
     }
   }
@@ -241,6 +266,8 @@ export async function probePrismaNative({
   );
   fs.copyFileSync(artifacts.library.file, library, fs.constants.COPYFILE_EXCL);
   fs.copyFileSync(artifacts.schema.file, schema, fs.constants.COPYFILE_EXCL);
+  if (fs.lstatSync(library).nlink !== 1 || fs.lstatSync(schema).nlink !== 1)
+    throw new Error("prisma_native_artifact_copy_mismatch");
   if (sha(fs.readFileSync(schema)) !== artifacts.schema.sha256)
     throw new Error("prisma_native_artifact_copy_mismatch");
   if (sha(fs.readFileSync(library)) !== artifacts.library.sha256)

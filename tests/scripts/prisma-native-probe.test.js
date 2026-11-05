@@ -170,10 +170,27 @@ test("missing, duplicate, detached and hardlinked native artifacts fail closed",
     /identity_invalid/,
   );
   f.items[0].package_id = "napi";
-  fs.linkSync(f.library, path.join(f.root, "linked"));
+  const outside = fixture(t);
+  fs.linkSync(f.library, path.join(outside.root, "linked"));
   assert.throws(
     () => selectPrismaNativeArtifacts(f.output(), f.metadata, f.root, "win32"),
     /path_invalid/,
+  );
+});
+
+test("Cargo's internal hardlink aliases are inventoried before making private single-link evidence copies", (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.root, "deps"));
+  fs.linkSync(f.library, path.join(f.root, "deps/query_engine.dll"));
+  const result = selectPrismaNativeArtifacts(
+    f.output(),
+    f.metadata,
+    f.root,
+    "win32",
+  );
+  assert.deepEqual(
+    result.library.compilerAliases,
+    [path.join("deps", "query_engine.dll"), "query_engine.dll"].sort(),
   );
 });
 
