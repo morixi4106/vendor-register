@@ -8,12 +8,12 @@ index 41aba57..f2552e2 100644
  readme = "README.md"
 -version = "0.3.0"
 +version = "0.3.0+oja.1"
- 
+
  [dependencies]
  combine = "3.2.0"
 @@ -20,4 +20,4 @@ indexmap = "1.5"
  thiserror = "1.0.11"
- 
+
  [dev-dependencies]
 -pretty_assertions = "0.5.0"
 +pretty_assertions = "=1.4.1"
@@ -36,7 +36,7 @@ index 72cea08..299ed4f 100644
 +++ b/src/tokenizer.rs
 @@ -124,6 +124,32 @@ fn check_float(value: &str, exponent: Option<usize>, real: Option<usize>)
  }
- 
+
  impl<'a> TokenStream<'a> {
 +    pub fn check_recursion_limit(s: &'a str) -> Result<(), Errors<Token<'a>, Token<'a>, Pos>> {
 +        // Scan with the original lexer before any recursive grammar or AST allocation.

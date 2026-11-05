@@ -9,7 +9,7 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "a5a6563a6bddb65b10baad48e6b61fa2eaa0fa998db875a4df7641a5e2c60b14"
+    "sha256": "399b1d3c99f7bb3717430268a1107e2b0b8493fc0483d939a5634a96bd0c0495"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
@@ -517,7 +517,7 @@
     "referenceCommit": "d19155f5f9206662964e388e80c68b85f3edb09a",
     "patch": {
       "path": "vendor/native/prisma/graphql.patch",
-      "sha256": "5bc363bcca975395b3c490714c30f6c50c0ac7b50f03387a5caf9500a559eebf"
+      "sha256": "17fbff50840d7c5c067df236e432bcfcaa64aa07cece35e554526dcca6d5d358"
     },
     "sourceFiles": [
       {

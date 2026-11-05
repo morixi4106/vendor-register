@@ -103,7 +103,7 @@ index 307dd8c..118f01e 100644
  toml = "0.8"
 @@ -174,7 +178,7 @@ quote = "1"
  syn = "2"
- 
+
  # dev dependencies
 -codspeed-criterion-compat = "1"
 +codspeed-criterion-compat = "=6.0.0"
