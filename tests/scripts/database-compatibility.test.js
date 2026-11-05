@@ -308,6 +308,7 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     modelsChecked: 100,
     rowsRemaining: 0,
     seedRowsPreserved: 3,
+    existingHistoryUpgraded: true,
     baselineStateSha256: "5".repeat(64),
     schemaEngineInvocations: 8,
     historyRegression: {
@@ -342,6 +343,7 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     (r) => delete r.schemaEngineInvocations,
     (r) => (r.rowsRemaining = 1),
     (r) => (r.seedRowsPreserved = 0),
+    (r) => (r.existingHistoryUpgraded = false),
     (r) => delete r.baselineStateSha256,
     (r) => (r.historyRegression.code = "P1001"),
     (r) => r.poolers.pop(),

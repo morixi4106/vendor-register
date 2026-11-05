@@ -269,6 +269,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     "rowsRemaining",
     "seedRowsPreserved",
     "baselineStateSha256",
+    "existingHistoryUpgraded",
     "schemaEngineInvocations",
     "historyRegression",
     "poolers",
@@ -293,6 +294,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     report.modelsChecked < 20 ||
     report.rowsRemaining !== 0 ||
     report.seedRowsPreserved !== 3 ||
+    report.existingHistoryUpgraded !== true ||
     !/^[a-f0-9]{64}$/.test(report.baselineStateSha256) ||
     !Number.isInteger(report.schemaEngineInvocations) ||
     report.schemaEngineInvocations < 6 ||

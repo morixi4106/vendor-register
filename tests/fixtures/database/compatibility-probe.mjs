@@ -85,7 +85,15 @@ try{
     const product=await client.product.create({data:{name:"synthetic",price:300,costAmount:new Prisma.Decimal("12.34"),vendorStoreId:store.id}});
     assert.equal(product.costAmount.toString(),"12.34");
     const before=await client.$queryRawUnsafe("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname");
-    await client.$executeRawUnsafe(foundation);
+    // Only this disposable DB: emulate an existing installation with the original
+    // 49 applied migrations and real-shaped data, then deploy the missing one.
+    const historyBefore=await client.$queryRawUnsafe('SELECT id,migration_name,checksum,finished_at FROM "_prisma_migrations" ORDER BY migration_name');
+    assert.equal(await client.$executeRaw`DELETE FROM "_prisma_migrations" WHERE migration_name = ${FOUNDATION}`,1);
+    command(input.project,["migrate","deploy"]);
+    const historyAfter=await client.$queryRawUnsafe('SELECT id,migration_name,checksum,finished_at FROM "_prisma_migrations" ORDER BY migration_name');
+    assert.equal(historyAfter.length,historyBefore.length);
+    assert.deepEqual(historyAfter.filter(r=>r.migration_name!==FOUNDATION),historyBefore.filter(r=>r.migration_name!==FOUNDATION));
+    assert.equal(historyAfter.find(r=>r.migration_name===FOUNDATION).checksum,historyBefore.find(r=>r.migration_name===FOUNDATION).checksum);
     assert.deepEqual(await client.product.findUnique({where:{id:product.id}}),product);
     assert.deepEqual(await client.$queryRawUnsafe("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname"),before);
     await client.product.delete({where:{id:product.id}});await client.vendorStore.delete({where:{id:store.id}});
@@ -142,4 +150,4 @@ const invocations=fs.readFileSync(path.join(input.project,"schema-engine-invocat
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 console.log(JSON.stringify({checks,sourceCommit:input.sourceCommit,librarySha256:input.librarySha256,schemaSha256:input.schemaSha256,loadedLibrarySha256:[...loaded][0],
   clientVersion:Prisma.prismaVersion.client,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
-  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));
+  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));
