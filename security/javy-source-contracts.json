@@ -29,6 +29,21 @@
     "patch": {
       "path": "vendor/native/javy/wirm.patch",
       "sha256": "8d983601eec62a963db509cca64660d292b5d9471a5a6ae8dd20a8232fd5e3fa"
+    },
+    "testSource": {
+      "repository": "composablesys/wirm",
+      "commit": "a03a3eb0466e8a7950ce601481505749b10f660c",
+      "sha256": "6c018a7e6f4b484d0affd22641005b7074f6f953bb820c71b5e216edfe4861ec",
+      "files": [
+        {
+          "path": "tests/common/wast_iter.rs",
+          "sha256": "4944e1371d6ebb84595125b256aa25e68e0a9f7ca3798467111057941b123907"
+        },
+        {
+          "path": "tests/common/validate.rs",
+          "sha256": "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f"
+        }
+      ]
     }
   },
   "sourceFiles": [
@@ -91,6 +106,14 @@
     {
       "path": "vendor/wirm/src/ir/instr_tests.rs",
       "sha256": "638348988542968c14a1ba624af6a3c7e8257cbc6a5b2b83753b7ad156f08fb8"
+    },
+    {
+      "path": "vendor/wirm/tests/common/wast_iter.rs",
+      "sha256": "4944e1371d6ebb84595125b256aa25e68e0a9f7ca3798467111057941b123907"
+    },
+    {
+      "path": "vendor/wirm/tests/common/validate.rs",
+      "sha256": "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f"
     }
   ]
 }

@@ -36,6 +36,8 @@ const SOURCE_FILES = [
   "crates/profiler/src/lib.rs",
   "vendor/wirm/Cargo.toml",
   "vendor/wirm/src/ir/instr_tests.rs",
+  "vendor/wirm/tests/common/wast_iter.rs",
+  "vendor/wirm/tests/common/validate.rs",
 ];
 const LOCAL = [
   ["javy", "9.0.0-alpha.1", "crates/javy"],
@@ -102,12 +104,36 @@ export function validateJavyPolicy(p) {
       "fc1329878e52f3b282b768518e5909d4807c4c311079383b9f55c77d86d54121" ||
     !input(p.patch, "javy.patch") ||
     !input(p.lockfile, "Cargo.lock") ||
-    !exact(p.wirm, ["upstreamVersion", "version", "sha256", "patch"]) ||
+    !exact(p.wirm, [
+      "upstreamVersion",
+      "version",
+      "sha256",
+      "patch",
+      "testSource",
+    ]) ||
     p.wirm.upstreamVersion !== "5.1.0" ||
     p.wirm.version !== "5.1.0+oja.1" ||
     p.wirm.sha256 !==
       "cbf24563802785ba2885e5357ab24d56a3b13b9884d9102347fe663d712df462" ||
     !input(p.wirm.patch, "wirm.patch") ||
+    !exact(p.wirm.testSource, ["repository", "commit", "sha256", "files"]) ||
+    p.wirm.testSource.repository !== "composablesys/wirm" ||
+    p.wirm.testSource.commit !== "a03a3eb0466e8a7950ce601481505749b10f660c" ||
+    p.wirm.testSource.sha256 !==
+      "6c018a7e6f4b484d0affd22641005b7074f6f953bb820c71b5e216edfe4861ec" ||
+    !Array.isArray(p.wirm.testSource.files) ||
+    p.wirm.testSource.files.length !== 2 ||
+    p.wirm.testSource.files.some(
+      (f, i) =>
+        !exact(f, ["path", "sha256"]) ||
+        f.path !==
+          ["tests/common/wast_iter.rs", "tests/common/validate.rs"][i] ||
+        f.sha256 !==
+          [
+            "4944e1371d6ebb84595125b256aa25e68e0a9f7ca3798467111057941b123907",
+            "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f",
+          ][i],
+    ) ||
     !Array.isArray(p.sourceFiles) ||
     p.sourceFiles.length !== SOURCE_FILES.length ||
     p.sourceFiles.some(
@@ -119,6 +145,60 @@ export function validateJavyPolicy(p) {
   )
     throw new Error("javy_policy_invalid");
   return p;
+}
+
+export function checkJavyWirmTestOrigin(
+  crate,
+  source,
+  policy,
+  readInput = runnerInput,
+) {
+  validateJavyPolicy(policy);
+  const expected = policy.wirm.testSource;
+  const vcs = JSON.parse(
+    fs.readFileSync(path.join(crate, ".cargo_vcs_info.json"), "utf8"),
+  );
+  if (
+    vcs.git?.sha1 !== expected.commit ||
+    vcs.path_in_vcs !== "" ||
+    !fs
+      .readFileSync(path.join(crate, "Cargo.toml.orig"))
+      .equals(fs.readFileSync(path.join(source, "Cargo.toml")))
+  )
+    throw new Error("javy_wirm_test_origin_invalid");
+  const files = (root, relative = "src") =>
+    fs
+      .readdirSync(path.join(root, relative), { withFileTypes: true })
+      .flatMap((entry) => {
+        const name = `${relative}/${entry.name}`;
+        if (entry.isSymbolicLink())
+          throw new Error("javy_wirm_test_origin_invalid");
+        if (entry.isDirectory()) return files(root, name);
+        if (!entry.isFile()) throw new Error("javy_wirm_test_origin_invalid");
+        return [name];
+      })
+      .sort();
+  const published = files(crate);
+  if (
+    published.length !== 51 ||
+    JSON.stringify(published) !== JSON.stringify(files(source))
+  )
+    throw new Error("javy_wirm_test_origin_invalid");
+  const sourceBindings = published.map((name) => {
+    const bytes = fs.readFileSync(path.join(crate, name));
+    if (!bytes.equals(fs.readFileSync(path.join(source, name))))
+      throw new Error("javy_wirm_test_origin_invalid");
+    return { path: name, sha256: sha(bytes) };
+  });
+  for (const file of expected.files) readInput(source, file);
+  return {
+    repository: expected.repository,
+    commit: expected.commit,
+    archiveSha256: expected.sha256,
+    publishedSourceFiles: published.length,
+    sourceBindings,
+    files: expected.files,
+  };
 }
 
 export function checkJavyWiring(source, policy, readInput = runnerInput) {
@@ -483,6 +563,29 @@ export async function testJavySource(root = ROOT) {
     recursive: true,
     errorOnExist: true,
   });
+  const testArchive = path.join(home, "wirm-test-source.tar.gz");
+  const testSourcePolicy = policy.wirm.testSource;
+  await downloadRustInput(
+    `https://codeload.github.com/${testSourcePolicy.repository}/tar.gz/${testSourcePolicy.commit}`,
+    testArchive,
+    testSourcePolicy.sha256,
+  );
+  const testSource = extract(
+    testArchive,
+    `wirm-${testSourcePolicy.commit}`,
+    home,
+  );
+  const wirmTestOrigin = checkJavyWirmTestOrigin(wirm, testSource, policy);
+  json("wirm-test-origin.json", wirmTestOrigin);
+  for (const file of testSourcePolicy.files) {
+    const destination = path.join(source, "vendor/wirm", file.path);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(
+      path.join(testSource, file.path),
+      destination,
+      fs.constants.COPYFILE_EXCL,
+    );
+  }
   const wirmPatchFile = path.join(home, "wirm.patch");
   fs.writeFileSync(wirmPatchFile, wirmPatch, { flag: "wx" });
   execute(
@@ -554,6 +657,8 @@ export async function testJavySource(root = ROOT) {
     patchSha256: policy.patch.sha256,
     compiler: receipt,
     sourceBindings: before,
+    wirmTestSource: testSourcePolicy,
+    wirmTestOriginSha256: sha(JSON.stringify(wirmTestOrigin)),
     tests,
     registryPackageCount: assessment.packageCount,
     registryAdvisoryMatches: 0,

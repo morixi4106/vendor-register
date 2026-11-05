@@ -7,6 +7,7 @@ import yaml from "js-yaml";
 import {
   validateJavyPolicy,
   checkJavyWiring,
+  checkJavyWirmTestOrigin,
   checkJavyMetadata,
   javySourceTestPlans,
   javyTestTotals,
@@ -50,6 +51,15 @@ test("Javy recipe distinguishes the CLI release from the development candidate a
     },
     (p) => {
       p.wirm.sha256 = "0".repeat(64);
+    },
+    (p) => {
+      p.wirm.testSource.commit = "0".repeat(40);
+    },
+    (p) => {
+      p.wirm.testSource.files[0].sha256 = "0".repeat(64);
+    },
+    (p) => {
+      p.wirm.testSource.files[0].path = "../Cargo.toml";
     },
     (p) => {
       p.sourceFiles.pop();
@@ -245,6 +255,81 @@ test("source wiring requires all hashes and preserves the optional profiler", (t
   assert.throws(
     () => checkJavyWiring(source, policy, () => {}),
     /wiring_invalid/,
+  );
+});
+
+test("restored wirm test helpers must come from the published crate's exact source commit", (t) => {
+  const { source } = fixture(t);
+  const crate = path.join(source, "published"),
+    git = path.join(source, "upstream");
+  for (const d of [crate, git])
+    fs.mkdirSync(path.join(d, "src"), { recursive: true });
+  const vcs = { git: { sha1: policy.wirm.testSource.commit }, path_in_vcs: "" };
+  fs.writeFileSync(
+    path.join(crate, ".cargo_vcs_info.json"),
+    JSON.stringify(vcs),
+  );
+  fs.writeFileSync(
+    path.join(crate, "Cargo.toml.orig"),
+    '[package]\nname="wirm"\n',
+  );
+  fs.writeFileSync(path.join(git, "Cargo.toml"), '[package]\nname="wirm"\n');
+  for (let i = 0; i < 51; i++)
+    for (const d of [crate, git])
+      fs.writeFileSync(
+        path.join(d, "src", `item${i}.rs`),
+        `fn item${i}() {}\n`,
+      );
+  const calls = [];
+  const report = checkJavyWirmTestOrigin(crate, git, policy, (base, file) =>
+    calls.push({ base, ...file }),
+  );
+  assert.equal(report.publishedSourceFiles, 51);
+  assert.equal(report.sourceBindings.length, 51);
+  assert.deepEqual(report.files, policy.wirm.testSource.files);
+  assert.ok(calls.every((c) => c.base === git));
+  assert.deepEqual(
+    calls.map((c) => c.path),
+    ["tests/common/wast_iter.rs", "tests/common/validate.rs"],
+  );
+  assert.throws(
+    () =>
+      checkJavyWirmTestOrigin(crate, git, policy, () => {
+        throw Error("changed_helper_hash");
+      }),
+    /changed_helper_hash/,
+  );
+  fs.writeFileSync(path.join(git, "src/item0.rs"), "changed\n");
+  assert.throws(
+    () => checkJavyWirmTestOrigin(crate, git, policy, () => {}),
+    /origin_invalid/,
+  );
+  fs.copyFileSync(
+    path.join(crate, "src/item0.rs"),
+    path.join(git, "src/item0.rs"),
+  );
+  fs.writeFileSync(path.join(git, "src/extra.rs"), "extra\n");
+  assert.throws(
+    () => checkJavyWirmTestOrigin(crate, git, policy, () => {}),
+    /origin_invalid/,
+  );
+  fs.unlinkSync(path.join(git, "src/extra.rs"));
+  fs.writeFileSync(
+    path.join(crate, ".cargo_vcs_info.json"),
+    JSON.stringify({ ...vcs, git: { sha1: "0".repeat(40) } }),
+  );
+  assert.throws(
+    () => checkJavyWirmTestOrigin(crate, git, policy, () => {}),
+    /origin_invalid/,
+  );
+  fs.writeFileSync(
+    path.join(crate, ".cargo_vcs_info.json"),
+    JSON.stringify(vcs),
+  );
+  fs.writeFileSync(path.join(git, "Cargo.toml"), "changed manifest\n");
+  assert.throws(
+    () => checkJavyWirmTestOrigin(crate, git, policy, () => {}),
+    /origin_invalid/,
   );
 });
 
