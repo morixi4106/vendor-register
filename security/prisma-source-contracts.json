@@ -512,7 +512,7 @@
     "reviewStatus": "UNREVIEWED",
     "patch": {
       "path": "vendor/native/prisma/postgres.patch",
-      "sha256": "9bebd0733d302023482ab9d9a8fd38bf93ced810405d4e3eb0e48ea97a573c4d"
+      "sha256": "19b9167b1422d2ebb53c12a2331c9238e2812d356f8b1b30041e7c5fd678f756"
     },
     "packages": [
       {
@@ -596,7 +596,7 @@
       },
       {
         "path": "tokio-postgres/src/row/oja_security_contracts.rs",
-        "sha256": "044c8346f8ec444e4acddfb92590c5d62d2df4bf72e0a1e661e5c73b337e2aa6"
+        "sha256": "81de14b2641d6b0c3e3994907eba3a238ca81facb1903baaefedd690eea7d9b9"
       },
       {
         "path": "tokio-postgres/src/client.rs",

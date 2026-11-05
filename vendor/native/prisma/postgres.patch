@@ -239,7 +239,7 @@ new file mode 100644
 +pub fn row(names: &[&str], packet: &[u8]) -> Result<Row, Error> {
 +    let columns = names.iter().map(|name| Column {
 +        name: (*name).to_owned(), table_oid: None, column_id: None,
-+        type_modifier: 0, r#type: Type::TEXT,
++        r#type: Type::TEXT,
 +    }).collect();
 +    Row::new(Statement::unnamed(vec![], columns), body(packet)?)
 +}
