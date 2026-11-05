@@ -10,6 +10,7 @@ on:
       - scripts/security/prisma-mysql-source.mjs
       - scripts/security/prisma-cuid-source.mjs
       - scripts/security/prisma-winauth-source.mjs
+      - scripts/security/prisma-postgres-source.mjs
       - scripts/security/rust-toolchain.mjs
       - scripts/security/rust-source-audit.mjs
       - scripts/security/rebuild-esbuild.mjs

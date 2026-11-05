@@ -30,6 +30,13 @@ import {
   checkPrismaWinauthWiring,
   checkPrismaWinauthMetadata,
 } from "./prisma-winauth-source.mjs";
+import {
+  validatePrismaPostgresSource,
+  preparePrismaPostgresSource,
+  checkPrismaPostgresWiring,
+  checkPrismaPostgresMetadata,
+  assessPrismaPostgresIdentities,
+} from "./prisma-postgres-source.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -86,6 +93,7 @@ const SOURCE_FILES = [
   "query-engine/connector-test-kit-rs/query-engine-tests/Cargo.toml",
   "schema-engine/sql-migration-tests/Cargo.toml",
   "quaint/src/macros.rs",
+  "security-contracts/src/postgres_contracts.rs",
 ];
 const PASTE_CONSUMERS = [
   ["quaint", "quaint/Cargo.toml", "dev-dependencies"],
@@ -134,6 +142,7 @@ export function validatePrismaSourcePolicy(policy) {
       "mysqlSources",
       "cuidSource",
       "winauthSource",
+      "postgresSource",
       "cliVersion",
       "httpClientVersion",
       "httpServerDependencies",
@@ -232,6 +241,7 @@ export function validatePrismaSourcePolicy(policy) {
   validatePrismaMysqlSources(policy.mysqlSources);
   validatePrismaCuidSource(policy.cuidSource);
   validatePrismaWinauthSource(policy.winauthSource);
+  validatePrismaPostgresSource(policy.postgresSource);
   return policy;
 }
 
@@ -274,6 +284,7 @@ export function checkPrismaSourceWiring(source, policy) {
   checkPrismaMysqlWiring(source, policy.mysqlSources, prismaSourceInput);
   checkPrismaCuidWiring(source, policy.cuidSource, prismaSourceInput);
   checkPrismaWinauthWiring(source, policy.winauthSource, prismaSourceInput);
+  checkPrismaPostgresWiring(source, policy.postgresSource, prismaSourceInput);
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
@@ -617,7 +628,7 @@ export function checkPrismaMetadata(
   if (contracts) {
     const locals = metadata.packages.filter((pkg) => !pkg.source);
     if (
-      locals.length !== 9 ||
+      locals.length !== 13 ||
       !rootFor("oja-prisma-source-contracts") ||
       path.dirname(
         fs.realpathSync(rootFor("oja-prisma-source-contracts").manifest_path),
@@ -629,6 +640,9 @@ export function checkPrismaMetadata(
     contracts,
   });
   checkPrismaCuidMetadata(metadata, source, policy.cuidSource, { contracts });
+  checkPrismaPostgresMetadata(metadata, source, policy.postgresSource, {
+    contracts,
+  });
   checkPrismaWinauthMetadata(metadata, source, policy.winauthSource, {
     contracts,
     target,
@@ -797,6 +811,19 @@ export function checkPrismaMaintenanceMetadata(
       throw new Error("prisma_maintenance_resolution_invalid");
   }
   return true;
+}
+
+export function prismaPostgresTestTotals(output) {
+  const entries = [
+    ...output.matchAll(/^test postgres_contracts::(\S+) \.\.\. (.+)$/gm),
+  ];
+  if (
+    entries.length !== 24 ||
+    new Set(entries.map((match) => match[1])).size !== 24 ||
+    entries.some((match) => match[2].trim() !== "ok")
+  )
+    throw new Error("prisma_postgres_tests_incomplete");
+  return { passed: 24, failed: 0, ignored: 0 };
 }
 
 export function prismaPasteTestTotals(output) {
@@ -992,6 +1019,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     mysqlSources: policy.mysqlSources,
     cuidSource: policy.cuidSource,
     winauthSource: policy.winauthSource,
+    postgresSource: policy.postgresSource,
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
     httpServerDependencies: policy.httpServerDependencies,
@@ -1032,6 +1060,7 @@ export async function testPrismaSource(
   for (const entry of policy.mysqlSources) prismaSourceInput(root, entry.patch);
   prismaSourceInput(root, policy.cuidSource.patch);
   prismaSourceInput(root, policy.winauthSource.patch);
+  prismaSourceInput(root, policy.postgresSource.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -1132,6 +1161,14 @@ export async function testPrismaSource(
     execute,
     prismaSourceInput,
   );
+  await preparePrismaPostgresSource(
+    root,
+    source,
+    cache,
+    policy.postgresSource,
+    execute,
+    prismaSourceInput,
+  );
   execute(
     "git",
     [
@@ -1177,6 +1214,10 @@ export async function testPrismaSource(
   json("engine-source-assessment.json", engine);
   json("contract-source-assessment.json", contracts);
   json("override-source-assessment.json", overrides);
+  json(
+    "postgres-original-identity-assessment.json",
+    await assessPrismaPostgresIdentities(policy.postgresSource),
+  );
   // A clean small test graph is not an approval of the complete engine graph.
   if (!contracts.registryAuditOk || !overrides.sourceAuditOk)
     throw new Error("prisma_contract_advisories_unresolved");
@@ -1228,7 +1269,8 @@ export async function testPrismaSource(
       "contracts",
       900_000,
     );
-    tests.contracts = rustTestTotals(contractOutput, 96);
+    tests.contracts = rustTestTotals(contractOutput, 120);
+    tests.postgres = prismaPostgresTestTotals(contractOutput);
     tests.ntlmParser = prismaParserTestTotals(contractOutput);
     tests.paste = prismaPasteTestTotals(contractOutput);
     env.GIT_HASH = policy.source.commit;

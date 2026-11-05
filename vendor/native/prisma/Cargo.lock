@@ -3775,8 +3775,7 @@ dependencies = [
 
 [[package]]
 name = "postgres-native-tls"
-version = "0.5.1"
-source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#d18e6fc2e549887161161025494f1db3b1b26cac"
+version = "0.5.1+oja.1"
 dependencies = [
  "native-tls",
  "tokio",
@@ -3786,8 +3785,7 @@ dependencies = [
 
 [[package]]
 name = "postgres-protocol"
-version = "0.6.8"
-source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#d18e6fc2e549887161161025494f1db3b1b26cac"
+version = "0.6.8+oja.1"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
@@ -3803,8 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "postgres-types"
-version = "0.2.9"
-source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#d18e6fc2e549887161161025494f1db3b1b26cac"
+version = "0.2.9+oja.1"
 dependencies = [
  "bit-vec",
  "bytes",
@@ -6231,8 +6228,7 @@ dependencies = [
 
 [[package]]
 name = "tokio-postgres"
-version = "0.7.13"
-source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#d18e6fc2e549887161161025494f1db3b1b26cac"
+version = "0.7.13+oja.1"
 dependencies = [
  "async-trait",
  "byteorder",

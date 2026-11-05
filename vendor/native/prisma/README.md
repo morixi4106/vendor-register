@@ -3,6 +3,34 @@
 This is an explicit patch of the engine source used by Prisma 6.19.3, not an
 upstream Prisma release or an installed replacement.
 
+The PostgreSQL follow-up retains Prisma's pgbouncer-mode fork at
+`d18e6fc2e549887161161025494f1db3b1b26cac`. An explicit patch backports the
+official RUSTSEC-2026-0178/0179/0180 fixes: reject mismatched DataRow counts,
+cap SCRAM iterations at 100,000 before hashing, and validate hstore lengths.
+It also rejects impossible hstore pair counts before a consumer can reserve
+from their size hint. A database configured above that SCRAM limit will now
+return an authentication error; deployed settings have not been inspected.
+
+Four fork packages are versioned +oja.1 and wired to the real engine consumers.
+PgBouncer, TLS, crypto and statement source remains unchanged. The archive's
+14 known relative license links are materialized as byte-identical regular
+license files on both OSes; no symlink is followed or accepted in the build tree.
+The recipe binds 21 fork files and 43 engine files plus both frozen locks.
+Diagnostic hooks are opt-in, disabled by default and rejected in engine metadata.
+
+Twenty-four actual-library regressions cover normal SCRAM proofs/channel
+binding, the iteration boundary/errors/state, hstore round trips/counts/lengths/
+truncation and a bounded mutation corpus, Row/SimpleQueryRow counts/accessors,
+and retained PgBouncer config/TLS types. They use fake credentials and bytes,
+not a server or TLS handshake. Finite debug tests do not certify general DoS,
+all PostgreSQL parsing, native/NAPI, migrations or deployed behavior.
+Original Git declared versions are independently queried against OSV as registry
+identities, without fabricated registry checksums or claims of equivalence.
+Those matches and all four Git-derived identities remain visible and UNREVIEWED.
+Current engine603/contract368 registry scans are separate from four remaining
+Cargo Git entries plus nine path-converted identities: total13 is unchanged.
+No receipt approves the whole engine or production.
+
 The CLI follow-up replaces structopt/clap2 at the actual query-engine,
 schema-engine and prisma-fmt consumers with pinned clap4.6.7/derive/env.
 The policy binds their manifests, parser modules and actual Cargo resolutions.

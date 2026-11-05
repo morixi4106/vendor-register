@@ -15,6 +15,7 @@ import {
   prismaParserTestTotals,
   checkPrismaMaintenanceMetadata,
   prismaPasteTestTotals,
+  prismaPostgresTestTotals,
   prismaBenchmarkArguments,
   prismaBenchmarkTotals,
   prismaPasteConsumerArguments,
@@ -35,6 +36,12 @@ import {
   checkPrismaWinauthWiring,
   checkPrismaWinauthMetadata,
 } from "../../scripts/security/prisma-winauth-source.mjs";
+import {
+  validatePrismaPostgresSource,
+  checkPrismaPostgresWiring,
+  checkPrismaPostgresMetadata,
+  assessPrismaPostgresIdentities,
+} from "../../scripts/security/prisma-postgres-source.mjs";
 
 const TIBERIUS =
   "git+https://github.com/prisma/tiberius?branch=main#35605c90adb38cc107d35c3432fd2643d9d6e1e6";
@@ -209,6 +216,7 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     ...policy.mysqlSources.map((entry) => entry.patch),
     policy.cuidSource.patch,
     policy.winauthSource.patch,
+    policy.postgresSource.patch,
   ])
     assert.ok(prismaSourceInput(ROOT, input).length);
   const whole = rustRegistryPackages(
@@ -221,14 +229,15 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     whole.packages.find((pkg) => pkg.name === "lru" && pkg.version === "0.7.8"),
     undefined,
   );
-  assert.equal(whole.unresolved.length, 8);
+  assert.equal(whole.unresolved.length, 4);
   assert.equal(
     whole.unresolved.length +
       policy.mysqlSources.filter((entry) => entry.gitSource).length +
-      policy.cuidSource.packages.length,
+      policy.cuidSource.packages.length +
+      policy.postgresSource.packages.length,
     13,
   );
-  assert.equal(contracts.packages.length, 354);
+  assert.equal(contracts.packages.length, 368);
   assert.equal(contracts.unresolved.length, 0);
   for (const [name, version] of Object.entries(policy.dependencies))
     assert.ok(
@@ -680,6 +689,49 @@ const metadataFixture = (t, contracts) => {
     nodes
       .find((node) => node.id === name)
       .deps.push({ name: "cuid", pkg: "cuid" });
+  for (const item of policy.postgresSource.packages) {
+    const directory = path.join(source, "vendor/postgres", item.name);
+    fs.mkdirSync(directory, { recursive: true });
+    const manifest = path.join(directory, "Cargo.toml");
+    fs.writeFileSync(manifest, "[package]\n");
+    packages.push({
+      id: item.name,
+      name: item.name,
+      version: item.version,
+      source: null,
+      manifest_path: manifest,
+    });
+    const names =
+      item.name === "postgres-native-tls"
+        ? ["tokio-postgres"]
+        : item.name === "postgres-types"
+          ? ["postgres-protocol"]
+          : item.name === "tokio-postgres"
+            ? ["postgres-protocol", "postgres-types"]
+            : [];
+    nodes.push({
+      id: item.name,
+      features: [
+        "runtime",
+        ...(contracts &&
+        ["tokio-postgres", "postgres-protocol"].includes(item.name)
+          ? ["oja-security-contracts"]
+          : []),
+      ],
+      deps: names.map((name) => ({
+        name: name.replaceAll("-", "_"),
+        pkg: name,
+      })),
+    });
+  }
+  const pgOwner = nodes.find(
+    (node) =>
+      node.id === (contracts ? "oja-prisma-source-contracts" : "quaint"),
+  );
+  for (const item of policy.postgresSource.packages.filter(
+    (pkg) => contracts || pkg.name !== "postgres-protocol",
+  ))
+    pgOwner.deps.push({ name: item.name.replaceAll("-", "_"), pkg: item.name });
   return { source, metadata: { packages, resolve: { nodes } } };
 };
 
@@ -1490,7 +1542,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   const engine = {
     packageCount: 640,
     findings: Array(34).fill({}),
-    unresolved: Array(8).fill({}),
+    unresolved: Array(4).fill({}),
     sourceAuditOk: false,
   };
   const contracts = {
@@ -1507,8 +1559,8 @@ test("clean contract registry scans never approve a path-converted Git source or
   assert.equal(receipt.artifactStatus, "NOT_VERIFIED");
   assert.equal(receipt.engineAdvisoryMatches, 34);
   assert.equal(receipt.unreviewedGitSources, 13);
-  assert.equal(receipt.unreviewedPatchedGitSources, 5);
-  assert.equal(receipt.contractUnreviewedGitSources, 5);
+  assert.equal(receipt.unreviewedPatchedGitSources, 9);
+  assert.equal(receipt.contractUnreviewedGitSources, 9);
   assert.equal(receipt.contractSourceReviewed, false);
   assert.equal(receipt.engineSourceAuditOk, false);
   assert.equal(receipt.contractSourceAuditOk, false);
@@ -1522,7 +1574,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).unreviewedGitSources,
-    5,
+    9,
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).productionApproved,
@@ -1536,7 +1588,7 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
   assert.equal(original.unresolved.length, 0);
   assert.equal(report.registryAuditOk, true);
   assert.equal(report.sourceAuditOk, false);
-  assert.equal(report.unresolved.length, 5);
+  assert.equal(report.unresolved.length, 9);
   assert.equal(
     report.unresolved[0].reason,
     "git_derived_override_requires_review",
@@ -1551,12 +1603,20 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
   );
   assert.deepEqual(report.findings, []);
   assert.deepEqual(
-    report.unresolved.slice(1).map((entry) => entry.name),
+    report.unresolved.slice(1, 5).map((entry) => entry.name),
     ["cuid", "cuid-util", "cuid1", "cuid2"],
   );
-  for (const entry of report.unresolved.slice(1)) {
+  for (const entry of report.unresolved.slice(1, 5)) {
     assert.equal(entry.commit, policy.cuidSource.commit);
     assert.equal(entry.archiveSha256, policy.cuidSource.sha256);
+  }
+  assert.deepEqual(
+    report.unresolved.slice(5).map((entry) => entry.name),
+    policy.postgresSource.packages.map((pkg) => pkg.name),
+  );
+  for (const entry of report.unresolved.slice(5)) {
+    assert.equal(entry.commit, policy.postgresSource.commit);
+    assert.equal(entry.archiveSha256, policy.postgresSource.sha256);
   }
 });
 
@@ -1714,6 +1774,295 @@ test("CUID manifest wiring preserves the pinned WASM entropy backend and refuses
     () => checkPrismaCuidWiring(source, policy.cuidSource, () => {}),
     /prisma_cuid_wiring_invalid/,
   );
+});
+
+test("PostgreSQL recipe pins the original fork, official fixes and every relevant source file", () => {
+  assert.equal(
+    validatePrismaPostgresSource(policy.postgresSource),
+    policy.postgresSource,
+  );
+  for (const change of [
+    (p) => {
+      p.commit = "0".repeat(40);
+    },
+    (p) => {
+      p.repository = "other/fork";
+    },
+    (p) => {
+      p.sha256 = "0".repeat(64);
+    },
+    (p) => {
+      p.reviewStatus = "REVIEWED";
+    },
+    (p) => {
+      p.patch.path = "../postgres.patch";
+    },
+    (p) => {
+      p.packages.pop();
+    },
+    (p) => {
+      p.packages[0].upstreamVersion = "0.6.9";
+    },
+    (p) => {
+      p.packages[0].version = "0.6.8";
+    },
+    (p) => {
+      delete p.fixes["RUSTSEC-2026-0179"];
+    },
+    (p) => {
+      p.sourceFiles.pop();
+    },
+    (p) => {
+      p.sourceFiles[0].path = "../Cargo.toml";
+    },
+    (p) => {
+      p.productionApproved = true;
+    },
+  ]) {
+    const changed = structuredClone(policy.postgresSource);
+    change(changed);
+    assert.throws(
+      () => validatePrismaPostgresSource(changed),
+      /prisma_postgres_policy_invalid/,
+    );
+  }
+  const patch = prismaSourceInput(ROOT, policy.postgresSource.patch).toString();
+  for (const required of [
+    "MAX_ITERATION_COUNT",
+    "split_at_checked(key_len",
+    "split_at_checked(value_len",
+    "row.ranges.len() != row.statement.columns().len()",
+    "row.ranges.len() != row.columns.len()",
+    "count as usize > buf.len() / 8",
+    "oja-security-contracts",
+  ])
+    assert.ok(patch.includes(required));
+  const enginePatch = prismaSourceInput(ROOT, policy.patch).toString();
+  assert.equal(
+    [
+      ...enginePatch.matchAll(
+        /^\+fn (?:scram|hstore|row|simple_row|pgbouncer)_\S+\(/gm,
+      ),
+    ].length,
+    24,
+  );
+});
+
+test("PostgreSQL metadata rejects detached forks, lost ownership, missing runtime and production diagnostics", (t) => {
+  for (const contracts of [false, true])
+    for (const change of [
+      (m) => {
+        m.packages.find((p) => p.name === "postgres-protocol").version =
+          "0.6.8";
+      },
+      (m) => {
+        m.packages.find((p) => p.name === "postgres-types").source =
+          "registry+https://github.com/rust-lang/crates.io-index";
+      },
+      (m) => {
+        m.packages.find((p) => p.name === "tokio-postgres").manifest_path =
+          m.packages[0].manifest_path;
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "postgres-native-tls").deps = [];
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "postgres-types").deps = [];
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "tokio-postgres").features = [
+          "oja-security-contracts",
+        ];
+      },
+      (m) => {
+        m.resolve.nodes.find((n) => n.id === "postgres-protocol").features =
+          contracts ? [] : ["oja-security-contracts"];
+      },
+      (m) => {
+        m.resolve.nodes
+          .find(
+            (n) =>
+              n.id === (contracts ? "oja-prisma-source-contracts" : "quaint"),
+          )
+          .deps.find((d) => d.name === "tokio_postgres").pkg = "postgres-types";
+      },
+      (m) => {
+        m.packages.push({
+          ...m.packages.find((p) => p.name === "postgres-protocol"),
+          id: "duplicate",
+        });
+      },
+    ]) {
+      const { source, metadata } = metadataFixture(t, contracts);
+      assert.equal(
+        checkPrismaPostgresMetadata(metadata, source, policy.postgresSource, {
+          contracts,
+        }),
+        true,
+      );
+      change(metadata);
+      assert.throws(
+        () =>
+          checkPrismaPostgresMetadata(metadata, source, policy.postgresSource, {
+            contracts,
+          }),
+        /prisma_postgres_/,
+      );
+    }
+});
+
+test("PostgreSQL wiring validates internal edges, diagnostic isolation and materialized licenses", (t) => {
+  const source = fixture(t);
+  const write = (file, bytes) => {
+    const target = path.join(source, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+  };
+  const pkgs = policy.postgresSource.packages;
+  const dependency = (pkg, base, hook = false) =>
+    `${pkg.name}={path="${base}/${pkg.name}",version="=${pkg.version}"${hook ? ',features=["oja-security-contracts"]' : ""}}\n`;
+  const root =
+    '[workspace]\nexclude=["vendor/postgres"]\n[workspace.dependencies]\n' +
+    pkgs
+      .filter((p) => p.name !== "postgres-protocol")
+      .map((p) => dependency(p, "vendor/postgres"))
+      .join("");
+  const contract =
+    "[dependencies]\n" +
+    pkgs
+      .map((p) =>
+        dependency(
+          p,
+          "../vendor/postgres",
+          ["postgres-protocol", "tokio-postgres"].includes(p.name),
+        ),
+      )
+      .join("");
+  write("Cargo.toml", root);
+  write("security-contracts/Cargo.toml", contract);
+  for (const name of ["LICENSE-APACHE", "LICENSE-MIT"])
+    write(`vendor/postgres/${name}`, name);
+  for (const pkg of [
+    "postgres-derive",
+    "postgres-native-tls",
+    "postgres-openssl",
+    "postgres-protocol",
+    "postgres-types",
+    "postgres",
+    "tokio-postgres",
+  ])
+    for (const name of ["LICENSE-APACHE", "LICENSE-MIT"])
+      write(`vendor/postgres/${pkg}/${name}`, name);
+  for (const pkg of pkgs) {
+    const names =
+      pkg.name === "postgres-native-tls"
+        ? ["tokio-postgres"]
+        : pkg.name === "postgres-types"
+          ? ["postgres-protocol"]
+          : pkg.name === "tokio-postgres"
+            ? ["postgres-protocol", "postgres-types"]
+            : [];
+    write(
+      `vendor/postgres/${pkg.name}/Cargo.toml`,
+      `[package]\nname="${pkg.name}"\nversion="${pkg.version}"\n[features]\ndefault=[]\noja-security-contracts=[]\n[dependencies]\n` +
+        names
+          .map((name) =>
+            dependency(
+              pkgs.find((p) => p.name === name),
+              "..",
+            ),
+          )
+          .join(""),
+    );
+  }
+  const verify = () =>
+    checkPrismaPostgresWiring(source, policy.postgresSource, () => {});
+  assert.equal(verify(), true);
+  for (const modified of [
+    root.replace('"vendor/postgres"', '"vendor/other"'),
+    root.replace("=0.5.1+oja.1", "=0.5.1"),
+    root.replace(
+      'version="=0.5.1+oja.1"',
+      'version="=0.5.1+oja.1",features=["oja-security-contracts"]',
+    ),
+  ]) {
+    write("Cargo.toml", modified);
+    assert.throws(verify, /prisma_postgres_wiring_invalid/);
+  }
+  write("Cargo.toml", root);
+  write(
+    "security-contracts/Cargo.toml",
+    contract.replace(',features=["oja-security-contracts"]', ""),
+  );
+  assert.throws(verify, /prisma_postgres_wiring_invalid/);
+  write("security-contracts/Cargo.toml", contract);
+  write("vendor/postgres/postgres-types/LICENSE-MIT", "modified");
+  assert.throws(verify, /prisma_postgres_license_invalid/);
+});
+
+test("PostgreSQL receipts require all 24 distinct successful real-library regressions", () => {
+  const lines = Array.from(
+    { length: 24 },
+    (_, i) => `test postgres_contracts::case_${i} ... ok`,
+  );
+  assert.deepEqual(prismaPostgresTestTotals(lines.join("\n")), {
+    passed: 24,
+    failed: 0,
+    ignored: 0,
+  });
+  for (const output of [
+    "",
+    lines.slice(1).join("\n"),
+    lines.concat(lines[0]).join("\n"),
+    Array(24).fill(lines[0]).join("\n"),
+    lines.join("\n").replace("ok", "ignored"),
+    lines.join("\n").replace("ok", "FAILED"),
+    lines.join("\n").replaceAll("postgres_contracts", "other"),
+  ])
+    assert.throws(
+      () => prismaPostgresTestTotals(output),
+      /prisma_postgres_tests_incomplete/,
+    );
+});
+
+test("PostgreSQL original identity checks retain findings and never pretend Git was a registry source", async () => {
+  const findings = {
+    results: [
+      {
+        vulns: [{ id: "RUSTSEC-2026-0179", modified: "2026-08-25T00:00:00Z" }],
+      },
+      {},
+      {},
+      {},
+    ],
+  };
+  let query;
+  const fetchImpl = async (url, options) => {
+    assert.equal(url, "https://api.osv.dev/v1/querybatch");
+    query = JSON.parse(options.body);
+    return new Response(JSON.stringify(findings));
+  };
+  const report = await assessPrismaPostgresIdentities(policy.postgresSource, {
+    fetchImpl,
+  });
+  assert.equal(report.sourceAuditOk, false);
+  assert.equal(report.productionApproved, false);
+  assert.equal(report.sourceReviewed, false);
+  assert.equal(report.packages[0].matches[0].advisory, "RUSTSEC-2026-0179");
+  assert.equal(query.queries[0].version, "0.6.8");
+  assert.equal(JSON.stringify(query).includes("checksum"), false);
+  for (const result of [
+    { results: [] },
+    { results: [{ next_page_token: "more" }, {}, {}, {}] },
+    { results: [{ vulns: [{ id: "bad", modified: "bad" }] }, {}, {}, {}] },
+  ])
+    await assert.rejects(
+      () =>
+        assessPrismaPostgresIdentities(policy.postgresSource, {
+          fetchImpl: async () => new Response(JSON.stringify(result)),
+        }),
+      /prisma_postgres_advisory_/,
+    );
 });
 
 test("MySQL source policy never marks the original Git revision reviewed by changing its location", () => {

@@ -9,20 +9,20 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "123c91fc703481aea4a66cb753313cc97982af202f643ce855be32c7bd101237"
+    "sha256": "94e266ac54b36aff598850e85ba47dfe7193ffa46bd200dab1c25278eca3ca57"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "2fc4173457903c98773100f574196d9a220cebedda3ecc668bbafa64585406d4"
+    "sha256": "eb7ed64a4ecc3b303ee1ba846a7fd0bac4e8d5e6b49a376d1ab0757ccbd498e1"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
-    "sha256": "6e7871e7e690151790b82bb4c6cfec10086d0c3c1667194800e9fa77ee8f08bc"
+    "sha256": "168508480fc79f6a76ea0c79eeb3eba98cefca961f2212f35c25765d1222037e"
   },
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "b4cd8706a8b4bf5edd5da9911a4fdb0cbd842005ffae07c560ad890590ca0e1b"
+      "sha256": "ba4ee3f821f852cf9aba5e2af8e3a108138a03da7010eb4003b5d7364c231d0c"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -38,11 +38,11 @@
     },
     {
       "path": "security-contracts/Cargo.toml",
-      "sha256": "7379e66313932abe95e5b456adb0340e058ec85452e10d4d38a4a8208484e81e"
+      "sha256": "db66679eff11764b5e27a30c3adeaa8e1333ff5b08de7bacd0fd67d05ed8e5bb"
     },
     {
       "path": "security-contracts/src/lib.rs",
-      "sha256": "61d64f210f6d29f8c7ea22a6840e0d89ef94fea82f8978b785d136aecf9cc294"
+      "sha256": "173ad999392e5b82086ed52a35773cba88fa279b00e50ae4481caf2d77288b9b"
     },
     {
       "path": "query-engine/core/Cargo.toml",
@@ -187,6 +187,10 @@
     {
       "path": "quaint/src/macros.rs",
       "sha256": "b3a1c0d566f42cb7dea3ee2f91d54e37702371d7072e5d1dc55be813837cb8dd"
+    },
+    {
+      "path": "security-contracts/src/postgres_contracts.rs",
+      "sha256": "608f804a387f07c84ef513b6f53c5509742992cbe82abd90f500f5defbdf0a41"
     }
   ],
   "dependencies": {
@@ -500,5 +504,128 @@
     "pastey": "0.2.3",
     "codspeed-criterion-compat": "6.0.0",
     "codspeed-criterion-compat-walltime": "6.0.0"
+  },
+  "postgresSource": {
+    "repository": "prisma/rust-postgres",
+    "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
+    "sha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
+    "reviewStatus": "UNREVIEWED",
+    "patch": {
+      "path": "vendor/native/prisma/postgres.patch",
+      "sha256": "9bebd0733d302023482ab9d9a8fd38bf93ced810405d4e3eb0e48ea97a573c4d"
+    },
+    "packages": [
+      {
+        "name": "postgres-protocol",
+        "upstreamVersion": "0.6.8",
+        "version": "0.6.8+oja.1"
+      },
+      {
+        "name": "postgres-types",
+        "upstreamVersion": "0.2.9",
+        "version": "0.2.9+oja.1"
+      },
+      {
+        "name": "postgres-native-tls",
+        "upstreamVersion": "0.5.1",
+        "version": "0.5.1+oja.1"
+      },
+      {
+        "name": "tokio-postgres",
+        "upstreamVersion": "0.7.13",
+        "version": "0.7.13+oja.1"
+      }
+    ],
+    "fixes": {
+      "RUSTSEC-2026-0178": "7a00ffa9ad4d951ec0a4564b52f1780fa9d353c1",
+      "RUSTSEC-2026-0179": "d40097a36a85068ea50a3afbf0ce154ba439e7f0",
+      "RUSTSEC-2026-0180": "a7cf84b5c46431cbca9d8ff50508c23f446efa7d"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "3927c4f3ceb761a3f3374f370d33e78142b5af18d434f73a6db7c6658ea36060"
+      },
+      {
+        "path": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "4d033ae2577fa5055e26ed7e4aa3b885522f20570d18366bbc0178e0ddc19e0f"
+      },
+      {
+        "path": "postgres-protocol/Cargo.toml",
+        "sha256": "d589b792410a5b21b85667d798a1f7658d1bc4fca5ef8b10cf56fe0b31dcf1a4"
+      },
+      {
+        "path": "postgres-types/Cargo.toml",
+        "sha256": "43439c785f15d9d7228d7329f1524b38ecdeb0046cb9e2e7b91e1134e61a0f9f"
+      },
+      {
+        "path": "postgres-native-tls/Cargo.toml",
+        "sha256": "988dacfcd58959df01ccbc0b0fc893471827de1c602cdcd59dccf8a19b6e4051"
+      },
+      {
+        "path": "tokio-postgres/Cargo.toml",
+        "sha256": "d4b19acf986da205d2e22dea9516a55311e17af8abbffa5d84b71f3b9daa2ecd"
+      },
+      {
+        "path": "postgres-protocol/src/authentication/sasl.rs",
+        "sha256": "c703eb519c676896748e20638bad7c7a0fc1380c8d2824fe1aad02427c8dca72"
+      },
+      {
+        "path": "postgres-protocol/src/types/mod.rs",
+        "sha256": "6a42dd4fd1498f6b19b9d4d09d70b75405904910950050d09541223b296b09ab"
+      },
+      {
+        "path": "postgres-protocol/src/message/backend.rs",
+        "sha256": "c94ef585e01830a2d423fd4906f726440ac3046d6a87ac4bdd619b0688c82fc3"
+      },
+      {
+        "path": "postgres-types/src/lib.rs",
+        "sha256": "ef63e4af527203d9ff3095cd9868a17200bbcae6b365bfdc3cac7d3cae7d6673"
+      },
+      {
+        "path": "postgres-native-tls/src/lib.rs",
+        "sha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273"
+      },
+      {
+        "path": "tokio-postgres/src/row.rs",
+        "sha256": "a413f4b90ea5829cd5ea5dda8a13be582cea00ad5081cd5792cbde72da5c4ae7"
+      },
+      {
+        "path": "tokio-postgres/src/row/oja_security_contracts.rs",
+        "sha256": "044c8346f8ec444e4acddfb92590c5d62d2df4bf72e0a1e661e5c73b337e2aa6"
+      },
+      {
+        "path": "tokio-postgres/src/client.rs",
+        "sha256": "b66e3231800583111525e958d4e793c26a61b30ea33a9f7ae458b5bdfb1941b4"
+      },
+      {
+        "path": "tokio-postgres/src/config.rs",
+        "sha256": "45084a12e92a1761a2452eae3331116081f1e7d0a2ea196ffab1d7b585f6f69c"
+      },
+      {
+        "path": "tokio-postgres/src/connect_raw.rs",
+        "sha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e"
+      },
+      {
+        "path": "tokio-postgres/src/connect_tls.rs",
+        "sha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6"
+      },
+      {
+        "path": "tokio-postgres/src/query.rs",
+        "sha256": "fe5b4f5487990105e7bbeb022b231fffde323701e27f675ffa26767141c03b1c"
+      },
+      {
+        "path": "tokio-postgres/src/simple_query.rs",
+        "sha256": "eec6bacdd42d2d19c1166e65389472c232d9341e4e32be17c711c1731f15d303"
+      },
+      {
+        "path": "tokio-postgres/src/statement.rs",
+        "sha256": "b4816c834b429e1ceed7708a067ab713cd35e75a632073e630c947b6565615fd"
+      }
+    ]
   }
 }

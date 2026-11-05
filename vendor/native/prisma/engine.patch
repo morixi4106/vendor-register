@@ -1,11 +1,11 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..4b291cf 100644
+index 307dd8c..258fb90 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,5 +1,6 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres"]
  members = [
      "schema-engine/cli",
      "schema-engine/commands",
@@ -50,7 +50,7 @@ index 307dd8c..4b291cf 100644
  names = { version = "0.11", default-features = false }
  nanoid = "0.4"
  napi = { version = "2", default-features = false, features = [
-@@ -110,7 +113,7 @@ nom = "7"
+@@ -110,21 +113,21 @@ nom = "7"
  num_cpus = "1"
  parking_lot = "0.12"
  parse-hyperlinks = "0.23"
@@ -59,7 +59,13 @@ index 307dd8c..4b291cf 100644
  percent-encoding = "2"
  pest = "2"
  pest_derive = "2"
-@@ -122,9 +125,9 @@ pretty = "0.12"
+ petgraph = "0.8"
+ pin-project = "1"
+-postgres-native-tls = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
+-postgres-types = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
++postgres-native-tls = { path = "vendor/postgres/postgres-native-tls", version = "=0.5.1+oja.1" }
++postgres-types = { path = "vendor/postgres/postgres-types", version = "=0.2.9+oja.1" }
+ pretty = "0.12"
  rustc-hash = "2"
  rand = "0.8"
  regex = "1"
@@ -80,6 +86,15 @@ index 307dd8c..4b291cf 100644
  sqlformat = "0.2"
  sqlparser = "0.32"
  sqlx-core = "0.8"
+@@ -143,7 +146,7 @@ sqlx-sqlite = "0.8"
+ tempfile = "3"
+ tiberius = { git = "https://github.com/prisma/tiberius", branch = "main", default-features = false }
+ tokio = { version = "1", features = ["sync"] }
+-tokio-postgres = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
++tokio-postgres = { path = "vendor/postgres/tokio-postgres", version = "=0.7.13+oja.1" }
+ tokio-tungstenite = "0.26"
+ tokio-util = "0.7"
+ toml = "0.8"
 @@ -174,7 +177,7 @@ quote = "1"
  syn = "2"
 
@@ -201,7 +216,7 @@ diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,29 @@
 +[package]
 +name = "oja-prisma-source-contracts"
 +version = "0.1.0+oja.1"
@@ -211,6 +226,11 @@ new file mode 100644
 +[workspace]
 +
 +[dependencies]
++postgres-protocol = { path = "../vendor/postgres/postgres-protocol", version = "=0.6.8+oja.1", features = ["oja-security-contracts"] }
++postgres-types = { path = "../vendor/postgres/postgres-types", version = "=0.2.9+oja.1" }
++postgres-native-tls = { path = "../vendor/postgres/postgres-native-tls", version = "=0.5.1+oja.1" }
++tokio-postgres = { path = "../vendor/postgres/tokio-postgres", version = "=0.7.13+oja.1", features = ["oja-security-contracts"] }
++fallible-iterator = "0.2"
 +paste = { package = "pastey", version = "=0.2.3" }
 +winauth = { path = "../vendor/winauth", features = ["oja-security-contracts"] }
 +lru = "=0.18.2"
@@ -230,7 +250,7 @@ diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
 new file mode 100644
 --- /dev/null
 +++ b/security-contracts/src/lib.rs
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,62 @@
 +#![deny(unsafe_code)]
 +#![allow(dead_code)]
 +
@@ -260,6 +280,9 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod paste_contracts;
++
++#[cfg(test)]
++mod postgres_contracts;
 +
 +#[cfg(test)]
 +mod tests {
@@ -2257,4 +2280,204 @@ new file mode 100644
 +    }
 +    assert_eq!(relation_join_strategy(), "join");
 +    assert_eq!(relation_query_strategy(), "query");
++}
+diff --git a/security-contracts/src/postgres_contracts.rs b/security-contracts/src/postgres_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/postgres_contracts.rs
+@@ -0,0 +1,195 @@
++use fallible_iterator::FallibleIterator;
++use postgres_protocol::authentication::sasl::{oja_scram_with_nonce, ChannelBinding, ScramSha256};
++use postgres_protocol::types::{hstore_from_sql, hstore_to_sql};
++use tokio_postgres::row::oja_security_contracts::{row, simple_row};
++
++const NONCE: &str = "9IZ2O01zb9IgiIZ1WJ/zgpJB";
++const FIRST: &str = "r=9IZ2O01zb9IgiIZ1WJ/zgpJBjx/oIRLs02gGSHcw1KEty3eY,s=fs3IXBy7U7+IvVjZ,i=4096";
++fn scram() -> ScramSha256 {
++    oja_scram_with_nonce(b"foobar", ChannelBinding::unsupported(), NONCE)
++}
++fn iterations(value: &str) -> Vec<u8> {
++    FIRST.replace("4096", value).into_bytes()
++}
++
++#[test]
++fn scram_original_proof_and_server_signature() {
++    let mut client = scram();
++    assert_eq!(client.message(), format!("n,,n=,r={NONCE}").as_bytes());
++    client.update(FIRST.as_bytes()).unwrap();
++    assert_eq!(client.message(), b"c=biws,r=9IZ2O01zb9IgiIZ1WJ/zgpJBjx/oIRLs02gGSHcw1KEty3eY,p=AmNKosjJzS31NTlQYNs5BTeQjdHdk7lOflDo5re2an8=");
++    client.finish(b"v=U+ppxD5XUKtradnv8e2MkeupiA8FU87Sg8CXzXHDAzw=").unwrap();
++}
++#[test]
++fn scram_accepts_exact_iteration_limit() {
++    scram().update(&iterations("100000")).unwrap();
++}
++#[test]
++fn scram_rejects_above_limit_before_decoding_salt() {
++    let error = scram().update(&String::from_utf8(iterations("100001")).unwrap().replace("fs3IXBy7U7+IvVjZ", "???").into_bytes()).unwrap_err();
++    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
++    assert!(error.to_string().contains("maximum allowed"));
++}
++#[test]
++fn scram_rejects_maximum_u32_without_hashing() {
++    assert!(scram().update(&iterations("4294967295")).unwrap_err().to_string().contains("maximum allowed"));
++}
++#[test]
++fn scram_malformed_iterations_and_nonce_fail() {
++    for value in ["-1", "no", "4294967296", ""] {
++        assert!(scram().update(&iterations(value)).is_err());
++    }
++    assert!(scram().update(FIRST.replace(NONCE, "other").as_bytes()).is_err());
++    assert!(scram().update(&[0xff]).is_err());
++}
++#[test]
++fn scram_bad_salt_or_signature_fails() {
++    assert!(scram().update(FIRST.replace("fs3IXBy7U7+IvVjZ", "???").as_bytes()).is_err());
++    let mut client = scram();
++    client.update(FIRST.as_bytes()).unwrap();
++    assert!(client.finish(b"v=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_err());
++}
++#[test]
++fn scram_failed_update_cannot_reuse_state() {
++    let mut client = scram();
++    assert!(client.update(&iterations("100001")).is_err());
++    assert!(client.update(FIRST.as_bytes()).unwrap_err().to_string().contains("invalid SCRAM state"));
++    assert!(client.finish(b"v=bad").is_err());
++}
++#[test]
++fn scram_real_nonce_and_channel_binding_paths_remain() {
++    let a = ScramSha256::new(b"offline-only", ChannelBinding::unsupported());
++    let b = ScramSha256::new(b"offline-only", ChannelBinding::unsupported());
++    assert_ne!(a.message(), b.message());
++    for binding in [ChannelBinding::unrequested(), ChannelBinding::tls_server_end_point(vec![1,2,3])] {
++        let mut client = oja_scram_with_nonce(b"foobar", binding, NONCE);
++        client.update(FIRST.as_bytes()).unwrap();
++        assert!(client.message().starts_with(b"c="));
++    }
++}
++
++fn hstore(count: i32, key_len: i32, key: &[u8], value_len: i32, value: &[u8]) -> Vec<u8> {
++    let mut bytes = count.to_be_bytes().to_vec();
++    bytes.extend(key_len.to_be_bytes()); bytes.extend(key);
++    bytes.extend(value_len.to_be_bytes()); bytes.extend(value);
++    bytes
++}
++fn decoded(bytes: &[u8]) -> Result<Vec<(&str, Option<&str>)>, Box<dyn std::error::Error + Send + Sync>> {
++    hstore_from_sql(bytes)?.collect()
++}
++#[test]
++fn hstore_empty_and_null_pairs_roundtrip() {
++    assert!(decoded(&0i32.to_be_bytes()).unwrap().is_empty());
++    assert_eq!(decoded(&hstore(1,0,b"",-1,b"")).unwrap(), vec![("",None)]);
++}
++#[test]
++fn hstore_unicode_and_multiple_pairs_roundtrip() {
++    // UTF-8 encoded without source-language-dependent encoding.
++    let key = "\u{6771}\u{4eac}";
++    let pairs = [(key, Some("value")), ("second", None), ("empty", Some(""))];
++    let mut output = Default::default();
++    hstore_to_sql(pairs, &mut output).unwrap();
++    assert_eq!(decoded(&output).unwrap(), pairs);
++    let ty = postgres_types::Type::new("hstore".to_owned(), 99999, postgres_types::Kind::Simple, "public".to_owned());
++    let actual = <std::collections::HashMap<String,Option<String>> as postgres_types::FromSql>::from_sql(&ty,&output).unwrap();
++    assert_eq!(actual.get(key), Some(&Some("value".to_owned())));
++}
++#[test]
++fn hstore_oversized_key_is_error() {
++    for len in [9, i32::MAX] { assert!(decoded(&hstore(1,len,b"",-1,b"")).is_err()); }
++}
++#[test]
++fn hstore_oversized_value_is_error() {
++    for len in [1, i32::MAX] { assert!(decoded(&hstore(1,0,b"",len,b"")).is_err()); }
++}
++#[test]
++fn hstore_negative_key_and_invalid_utf8_are_errors() {
++    assert!(decoded(&hstore(1,-1,b"",-1,b"")).is_err());
++    assert!(decoded(&hstore(1,1,&[255],-1,b"")).is_err());
++    assert!(decoded(&hstore(1,0,b"",1,&[255])).is_err());
++}
++#[test]
++fn hstore_impossible_count_rejected_before_reserving() {
++    for count in [-1,1,i32::MAX] { assert!(hstore_from_sql(&count.to_be_bytes()).is_err()); }
++    let bytes = hstore(2,0,b"",-1,b"");
++    assert!(hstore_from_sql(&bytes).is_err());
++    assert_eq!(hstore_from_sql(&hstore(1,0,b"",-1,b"")).unwrap().size_hint(), (1,Some(1)));
++}
++#[test]
++fn hstore_truncated_and_trailing_data_are_errors() {
++    let valid = hstore(1,1,b"a",1,b"b");
++    for n in 0..valid.len() { assert!(decoded(&valid[..n]).is_err()); }
++    let mut trailing=valid; trailing.push(0);
++    assert!(decoded(&trailing).is_err());
++}
++#[test]
++fn hstore_bounded_length_mutation_corpus_never_panics() {
++    let original = hstore(1,1,b"a",1,b"b");
++    for i in 0..4096usize {
++        let mut bytes=original.clone(); let pos=i%bytes.len(); bytes[pos]=(i/bytes.len()) as u8;
++        let _=decoded(&bytes);
++    }
++}
++
++fn packet(fields: &[Option<&[u8]>]) -> Vec<u8> {
++    let mut body=(fields.len() as u16).to_be_bytes().to_vec();
++    for field in fields { match field {
++        Some(bytes)=>{body.extend((bytes.len() as i32).to_be_bytes());body.extend(*bytes);},
++        None=>body.extend((-1i32).to_be_bytes()),
++    }}
++    let mut packet=b"D".to_vec(); packet.extend((body.len() as i32+4).to_be_bytes()); packet.extend(body); packet
++}
++#[test]
++fn row_fewer_fields_rejected_at_construction() {
++    assert!(row(&["a","b"],&packet(&[Some(b"one")])).is_err());
++}
++#[test]
++fn simple_row_fewer_fields_rejected_at_construction() {
++    assert!(simple_row(&["a","b"],&packet(&[Some(b"one")])).is_err());
++}
++#[test]
++fn row_extra_fields_rejected_at_construction() {
++    assert!(row(&["a"],&packet(&[Some(b"one"),None])).is_err());
++    assert!(simple_row(&["a"],&packet(&[Some(b"one"),None])).is_err());
++}
++#[test]
++fn row_zero_columns_and_fields_work() {
++    assert_eq!(row(&[],&packet(&[])).unwrap().len(),0);
++    assert_eq!(simple_row(&[],&packet(&[])).unwrap().len(),0);
++    assert!(row(&["a"],&packet(&[])).is_err());
++    assert!(simple_row(&["a"],&packet(&[])).is_err());
++}
++#[test]
++fn row_matching_fields_and_accessors_work() {
++    let p=packet(&[Some(b"one"),Some(b"two")]);
++    let r=row(&["a","b"],&p).unwrap();
++    assert_eq!(r.get::<_,&str>(0),"one");
++    assert_eq!(r.try_get::<_,&str>("b").unwrap(),"two");
++    assert!(r.try_get::<_,&str>(2).is_err());
++    let s=simple_row(&["a","b"],&p).unwrap();
++    assert_eq!(s.get(0),Some("one"));
++    assert_eq!(s.try_get("b").unwrap(),Some("two"));
++    assert!(s.try_get(2).is_err());
++}
++#[test]
++fn row_null_fields_preserve_option_semantics() {
++    let p=packet(&[None]);
++    assert_eq!(row(&["a"],&p).unwrap().get::<_,Option<&str>>(0),None);
++    assert_eq!(simple_row(&["a"],&p).unwrap().get(0),None);
++}
++#[test]
++fn row_truncated_and_bad_field_lengths_are_errors() {
++    let p=packet(&[Some(b"one")]);
++    for n in 0..p.len() { assert!(row(&["a"],&p[..n]).is_err()); assert!(simple_row(&["a"],&p[..n]).is_err()); }
++    let mut p=packet(&[Some(b"one")]); p[7..11].copy_from_slice(&i32::MAX.to_be_bytes());
++    assert!(row(&["a"],&p).is_err()); assert!(simple_row(&["a"],&p).is_err());
++}
++#[test]
++fn pgbouncer_config_and_native_tls_types_are_retained() {
++    let mut config=tokio_postgres::Config::new();
++    config.pgbouncer_mode(true); assert!(config.get_pgbouncer_mode());
++    config.pgbouncer_mode(false); assert!(!config.get_pgbouncer_mode());
++    // Type checking only: no TLS connector, network, real account, or database is opened.
++    fn tls_api(_: Option<postgres_native_tls::MakeTlsConnector>) {}
++    tls_api(None);
 +}
