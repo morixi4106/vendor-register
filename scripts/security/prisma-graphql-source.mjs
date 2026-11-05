@@ -110,7 +110,8 @@ export function checkPrismaGraphqlWiring(source, entry, input) {
     fs.readFileSync(path.join(vendor, "Cargo.toml"), "utf8"),
   );
   if (
-    !workspace.exclude?.includes("vendor/graphql") ||
+    workspace.exclude?.includes("vendor/graphql") ||
+    !workspace.members?.includes("vendor/graphql") ||
     !exact(workspace.dependencies["graphql-parser"], ["path", "version"]) ||
     workspace.dependencies["graphql-parser"].path !== "vendor/graphql" ||
     workspace.dependencies["graphql-parser"].version !== `=${entry.version}` ||
@@ -119,6 +120,7 @@ export function checkPrismaGraphqlWiring(source, entry, input) {
     manifest.dependencies.combine !== "3.2.0" ||
     manifest.dependencies.indexmap !== "1.5" ||
     manifest.dependencies.thiserror !== "1.0.11" ||
+    manifest["dev-dependencies"].pretty_assertions !== "=1.4.1" ||
     manifest.features ||
     !fs
       .readFileSync(path.join(vendor, "src/lib.rs"), "utf8")

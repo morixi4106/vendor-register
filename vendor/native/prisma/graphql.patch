@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 41aba57..3ffe899 100644
+index 41aba57..f2552e2 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -12,7 +12,7 @@ keywords = ["graphql", "parser"]
@@ -11,6 +11,12 @@ index 41aba57..3ffe899 100644
  
  [dependencies]
  combine = "3.2.0"
+@@ -20,4 +20,4 @@ indexmap = "1.5"
+ thiserror = "1.0.11"
+ 
+ [dev-dependencies]
+-pretty_assertions = "0.5.0"
++pretty_assertions = "=1.4.1"
 diff --git a/src/lib.rs b/src/lib.rs
 index 3649bdf..04d8572 100644
 --- a/src/lib.rs

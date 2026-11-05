@@ -1802,6 +1802,7 @@ version = "0.3.0+oja.1"
 dependencies = [
  "combine 3.8.1",
  "indexmap 1.9.3",
+ "pretty_assertions",
  "thiserror 1.0.69",
 ]
 

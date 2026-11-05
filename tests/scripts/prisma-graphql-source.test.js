@@ -77,11 +77,11 @@ function fixture(t) {
   t.after(() => fs.rmSync(source, { recursive: true, force: true }));
   fs.mkdirSync(path.join(source, "vendor/graphql/src"), { recursive: true });
   const workspace =
-    '[workspace]\nexclude=["vendor/graphql"]\n[workspace.dependencies]\ngraphql-parser={path="vendor/graphql",version="=0.3.0+oja.1"}\n';
+    '[workspace]\nmembers=["vendor/graphql"]\n[workspace.dependencies]\ngraphql-parser={path="vendor/graphql",version="=0.3.0+oja.1"}\n';
   fs.writeFileSync(path.join(source, "Cargo.toml"), workspace);
   fs.writeFileSync(
     path.join(source, "vendor/graphql/Cargo.toml"),
-    '[package]\nname="graphql-parser"\nversion="0.3.0+oja.1"\n[dependencies]\ncombine="3.2.0"\nindexmap="1.5"\nthiserror="1.0.11"\n',
+    '[package]\nname="graphql-parser"\nversion="0.3.0+oja.1"\n[dependencies]\ncombine="3.2.0"\nindexmap="1.5"\nthiserror="1.0.11"\n[dev-dependencies]\npretty_assertions="=1.4.1"\n',
   );
   fs.writeFileSync(
     path.join(source, "vendor/graphql/src/lib.rs"),

@@ -9,11 +9,11 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "3c555a333dcdb42dd6ccd28b7454aff45cef95f9614f190404e7e84d9659279a"
+    "sha256": "a5a6563a6bddb65b10baad48e6b61fa2eaa0fa998db875a4df7641a5e2c60b14"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "89eb140f96af92f46a555f1633b12cdfdce74e3d1f32a086cfd0287839675b50"
+    "sha256": "9496122a73a7aa96056aaf4040b569046943a339241f0f1a2d93ad809395ad23"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
@@ -22,7 +22,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "d300e60206e36a6e39a59d5abaf95f83059a41c7d3ed9df07652b7c020f65f1e"
+      "sha256": "2317ffbafa7ce052b5bdc0b722a6393e5bed263070e153ad4b76d86d88e47ed0"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -517,12 +517,12 @@
     "referenceCommit": "d19155f5f9206662964e388e80c68b85f3edb09a",
     "patch": {
       "path": "vendor/native/prisma/graphql.patch",
-      "sha256": "97a6b787a28f548bf7928a529ea094f1f0a6511ff5e476d9cf764405d9135bdb"
+      "sha256": "5bc363bcca975395b3c490714c30f6c50c0ac7b50f03387a5caf9500a559eebf"
     },
     "sourceFiles": [
       {
         "path": "Cargo.toml",
-        "sha256": "a8fc77b2350028bfbbd590ff150409593ce3b4eaca52685ced30806999332e7d"
+        "sha256": "c622a8b459ce31db68c4ddbc0f02218c8c3f456710daa623aaae7ecfc8675011"
       },
       {
         "path": "LICENSE-APACHE",
