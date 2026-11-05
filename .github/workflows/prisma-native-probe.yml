@@ -57,8 +57,10 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify native isolation and evidence rejection cases
         run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js
-      - name: Build source candidate and probe only ephemeral databases
-        run: node scripts/security/test-prisma-source.mjs --native-probe --postgres-port ${{ job.services.postgres.ports[5432] }}
+      - name: Configure TLS only on this job's disposable PostgreSQL service
+        run: node scripts/security/prisma-tls-lab.mjs --container ${{ job.services.postgres.id }}
+      - name: Build original release profile and probe ephemeral SQLite and strict TLS PostgreSQL
+        run: node scripts/security/test-prisma-source.mjs --native-probe --release --postgres-port ${{ job.services.postgres.ports[5432] }} --postgres-tls
       - name: Reject tracked changes
         run: git diff --exit-code
       - name: Upload probe evidence without approving native production artifacts
@@ -96,8 +98,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify native isolation and evidence rejection cases
         run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js
-      - name: Build source candidate and probe only ephemeral SQLite
-        run: node scripts/security/test-prisma-source.mjs --native-probe
+      - name: Build original release profile and probe only ephemeral SQLite
+        run: node scripts/security/test-prisma-source.mjs --native-probe --release
       - name: Reject tracked changes
         run: git diff --exit-code
       - name: Upload probe evidence without approving native production artifacts

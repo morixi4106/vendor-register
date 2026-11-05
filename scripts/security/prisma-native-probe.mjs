@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import toml from "toml";
+import { readPrismaTlsLab } from "./prisma-tls-lab.mjs";
 
 const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const CHECKS = [
@@ -22,8 +24,13 @@ export function prismaNativeOptions(
   environment = process.env,
   platform = process.platform,
 ) {
-  if (args.length === 1 && args[0] === "--native-probe")
-    return { nativeProbe: true };
+  const release = args[1] === "--release";
+  if (release) args = [args[0], ...args.slice(2)];
+  const postgresTls = args.at(-1) === "--postgres-tls";
+  if (postgresTls) args = args.slice(0, -1);
+  const extra = release ? { release: true } : {};
+  if (args.length === 1 && args[0] === "--native-probe" && !postgresTls)
+    return { nativeProbe: true, ...extra };
   if (
     args.length === 3 &&
     args[0] === "--native-probe" &&
@@ -34,13 +41,21 @@ export function prismaNativeOptions(
     environment.GITHUB_ACTIONS === "true" &&
     environment.CI === "true"
   )
-    return { nativeProbe: true, postgresPort: Number(args[2]) };
+    return {
+      nativeProbe: true,
+      ...extra,
+      postgresPort: Number(args[2]),
+      ...(postgresTls ? { postgresTls: true } : {}),
+    };
   throw new Error("prisma_native_probe_arguments_invalid");
 }
 
-export function prismaNativeBuildArguments() {
+export function prismaNativeBuildArguments(release = false) {
+  if (typeof release !== "boolean")
+    throw new Error("prisma_native_profile_invalid");
   return [
     "build",
+    ...(release ? ["--release"] : []),
     "--locked",
     "--package",
     "query-engine-node-api",
@@ -48,6 +63,24 @@ export function prismaNativeBuildArguments() {
     "schema-engine-cli",
     "--message-format=json",
   ];
+}
+
+export function prismaNativeReleaseProfile(manifest, environment) {
+  const release = toml.parse(manifest).profile?.release;
+  if (
+    release?.lto !== "fat" ||
+    release["codegen-units"] !== 1 ||
+    release["opt-level"] !== "s" ||
+    release.package?.["query-engine-node-api"]?.strip !== "symbols" ||
+    Object.keys(environment).some((key) =>
+      /^(CARGO_PROFILE_RELEASE|CARGO_ENCODED_RUSTFLAGS|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|CARGO_BUILD_RUSTFLAGS)/.test(
+        key,
+      ),
+    ) ||
+    environment.RUSTFLAGS !== ""
+  )
+    throw new Error("prisma_native_release_profile_invalid");
+  return release;
 }
 
 export function assertPrismaNativeRegistryAssessment(assessment) {
@@ -73,7 +106,7 @@ function compilerOwnedLinks(file, root) {
       }
     }
   };
-  // Cargo links deps outputs into debug/. Every alias must remain in this private target.
+  // Cargo links deps outputs into its profile directory. Inventory every alias.
   walk(root);
   if (BigInt(aliases.length) !== identity.nlink)
     throw new Error("prisma_native_artifact_path_invalid");
@@ -85,6 +118,7 @@ export function selectPrismaNativeArtifacts(
   metadata,
   targetDirectory,
   platform = process.platform,
+  release = false,
 ) {
   const selected = {};
   const definitions = [
@@ -116,6 +150,16 @@ export function selectPrismaNativeArtifacts(
         throw new Error("prisma_native_artifact_missing");
       const file = path.resolve(files[0]);
       const relative = path.relative(targetRoot, file);
+      if (
+        release &&
+        (relative.split(path.sep)[0] !== "release" ||
+          item.profile?.opt_level !== "s" ||
+          item.profile?.debuginfo !== 0 ||
+          item.profile?.debug_assertions !== false ||
+          item.profile?.overflow_checks !== false ||
+          item.profile?.test !== false)
+      )
+        throw new Error("prisma_native_release_artifact_profile_invalid");
       const stat = fs.lstatSync(file);
       if (
         relative.startsWith("..") ||
@@ -133,6 +177,7 @@ export function selectPrismaNativeArtifacts(
         bytes: stat.size,
         packageId: pkg.id,
         compilerAliases: compilerOwnedLinks(file, targetRoot),
+        ...(release ? { cargoProfile: item.profile } : {}),
       };
     }
   }
@@ -179,11 +224,20 @@ export function verifyPrismaNativeProbeReport(
   provider,
   artifacts,
   sourceCommit,
+  tls,
 ) {
   const expected = [
     ...CHECKS,
     ...(provider === "postgresql"
       ? ["scram-authentication", "scram-over-budget-rejected"]
+      : []),
+    ...(tls
+      ? [
+          "tls-encrypted",
+          "tls-untrusted-ca-rejected",
+          "tls-hostname-rejected",
+          "tls-plaintext-rejected",
+        ]
       : []),
   ];
   const keys = [
@@ -199,6 +253,7 @@ export function verifyPrismaNativeProbeReport(
     "productionApproved",
     "clientVersion",
     ...(provider === "postgresql" ? ["scram"] : []),
+    ...(tls ? ["tls"] : []),
   ];
   if (
     !report ||
@@ -214,6 +269,18 @@ export function verifyPrismaNativeProbeReport(
     report.rowsRemaining !== 0 ||
     report.clientVersion !== "6.19.3" ||
     report.productionApproved !== false ||
+    (tls &&
+      (provider !== "postgresql" ||
+        report.tls?.caSha256 !== tls.caSha256 ||
+        report.tls?.serverSha256 !== tls.serverSha256 ||
+        report.tls?.untrustedCaSha256 !== tls.untrustedCaSha256 ||
+        !["TLSv1.2", "TLSv1.3"].includes(report.tls?.version) ||
+        report.tls?.encrypted !== true ||
+        report.tls?.strict !== true ||
+        report.tls?.controlConnections !== 4 ||
+        report.tls?.untrustedCaRejectionCode !== "P1011" ||
+        report.tls?.hostnameRejectionCode !== "P1011" ||
+        report.tls?.plaintextRejectionCode !== "P1010")) ||
     !Number.isInteger(report.schemaEngineInvocations) ||
     report.schemaEngineInvocations < 2 ||
     (provider === "postgresql" &&
@@ -239,29 +306,59 @@ export async function probePrismaNative({
   metadata,
   run,
   postgresPort,
+  postgresTls = false,
+  release = false,
 }) {
+  if (postgresTls && postgresPort === undefined)
+    throw new Error("prisma_native_probe_arguments_invalid");
   if (postgresPort !== undefined)
     prismaNativeOptions([
       "--native-probe",
+      ...(release ? ["--release"] : []),
       "--postgres-port",
       String(postgresPort),
+      ...(postgresTls ? ["--postgres-tls"] : []),
     ]);
+  const tls = postgresTls ? readPrismaTlsLab(root) : undefined;
   tools.env.GIT_HASH = policy.source.commit;
-  tools.env.CARGO_PROFILE_DEV_DEBUG = "0";
+  const cargoProfile = release
+    ? prismaNativeReleaseProfile(
+        fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
+        tools.env,
+      )
+    : undefined;
+  if (release) tools.env.CARGO_BUILD_JOBS = "1";
+  if (!release) tools.env.CARGO_PROFILE_DEV_DEBUG = "0";
+  const buildArguments = prismaNativeBuildArguments(release);
   const output = execute(
     tools.cargo,
-    prismaNativeBuildArguments(),
+    buildArguments,
     source,
     "native-build",
-    1_800_000,
+    release ? 2_700_000 : 1_800_000,
   );
   const artifacts = selectPrismaNativeArtifacts(
     output,
     metadata,
     tools.env.CARGO_TARGET_DIR,
+    process.platform,
+    release,
   );
   const work = path.join(run, "native-probe");
   fs.mkdirSync(work);
+  if (tls) {
+    fs.mkdirSync(path.join(work, "tls"));
+    for (const role of ["ca", "server", "untrustedCa"]) {
+      const file = path.join(work, "tls", `${role}.crt`);
+      fs.copyFileSync(tls[`${role}File`], file, fs.constants.COPYFILE_EXCL);
+      if (
+        sha(fs.readFileSync(file)) !== tls[`${role}Sha256`] ||
+        fs.lstatSync(file).nlink !== 1
+      )
+        throw new Error("prisma_tls_lab_certificate_invalid");
+      tls[`${role}File`] = file;
+    }
+  }
   const library = path.join(work, "query_engine.node");
   const schema = path.join(
     work,
@@ -323,6 +420,7 @@ export async function probePrismaNative({
       cliHook,
       project,
       ...(provider === "postgresql" ? { postgresPort } : {}),
+      ...(provider === "postgresql" && tls ? { tls } : {}),
     };
     const inputFile = path.join(project, "probe-input.json");
     fs.writeFileSync(inputFile, JSON.stringify(input));
@@ -341,11 +439,16 @@ export async function probePrismaNative({
         provider,
         artifacts,
         policy.source.commit,
+        provider === "postgresql" ? tls : undefined,
       ),
     );
   }
   return {
-    profile: "dev/debug=0",
+    profile: release ? "release/original-fat-lto" : "dev/debug=0",
+    buildArguments,
+    buildJobs: Number(tools.env.CARGO_BUILD_JOBS),
+    ...(release ? { cargoProfile } : {}),
+    ...(tls ? { tlsLab: tls } : {}),
     artifacts,
     results,
     productionApproved: false,
@@ -358,7 +461,10 @@ export async function probePrismaNative({
       ),
     ),
     orchestratorSha256: sha(fs.readFileSync(new URL(import.meta.url))),
+    tlsLabScriptSha256: sha(
+      fs.readFileSync(path.join(root, "scripts/security/prisma-tls-lab.mjs")),
+    ),
     scope:
-      "synthetic client/migration/native-link probes only; not a production binary, TLS, PgBouncer or whole-source approval",
+      "isolated native/client/migration probes; optional original release profile and strict loopback TLS; not PgBouncer, actual application migrations, whole-source or production approval",
   };
 }

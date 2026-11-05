@@ -1052,18 +1052,23 @@ export async function testPrismaSource(
     upstreamUnits = false,
     nativeProbe = false,
     postgresPort,
+    postgresTls = false,
+    release = false,
   } = {},
 ) {
   if (
     (nativeProbe && (assessOnly || upstreamUnits)) ||
-    (!nativeProbe && postgresPort !== undefined)
+    (!nativeProbe && (postgresPort !== undefined || postgresTls || release)) ||
+    (postgresTls && postgresPort === undefined)
   )
     throw new Error("unexpected_prisma_source_arguments");
   if (postgresPort !== undefined)
     prismaNativeOptions([
       "--native-probe",
+      ...(release ? ["--release"] : []),
       "--postgres-port",
       String(postgresPort),
+      ...(postgresTls ? ["--postgres-tls"] : []),
     ]);
   const policyBytes = fs.readFileSync(
     path.join(root, "security/prisma-source-contracts.json"),
@@ -1370,6 +1375,8 @@ export async function testPrismaSource(
       metadata,
       run,
       postgresPort,
+      postgresTls,
+      release,
     });
   if (
     digest(fs.readFileSync(path.join(source, "Cargo.lock"))) !==
@@ -1394,7 +1401,7 @@ export async function testPrismaSource(
     sourceFiles: policy.sourceFiles,
     overrideSourceAuditOk: overrides.sourceAuditOk,
     testScope: nativeProbe
-      ? "debug native NAPI/schema and synthetic migrations/client probes; not release, TLS, PgBouncer, whole-engine or production approval"
+      ? "native NAPI/schema and synthetic migrations/client probes; explicit optional release/TLS evidence only; not PgBouncer, actual app migrations, whole-engine or production approval"
       : "source modules; not NAPI, migrations, database or production approval",
     upstreamUnitFeatures: upstreamUnits && !assessOnly ? UNIT_FEATURES : [],
   };

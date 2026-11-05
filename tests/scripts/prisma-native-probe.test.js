@@ -8,11 +8,18 @@ import yaml from "js-yaml";
 import {
   prismaNativeOptions,
   prismaNativeBuildArguments,
+  prismaNativeReleaseProfile,
   assertPrismaNativeRegistryAssessment,
   selectPrismaNativeArtifacts,
   prismaNativeFixture,
   verifyPrismaNativeProbeReport,
 } from "../../scripts/security/prisma-native-probe.mjs";
+import {
+  prismaTlsLabOptions,
+  preparePrismaTlsLab,
+  readPrismaTlsLab,
+  PRISMA_LAB_IMAGE,
+} from "../../scripts/security/prisma-tls-lab.mjs";
 import { rustBuildEnvironment } from "../../scripts/security/rust-toolchain.mjs";
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
@@ -56,7 +63,30 @@ test("native arguments allow only offline probes or the CI loopback database por
   assert.deepEqual(prismaNativeOptions(["--native-probe"]), {
     nativeProbe: true,
   });
+  assert.deepEqual(prismaNativeOptions(["--native-probe", "--release"]), {
+    nativeProbe: true,
+    release: true,
+  });
   const ci = { CI: "true", GITHUB_ACTIONS: "true" };
+  assert.deepEqual(
+    prismaNativeOptions(
+      [
+        "--native-probe",
+        "--release",
+        "--postgres-port",
+        "54321",
+        "--postgres-tls",
+      ],
+      ci,
+      "linux",
+    ),
+    {
+      nativeProbe: true,
+      release: true,
+      postgresPort: 54321,
+      postgresTls: true,
+    },
+  );
   assert.deepEqual(
     prismaNativeOptions(
       ["--native-probe", "--postgres-port", "54321"],
@@ -73,6 +103,16 @@ test("native arguments allow only offline probes or the CI loopback database por
     ["--native-probe", "--postgres-port", "1evil"],
     ["--native-probe", "--postgres-port", "05432"],
     ["--native-probe", "--postgres-url", "remote"],
+    ["--native-probe", "--postgres-tls"],
+    ["--native-probe", "--release", "--release"],
+    [
+      "--native-probe",
+      "--release",
+      "--postgres-port",
+      "5432",
+      "--postgres-tls",
+      "--postgres-tls",
+    ],
   ])
     assert.throws(
       () => prismaNativeOptions(args, ci, "linux"),
@@ -108,6 +148,171 @@ test("native builds keep both actual packages, frozen dependencies and default f
     "schema-engine-cli",
     "--message-format=json",
   ]);
+  const release = prismaNativeBuildArguments(true);
+  assert.deepEqual(release, [
+    "build",
+    "--release",
+    ...prismaNativeBuildArguments().slice(1),
+  ]);
+  assert.throws(() => prismaNativeBuildArguments("release"), /profile_invalid/);
+});
+
+test("original release LTO/optimization settings and an override-free compiler environment are mandatory", () => {
+  const manifest =
+    '[profile.release]\nlto="fat"\ncodegen-units=1\nopt-level="s"\n[profile.release.package.query-engine-node-api]\nstrip="symbols"\n';
+  assert.equal(
+    prismaNativeReleaseProfile(manifest, { RUSTFLAGS: "" }).lto,
+    "fat",
+  );
+  for (const change of [
+    manifest.replace('"fat"', '"thin"'),
+    manifest.replace("units=1", "units=2"),
+    manifest.replace('level="s"', 'level="0"'),
+    manifest.replace('strip="symbols"', 'strip="none"'),
+  ])
+    assert.throws(
+      () => prismaNativeReleaseProfile(change, { RUSTFLAGS: "" }),
+      /release_profile_invalid/,
+    );
+  for (const env of [
+    { RUSTFLAGS: "-O" },
+    { RUSTFLAGS: "", CARGO_PROFILE_RELEASE_LTO: "off" },
+    { RUSTFLAGS: "", RUSTC_WRAPPER: "compiler-wrapper" },
+  ])
+    assert.throws(
+      () => prismaNativeReleaseProfile(manifest, env),
+      /release_profile_invalid/,
+    );
+});
+
+test("release artifact receipts reject debug outputs even if the same source commit is embedded", (t) => {
+  const f = fixture(t);
+  assert.throws(
+    () =>
+      selectPrismaNativeArtifacts(
+        f.output(),
+        f.metadata,
+        f.root,
+        "win32",
+        true,
+      ),
+    /release_artifact_profile_invalid/,
+  );
+  fs.mkdirSync(path.join(f.root, "release"));
+  for (const [index, file] of [
+    [0, f.library],
+    [1, f.schema],
+  ]) {
+    const target = path.join(f.root, "release", path.basename(file));
+    fs.copyFileSync(file, target);
+    if (index === 0) f.items[index].filenames = [target];
+    else f.items[index].executable = target;
+    f.items[index].profile = {
+      opt_level: "s",
+      debuginfo: 0,
+      debug_assertions: false,
+      overflow_checks: false,
+      test: false,
+    };
+  }
+  const result = selectPrismaNativeArtifacts(
+    f.output(),
+    f.metadata,
+    f.root,
+    "win32",
+    true,
+  );
+  assert.equal(result.library.cargoProfile.opt_level, "s");
+  for (const [key, bad] of [
+    ["opt_level", "0"],
+    ["debuginfo", 2],
+    ["debug_assertions", true],
+    ["overflow_checks", true],
+    ["test", true],
+  ]) {
+    const before = f.items[0].profile[key];
+    f.items[0].profile[key] = bad;
+    assert.throws(
+      () =>
+        selectPrismaNativeArtifacts(
+          f.output(),
+          f.metadata,
+          f.root,
+          "win32",
+          true,
+        ),
+      /release_artifact_profile_invalid/,
+    );
+    f.items[0].profile[key] = before;
+  }
+});
+
+test("TLS lab accepts only an exact CI service container with the immutable synthetic database identity", async () => {
+  const ci = { CI: "true", GITHUB_ACTIONS: "true" },
+    container = "a".repeat(64);
+  assert.equal(
+    prismaTlsLabOptions(["--container", container], ci, "linux"),
+    container,
+  );
+  for (const args of [
+    ["--container", "production"],
+    ["--container", container, "--force"],
+    ["--url", "postgresql://external"],
+  ])
+    assert.throws(
+      () => prismaTlsLabOptions(args, ci, "linux"),
+      /arguments_invalid/,
+    );
+  for (const [env, platform] of [
+    [{}, "linux"],
+    [ci, "win32"],
+  ])
+    assert.throws(
+      () => prismaTlsLabOptions(["--container", container], env, platform),
+      /arguments_invalid/,
+    );
+  // The preparation entrypoint rechecks CI before it can invoke Docker or write files.
+  if (
+    process.platform !== "linux" ||
+    process.env.CI !== "true" ||
+    process.env.GITHUB_ACTIONS !== "true"
+  )
+    await assert.rejects(
+      preparePrismaTlsLab(ROOT, container, () => {
+        throw new Error("must-not-run");
+      }),
+      /arguments_invalid/,
+    );
+  assert.match(PRISMA_LAB_IMAGE, /^postgres:17\.11@sha256:[a-f0-9]{64}$/);
+});
+
+test("TLS evidence rejects absent certificates, forged manifests and private-path aliases", (t) => {
+  const f = fixture(t),
+    root = path.join(f.root, "repo");
+  fs.mkdirSync(path.join(root, ".audit/prisma-tls-lab"), { recursive: true });
+  const lab = path.join(root, ".audit/prisma-tls-lab");
+  fs.writeFileSync(
+    path.join(lab, "manifest.json"),
+    JSON.stringify({
+      image: "unbound",
+      hostname: "localhost",
+      plaintextRejected: true,
+      productionApproved: false,
+    }),
+  );
+  assert.throws(() => readPrismaTlsLab(root), /evidence_invalid/);
+  fs.writeFileSync(
+    path.join(lab, "manifest.json"),
+    JSON.stringify({
+      image: PRISMA_LAB_IMAGE,
+      hostname: "localhost",
+      plaintextRejected: true,
+      productionApproved: false,
+    }),
+  );
+  assert.throws(() => readPrismaTlsLab(root), /ENOENT/);
+  fs.writeFileSync(path.join(lab, "ca.crt"), "not-a-certificate");
+  assert.throws(() => readPrismaTlsLab(root), /certificate_invalid/);
 });
 
 test("new registry findings block native execution without approving unreviewed Git sources", () => {
@@ -311,6 +516,59 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     mutate(value);
     assert.throws(() => verifyPg(value), /evidence_invalid/);
   }
+  const tls = {
+    caSha256: "3".repeat(64),
+    serverSha256: "4".repeat(64),
+    untrustedCaSha256: "5".repeat(64),
+  };
+  const encrypted = {
+    ...structuredClone(pg),
+    checks: [
+      ...pg.checks,
+      "tls-encrypted",
+      "tls-untrusted-ca-rejected",
+      "tls-hostname-rejected",
+      "tls-plaintext-rejected",
+    ],
+    tls: {
+      ...tls,
+      version: "TLSv1.3",
+      encrypted: true,
+      strict: true,
+      controlConnections: 4,
+      untrustedCaRejectionCode: "P1011",
+      hostnameRejectionCode: "P1011",
+      plaintextRejectionCode: "P1010",
+    },
+  };
+  const verifyTls = (r) =>
+    verifyPrismaNativeProbeReport(
+      r,
+      "postgresql",
+      artifacts,
+      report.sourceCommit,
+      tls,
+    );
+  assert.equal(verifyTls(encrypted), encrypted);
+  for (const mutate of [
+    (r) => delete r.tls,
+    (r) => r.checks.pop(),
+    (r) => (r.tls.caSha256 = "0".repeat(64)),
+    (r) => (r.tls.serverSha256 = "0".repeat(64)),
+    (r) => (r.tls.untrustedCaSha256 = "0".repeat(64)),
+    (r) => (r.tls.version = "SSLv3"),
+    (r) => (r.tls.encrypted = false),
+    (r) => (r.tls.strict = false),
+    (r) => (r.tls.controlConnections = 3),
+    (r) => (r.tls.hostnameRejectionCode = "P1001"),
+    (r) => (r.tls.untrustedCaRejectionCode = "P1001"),
+    (r) => (r.tls.plaintextRejectionCode = "P1001"),
+  ]) {
+    const value = structuredClone(encrypted);
+    mutate(value);
+    assert.throws(() => verifyTls(value), /evidence_invalid/);
+  }
+  assert.throws(() => verifyPg(encrypted), /evidence_invalid/);
 });
 
 test("probe children have no production credentials or inherited native overrides", () => {
@@ -346,6 +604,33 @@ test("native workflow has no production settings and keeps every probe as an ind
   assert.equal(pg.env.POSTGRES_INITDB_ARGS, "--auth-host=scram-sha-256");
   assert.deepEqual(pg.ports, ["5432/tcp"]);
   assert.equal(workflow.jobs["windows-sqlite"].services, undefined);
+  const linux = workflow.jobs["linux-postgres"].steps
+    .filter((s) => s.run)
+    .map((s) => s.run);
+  assert.ok(
+    linux.includes(
+      "node scripts/security/prisma-tls-lab.mjs --container ${{ job.services.postgres.id }}",
+    ),
+  );
+  assert.ok(
+    linux.some(
+      (command) =>
+        command.includes("--native-probe --release --postgres-port") &&
+        command.endsWith("--postgres-tls"),
+    ),
+  );
+  assert.ok(
+    workflow.jobs["windows-sqlite"].steps.some(
+      (s) =>
+        s.run ===
+        "node scripts/security/test-prisma-source.mjs --native-probe --release",
+    ),
+  );
+  assert.ok(
+    !read(".github/workflows/prisma-native-probe.yml").includes(
+      ".audit/prisma-tls-lab/",
+    ),
+  );
   for (const job of Object.values(workflow.jobs)) {
     assert.equal(job.steps[0].with["persist-credentials"], false);
     for (const step of job.steps.filter((s) => s.run)) {

@@ -19,6 +19,13 @@ const url = input.provider === "sqlite" ? `file:${path.join(input.project, "prob
   value.username = "oja_probe";
   value.password = "oja-ephemeral-test-only";
   value.search = "schema=public&sslmode=disable&connection_limit=1&connect_timeout=5";
+  if (input.tls) {
+    value.hostname = "localhost";
+    value.searchParams.set("sslmode", "require");
+    value.searchParams.set("sslaccept", "strict");
+    value.searchParams.set("sslcert", input.tls.caFile);
+    for (const role of ["ca", "server", "untrustedCa"]) assert.equal(sha(input.tls[`${role}File`]), input.tls[`${role}Sha256`]);
+  }
   return value.href;
 })();
 const env = {
@@ -78,6 +85,7 @@ const { PrismaClient, Prisma } = require(path.join(input.project, "client/index.
 assert.equal(Prisma.prismaVersion.client, "6.19.3");
 const client = new PrismaClient({ datasourceUrl: url, log: [] });
 let scram;
+let tls;
 try {
   await record("generated-client-native-loader", async () => {
     await client.$connect();
@@ -186,6 +194,41 @@ try {
       scram.rejectionCode = "P1001";
       assert.equal(await client.probeRecord.count(), 0);
     });
+    if (input.tls) {
+      const encrypted = async (probe) => {
+        await probe.$connect();
+        const [row] = await probe.$queryRawUnsafe("SELECT ssl, version, cipher, bits FROM pg_stat_ssl WHERE pid = pg_backend_pid()");
+        assert.equal(row.ssl, true);
+        assert.ok(["TLSv1.2", "TLSv1.3"].includes(row.version));
+        assert.ok(typeof row.cipher === "string" && row.cipher.length > 0 && row.bits >= 128);
+        assert.equal(await probe.probeRecord.count(), 0);
+        return row;
+      };
+      const control = async () => {
+        const probe = new PrismaClient({ datasourceUrl: url, log: [] });
+        try { return await encrypted(probe); } finally { await probe.$disconnect(); }
+      };
+      await record("tls-encrypted", async () => {
+        const row = await encrypted(client);
+        tls = { encrypted: true, strict: true, version: row.version,
+          caSha256: input.tls.caSha256, serverSha256: input.tls.serverSha256,
+          untrustedCaSha256: input.tls.untrustedCaSha256, controlConnections: 1 };
+        await control();
+      });
+      for (const [check, key, code, change] of [
+        ["tls-untrusted-ca-rejected", "untrustedCaRejectionCode", "P1011", value => value.searchParams.set("sslcert", input.tls.untrustedCaFile)],
+        ["tls-hostname-rejected", "hostnameRejectionCode", "P1011", value => { value.hostname = "127.0.0.1"; }],
+        ["tls-plaintext-rejected", "plaintextRejectionCode", "P1010", value => value.searchParams.set("sslmode", "disable")],
+      ]) await record(check, async () => {
+        const invalid = new URL(url); change(invalid);
+        const probe = new PrismaClient({ datasourceUrl: invalid.href, log: [] });
+        try {
+          await assert.rejects(probe.$connect(), error => error.name === "PrismaClientInitializationError" && error.errorCode === code);
+        } finally { await probe.$disconnect(); }
+        tls[key] = code;
+        await control(); tls.controlConnections++;
+      });
+    }
   }
 } finally {
   await client.$disconnect();
@@ -198,4 +241,5 @@ console.log(JSON.stringify({ provider: input.provider, sourceCommit: input.sourc
   loadedLibrarySha256: [...loaded][0], checks, migrationsApplied: 2, rowsRemaining: 0,
   schemaEngineInvocations: fs.readFileSync(path.join(input.project, "schema-engine-invocations.jsonl"), "utf8").trim().split("\n").length,
   clientVersion: Prisma.prismaVersion.client,
+  ...(tls ? { tls } : {}),
   ...(scram ? { scram } : {}), productionApproved: false }));
