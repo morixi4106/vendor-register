@@ -66,7 +66,10 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
         with:
           name: prisma-native-linux-${{ github.run_id }}
-          path: .audit/native-prisma/
+          path: |
+            .audit/native-prisma/
+            !.audit/native-prisma/**/native-probe/*/client/**
+            !.audit/native-prisma/**/native-probe/*/probe.sqlite*
           if-no-files-found: error
           retention-days: 45
 
@@ -102,6 +105,9 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
         with:
           name: prisma-native-windows-${{ github.run_id }}
-          path: .audit/native-prisma/
+          path: |
+            .audit/native-prisma/
+            !.audit/native-prisma/**/native-probe/*/client/**
+            !.audit/native-prisma/**/native-probe/*/probe.sqlite*
           if-no-files-found: error
           retention-days: 45

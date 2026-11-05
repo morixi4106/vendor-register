@@ -221,7 +221,10 @@ export function verifyPrismaNativeProbeReport(
         !Number.isInteger(report.scram.iterations) ||
         report.scram.iterations < 1 ||
         report.scram.iterations > 100000 ||
-        report.scram.rejectedIterations !== 100001))
+        report.scram.rejectedIterations !== 100001 ||
+        report.scram.controlIterations !== 4096 ||
+        report.scram.controlConnections !== 2 ||
+        report.scram.rejectionCode !== "P1001"))
   )
     throw new Error("prisma_native_probe_evidence_invalid");
   return report;

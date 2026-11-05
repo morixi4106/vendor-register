@@ -285,6 +285,9 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
       method: "SCRAM-SHA-256",
       iterations: 4096,
       rejectedIterations: 100001,
+      controlIterations: 4096,
+      controlConnections: 2,
+      rejectionCode: "P1001",
     },
   };
   const verifyPg = (r) =>
@@ -300,6 +303,9 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     (r) => (r.scram.iterations = 100001),
     (r) => (r.scram.rejectedIterations = 100000),
     (r) => (r.scram.method = "trust"),
+    (r) => (r.scram.controlConnections = 1),
+    (r) => (r.scram.controlIterations = 100001),
+    (r) => (r.scram.rejectionCode = "P1000"),
   ]) {
     const value = structuredClone(pg);
     mutate(value);

@@ -147,19 +147,43 @@ try {
       scram = { method: row.method, iterations: row.iterations };
     });
     await record("scram-over-budget-rejected", async () => {
-      await client.$transaction(async tx => {
-        await tx.$executeRawUnsafe("SET LOCAL scram_iterations = 100001");
-        await tx.$executeRawUnsafe("CREATE ROLE oja_probe_over_budget LOGIN PASSWORD 'oja-ephemeral-test-only'");
-      });
       const overBudgetUrl = new URL(url); overBudgetUrl.username = "oja_probe_over_budget";
-      const overBudget = new PrismaClient({ datasourceUrl: overBudgetUrl.href, log: [] });
+      const password = async (iterations, create = false) => {
+        assert.ok(iterations === 4096 || iterations === 100001);
+        await client.$transaction(async tx => {
+          await tx.$executeRawUnsafe(`SET LOCAL scram_iterations = ${iterations}`);
+          await tx.$executeRawUnsafe(create
+            ? "CREATE ROLE oja_probe_over_budget LOGIN PASSWORD 'oja-ephemeral-test-only'"
+            : "ALTER ROLE oja_probe_over_budget PASSWORD 'oja-ephemeral-test-only'");
+        });
+        const [row] = await client.$queryRawUnsafe("SELECT split_part(rolpassword, '$', 1) AS method, split_part(split_part(rolpassword, '$', 2), ':', 1)::int AS iterations FROM pg_authid WHERE rolname = 'oja_probe_over_budget'");
+        assert.equal(row.method, "SCRAM-SHA-256");
+        assert.equal(row.iterations, iterations);
+      };
+      const connect = async (reject = false) => {
+        const probe = new PrismaClient({ datasourceUrl: overBudgetUrl.href, log: [] });
+        try {
+          if (reject) {
+            // The Client maps this IO-boundary rejection to P1001, hiding the Rust message.
+            await assert.rejects(probe.$connect(), error => error.name === "PrismaClientInitializationError" && error.errorCode === "P1001");
+          } else await probe.$connect();
+        } finally { await probe.$disconnect(); }
+      };
+      await password(4096, true);
       try {
-        await assert.rejects(overBudget.$connect(), /SCRAM iteration count exceeds the maximum allowed/);
+        await connect();
+        await password(100001);
+        await connect(true);
+        assert.equal(await client.probeRecord.count(), 0);
+        await password(4096);
+        await connect();
       } finally {
-        await overBudget.$disconnect();
         await client.$executeRawUnsafe("DROP ROLE oja_probe_over_budget");
       }
       scram.rejectedIterations = 100001;
+      scram.controlIterations = 4096;
+      scram.controlConnections = 2;
+      scram.rejectionCode = "P1001";
       assert.equal(await client.probeRecord.count(), 0);
     });
   }
