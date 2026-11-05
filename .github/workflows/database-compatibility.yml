@@ -1,0 +1,89 @@
+name: Isolated database compatibility
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/database-compatibility.yml
+      - scripts/security/*database*.mjs
+      - scripts/security/prisma-tls-lab.mjs
+      - security/prisma-source-contracts.json
+      - security/rust-toolchain.json
+      - prisma/**
+      - tests/fixtures/database/**
+      - tests/fixtures/prisma/probe-cli-hook.cjs
+      - tests/scripts/database-compatibility.test.js
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  postgres-pooler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1
+        env:
+          POSTGRES_USER: oja_probe
+          POSTGRES_DB: oja_probe
+          POSTGRES_PASSWORD: oja-ephemeral-test-only
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U oja_probe -d oja_probe"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node executable
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify database isolation and rejection contracts
+        run: node --test tests/scripts/database-compatibility.test.js
+      - name: Download immutable previously verified release input
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13412822329
+          run-id: 42022061630
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/database-native-input
+      - name: Refresh CI build-tool package indexes
+        run: sudo apt-get update
+      - name: Install C build dependencies only in this disposable runner
+        run: sudo apt-get install --no-install-recommends -y gcc make pkg-config libevent-dev libssl-dev
+      - name: Configure TLS only on this job's disposable PostgreSQL service
+        run: node scripts/security/prisma-tls-lab.mjs --container ${{ job.services.postgres.id }}
+      - name: Verify actual application migrations and both transaction-pool modes
+        run: node scripts/security/test-database-compatibility.mjs --postgres-port ${{ job.services.postgres.ports[5432] }}
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload isolated evidence without granting production approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: database-compatibility-${{ github.run_id }}
+          path: |
+            .audit/database-compatibility/
+            !.audit/database-compatibility/**/node_modules/**
+          if-no-files-found: error
+          retention-days: 45
