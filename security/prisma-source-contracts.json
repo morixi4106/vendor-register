@@ -9,7 +9,7 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "94e266ac54b36aff598850e85ba47dfe7193ffa46bd200dab1c25278eca3ca57"
+    "sha256": "f3d9f8b1f8416b748346686ded72bcfa5eb929b769e78ba9171955720497ebfe"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
@@ -190,7 +190,7 @@
     },
     {
       "path": "security-contracts/src/postgres_contracts.rs",
-      "sha256": "608f804a387f07c84ef513b6f53c5509742992cbe82abd90f500f5defbdf0a41"
+      "sha256": "0735692ca134c84460a1f135ca50b3a469540901d0d2a4ca5afa70616c2b2bdd"
     }
   ],
   "dependencies": {

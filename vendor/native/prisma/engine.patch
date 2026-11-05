@@ -2378,7 +2378,7 @@ new file mode 100644
 +    let mut output = Default::default();
 +    hstore_to_sql(pairs, &mut output).unwrap();
 +    assert_eq!(decoded(&output).unwrap(), pairs);
-+    let ty = postgres_types::Type::new("hstore".to_owned(), 99999, postgres_types::Kind::Simple, "public".to_owned());
++    let ty = postgres_types::Type::new("hstore".to_owned(), 99999, postgres_types::Kind::Simple);
 +    let actual = <std::collections::HashMap<String,Option<String>> as postgres_types::FromSql>::from_sql(&ty,&output).unwrap();
 +    assert_eq!(actual.get(key), Some(&Some("value".to_owned())));
 +}
