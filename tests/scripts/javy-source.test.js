@@ -353,6 +353,7 @@ test("source tests require exact successful nonignored totals and keep the compi
     text,
     /CARGO_CFG_FEATURE|stub_plugin|\.audit\/.*private.*key/,
   );
+  assert.equal([...text.matchAll(/"core\.autocrlf=false"/g)].length, 4);
 });
 
 test("source verification is argument-free CI only and never publishes or installs tools", () => {

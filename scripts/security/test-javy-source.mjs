@@ -459,8 +459,18 @@ export async function testJavySource(root = ROOT) {
   }
   const patchFile = path.join(home, "javy.patch");
   fs.writeFileSync(patchFile, patch, { flag: "wx" });
-  execute("git", ["apply", "--check", patchFile], source, "javy-patch-check");
-  execute("git", ["apply", patchFile], source, "javy-patch");
+  execute(
+    "git",
+    ["-c", "core.autocrlf=false", "apply", "--check", patchFile],
+    source,
+    "javy-patch-check",
+  );
+  execute(
+    "git",
+    ["-c", "core.autocrlf=false", "apply", patchFile],
+    source,
+    "javy-patch",
+  );
   const wirmArchive = path.join(home, "wirm.crate");
   await downloadRustInput(
     "https://static.crates.io/crates/wirm/wirm-5.1.0.crate",
@@ -477,13 +487,13 @@ export async function testJavySource(root = ROOT) {
   fs.writeFileSync(wirmPatchFile, wirmPatch, { flag: "wx" });
   execute(
     "git",
-    ["apply", "--check", wirmPatchFile],
+    ["-c", "core.autocrlf=false", "apply", "--check", wirmPatchFile],
     path.join(source, "vendor/wirm"),
     "wirm-patch-check",
   );
   execute(
     "git",
-    ["apply", wirmPatchFile],
+    ["-c", "core.autocrlf=false", "apply", wirmPatchFile],
     path.join(source, "vendor/wirm"),
     "wirm-patch",
   );

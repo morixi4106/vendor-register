@@ -16,7 +16,7 @@
   },
   "patch": {
     "path": "vendor/native/javy/javy.patch",
-    "sha256": "01fbabc5d1980d3176e33b6cabb092e543942c130382ea16c69e1e2b4b899556"
+    "sha256": "c5d8c3aaf65d60e32ae6849d487a610f47fbfc659e53aeca615cc9a6da715362"
   },
   "lockfile": {
     "path": "vendor/native/javy/Cargo.lock",
@@ -28,7 +28,7 @@
     "sha256": "cbf24563802785ba2885e5357ab24d56a3b13b9884d9102347fe663d712df462",
     "patch": {
       "path": "vendor/native/javy/wirm.patch",
-      "sha256": "c48b42eee524d00f8fddd41bcde26cf26f9b7f24fa56b9ba32c744af5eb84ab7"
+      "sha256": "8d983601eec62a963db509cca64660d292b5d9471a5a6ae8dd20a8232fd5e3fa"
     }
   },
   "sourceFiles": [

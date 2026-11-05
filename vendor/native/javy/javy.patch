@@ -11,7 +11,7 @@ index aad05ee..57f5edb 100644
    "crates/javy",
 @@ -19,7 +20,7 @@ members = [
  resolver = "2"
- 
+
  [workspace.package]
 -version = "9.1.0"
 +version = "9.1.0+oja.1"
@@ -44,7 +44,7 @@ index 8b29041..d02dfd3 100644
 +++ b/crates/profiler/Cargo.toml
 @@ -9,9 +9,9 @@ edition.workspace = true
  license.workspace = true
- 
+
  [dependencies]
 -whamm =  "1.2.0"
 +whamm = "=2.0.1"
