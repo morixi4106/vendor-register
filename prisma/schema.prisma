@@ -173,8 +173,8 @@ model InternationalShippingCountryAvailability {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([countryCode, service])
-  @@index([service, status, checkedAt])
+  @@unique([countryCode, service], map: "international_shipping_country_availabilities_countryCode_servi")
+  @@index([service, status, checkedAt], map: "international_shipping_country_availabilities_service_status_ch")
   @@map("international_shipping_country_availabilities")
 }
 
@@ -216,7 +216,7 @@ model ProductPriceApplyLog {
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([productId, attemptedAt])
-  @@index([shopifyProductId, shopDomain, attemptedAt])
+  @@index([shopifyProductId, shopDomain, attemptedAt], map: "ProductPriceApplyLog_shopifyProductId_shopDomain_attemptedAt_id")
 }
 
 model Vendor {
@@ -366,8 +366,8 @@ model MarketplacePaymentAttempt {
   directCustomerRefund DirectCustomerRefund?
 
   @@unique([shopDomain, attemptKey])
-  @@index([shopDomain, shopifyOrderId, status])
-  @@index([provider, paymentMethod, status, updatedAt])
+  @@index([shopDomain, shopifyOrderId, status], map: "marketplace_payment_attempts_shopDomain_shopifyOrderId_status_i")
+  @@index([provider, paymentMethod, status, updatedAt], map: "marketplace_payment_attempts_provider_paymentMethod_status_upda")
   @@index([requiresReview, updatedAt])
   @@map("marketplace_payment_attempts")
 }
@@ -407,7 +407,7 @@ model PaymentRefundOperation {
   settlementLine   PaymentSettlementLine?
 
   @@index([shopDomain, shopifyOrderId, status])
-  @@index([provider, refundMode, status, updatedAt])
+  @@index([provider, refundMode, status, updatedAt], map: "payment_refund_operations_provider_refundMode_status_updatedAt_")
   @@index([shopifyRefundId])
   @@map("payment_refund_operations")
 }
@@ -696,7 +696,7 @@ model SellerShipmentLine {
   sellerShipment  SellerShipment  @relation(fields: [sellerShipmentId], references: [id], onDelete: Cascade)
   sellerOrderLine SellerOrderLine @relation(fields: [sellerOrderLineId], references: [id], onDelete: Cascade)
 
-  @@unique([sellerShipmentId, shopifyFulfillmentOrderLineItemId])
+  @@unique([sellerShipmentId, shopifyFulfillmentOrderLineItemId], map: "seller_shipment_lines_sellerShipmentId_shopifyFulfillmentOrderL")
   @@index([sellerOrderLineId])
   @@index([shopifyLineItemId])
   @@index([shopifyFulfillmentOrderId])
@@ -785,8 +785,8 @@ model ShopifyOrderQuarantineHold {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  @@unique([shopDomain, fulfillmentOrderId, holdHandle])
-  @@index([shopDomain, shopifyOrderId, status])
+  @@unique([shopDomain, fulfillmentOrderId, holdHandle], map: "shopify_order_quarantine_holds_shopDomain_fulfillmentOrderId_ho")
+  @@index([shopDomain, shopifyOrderId, status], map: "shopify_order_quarantine_holds_shopDomain_shopifyOrderId_status")
   @@index([operationalCaseId])
   @@map("shopify_order_quarantine_holds")
 }
@@ -868,7 +868,7 @@ model OperationalControlExecution {
 
   control OperationalControl @relation(fields: [controlId], references: [id], onDelete: Restrict)
 
-  @@unique([controlId, targetSystem, targetType, targetId, operation])
+  @@unique([controlId, targetSystem, targetType, targetId, operation], map: "operational_control_executions_controlId_targetSystem_targetTyp")
   @@index([controlId, status])
   @@index([status, updatedAt])
   @@map("operational_control_executions")
@@ -890,7 +890,7 @@ model OperationalReadinessAttestation {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  @@unique([checkKey, scopeType, scopeId])
+  @@unique([checkKey, scopeType, scopeId], map: "operational_readiness_attestations_checkKey_scopeType_scopeId_k")
   @@index([status, expiresAt])
   @@map("operational_readiness_attestations")
 }
@@ -1216,8 +1216,8 @@ model SellerAgreementAcceptance {
 
   seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
-  @@index([sellerId, agreementType, version, acceptedAt])
-  @@index([agreementType, version, acceptedAt])
+  @@index([sellerId, agreementType, version, acceptedAt], map: "seller_agreement_acceptances_sellerId_agreementType_version_acc")
+  @@index([agreementType, version, acceptedAt], map: "seller_agreement_acceptances_agreementType_version_acceptedAt_i")
   @@map("seller_agreement_acceptances")
 }
 
@@ -1410,7 +1410,7 @@ model SaleEligibilityProjection {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([shopDomain, productId, destinationCountry, salesChannel])
+  @@unique([shopDomain, productId, destinationCountry, salesChannel], map: "sale_eligibility_projections_shopDomain_productId_destinationCo")
   @@index([status, expiresAt])
   @@index([vendorStoreId, status])
   @@map("sale_eligibility_projections")
@@ -1436,8 +1436,8 @@ model SaleEligibilityProjectionRevision {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([shopDomain, productId, destinationCountry, salesChannel, projectionRevision])
-  @@index([shopDomain, productId, destinationCountry, salesChannel, evaluatedAt, expiresAt])
+  @@unique([shopDomain, productId, destinationCountry, salesChannel, projectionRevision], map: "sale_eligibility_projection_revisions_identity_revision_key")
+  @@index([shopDomain, productId, destinationCountry, salesChannel, evaluatedAt, expiresAt], map: "sale_eligibility_projection_revisions_temporal_idx")
   @@index([status, expiresAt])
   @@map("sale_eligibility_projection_revisions")
 }
@@ -1810,7 +1810,7 @@ model WithdrawalRequestStatusHistory {
 
   withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
 
-  @@index([withdrawalRequestId, createdAt])
+  @@index([withdrawalRequestId, createdAt], map: "withdrawal_request_status_history_withdrawalRequestId_createdAt")
   @@index([toStatus, createdAt])
   @@map("withdrawal_request_status_history")
 }
@@ -1930,8 +1930,8 @@ model WithdrawalLegalBundle {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  @@unique([consumerLawCountry, locale, version])
-  @@index([consumerLawCountry, locale, status])
+  @@unique([consumerLawCountry, locale, version], map: "withdrawal_legal_bundles_country_locale_version_key")
+  @@index([consumerLawCountry, locale, status], map: "withdrawal_legal_bundles_country_locale_status_idx")
   @@map("withdrawal_legal_bundles")
 }
 
@@ -2005,7 +2005,7 @@ model VendorReturnAddressLocale {
 
   returnAddress VendorReturnAddress @relation(fields: [returnAddressId], references: [id], onDelete: Cascade)
 
-  @@unique([returnAddressId, locale])
+  @@unique([returnAddressId, locale], map: "vendor_return_address_locales_address_locale_key")
   @@index([locale])
   @@map("vendor_return_address_locales")
 }
@@ -2327,7 +2327,7 @@ model WithdrawalActualRefundEvent {
   withdrawalRequest WithdrawalRequest                  @relation(fields: [withdrawalRequestId], references: [id], onDelete: Restrict)
   allocations       WithdrawalActualRefundAllocation[]
 
-  @@unique([withdrawalRequestId, shopDomain, shopifyRefundId])
+  @@unique([withdrawalRequestId, shopDomain, shopifyRefundId], map: "withdrawal_actual_refund_events_withdrawalRequestId_shopDomain_")
   @@index([withdrawalRequestId, createdAt])
   @@map("withdrawal_actual_refund_events")
 }
