@@ -1,5 +1,40 @@
 # Production dependency advisories
 
+## Prisma Native Probe Candidate: 2026-11-05
+
+Add a separate, non-promoting native probe workflow. Reuse the exact source
+archive, explicit patches, fixed compiler, locked graphs and real metadata
+checks from the source-contract pipeline. Build the actual default-feature
+query-engine-node-api and schema-engine-cli with a debug profile, not a release
+or a production replacement. Fresh registry findings block native execution;
+unreviewed Git provenance and whole-engine/native production approval stay open.
+
+On both OSs, generate a private Prisma6.19.3 client and apply two synthetic
+migrations twice to a disposable SQLite database. Check actual N-API loading,
+CRUD/CUID, parameterized queries, unique errors, batch and interactive commit/
+rollback, reconnect and cleanup. A loader hook hashes the library actually
+loaded; a separate CLI spawn hook hashes each actual schema-engine invocation.
+Bind both compiled binaries, fixture scripts, workflow, source policy and locks
+to the receipt. Missing checks, changed binaries or production approval claims
+cannot become a passing probe report. Installed application engines, generated
+application client, application schema and real databases are not replaced.
+
+Linux additionally uses an immutable official PostgreSQL17.11 service image,
+random runner loopback port, synthetic database/account and SCRAM host auth.
+No external database URL is accepted. PostgreSQL mode requires explicit CI
+context; children inherit only the existing credential-free build environment.
+Private explicit Prisma configuration disables dotenv loading and client
+auto-installation. Verify real SCRAM authentication and rejection of a separate
+synthetic role with100001 iterations, without exposing its verifier. This is
+not TLS, PgBouncer, production SCRAM configuration, application migrations or
+release-profile verification. A fixture-development run with the original
+installed engine is diagnostic only and never patched-native proof.
+
+CI execution and independent artifact comparison must complete before claiming
+these native probes passed. Existing incident/native promotion gates, main,
+production, Shopify, financial operations and notification suppression remain
+unchanged.
+
 ## Minimatch Advisory Re-review: 2026-11-05
 
 Re-reviewed [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)

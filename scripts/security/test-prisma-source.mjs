@@ -37,6 +37,11 @@ import {
   checkPrismaPostgresMetadata,
   assessPrismaPostgresIdentities,
 } from "./prisma-postgres-source.mjs";
+import {
+  probePrismaNative,
+  prismaNativeOptions,
+  assertPrismaNativeRegistryAssessment,
+} from "./prisma-native-probe.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -1042,8 +1047,24 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
 
 export async function testPrismaSource(
   root = ROOT,
-  { assessOnly = false, upstreamUnits = false } = {},
+  {
+    assessOnly = false,
+    upstreamUnits = false,
+    nativeProbe = false,
+    postgresPort,
+  } = {},
 ) {
+  if (
+    (nativeProbe && (assessOnly || upstreamUnits)) ||
+    (!nativeProbe && postgresPort !== undefined)
+  )
+    throw new Error("unexpected_prisma_source_arguments");
+  if (postgresPort !== undefined)
+    prismaNativeOptions([
+      "--native-probe",
+      "--postgres-port",
+      String(postgresPort),
+    ]);
   const policyBytes = fs.readFileSync(
     path.join(root, "security/prisma-source-contracts.json"),
   );
@@ -1221,6 +1242,7 @@ export async function testPrismaSource(
   // A clean small test graph is not an approval of the complete engine graph.
   if (!contracts.registryAuditOk || !overrides.sourceAuditOk)
     throw new Error("prisma_contract_advisories_unresolved");
+  if (nativeProbe) assertPrismaNativeRegistryAssessment(engine);
   const common = [
     "metadata",
     "--locked",
@@ -1255,7 +1277,7 @@ export async function testPrismaSource(
   json("engine-metadata.json", metadata);
   json("contract-metadata.json", contractMetadata);
   const tests = {};
-  if (!assessOnly) {
+  if (!assessOnly && !nativeProbe) {
     const contractOutput = execute(
       cargo,
       [
@@ -1338,6 +1360,17 @@ export async function testPrismaSource(
     );
     tests.pasteConsumersChecked = true;
   }
+  if (nativeProbe)
+    tests.nativeProbe = await probePrismaNative({
+      root,
+      source,
+      tools,
+      execute,
+      policy,
+      metadata,
+      run,
+      postgresPort,
+    });
   if (
     digest(fs.readFileSync(path.join(source, "Cargo.lock"))) !==
       policy.lockfile.sha256 ||
@@ -1360,8 +1393,9 @@ export async function testPrismaSource(
     contractLockfileSha256: digest(contractLock),
     sourceFiles: policy.sourceFiles,
     overrideSourceAuditOk: overrides.sourceAuditOk,
-    testScope:
-      "source modules; not NAPI, migrations, database or production approval",
+    testScope: nativeProbe
+      ? "debug native NAPI/schema and synthetic migrations/client probes; not release, TLS, PgBouncer, whole-engine or production approval"
+      : "source modules; not NAPI, migrations, database or production approval",
     upstreamUnitFeatures: upstreamUnits && !assessOnly ? UNIT_FEATURES : [],
   };
   json("receipt.json", receipt);
@@ -1378,14 +1412,21 @@ if (
 ) {
   try {
     const args = process.argv.slice(2);
+    const nativeOptions = args.includes("--native-probe")
+      ? prismaNativeOptions(args)
+      : {};
     if (
-      args.length > 1 ||
-      args.some((arg) => !["--assess-only", "--upstream-units"].includes(arg))
+      !nativeOptions.nativeProbe &&
+      (args.length > 1 ||
+        args.some(
+          (arg) => !["--assess-only", "--upstream-units"].includes(arg),
+        ))
     )
       throw new Error("unexpected_prisma_source_arguments");
     const result = await testPrismaSource(ROOT, {
       assessOnly: args.includes("--assess-only"),
       upstreamUnits: args.includes("--upstream-units"),
+      ...nativeOptions,
     });
     console.log(
       JSON.stringify({

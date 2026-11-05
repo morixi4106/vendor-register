@@ -1,0 +1,177 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
+
+const input = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const sha = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+assert.equal(sha(input.library), input.librarySha256);
+assert.equal(sha(input.schema), input.schemaSha256);
+assert.equal(fs.realpathSync(process.cwd()), fs.realpathSync(input.project));
+assert.ok(["sqlite", "postgresql"].includes(input.provider));
+const url = input.provider === "sqlite" ? `file:${path.join(input.project, "probe.sqlite").replaceAll("\\", "/")}` : (() => {
+  assert.equal(process.platform, "linux");
+  assert.ok(Number.isInteger(input.postgresPort) && input.postgresPort > 0 && input.postgresPort <= 65535);
+  const value = new URL("postgresql://127.0.0.1/oja_probe");
+  value.port = String(input.postgresPort);
+  value.username = "oja_probe";
+  value.password = "oja-ephemeral-test-only";
+  value.search = "schema=public&sslmode=disable&connection_limit=1&connect_timeout=5";
+  return value.href;
+})();
+const env = {
+  ...process.env,
+  OJA_PRISMA_PROBE_DATABASE_URL: url,
+  PRISMA_QUERY_ENGINE_LIBRARY: input.library,
+  PRISMA_SCHEMA_ENGINE_BINARY: input.schema,
+  PRISMA_CLIENT_ENGINE_TYPE: "library",
+  PRISMA_CLI_QUERY_ENGINE_TYPE: "library",
+  PRISMA_GENERATE_SKIP_AUTOINSTALL: "1",
+  CHECKPOINT_DISABLE: "1", PRISMA_HIDE_UPDATE_MESSAGE: "1", DO_NOT_TRACK: "1",
+  OJA_PRISMA_PROBE_INPUT: process.argv[2],
+};
+for (const name of Object.keys(process.env)) {
+  assert.ok(!/^(DATABASE_URL|DIRECT_URL|SHOPIFY_|KOMOJU_|RESEND_|GITHUB_TOKEN|GH_TOKEN)/i.test(name));
+}
+Object.assign(process.env, env);
+const command = (args) => {
+  const ledger = path.join(input.project, "schema-engine-invocations.jsonl");
+  const before = fs.existsSync(ledger) ? fs.readFileSync(ledger, "utf8").trim().split("\n").length : 0;
+  const result = spawnSync(process.execPath, ["--require", input.cliHook, input.cli, ...args, "--config", path.join(input.project, "prisma.config.ts")],
+    { cwd: input.project, env, encoding: "utf8", timeout: 45_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  // Only synthetic fixture output; never inherit a production URL or dotenv file.
+  fs.writeFileSync(path.join(input.project, `${args.join("-")}.log`), (result.stdout || "") + (result.stderr || ""));
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
+  assert.ok(!result.stderr.includes("Environment variables loaded from"));
+  if (args[0] === "migrate") {
+    const after = fs.readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse);
+    assert.ok(after.length > before);
+    assert.ok(after.every(item => item.sha256 === input.schemaSha256));
+  }
+};
+const checks = [];
+const record = async (name, action) => { await action(); checks.push(name); };
+const require = createRequire(import.meta.url);
+const loaded = new Set();
+const dlopen = process.dlopen;
+process.dlopen = function(module, filename, ...args) {
+  assert.equal(path.toNamespacedPath(fs.realpathSync(filename)), path.toNamespacedPath(fs.realpathSync(input.library)));
+  assert.equal(sha(filename), input.librarySha256);
+  loaded.add(input.librarySha256);
+  return Reflect.apply(dlopen, this, [module, filename, ...args]);
+};
+await record("native-identity", () => {
+  const native = require(input.library);
+  assert.equal(native.version().commit, input.sourceCommit);
+  assert.equal(typeof native.QueryEngine, "function");
+  const version = spawnSync(input.schema, ["--version"], { env, encoding: "utf8", timeout: 15000, windowsHide: true });
+  assert.equal(version.status, 0);
+  assert.ok(version.stdout.includes(input.sourceCommit));
+});
+command(["generate"]);
+command(["migrate", "deploy"]);
+command(["migrate", "deploy"]);
+const { PrismaClient, Prisma } = require(path.join(input.project, "client/index.js"));
+assert.equal(Prisma.prismaVersion.client, "6.19.3");
+const client = new PrismaClient({ datasourceUrl: url, log: [] });
+let scram;
+try {
+  await record("generated-client-native-loader", async () => {
+    await client.$connect();
+    assert.deepEqual([...loaded], [input.librarySha256]);
+    assert.equal(client._engine.versionInfo.commit, input.sourceCommit);
+  });
+  await record("migration-history", async () => {
+    const rows = await client.$queryRawUnsafe('SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name');
+    assert.deepEqual(rows.map(row => row.migration_name), ["202611050001_initial", "202611050002_label"]);
+    assert.equal(await client.probeRecord.count(), 0);
+  });
+  await record("crud-and-cuid", async () => {
+    const value = await client.probeRecord.create({ data: { key: "native-probe", amount: 2, label: "synthetic" } });
+    assert.match(value.id, /^c[a-z0-9]{24}$/);
+    assert.equal((await client.probeRecord.update({ where: { id: value.id }, data: { amount: { increment: 3 } } })).amount, 5);
+    assert.equal((await client.probeRecord.findUnique({ where: { id: value.id } })).label, "synthetic");
+  });
+  await record("parameterized-query", async () => {
+    const key = "' OR 1=1; --";
+    await client.probeRecord.create({ data: { key, amount: 7 } });
+    const rows = await client.$queryRaw`SELECT "amount" FROM "ProbeRecord" WHERE "key" = ${key}`;
+    assert.equal(rows.length, 1); assert.equal(rows[0].amount, 7);
+    assert.equal(await client.probeRecord.count(), 2);
+  });
+  await record("unique-error", async () => {
+    await assert.rejects(client.probeRecord.create({ data: { key: "native-probe" } }), error => error.code === "P2002");
+    assert.equal(await client.probeRecord.count(), 2);
+  });
+  await record("batch-transaction", async () => {
+    await client.$transaction([
+      client.probeRecord.create({ data: { key: "batch-a" } }),
+      client.probeRecord.create({ data: { key: "batch-b" } }),
+    ]);
+    await assert.rejects(client.$transaction([
+      client.probeRecord.create({ data: { key: "batch-rolled-back" } }),
+      client.probeRecord.create({ data: { key: "batch-a" } }),
+    ]), error => error.code === "P2002");
+    assert.equal(await client.probeRecord.findUnique({ where: { key: "batch-rolled-back" } }), null);
+  });
+  await record("interactive-commit", async () => {
+    await client.$transaction(async tx => {
+      await tx.probeRecord.create({ data: { key: "interactive" } });
+      assert.equal(await tx.probeRecord.count(), 5);
+    });
+    assert.ok(await client.probeRecord.findUnique({ where: { key: "interactive" } }));
+  });
+  await record("interactive-rollback", async () => {
+    await assert.rejects(client.$transaction(async tx => {
+      await tx.probeRecord.create({ data: { key: "interactive-rolled-back" } });
+      throw new Error("synthetic_rollback");
+    }), /synthetic_rollback/);
+    assert.equal(await client.probeRecord.findUnique({ where: { key: "interactive-rolled-back" } }), null);
+  });
+  await record("reconnect", async () => {
+    await client.$disconnect(); await client.$connect();
+    assert.equal(await client.probeRecord.count(), 5);
+  });
+  await record("cleanup", async () => {
+    assert.equal((await client.probeRecord.deleteMany()).count, 5);
+    assert.equal(await client.probeRecord.count(), 0);
+  });
+  if (input.provider === "postgresql") {
+    await record("scram-authentication", async () => {
+      const [row] = await client.$queryRawUnsafe("SELECT split_part(rolpassword, '$', 1) AS method, split_part(split_part(rolpassword, '$', 2), ':', 1)::int AS iterations FROM pg_authid WHERE rolname = current_user");
+      assert.equal(row.method, "SCRAM-SHA-256");
+      assert.ok(Number.isInteger(row.iterations) && row.iterations > 0 && row.iterations <= 100000);
+      scram = { method: row.method, iterations: row.iterations };
+    });
+    await record("scram-over-budget-rejected", async () => {
+      await client.$transaction(async tx => {
+        await tx.$executeRawUnsafe("SET LOCAL scram_iterations = 100001");
+        await tx.$executeRawUnsafe("CREATE ROLE oja_probe_over_budget LOGIN PASSWORD 'oja-ephemeral-test-only'");
+      });
+      const overBudgetUrl = new URL(url); overBudgetUrl.username = "oja_probe_over_budget";
+      const overBudget = new PrismaClient({ datasourceUrl: overBudgetUrl.href, log: [] });
+      try {
+        await assert.rejects(overBudget.$connect(), /SCRAM iteration count exceeds the maximum allowed/);
+      } finally {
+        await overBudget.$disconnect();
+        await client.$executeRawUnsafe("DROP ROLE oja_probe_over_budget");
+      }
+      scram.rejectedIterations = 100001;
+      assert.equal(await client.probeRecord.count(), 0);
+    });
+  }
+} finally {
+  await client.$disconnect();
+  process.dlopen = dlopen;
+}
+assert.equal(sha(input.library), input.librarySha256);
+assert.equal(sha(input.schema), input.schemaSha256);
+console.log(JSON.stringify({ provider: input.provider, sourceCommit: input.sourceCommit,
+  librarySha256: input.librarySha256, schemaSha256: input.schemaSha256,
+  loadedLibrarySha256: [...loaded][0], checks, migrationsApplied: 2, rowsRemaining: 0,
+  schemaEngineInvocations: fs.readFileSync(path.join(input.project, "schema-engine-invocations.jsonl"), "utf8").trim().split("\n").length,
+  clientVersion: Prisma.prismaVersion.client,
+  ...(scram ? { scram } : {}), productionApproved: false }));
