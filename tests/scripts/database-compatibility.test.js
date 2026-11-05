@@ -251,8 +251,23 @@ test("native reuse cannot substitute a current unrelated build or treat prior ap
     () => selectDatabaseNativeInput(ROOT, downloaded),
     /evidence_invalid/,
   );
-  assert.equal(DATABASE_NATIVE_INPUT.run, "42022061630");
-  assert.equal(DATABASE_NATIVE_INPUT.artifactId, "13412822329");
+  assert.deepEqual(DATABASE_NATIVE_INPUT, {
+    run: "42038861752",
+    head: "58db7772b94d294202ae4961d65b8c72d5ca57e2",
+    artifactId: "13421125529",
+    policySha256:
+      "2da8f59fe8bf52764c1097bbf5f77766313ea7e9bd94857aa0f6c9cee904d217",
+    librarySha256:
+      "097b6f7d68a6ea3770d599b9f7b38544c38489e1c1b3775e3d2736407b9e2aa5",
+    schemaSha256:
+      "61ebb54084936ef7679d0b6c2e8f34a16d00aad6196e9c892833e0c990f6ee3f",
+  });
+  assert.equal(
+    DATABASE_NATIVE_INPUT.policySha256,
+    sha(
+      fs.readFileSync(path.join(ROOT, "security/prisma-source-contracts.json")),
+    ),
+  );
 });
 
 test("foundation restores only the historical missing tables without changing existing migration files", () => {
