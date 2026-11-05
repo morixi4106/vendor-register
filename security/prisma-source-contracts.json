@@ -9,11 +9,11 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "04a6eaba091f52a8f6d7622a12b86d3a747e450e548fec8a7fbdf35afaf6b117"
+    "sha256": "3c555a333dcdb42dd6ccd28b7454aff45cef95f9614f190404e7e84d9659279a"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
-    "sha256": "eb7ed64a4ecc3b303ee1ba846a7fd0bac4e8d5e6b49a376d1ab0757ccbd498e1"
+    "sha256": "89eb140f96af92f46a555f1633b12cdfdce74e3d1f32a086cfd0287839675b50"
   },
   "contractLockfile": {
     "path": "vendor/native/prisma/contracts.Cargo.lock",
@@ -22,7 +22,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "ba4ee3f821f852cf9aba5e2af8e3a108138a03da7010eb4003b5d7364c231d0c"
+      "sha256": "d300e60206e36a6e39a59d5abaf95f83059a41c7d3ed9df07652b7c020f65f1e"
     },
     {
       "path": "query-engine/core/src/interactive_transactions/mod.rs",
@@ -504,6 +504,55 @@
     "pastey": "0.2.3",
     "codspeed-criterion-compat": "6.0.0",
     "codspeed-criterion-compat-walltime": "6.0.0"
+  },
+  "graphqlSource": {
+    "name": "graphql-parser",
+    "upstreamVersion": "0.3.0",
+    "version": "0.3.0+oja.1",
+    "repository": "prisma/graphql-parser",
+    "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
+    "sha256": "178523e71418f058b4b0eeb829b2c8b36064378d77eb83707130fb2e9916653e",
+    "reviewStatus": "UNREVIEWED",
+    "maximumNesting": 50,
+    "referenceCommit": "d19155f5f9206662964e388e80c68b85f3edb09a",
+    "patch": {
+      "path": "vendor/native/prisma/graphql.patch",
+      "sha256": "97a6b787a28f548bf7928a529ea094f1f0a6511ff5e476d9cf764405d9135bdb"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "a8fc77b2350028bfbbd590ff150409593ce3b4eaca52685ced30806999332e7d"
+      },
+      {
+        "path": "LICENSE-APACHE",
+        "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+      },
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "245066e084429ef1829fdf2dd80ea223342cd62ccfac5b92d9921de350a3af9f"
+      },
+      {
+        "path": "src/lib.rs",
+        "sha256": "aa6a66b1212126e674035a5ae15a653f634ccd138ce6f53f1bd2dde247628d1d"
+      },
+      {
+        "path": "src/tokenizer.rs",
+        "sha256": "da5fb5ad022b2bce9d92369549b34878d89a442268fd0561164f1d6fd8eef16d"
+      },
+      {
+        "path": "src/query/grammar.rs",
+        "sha256": "b6a6366c4b57496788dce65321b41af3f007893d79fd8c89f46b80dff58105d9"
+      },
+      {
+        "path": "src/schema/grammar.rs",
+        "sha256": "3c9623cd24d35849312f9cfe9b765729863e7df408c20ce9e3568dc6741cafab"
+      },
+      {
+        "path": "src/oja_security_contracts.rs",
+        "sha256": "c0714c30e2dc78b86aaa06e5a96f80f6cdfdd039a2ec42d0dd40463afb4bbbaf"
+      }
+    ]
   },
   "postgresSource": {
     "repository": "prisma/rust-postgres",

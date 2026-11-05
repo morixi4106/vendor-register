@@ -13,6 +13,13 @@ import {
 import { scanRustLockfile } from "./rust-source-audit.mjs";
 import { assessPrismaGitIdentities } from "./prisma-git-assessment.mjs";
 import {
+  validatePrismaGraphqlSource,
+  preparePrismaGraphqlSource,
+  checkPrismaGraphqlWiring,
+  checkPrismaGraphqlMetadata,
+  prismaGraphqlArguments,
+} from "./prisma-graphql-source.mjs";
+import {
   validatePrismaMysqlSources,
   preparePrismaMysqlSources,
   checkPrismaMysqlWiring,
@@ -149,6 +156,7 @@ export function validatePrismaSourcePolicy(policy) {
       "cuidSource",
       "winauthSource",
       "postgresSource",
+      "graphqlSource",
       "cliVersion",
       "httpClientVersion",
       "httpServerDependencies",
@@ -248,6 +256,7 @@ export function validatePrismaSourcePolicy(policy) {
   validatePrismaCuidSource(policy.cuidSource);
   validatePrismaWinauthSource(policy.winauthSource);
   validatePrismaPostgresSource(policy.postgresSource);
+  validatePrismaGraphqlSource(policy.graphqlSource);
   return policy;
 }
 
@@ -1026,6 +1035,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     cuidSource: policy.cuidSource,
     winauthSource: policy.winauthSource,
     postgresSource: policy.postgresSource,
+    graphqlSource: policy.graphqlSource,
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
     httpServerDependencies: policy.httpServerDependencies,
@@ -1051,6 +1061,7 @@ export async function testPrismaSource(
   {
     assessOnly = false,
     upstreamUnits = false,
+    graphqlOnly = false,
     nativeProbe = false,
     postgresPort,
     postgresTls = false,
@@ -1058,7 +1069,8 @@ export async function testPrismaSource(
   } = {},
 ) {
   if (
-    (nativeProbe && (assessOnly || upstreamUnits)) ||
+    (nativeProbe && (assessOnly || upstreamUnits || graphqlOnly)) ||
+    (graphqlOnly && (assessOnly || upstreamUnits)) ||
     (!nativeProbe && (postgresPort !== undefined || postgresTls || release)) ||
     (postgresTls && postgresPort === undefined)
   )
@@ -1088,6 +1100,7 @@ export async function testPrismaSource(
   prismaSourceInput(root, policy.cuidSource.patch);
   prismaSourceInput(root, policy.winauthSource.patch);
   prismaSourceInput(root, policy.postgresSource.patch);
+  prismaSourceInput(root, policy.graphqlSource.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -1196,6 +1209,14 @@ export async function testPrismaSource(
     execute,
     prismaSourceInput,
   );
+  await preparePrismaGraphqlSource(
+    root,
+    source,
+    cache,
+    policy.graphqlSource,
+    execute,
+    prismaSourceInput,
+  );
   execute(
     "git",
     [
@@ -1215,6 +1236,7 @@ export async function testPrismaSource(
     "patch",
   );
   checkPrismaSourceWiring(source, policy);
+  checkPrismaGraphqlWiring(source, policy.graphqlSource, prismaSourceInput);
   fs.writeFileSync(path.join(source, "Cargo.lock"), lock);
   fs.writeFileSync(
     path.join(source, "security-contracts/Cargo.lock"),
@@ -1280,12 +1302,35 @@ export async function testPrismaSource(
     contracts: true,
     target: tools.receipt.target,
   });
+  checkPrismaGraphqlMetadata(metadata, source, policy.graphqlSource);
   json("engine-metadata.json", metadata);
   json("contract-metadata.json", contractMetadata);
   const gitAssessment = await assessPrismaGitIdentities(policy, lock, metadata);
   json("git-original-identity-assessment.json", gitAssessment);
   const tests = {};
   if (!assessOnly && !nativeProbe) {
+    tests.graphql = rustTestTotals(
+      execute(
+        cargo,
+        prismaGraphqlArguments(),
+        source,
+        "graphql-contracts",
+        900_000,
+      ),
+      18,
+    );
+    tests.graphqlUpstream = rustTestTotals(
+      execute(
+        cargo,
+        ["test", "--locked", "--package", "graphql-parser", "--lib"],
+        source,
+        "graphql-upstream",
+        900_000,
+      ),
+      52,
+    );
+  }
+  if (!assessOnly && !nativeProbe && !graphqlOnly) {
     const contractOutput = execute(
       cargo,
       [
@@ -1390,6 +1435,7 @@ export async function testPrismaSource(
   )
     throw new Error("prisma_lock_changed_during_test");
   checkPrismaSourceWiring(source, policy);
+  checkPrismaGraphqlWiring(source, policy.graphqlSource, prismaSourceInput);
   const receipt = {
     ...prismaSourceReceipt(
       policy,
@@ -1404,9 +1450,11 @@ export async function testPrismaSource(
     sourceFiles: policy.sourceFiles,
     overrideSourceAuditOk: overrides.sourceAuditOk,
     gitIdentityAssessmentSha256: digest(JSON.stringify(gitAssessment)),
-    testScope: nativeProbe
-      ? "native NAPI/schema and synthetic migrations/client probes; explicit optional release/TLS evidence only; not PgBouncer, actual app migrations, whole-engine or production approval"
-      : "source modules; not NAPI, migrations, database or production approval",
+    testScope: graphqlOnly
+      ? "actual patched GraphQL parser contracts and original library units only; not complete engine, NAPI, database or production approval"
+      : nativeProbe
+        ? "native NAPI/schema and synthetic migrations/client probes; explicit optional release/TLS evidence only; not PgBouncer, actual app migrations, whole-engine or production approval"
+        : "source modules; not NAPI, migrations, database or production approval",
     upstreamUnitFeatures: upstreamUnits && !assessOnly ? UNIT_FEATURES : [],
   };
   json("receipt.json", receipt);
@@ -1430,13 +1478,17 @@ if (
       !nativeOptions.nativeProbe &&
       (args.length > 1 ||
         args.some(
-          (arg) => !["--assess-only", "--upstream-units"].includes(arg),
+          (arg) =>
+            !["--assess-only", "--upstream-units", "--graphql-only"].includes(
+              arg,
+            ),
         ))
     )
       throw new Error("unexpected_prisma_source_arguments");
     const result = await testPrismaSource(ROOT, {
       assessOnly: args.includes("--assess-only"),
       upstreamUnits: args.includes("--upstream-units"),
+      graphqlOnly: args.includes("--graphql-only"),
       ...nativeOptions,
     });
     console.log(

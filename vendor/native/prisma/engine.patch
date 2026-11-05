@@ -5,7 +5,7 @@ index 307dd8c..258fb90 100644
 @@ -1,5 +1,6 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres", "vendor/graphql"]
  members = [
      "schema-engine/cli",
      "schema-engine/commands",
@@ -18,7 +18,9 @@ index 307dd8c..258fb90 100644
  derive_more = "0.99"
  either = "1"
  enumflags2 = "0.7"
-@@ -78,25 +79,27 @@ graphql-parser = { git = "https://github.com/prisma/graphql-parser" }
+@@ -77,26 +78,28 @@
+-graphql-parser = { git = "https://github.com/prisma/graphql-parser" }
++graphql-parser = { path = "vendor/graphql", version = "=0.3.0+oja.1" }
  hashbrown = "0.16"
  heck = "0.4"
  hex = "0.4"

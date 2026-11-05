@@ -12,6 +12,7 @@ on:
       - vendor/native/prisma/**
       - tests/scripts/prisma-native-probe.test.js
       - tests/scripts/prisma-git-assessment.test.js
+      - tests/scripts/prisma-graphql-source.test.js
       - tests/fixtures/prisma/**
       - package.json
       - package-lock.json
@@ -57,7 +58,7 @@ jobs:
       - name: Install without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify native isolation and evidence rejection cases
-        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js
+        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js tests/scripts/prisma-graphql-source.test.js
       - name: Configure TLS only on this job's disposable PostgreSQL service
         run: node scripts/security/prisma-tls-lab.mjs --container ${{ job.services.postgres.id }}
       - name: Build original release profile and probe ephemeral SQLite and strict TLS PostgreSQL
@@ -98,7 +99,7 @@ jobs:
       - name: Install without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify native isolation and evidence rejection cases
-        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js
+        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js tests/scripts/prisma-graphql-source.test.js
       - name: Build original release profile and probe only ephemeral SQLite
         run: node scripts/security/test-prisma-source.mjs --native-probe --release
       - name: Reject tracked changes

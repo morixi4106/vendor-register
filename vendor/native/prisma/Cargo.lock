@@ -1798,8 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-parser"
-version = "0.3.0"
-source = "git+https://github.com/prisma/graphql-parser#6a3f58bd879065588e710cb02b5bd30c1ce182c3"
+version = "0.3.0+oja.1"
 dependencies = [
  "combine 3.8.1",
  "indexmap 1.9.3",

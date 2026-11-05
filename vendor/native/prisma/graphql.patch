@@ -1,0 +1,147 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 41aba57..3ffe899 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,7 +12,7 @@ keywords = ["graphql", "parser"]
+ license = "MIT/Apache-2.0"
+ name = "graphql-parser"
+ readme = "README.md"
+-version = "0.3.0"
++version = "0.3.0+oja.1"
+ 
+ [dependencies]
+ combine = "3.2.0"
+diff --git a/src/lib.rs b/src/lib.rs
+index 3649bdf..04d8572 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -99,6 +99,8 @@ mod common;
+ mod format;
+ mod position;
+ mod tokenizer;
++#[cfg(test)]
++mod oja_security_contracts;
+ mod helpers;
+ pub mod query;
+ pub mod schema;
+diff --git a/src/tokenizer.rs b/src/tokenizer.rs
+index 72cea08..299ed4f 100644
+--- a/src/tokenizer.rs
++++ b/src/tokenizer.rs
+@@ -124,6 +124,32 @@ fn check_float(value: &str, exponent: Option<usize>, real: Option<usize>)
+ }
+ 
+ impl<'a> TokenStream<'a> {
++    pub fn check_recursion_limit(s: &'a str) -> Result<(), Errors<Token<'a>, Token<'a>, Pos>> {
++        // Scan with the original lexer before any recursive grammar or AST allocation.
++        // The upstream parser uses the same limit (graphql-rust/graphql-parser d19155f).
++        let mut tokens = TokenStream::new(s);
++        let mut nesting: usize = 0;
++        while tokens.off < tokens.buf.len() {
++            let position = tokens.position;
++            let token = tokens.uncons().map_err(|e| Errors::new(position, e))?;
++            if token.kind != Kind::Punctuator { continue; }
++            match token.value {
++                "(" | "[" | "{" => {
++                    if nesting == 50 {
++                        return Err(Errors::new(position, Error::message_static_message("Recursion limit exceeded")));
++                    }
++                    nesting += 1;
++                }
++                ")" | "]" | "}" => {
++                    // Leave invalid pair diagnostics to the original grammar, like upstream.
++                    nesting = nesting.saturating_sub(1);
++                }
++                _ => {}
++            }
++        }
++        Ok(())
++    }
++
+     pub fn new(s: &str) -> TokenStream {
+         let mut me = TokenStream {
+             buf: s,
+diff --git a/src/query/grammar.rs b/src/query/grammar.rs
+index 08c69ce..b12a20d 100644
+--- a/src/query/grammar.rs
++++ b/src/query/grammar.rs
+@@ -196,6 +196,7 @@ pub fn definition<'a, S>(input: &mut TokenStream<'a>)
+ pub fn parse_query<'a, S>(s: &'a str) -> Result<Document<'a, S>, ParseError> 
+     where S: Text<'a>,
+ {
++    TokenStream::check_recursion_limit(s)?;
+     let mut tokens = TokenStream::new(s);
+     let (doc, _) = many1(parser(definition))
+         .map(|d| Document { definitions: d })
+diff --git a/src/schema/grammar.rs b/src/schema/grammar.rs
+index 4dc4788..3f6cde5 100644
+--- a/src/schema/grammar.rs
++++ b/src/schema/grammar.rs
+@@ -559,6 +559,7 @@ pub fn definition<'a, T>(input: &mut TokenStream<'a>)
+ pub fn parse_schema<'a, T>(s: &'a str) -> Result<Document<'a, T>, ParseError>
+     where T: Text<'a>,
+ {
++    TokenStream::check_recursion_limit(s)?;
+     let mut tokens = TokenStream::new(s);
+     let (doc, _) = many1(parser(definition))
+         .map(|d| Document { definitions: d })
+diff --git a/src/oja_security_contracts.rs b/src/oja_security_contracts.rs
+new file mode 100644
+index 0000000..6174745
+--- /dev/null
++++ b/src/oja_security_contracts.rs
+@@ -0,0 +1,54 @@
++use crate::{parse_query, parse_schema};
++
++fn nested(depth: usize) -> String {
++    format!("{}id{}", "{a ".repeat(depth), "}".repeat(depth))
++}
++fn rejected(query: &str) {
++    let error = parse_query::<String>(query).unwrap_err().to_string();
++    assert!(error.contains("Recursion limit exceeded"), "{}", error);
++}
++
++#[test] fn simple_query() { assert!(parse_query::<String>("{a}").is_ok()); }
++#[test] fn named_mutation() { assert!(parse_query::<String>("mutation M {a(value: 1)}").is_ok()); }
++#[test] fn selection_5000() { rejected(&nested(5000)); }
++#[test] fn inline_fragments() { rejected(&format!("{}a{}", "{... on Q ".repeat(5000), "}".repeat(5000))); }
++#[test] fn list_values() { rejected(&format!("{{a(value: {}1{})}}", "[".repeat(5000), "]".repeat(5000))); }
++#[test] fn object_values() { rejected(&format!("{{a(value: {}1{})}}", "{v:".repeat(5000), "}".repeat(5000))); }
++#[test] fn variable_types() { rejected(&format!("query Q($v:{}Int{}){{a}}", "[".repeat(5000), "]".repeat(5000))); }
++#[test] fn schema_types() {
++    let schema = format!("type Q{{a:{}Int{}}}", "[".repeat(5000), "]".repeat(5000));
++    assert!(parse_schema::<String>(&schema).unwrap_err().to_string().contains("Recursion limit exceeded"));
++}
++#[test] fn exact_limit() { assert!(parse_query::<String>(&nested(50)).is_ok()); }
++#[test] fn above_limit() { rejected(&nested(51)); }
++#[test] fn wide_not_deep() {
++    assert!(parse_query::<String>(&format!("{{{}}}", "a ".repeat(1000))).is_ok());
++}
++#[test] fn quoted_delimiters() {
++    assert!(parse_query::<String>(&format!("{{a(value:\"{}\")}}", "{}[]()".repeat(1000))).is_ok());
++}
++#[test] fn block_string_delimiters() {
++    assert!(parse_query::<String>(&format!("{{a(value:\"\"\"{}\"\"\")}}", "{}[]()\n".repeat(1000))).is_ok());
++}
++#[test] fn escaped_quotes() {
++    assert!(parse_query::<String>(r#"{a(value:"\"{{[]}}\"" )}"#).is_ok());
++}
++#[test] fn comments_and_bom() {
++    assert!(parse_query::<String>(&format!("\u{feff}# {}\n{{a}}", "[({".repeat(1000))).is_ok());
++}
++#[test] fn malformed_is_error() {
++    for query in &["{a(]}", "{a", "}{{", "{a(value:\"unterminated)}"] {
++        assert!(parse_query::<String>(query).is_err());
++    }
++}
++#[test] fn failure_does_not_poison_next_parse() {
++    for _ in 0..20 { rejected(&nested(51)); assert!(parse_query::<String>("{a}").is_ok()); }
++}
++#[test] fn deterministic_depth_corpus() {
++    for depth in 1..=100 {
++        let query = nested(depth);
++        assert_eq!(parse_query::<String>(&query).is_ok(), depth <= 50);
++        let schema = format!("type Q{{a:{}Int{}}}", "[".repeat(depth), "]".repeat(depth));
++        assert_eq!(parse_schema::<String>(&schema).is_ok(), depth < 50);
++    }
++}

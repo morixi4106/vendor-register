@@ -436,6 +436,7 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     checks: [
       "native-identity",
       "generated-client-native-loader",
+      "graphql-depth-limit",
       "migration-history",
       "crud-and-cuid",
       "parameterized-query",
@@ -451,6 +452,12 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     schemaEngineInvocations: 2,
     productionApproved: false,
     clientVersion: "6.19.3",
+    graphql: {
+      maximumNesting: 50,
+      rejected: 6,
+      acceptedLexicalCases: 3,
+      controlQueries: 18,
+    },
   };
   const verify = (value) =>
     verifyPrismaNativeProbeReport(
@@ -462,6 +469,15 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
   assert.equal(verify(report), report);
   for (const mutate of [
     (r) => r.checks.pop(),
+    (r) => {
+      r.graphql.controlQueries = 0;
+    },
+    (r) => {
+      r.graphql.maximumNesting = 5000;
+    },
+    (r) => {
+      delete r.graphql;
+    },
     (r) => r.checks.reverse(),
     (r) => (r.productionApproved = true),
     (r) => (r.wholeEngineVerified = true),

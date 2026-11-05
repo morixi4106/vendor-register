@@ -1,0 +1,56 @@
+name: GraphQL parser source regression tests
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-graphql-contracts.yml
+      - security/prisma-source-contracts.json
+      - security/rust-toolchain.json
+      - scripts/security/*prisma*.mjs
+      - scripts/security/rust-toolchain.mjs
+      - scripts/security/rust-source-audit.mjs
+      - vendor/native/prisma/**
+      - tests/scripts/prisma-graphql-source.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  graphql-contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify bindings and rejection cases
+        run: node --test tests/scripts/prisma-graphql-source.test.js tests/scripts/prisma-git-assessment.test.js
+      - name: Test the actual patched parser and original library units
+        run: node scripts/security/test-prisma-source.mjs --graphql-only
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload evidence without native or production approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: graphql-parser-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/native-prisma/
+          if-no-files-found: error
+          retention-days: 45

@@ -258,6 +258,14 @@ export function prismaPatchedGitSources(policy) {
       commit: policy.postgresSource.commit,
       archiveSha256: policy.postgresSource.sha256,
     })),
+    {
+      name: policy.graphqlSource.name,
+      version: policy.graphqlSource.version,
+      upstreamVersion: policy.graphqlSource.upstreamVersion,
+      repository: policy.graphqlSource.repository,
+      commit: policy.graphqlSource.commit,
+      archiveSha256: policy.graphqlSource.sha256,
+    },
   ].map((entry) => ({
     ...entry,
     reason: "git_derived_override_requires_review",

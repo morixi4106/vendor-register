@@ -9,12 +9,6 @@ const GIT = [
     "4e84cf3d5013b4c92eb81d7ba90cd1c1c01c6805",
   ],
   [
-    "graphql-parser",
-    "0.3.0",
-    "prisma/graphql-parser",
-    "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
-  ],
-  [
     "tiberius",
     "0.13.0",
     "prisma/tiberius",
@@ -70,6 +64,7 @@ export function prismaGitIdentities(policy, lockBytes, metadata) {
     };
   });
   for (const [entry, packages] of [
+    [policy.graphqlSource, [policy.graphqlSource]],
     [policy.mysqlSources[0], [policy.mysqlSources[0]]],
     [policy.cuidSource, policy.cuidSource.packages],
     [policy.postgresSource, policy.postgresSource.packages],
@@ -100,7 +95,7 @@ export function prismaGitIdentities(policy, lockBytes, metadata) {
   if (
     packages.size !== metadata.packages.length ||
     nodes.size !== metadata.resolve.nodes.length ||
-    metadata.packages.filter((p) => p.source?.startsWith("git+")).length !== 4
+    metadata.packages.filter((p) => p.source?.startsWith("git+")).length !== 3
   )
     throw new Error("prisma_git_metadata_invalid");
   for (const node of nodes.values()) {

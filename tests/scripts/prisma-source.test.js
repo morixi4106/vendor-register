@@ -229,12 +229,13 @@ test("Prisma recipe binds the source patch and both complete lock graphs", () =>
     whole.packages.find((pkg) => pkg.name === "lru" && pkg.version === "0.7.8"),
     undefined,
   );
-  assert.equal(whole.unresolved.length, 4);
+  assert.equal(whole.unresolved.length, 3);
   assert.equal(
     whole.unresolved.length +
       policy.mysqlSources.filter((entry) => entry.gitSource).length +
       policy.cuidSource.packages.length +
-      policy.postgresSource.packages.length,
+      policy.postgresSource.packages.length +
+      1,
     13,
   );
   assert.equal(contracts.packages.length, 368);
@@ -1542,7 +1543,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   const engine = {
     packageCount: 640,
     findings: Array(34).fill({}),
-    unresolved: Array(4).fill({}),
+    unresolved: Array(3).fill({}),
     sourceAuditOk: false,
   };
   const contracts = {
@@ -1559,8 +1560,8 @@ test("clean contract registry scans never approve a path-converted Git source or
   assert.equal(receipt.artifactStatus, "NOT_VERIFIED");
   assert.equal(receipt.engineAdvisoryMatches, 34);
   assert.equal(receipt.unreviewedGitSources, 13);
-  assert.equal(receipt.unreviewedPatchedGitSources, 9);
-  assert.equal(receipt.contractUnreviewedGitSources, 9);
+  assert.equal(receipt.unreviewedPatchedGitSources, 10);
+  assert.equal(receipt.contractUnreviewedGitSources, 10);
   assert.equal(receipt.contractSourceReviewed, false);
   assert.equal(receipt.engineSourceAuditOk, false);
   assert.equal(receipt.contractSourceAuditOk, false);
@@ -1574,7 +1575,7 @@ test("clean contract registry scans never approve a path-converted Git source or
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).unreviewedGitSources,
-    9,
+    10,
   );
   assert.equal(
     prismaSourceReceipt(policy, engine, contracts).productionApproved,
@@ -1588,7 +1589,7 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
   assert.equal(original.unresolved.length, 0);
   assert.equal(report.registryAuditOk, true);
   assert.equal(report.sourceAuditOk, false);
-  assert.equal(report.unresolved.length, 9);
+  assert.equal(report.unresolved.length, 10);
   assert.equal(
     report.unresolved[0].reason,
     "git_derived_override_requires_review",
@@ -1611,13 +1612,15 @@ test("contract assessments retain unresolved Git provenance even when its Cargo 
     assert.equal(entry.archiveSha256, policy.cuidSource.sha256);
   }
   assert.deepEqual(
-    report.unresolved.slice(5).map((entry) => entry.name),
+    report.unresolved.slice(5, 9).map((entry) => entry.name),
     policy.postgresSource.packages.map((pkg) => pkg.name),
   );
-  for (const entry of report.unresolved.slice(5)) {
+  for (const entry of report.unresolved.slice(5, 9)) {
     assert.equal(entry.commit, policy.postgresSource.commit);
     assert.equal(entry.archiveSha256, policy.postgresSource.sha256);
   }
+  assert.equal(report.unresolved[9].name, "graphql-parser");
+  assert.equal(report.unresolved[9].commit, policy.graphqlSource.commit);
 });
 
 test("CUID policy binds all four original Git packages without granting source review", () => {

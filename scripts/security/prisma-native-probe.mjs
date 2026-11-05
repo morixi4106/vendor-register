@@ -8,6 +8,7 @@ const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const CHECKS = [
   "native-identity",
   "generated-client-native-loader",
+  "graphql-depth-limit",
   "migration-history",
   "crud-and-cuid",
   "parameterized-query",
@@ -252,6 +253,7 @@ export function verifyPrismaNativeProbeReport(
     "schemaEngineInvocations",
     "productionApproved",
     "clientVersion",
+    "graphql",
     ...(provider === "postgresql" ? ["scram"] : []),
     ...(tls ? ["tls"] : []),
   ];
@@ -264,6 +266,14 @@ export function verifyPrismaNativeProbeReport(
     report.librarySha256 !== artifacts.library.sha256 ||
     report.schemaSha256 !== artifacts.schema.sha256 ||
     JSON.stringify(report.checks) !== JSON.stringify(expected) ||
+    Object.keys(report.graphql || {})
+      .sort()
+      .join() !==
+      "acceptedLexicalCases,controlQueries,maximumNesting,rejected" ||
+    report.graphql.maximumNesting !== 50 ||
+    report.graphql.rejected !== 6 ||
+    report.graphql.acceptedLexicalCases !== 3 ||
+    report.graphql.controlQueries !== 18 ||
     report.loadedLibrarySha256 !== artifacts.library.sha256 ||
     report.migrationsApplied !== 2 ||
     report.rowsRemaining !== 0 ||

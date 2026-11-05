@@ -1,5 +1,36 @@
 # Production dependency advisories
 
+## GraphQL Parser Depth Candidate: 2026-11-05
+
+The exact previously verified Windows release library aborts an isolated child
+on a 5000-level GraphQL selection, after a successful synthetic SQLite SELECT1
+control. Depth0/32 controls complete, including the subsequent SELECT1. This is
+not proof of public HTTP exploitability or an observation against production.
+
+Keep the original Prisma graphql-parser fork and ordered AST representation.
+An explicit pinned source patch adds an iterative preflight using its original
+lexer, before both recursive query and schema parsing. Limit combined delimiter
+nesting to50, consistent with the maintained parser's
+[upstream security fix](https://github.com/graphql-rust/graphql-parser/commit/d19155f5f9206662964e388e80c68b85f3edb09a).
+Strings, block strings and comments use the original lexer, not a second parser
+or a bracket-counting regex. Grammar and AST conversion remain unchanged.
+No new byte/token limit or protocol/dialect removal. Inputs beyond this nesting
+limit now return a parse error rather than entering recursive parsing.
+
+Add18 actual-parser regressions, the original library unit suite and separate
+non-promoting Linux/Windows CI. Native probes additionally require six excessive
+input families to reject without panic, three quoted/block/comment cases to
+pass and18 successful before/after database controls. Source/module/patch/lock/
+metadata bindings and rejected receipt tests remain mandatory. Move one Git
+identity to a bound path without approving it: three Git plus ten Git-derived
+paths still mean13 UNREVIEWED identities. Registry dependency graph is unchanged.
+
+Actual new parser/native CI and artifact comparisons are not completed at this
+implementation point. Whole-engine/native admission and production approval
+remain false. The old database-lab native artifact pin must reject this changed
+recipe until a newly verified native input is available; do not waive it. No
+production migration/deployment, Shopify, financial or notification change.
+
 ## Original Git Dependency Assessment: 2026-11-05
 
 Keep all13 Prisma Git-derived packages explicitly UNREVIEWED, including the9

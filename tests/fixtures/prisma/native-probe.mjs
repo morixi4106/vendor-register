@@ -86,11 +86,56 @@ assert.equal(Prisma.prismaVersion.client, "6.19.3");
 const client = new PrismaClient({ datasourceUrl: url, log: [] });
 let scram;
 let tls;
+let graphql;
 try {
   await record("generated-client-native-loader", async () => {
     await client.$connect();
     assert.deepEqual([...loaded], [input.librarySha256]);
     assert.equal(client._engine.versionInfo.commit, input.sourceCommit);
+  });
+  await record("graphql-depth-limit", async () => {
+    const engine = new (require(input.library).QueryEngine)({
+      datamodel: fs.readFileSync(path.join(input.project, "schema.prisma"), "utf8"),
+      logLevel: "error", logQueries: false, enableTracing: false,
+      datasourceOverrides: {}, configDir: input.project,
+      env: { OJA_PRISMA_PROBE_DATABASE_URL: url }, ignoreEnvVarErrors: false, engineProtocol: "graphql",
+    }, () => {});
+    const raw = (sql, block = false) => `mutation {queryRaw(query:${block ? '"""' + sql + '"""' : JSON.stringify(sql)},parameters:"[]")}`;
+    const controlQuery = raw("SELECT 1 AS probe");
+    const single = query => ({ query, variables: {} });
+    let controls = 0;
+    const request = async body => JSON.parse(await engine.query(JSON.stringify(body), "{}", undefined, String(1000 + controls)));
+    const healthy = result => {
+      assert.equal(result.errors, undefined);
+      assert.deepEqual(result.data.queryRaw.columns, ["probe"]);
+      assert.equal(Number(result.data.queryRaw.rows[0][0]), 1);
+    };
+    const control = async () => { healthy(await request(single(controlQuery))); controls++; };
+    const selection = "{a ".repeat(5000) + "id" + "}".repeat(5000);
+    const rejected = [single(selection),
+      single("{... on Q ".repeat(5000) + "a" + "}".repeat(5000)),
+      single(`{a(v:${"[".repeat(5000)}1${"]".repeat(5000)})}`),
+      single(`{a(v:${"{v:".repeat(5000)}1${"}".repeat(5000)})}`),
+      single(`query Q($v:${"[".repeat(5000)}Int${"]".repeat(5000)}){a}`),
+      { batch: [single(selection)], transaction: false },
+    ];
+    const delimiters = "{}[]()".repeat(1000);
+    const accepted = [raw(`SELECT 1 AS probe /* ${delimiters} */`),
+      raw(`SELECT 1 AS probe /* ${delimiters} */`, true), `# ${delimiters}\n${controlQuery}`];
+    try {
+      await engine.connect("{}", "999");
+      for (const body of rejected) {
+        await control();
+        const result = await request(body);
+        assert.ok(Array.isArray(result.errors) && result.errors.length > 0);
+        assert.ok(JSON.stringify(result.errors).includes("Recursion limit exceeded"));
+        assert.ok(!result.errors.some(error => error.user_facing_error?.is_panic));
+        await control();
+      }
+      for (const query of accepted) { await control(); healthy(await request(single(query))); await control(); }
+      graphql = { maximumNesting: 50, rejected: 6, acceptedLexicalCases: 3, controlQueries: controls };
+      assert.equal(controls, 18);
+    } finally { await engine.disconnect("{}", "2000"); }
   });
   await record("migration-history", async () => {
     const rows = await client.$queryRawUnsafe('SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name');
@@ -241,5 +286,6 @@ console.log(JSON.stringify({ provider: input.provider, sourceCommit: input.sourc
   loadedLibrarySha256: [...loaded][0], checks, migrationsApplied: 2, rowsRemaining: 0,
   schemaEngineInvocations: fs.readFileSync(path.join(input.project, "schema-engine-invocations.jsonl"), "utf8").trim().split("\n").length,
   clientVersion: Prisma.prismaVersion.client,
+  graphql,
   ...(tls ? { tls } : {}),
   ...(scram ? { scram } : {}), productionApproved: false }));

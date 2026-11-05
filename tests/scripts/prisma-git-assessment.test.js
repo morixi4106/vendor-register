@@ -22,6 +22,7 @@ function fixture() {
       (p) =>
         p.source?.startsWith("git+") ||
         [
+          "graphql-parser",
           "mysql_async",
           "cuid",
           "cuid-util",
@@ -68,7 +69,7 @@ const response = (v) => new Response(JSON.stringify(v));
 test("all original Git identities survive path patching and keep declared upstream versions", () => {
   const entries = prismaGitIdentities(policy, lock, fixture());
   assert.equal(entries.length, 13);
-  assert.equal(entries.filter((p) => p.source).length, 4);
+  assert.equal(entries.filter((p) => p.source).length, 3);
   assert.equal(new Set(entries.map((p) => p.commit)).size, 6);
   assert.equal(
     entries.find((p) => p.name === "mysql_async").upstreamVersion,

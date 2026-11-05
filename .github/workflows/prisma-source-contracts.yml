@@ -12,12 +12,14 @@ on:
       - scripts/security/prisma-winauth-source.mjs
       - scripts/security/prisma-postgres-source.mjs
       - scripts/security/prisma-git-assessment.mjs
+      - scripts/security/prisma-graphql-source.mjs
       - scripts/security/rust-toolchain.mjs
       - scripts/security/rust-source-audit.mjs
       - scripts/security/rebuild-esbuild.mjs
       - vendor/native/prisma/**
       - tests/scripts/prisma-source.test.js
       - tests/scripts/prisma-git-assessment.test.js
+      - tests/scripts/prisma-graphql-source.test.js
   workflow_dispatch:
 
 permissions:
@@ -50,7 +52,7 @@ jobs:
           npm run runtime:version
           npm ci --ignore-scripts
       - name: Verify source bindings and rejection tests
-        run: node --test tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js
+        run: node --test tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js tests/scripts/prisma-graphql-source.test.js
       - name: Test patched source modules without database or production credentials
         run: node scripts/security/test-prisma-source.mjs --upstream-units
       - name: Upload test evidence without approving the complete engine
