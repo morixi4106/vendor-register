@@ -185,15 +185,21 @@ jobs:
       - name: Rebuild and scan esbuild binaries for both target platforms
         run: npm run native:esbuild
       - name: Verify Node and patched dependencies
-        run: |
-          npm run runtime:version
-          node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js
-          node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
-          node scripts/security/minimatch-backport.mjs
-          npm run audit:npm-tree
-          npm audit --audit-level=low
-          npm run build:function:types
-          git diff --exit-code
+        run: npm run runtime:version
+      - name: Test runtime and native admission
+        run: node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js
+      - name: Test minimatch backport and dependency tree validation
+        run: node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
+      - name: Verify installed minimatch backport and original upstream advisories
+        run: node scripts/security/minimatch-backport.mjs
+      - name: Verify exact installed dependency tree
+        run: npm run audit:npm-tree
+      - name: Audit all npm vulnerability severities
+        run: npm audit --audit-level=low
+      - name: Generate function types with guarded tools
+        run: npm run build:function:types
+      - name: Reject generated repository changes
+        run: git diff --exit-code
 
       - name: Upload minimatch provenance even when promotion is blocked
         if: always() && hashFiles('.audit/minimatch-backport-receipt.json') != ''

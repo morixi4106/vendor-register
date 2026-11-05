@@ -57,6 +57,35 @@ test("production builds and CI cannot skip the incident audit", () => {
   );
 });
 
+test("runtime integrity checks fail independently on both Windows and Linux", () => {
+  const quality = yaml.load(read(".github/workflows/quality.yml"));
+  const job = quality.jobs["runtime-integrity"];
+  assert.deepEqual(job.strategy.matrix.os, ["ubuntu-latest", "windows-latest"]);
+  const commands = [
+    "npm run runtime:version",
+    "node --test tests/scripts/node-runtime.test.js tests/scripts/deepmerge-security-backport.test.js tests/scripts/vendor-patches.test.js tests/scripts/native-inventory.test.js tests/scripts/incident-enforcement.test.js tests/scripts/runtime-package.test.js tests/scripts/safe-build.test.js tests/scripts/rebuild-esbuild.test.js",
+    "node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js",
+    "node scripts/security/minimatch-backport.mjs",
+    "npm run audit:npm-tree",
+    "npm audit --audit-level=low",
+    "npm run build:function:types",
+    "git diff --exit-code",
+  ];
+  let previous = -1;
+  for (const command of commands) {
+    const index = job.steps.findIndex(
+      (step, index) => index > previous && step.run === command,
+    );
+    assert.ok(index > previous, command);
+    const step = job.steps[index];
+    assert.equal(step.if, undefined);
+    assert.equal(step["continue-on-error"], undefined);
+    assert.equal(step.shell, undefined);
+    assert.equal(step.run.includes("\n"), false);
+    previous = index;
+  }
+});
+
 test("all Node setup workflows use the exact version policy and no floating action tags", () => {
   for (const name of fs.readdirSync(path.join(ROOT, ".github/workflows"))) {
     const workflow = yaml.load(read(`.github/workflows/${name}`));

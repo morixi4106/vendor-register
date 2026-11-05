@@ -2314,7 +2314,7 @@ new file mode 100644
 +}
 +#[test]
 +fn scram_rejects_above_limit_before_decoding_salt() {
-+    let error = scram().update(&String::from_utf8(iterations("100001")).unwrap().replace("fs3IXBy7U7+IvVjZ", "???").into_bytes()).unwrap_err();
++    let error = scram().update(&String::from_utf8(iterations("100001")).unwrap().replace("fs3IXBy7U7+IvVjZ", "A").into_bytes()).unwrap_err();
 +    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 +    assert!(error.to_string().contains("maximum allowed"));
 +}
