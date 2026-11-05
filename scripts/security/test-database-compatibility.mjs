@@ -250,7 +250,7 @@ export async function testDatabaseCompatibility(root, postgresPort) {
         240000,
       ),
     );
-    verifyDatabaseCompatibilityReport(report, inputs, native);
+    verifyDatabaseCompatibilityReport(report, inputs, native, tls);
     if (
       JSON.stringify(applicationDatabaseInputs(root)) !== JSON.stringify(inputs)
     )

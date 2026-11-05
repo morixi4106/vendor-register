@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import test from "node:test";
 import yaml from "js-yaml";
+import { PRISMA_LAB_DATABASES } from "../../scripts/security/prisma-tls-lab.mjs";
 import {
   DATABASE_NATIVE_INPUT,
   POOLER_SOURCE,
@@ -318,6 +319,12 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     loadedLibrarySha256: native.librarySha256,
     schemaSha256: native.schemaSha256,
     clientVersion: "6.19.3",
+    postgres: {
+      image: PRISMA_LAB_DATABASES[0].image,
+      serverVersionNum: 170011,
+      encrypted: true,
+      tlsVersion: "TLSv1.3",
+    },
     applicationInputSha256: sha(JSON.stringify(inputs)),
     migrationsApplied: 1,
     modelsChecked: 100,
@@ -344,8 +351,23 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     productionApproved: false,
     wholeEngineVerified: false,
   };
-  const verify = (r) => verifyDatabaseCompatibilityReport(r, inputs, native);
+  const tls = PRISMA_LAB_DATABASES[0];
+  const verify = (r) =>
+    verifyDatabaseCompatibilityReport(r, inputs, native, tls);
   assert.equal(verify(report), report);
+  for (const database of PRISMA_LAB_DATABASES) {
+    const value = structuredClone(report);
+    value.postgres.image = database.image;
+    value.postgres.serverVersionNum = database.serverVersionNum;
+    assert.equal(
+      verifyDatabaseCompatibilityReport(value, inputs, native, database),
+      value,
+    );
+    assert.throws(
+      () => verifyDatabaseCompatibilityReport(value, inputs, native),
+      /evidence_invalid/,
+    );
+  }
   for (const mutate of [
     (r) => r.checks.pop(),
     (r) => (r.productionApproved = true),
@@ -356,6 +378,11 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     (r) => (r.migrationsApplied = 0),
     (r) => delete r.modelsChecked,
     (r) => delete r.schemaEngineInvocations,
+    (r) => delete r.postgres,
+    (r) => (r.postgres.image = PRISMA_LAB_DATABASES[1].image),
+    (r) => (r.postgres.serverVersionNum = 180006),
+    (r) => (r.postgres.encrypted = false),
+    (r) => (r.postgres.tlsVersion = "TLSv1.1"),
     (r) => (r.rowsRemaining = 1),
     (r) => (r.seedRowsPreserved = 0),
     (r) => (r.existingHistoryUpgraded = false),
@@ -389,9 +416,18 @@ test("database workflow reuses immutable byte-checked native inputs and never sc
     DATABASE_NATIVE_INPUT.artifactId,
   );
   assert.equal(String(download.with["run-id"]), DATABASE_NATIVE_INPUT.run);
-  assert.match(
-    job.services.postgres.image,
-    /^postgres:17\.11@sha256:[a-f0-9]{64}$/,
+  assert.equal(job.services.postgres.image, "${{ matrix.image }}");
+  assert.equal(job.name, "postgres-pooler (${{ matrix.postgres }})");
+  assert.equal(job.strategy["fail-fast"], false);
+  assert.deepEqual(
+    job.strategy.matrix.include,
+    PRISMA_LAB_DATABASES.map((entry) => ({
+      postgres: entry.image
+        .split(":")[1]
+        .split("@")[0]
+        .replace("-bookworm", ""),
+      image: entry.image,
+    })),
   );
   assert.deepEqual(job.services.postgres.ports, ["5432/tcp"]);
   for (const step of job.steps.filter((s) => s.run)) {
@@ -401,6 +437,10 @@ test("database workflow reuses immutable byte-checked native inputs and never sc
     assert.ok(!step.run.includes("migrate deploy"));
   }
   const upload = job.steps.find((s) => s.with?.["retention-days"]);
+  assert.equal(
+    upload.with.name,
+    "database-compatibility-${{ matrix.postgres }}-${{ github.run_id }}",
+  );
   assert.ok(upload.with.path.includes("!"));
   assert.ok(!upload.with.path.includes("prisma-tls-lab"));
   assert.equal(job.steps[0].with["persist-credentials"], false);

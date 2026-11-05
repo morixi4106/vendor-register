@@ -22,11 +22,20 @@ permissions:
 
 jobs:
   postgres-pooler:
+    name: postgres-pooler (${{ matrix.postgres }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - postgres: "17.11"
+            image: postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1
+          - postgres: "18.6"
+            image: postgres:18.6-bookworm@sha256:02fb3245e038f33536cf13bc6c4e59f21d07b0cea3c1fe1c07c6e8aa8f083bcc
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1
+        image: ${{ matrix.image }}
         env:
           POSTGRES_USER: oja_probe
           POSTGRES_DB: oja_probe
@@ -81,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
         with:
-          name: database-compatibility-${{ github.run_id }}
+          name: database-compatibility-${{ matrix.postgres }}-${{ github.run_id }}
           path: |
             .audit/database-compatibility/
             !.audit/database-compatibility/**/node_modules/**

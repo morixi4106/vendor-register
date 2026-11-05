@@ -19,6 +19,7 @@ import {
   preparePrismaTlsLab,
   readPrismaTlsLab,
   PRISMA_LAB_IMAGE,
+  PRISMA_LAB_DATABASES,
 } from "../../scripts/security/prisma-tls-lab.mjs";
 import { rustBuildEnvironment } from "../../scripts/security/rust-toolchain.mjs";
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -305,6 +306,7 @@ test("TLS evidence rejects absent certificates, forged manifests and private-pat
     path.join(lab, "manifest.json"),
     JSON.stringify({
       image: PRISMA_LAB_IMAGE,
+      serverVersionNum: 170011,
       hostname: "localhost",
       plaintextRejected: true,
       productionApproved: false,
@@ -313,6 +315,59 @@ test("TLS evidence rejects absent certificates, forged manifests and private-pat
   assert.throws(() => readPrismaTlsLab(root), /ENOENT/);
   fs.writeFileSync(path.join(lab, "ca.crt"), "not-a-certificate");
   assert.throws(() => readPrismaTlsLab(root), /certificate_invalid/);
+});
+
+test("TLS lab binds both database majors to exact images, server versions and data-directory layouts", (t) => {
+  assert.deepEqual(
+    PRISMA_LAB_DATABASES.map((entry) => [
+      entry.serverVersionNum,
+      entry.hbaFile,
+    ]),
+    [
+      [170011, "/var/lib/postgresql/data/pg_hba.conf"],
+      [180006, "/var/lib/postgresql/18/docker/pg_hba.conf"],
+    ],
+  );
+  assert.equal(PRISMA_LAB_DATABASES[0].image, PRISMA_LAB_IMAGE);
+  assert.match(
+    PRISMA_LAB_DATABASES[1].image,
+    /^postgres:18\.6-bookworm@sha256:[a-f0-9]{64}$/,
+  );
+  const f = fixture(t),
+    root = path.join(f.root, "repo");
+  const directory = path.join(root, ".audit/prisma-tls-lab");
+  fs.mkdirSync(directory, { recursive: true });
+  for (const database of PRISMA_LAB_DATABASES) {
+    const manifest = {
+      image: database.image,
+      serverVersionNum: database.serverVersionNum,
+      hostname: "localhost",
+      plaintextRejected: true,
+      productionApproved: false,
+    };
+    for (const changed of [
+      { ...manifest, serverVersionNum: undefined },
+      { ...manifest, serverVersionNum: 180005 },
+      {
+        ...manifest,
+        serverVersionNum: PRISMA_LAB_DATABASES.find(
+          (entry) => entry !== database,
+        ).serverVersionNum,
+      },
+      { ...manifest, image: "postgres:18" },
+    ]) {
+      fs.writeFileSync(
+        path.join(directory, "manifest.json"),
+        JSON.stringify(changed),
+      );
+      assert.throws(() => readPrismaTlsLab(root), /evidence_invalid/);
+    }
+    fs.writeFileSync(
+      path.join(directory, "manifest.json"),
+      JSON.stringify(manifest),
+    );
+    assert.throws(() => readPrismaTlsLab(root), /ENOENT/);
+  }
 });
 
 test("new registry findings block native execution without approving unreviewed Git sources", () => {

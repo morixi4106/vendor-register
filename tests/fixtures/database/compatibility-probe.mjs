@@ -43,10 +43,16 @@ command(input.project,["generate"]);
 const {PrismaClient,Prisma}=require("@prisma/client");
 assert.equal(Prisma.prismaVersion.client,"6.19.3");
 const admin=new PrismaClient({datasourceUrl:url("oja_probe"),log:[]});
-let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[];
+let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[],postgres;
 try{
   await record("native-identity",async()=>{
     await admin.$connect();assert.deepEqual([...loaded],[input.librarySha256]);assert.equal(admin._engine.versionInfo.commit,input.sourceCommit);
+  });
+  await record("postgres-server-identity",async()=>{
+    const [row]=await admin.$queryRawUnsafe("SELECT current_setting('server_version_num')::int AS version_num,ssl,version FROM pg_stat_ssl WHERE pid=pg_backend_pid()");
+    assert.equal(row.version_num,input.tls.serverVersionNum);assert.equal(row.ssl,true);assert.ok(["TLSv1.2","TLSv1.3"].includes(row.version));
+    postgres={image:input.tls.image,serverVersionNum:row.version_num,encrypted:row.ssl,tlsVersion:row.version};
+    fs.writeFileSync(path.join(input.project,"postgres-identity.json"),JSON.stringify(postgres));
     for(const database of ["oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe"])await admin.$executeRawUnsafe(`CREATE DATABASE ${database}`);
   });
   await record("original-history-regression",()=>{
@@ -149,5 +155,5 @@ assert.deepEqual(checks,DATABASE_CHECKS);
 const invocations=fs.readFileSync(path.join(input.project,"schema-engine-invocations.jsonl"),"utf8").trim().split("\n").map(JSON.parse);assert.ok(invocations.every(r=>r.sha256===input.schemaSha256));
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 console.log(JSON.stringify({checks,sourceCommit:input.sourceCommit,librarySha256:input.librarySha256,schemaSha256:input.schemaSha256,loadedLibrarySha256:[...loaded][0],
-  clientVersion:Prisma.prismaVersion.client,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
+  clientVersion:Prisma.prismaVersion.client,postgres,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
   modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));

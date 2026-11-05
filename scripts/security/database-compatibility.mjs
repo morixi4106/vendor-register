@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { PRISMA_LAB_DATABASES } from "./prisma-tls-lab.mjs";
 
 export const DATABASE_NATIVE_INPUT = Object.freeze({
   run: "42038861752",
@@ -21,6 +22,7 @@ export const POOLER_SOURCE = Object.freeze({
 export const FOUNDATION = "20260409000000_restore_legacy_foundation";
 export const DATABASE_CHECKS = Object.freeze([
   "native-identity",
+  "postgres-server-identity",
   "original-history-regression",
   "fresh-full-migration-history",
   "schema-drift",
@@ -255,7 +257,10 @@ pidfile = ${path.join(directory, "pooler.pid")}
 `;
 }
 
-export function verifyDatabaseCompatibilityReport(report, inputs, native) {
+export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
+  const database = PRISMA_LAB_DATABASES.find(
+    (entry) => entry.image === tls?.image,
+  );
   const keys = [
     "checks",
     "sourceCommit",
@@ -263,6 +268,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     "schemaSha256",
     "loadedLibrarySha256",
     "clientVersion",
+    "postgres",
     "applicationInputSha256",
     "migrationsApplied",
     "modelsChecked",
@@ -278,6 +284,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
   ];
   if (
     !report ||
+    !database ||
     Object.keys(report).sort().join() !== keys.sort().join() ||
     JSON.stringify(report.checks) !== JSON.stringify(DATABASE_CHECKS) ||
     report.productionApproved !== false ||
@@ -287,6 +294,14 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native) {
     report.schemaSha256 !== native.schemaSha256 ||
     report.sourceCommit !== native.sourceCommit ||
     report.clientVersion !== "6.19.3" ||
+    Object.keys(report.postgres || {})
+      .sort()
+      .join() !== "encrypted,image,serverVersionNum,tlsVersion" ||
+    report.postgres.image !== database.image ||
+    report.postgres.serverVersionNum !== database.serverVersionNum ||
+    report.postgres.serverVersionNum !== tls.serverVersionNum ||
+    report.postgres.encrypted !== true ||
+    !["TLSv1.2", "TLSv1.3"].includes(report.postgres.tlsVersion) ||
     report.applicationInputSha256 !== sha(JSON.stringify(inputs)) ||
     report.migrationsApplied !==
       inputs.filter((e) => e.path.endsWith("/migration.sql")).length ||

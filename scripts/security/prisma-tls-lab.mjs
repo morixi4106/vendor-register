@@ -6,6 +6,19 @@ import { pathToFileURL } from "node:url";
 
 export const PRISMA_LAB_IMAGE =
   "postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1";
+export const PRISMA_LAB_DATABASES = Object.freeze([
+  Object.freeze({
+    image: PRISMA_LAB_IMAGE,
+    serverVersionNum: 170011,
+    hbaFile: "/var/lib/postgresql/data/pg_hba.conf",
+  }),
+  Object.freeze({
+    image:
+      "postgres:18.6-bookworm@sha256:02fb3245e038f33536cf13bc6c4e59f21d07b0cea3c1fe1c07c6e8aa8f083bcc",
+    serverVersionNum: 180006,
+    hbaFile: "/var/lib/postgresql/18/docker/pg_hba.conf",
+  }),
+]);
 const sha = (file) =>
   crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -49,8 +62,12 @@ export function readPrismaTlsLab(root) {
     server: "server.crt",
     untrustedCa: "untrusted-ca.crt",
   };
+  const database = PRISMA_LAB_DATABASES.find(
+    (entry) => entry.image === manifest.image,
+  );
   if (
-    manifest.image !== PRISMA_LAB_IMAGE ||
+    !database ||
+    manifest.serverVersionNum !== database.serverVersionNum ||
     manifest.hostname !== "localhost" ||
     manifest.plaintextRejected !== true ||
     manifest.productionApproved !== false
@@ -58,6 +75,7 @@ export function readPrismaTlsLab(root) {
     throw new Error("prisma_tls_lab_evidence_invalid");
   const result = {
     image: manifest.image,
+    serverVersionNum: manifest.serverVersionNum,
     hostname: manifest.hostname,
     plaintextRejected: true,
   };
@@ -115,10 +133,13 @@ export async function preparePrismaTlsLab(root, container, run) {
   const docker = (args) => execute("docker", args);
   const inspect = JSON.parse(docker(["inspect", container]));
   const service = inspect[0];
+  const database = PRISMA_LAB_DATABASES.find(
+    (entry) => entry.image === service?.Config?.Image,
+  );
   if (
     inspect.length !== 1 ||
     service.Id !== container ||
-    service.Config?.Image !== PRISMA_LAB_IMAGE ||
+    !database ||
     !service.State?.Running ||
     ![
       "POSTGRES_USER=oja_probe",
@@ -206,6 +227,8 @@ export async function preparePrismaTlsLab(root, container, run) {
       "-Atc",
       query,
     ]);
+  if (sql("SHOW server_version_num") !== String(database.serverVersionNum))
+    throw new Error("prisma_tls_lab_server_version_invalid");
   const remote = "/tmp/oja-prisma-tls-lab";
   docker(["exec", container, "mkdir", "-m", "700", remote]);
   for (const name of ["server.crt", "server.key"])
@@ -224,7 +247,7 @@ export async function preparePrismaTlsLab(root, container, run) {
   ])
     sql(`ALTER SYSTEM SET ${key} = '${value}'`);
   const hba = sql("SHOW hba_file");
-  if (hba !== "/var/lib/postgresql/data/pg_hba.conf")
+  if (hba !== database.hbaFile)
     throw new Error("prisma_tls_lab_hba_path_invalid");
   fs.writeFileSync(
     path.join(directory, "pg_hba.conf"),
@@ -245,7 +268,8 @@ export async function preparePrismaTlsLab(root, container, run) {
   )
     throw new Error("prisma_tls_lab_hba_invalid");
   const manifest = {
-    image: PRISMA_LAB_IMAGE,
+    image: database.image,
+    serverVersionNum: database.serverVersionNum,
     hostname: "localhost",
     plaintextRejected: true,
     caSha256: sha(path.join(directory, "ca.crt")),
