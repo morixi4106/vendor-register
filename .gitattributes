@@ -18,3 +18,8 @@ vendor/native/prisma/* text eol=lf
 vendor/minimatch/** text eol=lf
 vendor/minimatch/*.tgz binary
 security/minimatch-backport.json text eol=lf
+security/javy-source-contracts.json text eol=lf
+vendor/native/javy/* text eol=lf
+scripts/security/test-javy-source.mjs text eol=lf
+tests/scripts/javy-source.test.js text eol=lf
+.github/workflows/javy-source-contracts.yml text eol=lf

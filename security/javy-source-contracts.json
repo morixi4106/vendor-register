@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "role": "javy-source",
+  "version": "9.1.0+oja.1",
+  "source": {
+    "repository": "bytecodealliance/javy",
+    "commit": "66f04f1fa2065123e0f712cddcee20770f58b13e",
+    "sha256": "5f51e3c3109a6321e619182e23da64961d6746201834e9d1c941390e866ce17e"
+  },
+  "baseline": {
+    "version": "9.0.0",
+    "repository": "bytecodealliance/javy",
+    "commit": "03458aaa9ed3e56d9a2baffcf646ac38f69664b5",
+    "manifestSha256": "b310cbce35730bce014c5f78fa3340a632393be208011fa3244985ad300b1b8c",
+    "lockfileSha256": "fc1329878e52f3b282b768518e5909d4807c4c311079383b9f55c77d86d54121"
+  },
+  "patch": {
+    "path": "vendor/native/javy/javy.patch",
+    "sha256": "01fbabc5d1980d3176e33b6cabb092e543942c130382ea16c69e1e2b4b899556"
+  },
+  "lockfile": {
+    "path": "vendor/native/javy/Cargo.lock",
+    "sha256": "d0985c6bafe6d0476d96834820fa0153d94becf87a5700316457835c3c61f441"
+  },
+  "wirm": {
+    "upstreamVersion": "5.1.0",
+    "version": "5.1.0+oja.1",
+    "sha256": "cbf24563802785ba2885e5357ab24d56a3b13b9884d9102347fe663d712df462",
+    "patch": {
+      "path": "vendor/native/javy/wirm.patch",
+      "sha256": "c48b42eee524d00f8fddd41bcde26cf26f9b7f24fa56b9ba32c744af5eb84ab7"
+    }
+  },
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2d127613d77c99373c5af5fe2b4b37cf2bfe892e825e0259eb6eac9b96080687"
+    },
+    {
+      "path": ".cargo/config.toml",
+      "sha256": "5332d890c6d74a4e866612f4a667f878108818f02e01f4bcbe8a928452608336"
+    },
+    {
+      "path": "crates/cli/Cargo.toml",
+      "sha256": "de639e9e350efe6d76f96cde7d8e46402f3a0cd13220a4e9f2e08b8c83339fff"
+    },
+    {
+      "path": "crates/cli/build.rs",
+      "sha256": "893598d7352009abf4098f66e0542b84b95b8a062d8f60b84ba0f5e9253afdbd"
+    },
+    {
+      "path": "crates/codegen/Cargo.toml",
+      "sha256": "17dac2eccc6cc17bdc1a2d283d1fec75f66adaa4b6006576b6a06d32b446913e"
+    },
+    {
+      "path": "crates/codegen/src/lib.rs",
+      "sha256": "27401a64a1f2b4b61fb8e576879e7afcc519bd2af4a7dfcbc806edca7cb17d0a"
+    },
+    {
+      "path": "crates/codegen/src/plugin.rs",
+      "sha256": "94fbc16fe874a62c6260a900c404421a914fb0aaef843c67de640cd453a9e8d0"
+    },
+    {
+      "path": "crates/codegen/src/js.rs",
+      "sha256": "d921879a72a679601a5282d049e6e1ce8bcdd074b80f85b18dad43d92513de77"
+    },
+    {
+      "path": "crates/plugin/Cargo.toml",
+      "sha256": "b59508d82700cd83744598dd9d56cf698b9b86f4d9d49df98a2adec3b176b2f6"
+    },
+    {
+      "path": "crates/plugin-processing/Cargo.toml",
+      "sha256": "ce1a88386b402a423d08c7edf2f8605a8341e52efb2452625b87a7f94589901b"
+    },
+    {
+      "path": "crates/plugin-processing/src/lib.rs",
+      "sha256": "7a0f9cfb0fe3a63baf9458ba4a225a5790579bdcf48a76b46c4dbfdfd18772fa"
+    },
+    {
+      "path": "crates/profiler/Cargo.toml",
+      "sha256": "257589bf016ea3c4c7f09a5ef2e946b32b49b3b8cdf90f6cdb7a42f92d45900a"
+    },
+    {
+      "path": "crates/profiler/src/lib.rs",
+      "sha256": "c57454016f09fe007b5a6c8d0545bb3f03cfa76c95ad246c6802cfb5686819f5"
+    },
+    {
+      "path": "vendor/wirm/Cargo.toml",
+      "sha256": "d544c10ebc86504cba1400ab1da46ec0444de898b4a57f3ed66386950046398d"
+    },
+    {
+      "path": "vendor/wirm/src/ir/instr_tests.rs",
+      "sha256": "638348988542968c14a1ba624af6a3c7e8257cbc6a5b2b83753b7ad156f08fb8"
+    }
+  ]
+}

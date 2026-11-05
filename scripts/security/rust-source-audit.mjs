@@ -18,7 +18,7 @@ const SOURCES = Object.freeze({
   },
   javy: {
     repository: "bytecodealliance/javy",
-    commit: "66f04f1fa2065123e0f712cddcee20770f58b13e",
+    commit: "03458aaa9ed3e56d9a2baffcf646ac38f69664b5",
   },
 });
 const digest = (bytes) =>
