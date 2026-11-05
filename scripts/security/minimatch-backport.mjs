@@ -9,6 +9,17 @@ const HASH = /^[a-f0-9]{64}$/;
 const ADVISORY = "GHSA-g3hv-75wg-m249";
 const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 
+// Bind all advisory fields while ignoring JSON object-key order, not array order.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+}
+
 function checkedFile(directory, relative) {
   if (
     typeof relative !== "string" ||
@@ -40,6 +51,8 @@ export function readMinimatchPolicy(root = ROOT) {
     policy.packageName !== "@oja/minimatch" ||
     policy.version !== "9.0.9-oja.1" ||
     policy.advisory !== ADVISORY ||
+    policy.advisoryReview?.modified !== "2026-11-04T17:01:25.850114200Z" ||
+    !HASH.test(policy.advisoryReview.canonicalSha256 || "") ||
     policy.upstream?.name !== "minimatch" ||
     policy.upstream.version !== "9.0.9" ||
     policy.upstream.commit !== "8a10e473e2e0ff03c2d4de308f257093af2bce21" ||
@@ -166,7 +179,7 @@ export async function checkMinimatchUpstream(
   });
   if (!response.ok) throw new Error("minimatch_upstream_audit_unavailable");
   let text = "";
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   for await (const chunk of response.body) {
     text += decoder.decode(chunk, { stream: true });
     if (Buffer.byteLength(text) > 1024 * 1024)
@@ -178,7 +191,7 @@ export async function checkMinimatchUpstream(
     !report ||
     typeof report !== "object" ||
     Array.isArray(report) ||
-    report.error ||
+    Object.keys(report).some((key) => key !== "vulns") ||
     (report.vulns !== undefined && !Array.isArray(report.vulns))
   )
     throw new Error("minimatch_upstream_audit_invalid");
@@ -186,14 +199,23 @@ export async function checkMinimatchUpstream(
   for (const advisory of advisories) {
     if (advisory?.id !== ADVISORY)
       throw new Error("minimatch_upstream_advisory_unresolved");
-    if (advisory.modified !== "2026-10-30T23:15:07.420159385Z")
+    if (
+      advisory.modified !== policy.advisoryReview.modified ||
+      sha(canonicalJson(advisory)) !== policy.advisoryReview.canonicalSha256
+    )
       throw new Error("minimatch_upstream_advisory_changed");
   }
+  // The reviewed range still contains v9; disappearance also requires re-review.
+  if (advisories.length === 0)
+    throw new Error("minimatch_upstream_advisory_missing");
+  if (advisories.length !== 1)
+    throw new Error("minimatch_upstream_audit_invalid");
   return {
     upstreamPackage: policy.upstream.name,
     upstreamVersion: policy.upstream.version,
     observedAdvisories: advisories.map((item) => item.id),
     coveredByVerifiedBackport: advisories.map((item) => item.id),
+    advisoryReview: { ...policy.advisoryReview },
     observedAt: new Date().toISOString(),
   };
 }

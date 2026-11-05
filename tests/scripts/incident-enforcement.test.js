@@ -122,7 +122,10 @@ test("manual backport verification retains both platforms and unconditional chec
   assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
   const job = workflow.jobs.backport;
   assert.deepEqual(job.strategy.matrix.os, ["ubuntu-latest", "windows-latest"]);
+  let previous = -1;
   for (const command of [
+    "npm run runtime:version",
+    "npm ci --ignore-scripts --no-audit --no-fund",
     "node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js",
     "node scripts/security/minimatch-backport.mjs",
     "npm run audit:npm-tree",
@@ -130,13 +133,19 @@ test("manual backport verification retains both platforms and unconditional chec
     "npm run build:function:types",
     "git diff --exit-code",
   ]) {
-    const step = job.steps.find((item) => item.run === command);
+    const index = job.steps.findIndex(
+      (item, index) => index > previous && item.run === command,
+    );
+    assert.ok(index > previous, command);
+    const step = job.steps[index];
     assert.ok(step, command);
     assert.equal(step.if, undefined);
     assert.equal(step["continue-on-error"], undefined);
+    assert.equal(step.shell, undefined);
+    assert.equal(step.run.includes("\n"), false);
+    previous = index;
   }
   assert.equal(job.steps[0].with["persist-credentials"], false);
-  assert.match(job.steps[3].run, /npm ci --ignore-scripts/);
   const manifest = JSON.parse(read("package.json"));
   assert.equal(
     manifest.scripts["audit:npm-tree"],

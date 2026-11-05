@@ -18,6 +18,11 @@ const require = createRequire(import.meta.url);
 const commonjs = require("../../vendor/minimatch/dist/commonjs/index.js");
 const esm = await import("../../vendor/minimatch/dist/esm/index.js");
 const policy = readMinimatchPolicy(ROOT);
+const reviewedAdvisory = JSON.parse(
+  fs.readFileSync(
+    path.join(ROOT, "tests/fixtures/minimatch/reviewed-advisory.json"),
+  ),
+);
 const fixture = (t) => {
   const base = fs.realpathSync(os.tmpdir());
   const dir = fs.mkdtempSync(path.join(base, "minimatch-test-"));
@@ -134,6 +139,30 @@ test("ESM preprocessing has the same bound and preserves large input sets", () =
   assert.equal(matcher.secondPhasePreProcess(patterns), patterns);
 });
 
+test("both modules enforce the generated-alternative boundary without truncating existing inputs", () => {
+  for (const module of [commonjs, esm]) {
+    const matcher = new module.Minimatch("a", { optimizationLevel: 2 });
+    const input = (count) => [
+      ...Array.from({ length: count - 1 }, (_, i) => ["p" + i]),
+      ["**", "..", "a", "b"],
+    ];
+    assert.equal(matcher.firstPhasePreProcess(input(999)).length, 1000);
+    assert.throws(() => matcher.firstPhasePreProcess(input(1000)), {
+      name: "RangeError",
+      message: "glob preprocessing limit exceeded",
+    });
+    assert.throws(() => matcher.firstPhasePreProcess(input(1001)), RangeError);
+    const existing = Array.from({ length: 1001 }, (_, i) => ["p" + i]);
+    const expected = structuredClone(existing);
+    matcher.partsMatch = () => {
+      throw new Error("quadratic_comparison");
+    };
+    assert.deepEqual(matcher.firstPhasePreProcess(existing), expected);
+    assert.equal(matcher.secondPhasePreProcess(existing), existing);
+    assert.deepEqual(existing, expected);
+  }
+});
+
 test("modified files, manifests, provenance, paths and hardlinks are rejected", (t) => {
   const root = fixture(t);
   const target = path.join(root, "copy");
@@ -186,6 +215,15 @@ test("root policy cannot replace the original identity, revision or file invento
     (p) => {
       p.tarball.path = "../archive.tgz";
     },
+    (p) => {
+      delete p.advisoryReview;
+    },
+    (p) => {
+      p.advisoryReview.modified = "2026-10-30T23:15:07.420159385Z";
+    },
+    (p) => {
+      p.advisoryReview.canonicalSha256 = "invalid";
+    },
   ]) {
     const changed = structuredClone(policy);
     change(changed);
@@ -211,14 +249,105 @@ test("the original upstream identity is freshly queried, not hidden by the scope
         package: { ecosystem: "npm", name: "minimatch" },
         version: "9.0.9",
       });
-      return response({
-        vulns: [
-          { id: policy.advisory, modified: "2026-10-30T23:15:07.420159385Z" },
-        ],
-      });
+      return response({ vulns: [reviewedAdvisory] });
     },
   });
   assert.deepEqual(result.coveredByVerifiedBackport, [policy.advisory]);
+  assert.deepEqual(result.advisoryReview, policy.advisoryReview);
+});
+
+test("all advisory content is bound even when its modified timestamp is unchanged", async () => {
+  for (const change of [
+    (a) => {
+      a.details += " Changed impact.";
+    },
+    (a) => {
+      a.summary = "Changed summary";
+    },
+    (a) => {
+      a.affected[0].ranges[0].events[0].introduced = "0";
+    },
+    (a) => {
+      a.affected[0].ranges[0].events[1].fixed = "12.0.0";
+    },
+    (a) => {
+      a.affected[0].package.name = "@oja/minimatch";
+    },
+    (a) => {
+      a.references.pop();
+    },
+    (a) => {
+      a.references[3].url += "-changed";
+    },
+    (a) => {
+      a.aliases.push("CVE-new");
+    },
+    (a) => {
+      a.database_specific.severity = "CRITICAL";
+    },
+    (a) => {
+      a.severity[0].score = "changed";
+    },
+    (a) => {
+      a.withdrawn = "2026-11-05T00:00:00Z";
+    },
+    (a) => {
+      delete a.details;
+    },
+    (a) => {
+      a.new_field = "requires review";
+    },
+  ]) {
+    const advisory = structuredClone(reviewedAdvisory);
+    change(advisory);
+    assert.equal(advisory.modified, reviewedAdvisory.modified);
+    await assert.rejects(
+      checkMinimatchUpstream(policy, {
+        fetchImpl: async () => response({ vulns: [advisory] }),
+      }),
+      /advisory_changed/,
+    );
+  }
+});
+
+test("object-key reordering alone does not invalidate the reviewed content", async () => {
+  const reorder = (value) => {
+    if (Array.isArray(value)) return value.map(reorder);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .reverse()
+        .map(([key, item]) => [key, reorder(item)]),
+    );
+  };
+  const result = await checkMinimatchUpstream(policy, {
+    fetchImpl: async () => response({ vulns: [reorder(reviewedAdvisory)] }),
+  });
+  assert.deepEqual(result.advisoryReview, policy.advisoryReview);
+});
+
+test("duplicate, missing, paginated and incomplete advisory results require review", async () => {
+  for (const [value, error] of [
+    [{ vulns: [reviewedAdvisory, reviewedAdvisory] }, /audit_invalid/],
+    [{}, /advisory_missing/],
+    [{ vulns: [] }, /advisory_missing/],
+    [{ vulns: [reviewedAdvisory], next_page_token: "more" }, /audit_invalid/],
+    [{ vulns: [reviewedAdvisory], error: false }, /audit_invalid/],
+    [
+      { vulns: [{ id: policy.advisory, modified: reviewedAdvisory.modified }] },
+      /advisory_changed/,
+    ],
+    [
+      { vulns: [reviewedAdvisory, { id: "GHSA-new-unknown" }] },
+      /advisory_unresolved/,
+    ],
+  ])
+    await assert.rejects(
+      checkMinimatchUpstream(policy, {
+        fetchImpl: async () => response(value),
+      }),
+      error,
+    );
 });
 
 test("unknown or changed advisories, unavailable and malformed upstream checks fail closed", async () => {
@@ -250,13 +379,17 @@ test("unknown or changed advisories, unavailable and malformed upstream checks f
     }),
     /audit_invalid/,
   );
-  assert.deepEqual(
-    (
-      await checkMinimatchUpstream(policy, {
-        fetchImpl: async () => response({}),
-      })
-    ).observedAdvisories,
-    [],
+  await assert.rejects(
+    checkMinimatchUpstream(policy, {
+      fetchImpl: async () => new Response(new Uint8Array([0xff])),
+    }),
+    /encoded data was not valid/,
+  );
+  await assert.rejects(
+    checkMinimatchUpstream(policy, {
+      fetchImpl: async () => new Response('{"vulns":['),
+    }),
+    SyntaxError,
   );
 });
 

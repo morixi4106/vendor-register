@@ -41,10 +41,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-      - name: Verify Node and install without lifecycle scripts
-        run: |
-          npm run runtime:version
-          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify Node executable
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check rejection cases and real consumers
         run: node --test tests/scripts/minimatch-backport.test.js tests/scripts/npm-tree-verification.test.js
       - name: Verify installed bytes and fresh original upstream advisories

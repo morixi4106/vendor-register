@@ -1,5 +1,40 @@
 # Production dependency advisories
 
+## Minimatch Advisory Re-review: 2026-11-05
+
+Re-reviewed [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+after its November4 update stopped the existing gate. Comparing the official
+advisory-database revisions dbeae43fd24e3702e6d80fe80d1a08adc3c44122 and
+db6b565eb01ac6a316283ef3d177ce76b587c7d0 shows three changed fields:
+modified, affected and references. The introduced version changes from0 to7.0.0;
+two introducing commits are added. The description and
+[fix77a0f5c](https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8)
+are unchanged. Original9.0.9 remains affected; narrowing is not clearance.
+
+Keep the existing hash-bound @oja/minimatch9.0.9-oja.1 bytes, archive and API.
+Both CommonJS and ESM cap generated alternatives at1000, explicitly rejecting
+further amplification with RangeError, and skip quadratic second-phase work
+above1000 existing alternatives without truncation. The official v11 fix uses
+its braceExpandMax option for the first bound; the local v9 bound/error behavior
+is an intentional, previously documented compatibility difference, not an
+upstream release or an assurance about every possible resource-exhaustion path.
+
+The fresh original-identity OSV query now binds the entire reviewed advisory
+through recursive object-key-sorted JSON SHA256, including affected ranges,
+description, references, aliases, severity and modified timestamp. Arrays retain
+their order. Policy pins modified2026-11-04T17:01:25.850114200Z and digest
+2e09f17fa14e2cf81498f498fe06d7acc24c72ef6ee883e02da2aae2e7dad2a6.
+Tests retain the full reviewed response as an offline fixture. Any content
+change, unknown advisory, missing expected advisory, duplicate, paginated or
+malformed response fails closed. A valid empty response also requires review:
+the pinned reviewed range still includes v9. Network failure never grants
+approval. Splitting the dedicated workflow's version/install commands prevents
+a Windows shell from hiding the earlier command's exit status.
+
+Local and CI results are recorded separately in the launch handoff and PR59.
+This re-review does not approve native artifacts, close the whole incident,
+merge main, deploy production, release Shopify or resume notification emails.
+
 ## Prisma CLI Parser Migration: 2026-11-04
 
 Replace the actual query-engine, schema-engine and prisma-fmt consumers of

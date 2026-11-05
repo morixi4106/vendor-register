@@ -3,6 +3,10 @@
   "packageName": "@oja/minimatch",
   "version": "9.0.9-oja.1",
   "advisory": "GHSA-g3hv-75wg-m249",
+  "advisoryReview": {
+    "modified": "2026-11-04T17:01:25.850114200Z",
+    "canonicalSha256": "2e09f17fa14e2cf81498f498fe06d7acc24c72ef6ee883e02da2aae2e7dad2a6"
+  },
   "upstream": {
     "name": "minimatch",
     "version": "9.0.9",
