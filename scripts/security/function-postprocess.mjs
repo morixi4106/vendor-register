@@ -95,7 +95,7 @@ export function optimizerCreateArguments(s) {
     ![s.uid, s.gid].every(
       (n) => Number.isInteger(n) && n > 0 && n < 2147483647,
     ) ||
-    ![s.inputs, s.work].every(
+    ![s.inputs, s.work, ...(s.modules === undefined ? [] : [s.modules])].every(
       (p) =>
         typeof p === "string" &&
         p.startsWith("/") &&
@@ -134,6 +134,12 @@ export function optimizerCreateArguments(s) {
     `type=bind,source=${s.inputs},target=/inputs,readonly`,
     "--mount",
     `type=bind,source=${s.work},target=/work`,
+    ...(s.modules === undefined
+      ? []
+      : [
+          "--mount",
+          `type=bind,source=${s.modules},target=/inputs/node_modules,readonly`,
+        ]),
     "--workdir",
     "/work",
     "--entrypoint",
@@ -146,6 +152,13 @@ export function optimizerCreateArguments(s) {
 export function verifyOptimizerContainer(inspect, s, completed = true) {
   const a = inspect?.[0],
     h = a?.HostConfig;
+  const mounts = [
+    ["inputs", "/inputs", false],
+    ["work", "/work", true],
+    ...(s.modules === undefined
+      ? []
+      : [["modules", "/inputs/node_modules", false]]),
+  ];
   if (
     inspect?.length !== 1 ||
     a.Id !== s.container ||
@@ -168,11 +181,8 @@ export function verifyOptimizerContainer(inspect, s, completed = true) {
     a.Config.Env?.some(
       (e) => !/^(HOME|PATH|NODE_VERSION|YARN_VERSION)=/.test(e),
     ) ||
-    a.Mounts?.length !== 2 ||
-    ![
-      ["inputs", "/inputs", false],
-      ["work", "/work", true],
-    ].every(
+    a.Mounts?.length !== mounts.length ||
+    !mounts.every(
       ([key, dest, rw]) =>
         a.Mounts.filter(
           (m) =>
