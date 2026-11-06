@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "role": "javy-native-lab",
+  "sourcePolicySha256": "da7b84f7d69b985766b1256f0e56dce65e10a69c0e7198c94ece3a70cbe01de7",
+  "rustStd": {
+    "version": "1.99.1",
+    "date": "2026-10-15",
+    "target": "wasm32-wasip1",
+    "sha256": "d498fbff3fd032f2f5fabc299e5cbf7bc9d64abac6e389fc1a315b69821b48c4"
+  },
+  "wasiSdk": {
+    "version": "34.0",
+    "archive": "wasi-sdk-34.0-x86_64-linux.tar.gz",
+    "size": 192383077,
+    "sha256": "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
+  },
+  "shopifyProvider": {
+    "version": 4,
+    "url": "https://cdn.shopify.com/shopifycloud/shopify-functions-javy-plugin/shopify_functions_javy_v4.wasm",
+    "size": 1233749,
+    "sha256": "b1b5f0d38cb5cd1692fa027db8186b73c3673cacd337bf3d6ee8cf16cac70087",
+    "namespace": "shopify_functions_javy_v4"
+  }
+}

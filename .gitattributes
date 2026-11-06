@@ -23,3 +23,7 @@ vendor/native/javy/* text eol=lf
 scripts/security/test-javy-source.mjs text eol=lf
 tests/scripts/javy-source.test.js text eol=lf
 .github/workflows/javy-source-contracts.yml text eol=lf
+security/javy-native-contracts.json text eol=lf
+scripts/security/test-javy-native.mjs text eol=lf
+tests/scripts/javy-native.test.js text eol=lf
+.github/workflows/javy-native-contracts.yml text eol=lf

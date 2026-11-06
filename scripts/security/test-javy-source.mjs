@@ -428,7 +428,7 @@ export function javySourceOptions(args, env = process.env) {
   return true;
 }
 
-export async function testJavySource(root = ROOT) {
+export async function prepareJavySource(root = ROOT) {
   javySourceOptions([]);
   const policyBytes = fs.readFileSync(
     path.join(root, "security/javy-source-contracts.json"),
@@ -452,13 +452,13 @@ export async function testJavySource(root = ROOT) {
     process.platform === "win32" ? "cargo.exe" : "cargo",
   );
   env.CARGO_BUILD_JOBS = "1";
-  const execute = (command, args, cwd, label) => {
+  const execute = (command, args, cwd, label, timeout = 1_800_000) => {
     const r = spawnSync(command, args, {
       cwd,
       env,
       encoding: "utf8",
       windowsHide: true,
-      timeout: 1_800_000,
+      timeout,
       maxBuffer: 40 * 1024 * 1024,
     });
     writeRunnerEvidence(output, `${label}.stdout.log`, r.stdout || "");
@@ -631,21 +631,6 @@ export async function testJavySource(root = ROOT) {
   );
   checkJavyMetadata(metadata, source, policy);
   json("metadata.json", metadata);
-  const tests = [];
-  for (const plan of javySourceTestPlans())
-    tests.push({
-      name: plan.name,
-      ...javyTestTotals(
-        execute(cargo, plan.args, source, plan.name),
-        plan.count,
-      ),
-    });
-  checkJavyWiring(source, policy);
-  if (
-    sha(fs.readFileSync(path.join(source, "Cargo.lock"))) !==
-    policy.lockfile.sha256
-  )
-    throw new Error("javy_source_lock_changed");
   const report = {
     schemaVersion: 1,
     observedAt: new Date().toISOString(),
@@ -659,12 +644,41 @@ export async function testJavySource(root = ROOT) {
     sourceBindings: before,
     wirmTestSource: testSourcePolicy,
     wirmTestOriginSha256: sha(JSON.stringify(wirmTestOrigin)),
-    tests,
     registryPackageCount: assessment.packageCount,
     registryAdvisoryMatches: 0,
     artifactStatus: "NOT_VERIFIED",
     wholeCompilerVerified: false,
     productionApproved: false,
+  };
+  return { ...prepared, source, policy, output, execute, json, report };
+}
+
+export function checkPreparedJavySource(prepared) {
+  checkJavyWiring(prepared.source, prepared.policy);
+  if (
+    sha(fs.readFileSync(path.join(prepared.source, "Cargo.lock"))) !==
+    prepared.policy.lockfile.sha256
+  )
+    throw new Error("javy_source_lock_changed");
+}
+
+export async function testJavySource(root = ROOT) {
+  const prepared = await prepareJavySource(root);
+  const { cargo, source, execute, json } = prepared;
+  const tests = [];
+  for (const plan of javySourceTestPlans())
+    tests.push({
+      name: plan.name,
+      ...javyTestTotals(
+        execute(cargo, plan.args, source, plan.name),
+        plan.count,
+      ),
+    });
+  checkPreparedJavySource(prepared);
+  const report = {
+    ...prepared.report,
+    observedAt: new Date().toISOString(),
+    tests,
   };
   json("receipt.json", report);
   return report;
