@@ -223,6 +223,9 @@ test("TLS workflow remains isolated and never turns on certificate bypass or net
   assert.match(native, /Client::connect/);
   assert.match(native, /tokio::io::duplex/);
   assert.match(native, /EncryptionLevel::Strict/);
+  for (const code of ["-2146762487i32", "-2146762481i32", "-2146762495i32"])
+    assert.ok(native.includes(code));
+  assert.match(native, /message\.ends_with/);
   assert.doesNotMatch(
     native,
     /TcpStream|TcpListener|danger_accept|trust_cert\(\)|DATABASE_URL/,

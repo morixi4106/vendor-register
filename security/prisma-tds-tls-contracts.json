@@ -23,7 +23,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "da7efe72a5591e3e0a8cc8754a56dfe7d49d6836282917a4c3a2f8483c484fb2"
+      "sha256": "c5b6bbd5e2630580b111e86b24db3c2641663c5906ba8ec6d0195cfd8e23aabc"
     },
     {
       "path": "generate-certificates.ps1",

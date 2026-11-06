@@ -68,7 +68,18 @@ mod tests {
             match result {
                 Err(Error::Tls(message)) => {
                     let message = message.to_lowercase();
-                    assert!(expected.iter().any(|part| message.contains(part)), "unexpected certificate error for {name}: {message}");
+                    let reason_matches = if cfg!(windows) {
+                        let code = match name {
+                            "untrusted" => -2146762487i32, // CERT_E_UNTRUSTEDROOT
+                            "hostname" => -2146762481i32, // CERT_E_CN_NO_MATCH
+                            "expired" | "future" => -2146762495i32, // CERT_E_EXPIRED
+                            _ => panic!("unbound certificate rejection scenario"),
+                        };
+                        message.ends_with(&format!("(os error {code})"))
+                    } else {
+                        expected.iter().any(|part| message.contains(part))
+                    };
+                    assert!(reason_matches, "unexpected certificate error for {name}: {message}");
                     eprintln!("OJA_TDS_TLS_ERROR scenario={name} detail={message}");
                 }
                 other => panic!("expected certificate TLS error for {name}, got {other:?}"),
