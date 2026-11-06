@@ -128,3 +128,20 @@ test("financial, missing native, arbitrary descriptor fields and caller supplied
     null,
   );
 });
+
+test("authorization rejects browser-incompatible scope before returning an approvable preview", () => {
+  const f = fixture();
+  const template = f.context.native.verificationInventory[0].routes[0];
+  const routes = (count) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...template,
+      methodId: `method-${index}`,
+    }));
+  f.context.native.verificationInventory[0].routes = routes(127);
+  assert.equal(prepareCheckoutAuthorizationPlan(f).summary.caseCount, 383);
+  f.context.native.verificationInventory[0].routes = routes(128);
+  assert.throws(
+    () => prepareCheckoutAuthorizationPlan(f),
+    (e) => e.code === "international_checkout_session_limit",
+  );
+});

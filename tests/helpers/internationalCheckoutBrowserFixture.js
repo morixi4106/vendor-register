@@ -95,3 +95,16 @@ export function checkoutBrowserFixture() {
   const url = "https://browser.myshopify.com/checkouts/cn/abcdefghijklmnop";
   return { row, facts, view, url, plan: { cases } };
 }
+
+export function checkoutBrowserCapacityCases(routeCount) {
+  const base = checkoutBrowserFixture().plan.cases;
+  const cases = base.slice(3);
+  for (let index = 0; index < routeCount; index++) {
+    for (const row of base.slice(0, 3)) {
+      const { caseKey: _key, ...body } = row;
+      body.target = { ...body.target, methodId: `method-${index}` };
+      cases.push({ ...body, caseKey: proofHash(body) });
+    }
+  }
+  return cases.sort((a, b) => a.caseKey.localeCompare(b.caseKey));
+}

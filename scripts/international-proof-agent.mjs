@@ -49,14 +49,16 @@ export function createInternationalAgentTransport(
     !/^[a-f0-9]{64}$/.test(env[config[1]] || "")
   )
     throw proofError("international_agent_unconfigured");
-  return async (body, leaseToken) => {
+  return async (body, leaseToken, { signal } = {}) => {
     const bytes = canonicalProof(body);
     if (Buffer.byteLength(bytes) > 32000)
       throw proofError("international_input_limit");
     const response = await fetchImpl(new URL(config[0], base), {
       method: "POST",
       redirect: "error",
-      signal: AbortSignal.timeout(45000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(45000)])
+        : AbortSignal.timeout(45000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${env[config[1]]}`,

@@ -8,7 +8,7 @@ import { checkoutCaseExpected } from "../app/utils/internationalCheckoutResults.
 
 export const CHECKOUT_BROWSER_POLICY =
   "international-checkout-browser-readonly-v1";
-export const CHECKOUT_BROWSER_MAX_SESSIONS = 256;
+export { CHECKOUT_BROWSER_MAX_SESSIONS } from "../app/utils/internationalCheckoutCapacity.js";
 export const CHECKOUT_BROWSER_SELECTORS = "shopify-checkout-semantic-v1";
 export const CHECKOUT_REJECTION =
   "海外販売条件を確認できないため、この配送先への注文を受け付けられません。";

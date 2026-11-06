@@ -8,6 +8,7 @@ import {
   checkoutCaseExpected,
 } from "../utils/internationalCheckoutResults.js";
 import { HASH, proofHash, shape } from "../utils/internationalProofContract.js";
+import { checkoutBrowserPlanCapacity } from "../utils/internationalCheckoutCapacity.js";
 
 // This metadata belongs to the server-owned operator snapshot, not to HTTP input.
 export function prepareCheckoutAuthorizationPlan({
@@ -36,6 +37,7 @@ export function prepareCheckoutAuthorizationPlan({
     sourceHash,
     verificationKind: input.verificationKind,
   });
+  checkoutBrowserPlanCapacity(plan.cases);
   const summary = checkoutPlanSummary(
     plan,
     {

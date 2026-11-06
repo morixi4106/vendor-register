@@ -293,6 +293,8 @@ export async function testCheckoutBrowser({
       "tests/scripts/international-checkout-browser-process.test.js",
       "app/utils/internationalProofContract.js",
       "app/utils/internationalCheckoutResults.js",
+      "app/utils/internationalCheckoutCapacity.js",
+      "tests/utils/internationalCheckoutCapacity.test.js",
       "app/utils/internationalCheckoutVerification.js",
       "app/utils/internationalCurrencyPolicy.js",
       "app/utils/japanPostAirPacket.js",

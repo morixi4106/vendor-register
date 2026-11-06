@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runInternationalCheckoutAgentOnce } from "../../scripts/international-checkout-agent.mjs";
 import { internationalCheckoutResultFixture } from "../helpers/internationalCheckoutResultFixture.js";
+import { checkoutBrowserCapacityCases } from "../helpers/internationalCheckoutBrowserFixture.js";
 import {
   verifyProofSignature,
   proofHash,
@@ -211,4 +212,79 @@ test("polling and pagination are bounded and failures still dispose sessions", a
     assert.equal(f.closed(), 1);
     assert.ok(f.calls.filter((c) => c.body.intent === "status").length <= 30);
   }
+});
+
+test("no work, next failure and malformed task still close the observer exactly once", async () => {
+  for (const mode of ["empty", "error", "malformed"]) {
+    const f = fixture();
+    f.options.transport = async () => {
+      if (mode === "error") throw new Error("private canary");
+      return { task: mode === "empty" ? null : { runId: "invalid/id" } };
+    };
+    const result = await runInternationalCheckoutAgentOnce(f.options);
+    assert.equal(result.processed, 0);
+    assert.equal(f.closed(), 1);
+    assert.ok(!JSON.stringify(result).includes("canary"));
+  }
+});
+
+test("oversized pinned plan is rejected after pagination and before any challenge or provider observation", async () => {
+  const f = fixture(),
+    cases = checkoutBrowserCapacityCases(128);
+  f.task.summary.caseCount = cases.length;
+  f.task.summary.caseSetHash = proofHash(cases.map((row) => row.caseKey));
+  f.options.transport = async (body, lease) => {
+    if (body.intent === "cases") {
+      f.calls.push({ body, lease });
+      return {
+        cases: cases
+          .slice(body.offset, body.offset + 8)
+          .map((row) => ({ ...row, status: "PENDING", resultCode: null })),
+        nextOffset: body.offset + 8 >= cases.length ? null : body.offset + 8,
+      };
+    }
+    return f.transport(body, lease);
+  };
+  assert.equal((await runInternationalCheckoutAgentOnce(f.options)).failed, 1);
+  assert.equal(f.observations.length, 0);
+  assert.ok(
+    !f.calls.some((call) =>
+      ["challenge", "finish", "finalize"].includes(call.body.intent),
+    ),
+  );
+  assert.equal(f.closed(), 1);
+});
+
+test("expired work budget still reports STOP with its own abortable deadline", async () => {
+  const f = fixture();
+  let now = Date.now(),
+    stopSignal;
+  f.options.clock = () => now;
+  f.options.transport = async (body, lease, options) => {
+    if (body.intent === "fail") stopSignal = options.signal;
+    return f.transport(body, lease);
+  };
+  f.options.observe = async () => {
+    now += 600001;
+    throw new Error("private canary");
+  };
+  assert.equal((await runInternationalCheckoutAgentOnce(f.options)).failed, 1);
+  assert.ok(f.calls.some((call) => call.body.intent === "fail"));
+  assert.equal(stopSignal.aborted, true);
+  assert.equal(f.closed(), 1);
+});
+
+test("cleanup failure never finalizes or leaks a private provider exception", async () => {
+  const f = fixture();
+  let closed = 0;
+  f.options.close = async () => {
+    closed++;
+    throw new Error("private canary");
+  };
+  const result = await runInternationalCheckoutAgentOnce(f.options);
+  assert.equal(result.failed, 1);
+  assert.equal(closed, 1);
+  assert.ok(!f.calls.some((call) => call.body.intent === "finalize"));
+  assert.ok(f.calls.some((call) => call.body.intent === "fail"));
+  assert.ok(!JSON.stringify(result).includes("canary"));
 });

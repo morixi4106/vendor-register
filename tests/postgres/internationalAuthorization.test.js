@@ -209,6 +209,65 @@ test(
     );
 
     await t.test(
+      "browser capacity failure cannot create approval or consume a prior nonce/start a gate",
+      async () => {
+        const f = await fixture(),
+          preview = await f.commands.preview(post(), f.input);
+        const commands = createInternationalAuthorizationCommands({
+          ...f.dependencies,
+          inspectContext: async (...args) => {
+            const context = await f.dependencies.inspectContext(...args);
+            const product = context.native.verificationInventory[0];
+            product.routes = Array.from({ length: 128 }, (_, index) => ({
+              ...product.routes[0],
+              methodId: `method-${index}`,
+            }));
+            return context;
+          },
+        });
+        for (const operation of [
+          () => commands.preview(post(), f.input),
+          () =>
+            commands.confirm(post(), {
+              requestId: preview.requestId,
+              nonce: preview.nonce,
+            }),
+        ])
+          await assert.rejects(
+            operation(),
+            (e) => e.code === "international_checkout_session_limit",
+          );
+        assert.equal(
+          (
+            await db.internationalGateAuthorizationRequest.findUnique({
+              where: { id: preview.requestId },
+            })
+          ).consumedAt,
+          null,
+        );
+        assert.equal(
+          await db.internationalGateAuthorizationRequest.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          1,
+        );
+        assert.equal(
+          await db.internationalCheckoutVerificationRun.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          0,
+        );
+        assert.equal(
+          await db.internationalGateSyncJob.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          0,
+        );
+        assert.equal(await stateOf(f), null);
+      },
+    );
+
+    await t.test(
       "nonce is hashed, parallel double confirm creates one generation/job/run",
       async () => {
         const f = await fixture();

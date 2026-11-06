@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { createInternationalAgentTransport } from "./international-proof-agent.mjs";
+import { checkoutBrowserPlanCapacity } from "../app/utils/internationalCheckoutCapacity.js";
 import {
   CHECKOUT_RESULT_VERSION,
   checkoutCaseExpected,
@@ -43,6 +44,21 @@ export async function runInternationalCheckoutAgentOnce({
   )
     fail();
   const deadline = clock() + budgetMs;
+  let disposal;
+  const dispose = () =>
+    (disposal ||= (async () => {
+      let timer;
+      try {
+        await Promise.race([
+          Promise.resolve().then(close),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("close_timeout")), 5000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    })());
   const bounded = async (operation, limit = 45000) => {
     const remaining = Math.min(limit, deadline - clock());
     if (remaining <= 0) fail();
@@ -63,14 +79,16 @@ export async function runInternationalCheckoutAgentOnce({
       controller.abort();
     }
   };
-  const call = (body, lease) => bounded(() => transport(body, lease));
-  const next = await call({ intent: "next" });
-  if (!next.task) return { processed: 0 };
-  const runId = next.task.runId;
-  if (!ID.test(runId || "")) fail();
-  let lease,
+  const call = (body, lease) =>
+    bounded((signal) => transport(body, lease, { signal }));
+  let runId,
+    lease,
     claimed = false;
   try {
+    const next = await call({ intent: "next" });
+    if (!next.task) return { processed: 0 };
+    runId = next.task.runId;
+    if (!ID.test(runId || "")) fail();
     const task = await call({ intent: "claim", runId });
     lease = task.leaseToken;
     claimed = true;
@@ -120,6 +138,7 @@ export async function runInternationalCheckoutAgentOnce({
       proofHash(cases.map((row) => row.caseKey)) !== summary.caseSetHash
     )
       fail();
+    checkoutBrowserPlanCapacity(cases);
     const observePhase = async (phase, generation) => {
       for (const row of cases.filter((row) => row.phase === phase)) {
         if (phase === "OPEN") await call({ intent: "heartbeat", runId }, lease);
@@ -240,6 +259,7 @@ export async function runInternationalCheckoutAgentOnce({
     }
     if (state.closureGeneration !== summary.startGeneration + 1) fail();
     await observePhase("CLOSED", state.closureGeneration);
+    await dispose();
     let result;
     try {
       result = await call({ intent: "finalize", runId });
@@ -261,7 +281,9 @@ export async function runInternationalCheckoutAgentOnce({
   } catch {
     if (claimed) {
       try {
-        await call(
+        // STOP reporting has its own short budget, even after the work deadline.
+        await boundedStop(
+          transport,
           {
             intent: "fail",
             runId,
@@ -276,16 +298,27 @@ export async function runInternationalCheckoutAgentOnce({
     return { processed: 0, failed: 1, saleReady: false };
   } finally {
     // Close sessions even when the work budget is exhausted.
-    let timer;
     try {
-      await Promise.race([
-        close(),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error("close_timeout")), 5000);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
+      await dispose();
+    } catch {
+      // Cleanup failure is not a pass and must not disclose provider errors.
+      return { processed: 0, failed: 1, saleReady: false };
     }
+  }
+}
+
+async function boundedStop(transport, body, lease) {
+  const controller = new AbortController();
+  let timer;
+  try {
+    await Promise.race([
+      transport(body, lease, { signal: controller.signal }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("stop_timeout")), 5000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
   }
 }

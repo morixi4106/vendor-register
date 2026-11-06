@@ -8,6 +8,8 @@ on:
       - scripts/test-international-checkout-browser.mjs
       - app/utils/internationalProofContract.js
       - app/utils/internationalCheckoutResults.js
+      - app/utils/internationalCheckoutCapacity.js
+      - tests/utils/internationalCheckoutCapacity.test.js
       - tests/scripts/international-checkout-browser*.test.js
       - tests/helpers/internationalCheckoutBrowserFixture.js
       - tests/fixtures/internationalCheckoutBrowserPage.js
@@ -44,7 +46,7 @@ jobs:
       - name: Install pinned browser and platform dependencies
         run: node tools/international-checkout-browser/node_modules/playwright-core/cli.js install chromium --only-shell --with-deps
       - name: Run browser policy and sanitized-process contracts
-        run: node --test tests/scripts/international-checkout-browser-policy.test.js tests/scripts/international-checkout-browser-process.test.js
+        run: node --test tests/scripts/international-checkout-browser-policy.test.js tests/scripts/international-checkout-browser-process.test.js tests/utils/internationalCheckoutCapacity.test.js
       - name: Observe synthetic checkout pages in actual sandboxed browser
         run: node scripts/test-international-checkout-browser.mjs
       - name: Reject tracked changes

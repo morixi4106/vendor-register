@@ -29,6 +29,7 @@ import {
   validateCheckoutSummary,
 } from "../utils/internationalCheckoutResults.js";
 import { validateCheckoutCloseContext } from "../utils/internationalCheckoutClosure.js";
+import { checkoutBrowserPlanCapacity } from "../utils/internationalCheckoutCapacity.js";
 import {
   ID,
   shape,
@@ -146,9 +147,15 @@ export function createInternationalCheckoutRunner({
                 now,
                 trust,
               );
-              inspectCheckoutCaseSet(
+              const cases = inspectCheckoutCaseSet(
                 run,
                 await readCheckoutCases(tx, { ...args, runId: run.id }),
+              );
+              checkoutBrowserPlanCapacity(
+                cases.map((row) => ({
+                  ...row.expectedJson,
+                  caseKey: row.caseKey,
+                })),
               );
               const state = await tx.internationalGateSyncState.findUnique({
                 where: { shopDomain: args.shopDomain },
@@ -192,7 +199,16 @@ export function createInternationalCheckoutRunner({
               unavailable();
             const summary = validateCheckoutSummary(run.planSummaryJson, run);
             assertCheckoutExecutor(summary, EXECUTOR, now, trust);
-            inspectCheckoutCaseSet(run, await readCheckoutCases(tx, args));
+            const cases = inspectCheckoutCaseSet(
+              run,
+              await readCheckoutCases(tx, args),
+            );
+            checkoutBrowserPlanCapacity(
+              cases.map((row) => ({
+                ...row.expectedJson,
+                caseKey: row.caseKey,
+              })),
+            );
             const contextRun = {
               ...run,
               startedAt: new Date(context.observedAt),

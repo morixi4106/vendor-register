@@ -34,6 +34,26 @@ test("agent transport pins path, refuses redirects, bounds responses and never s
       }),
     );
 });
+
+test("caller cancellation reaches the fixed transport without changing its endpoint or deadline", async () => {
+  const controller = new AbortController();
+  const call = createInternationalAgentTransport("checkout", {
+    env: {
+      INTERNATIONAL_PROOF_APP_ORIGIN: "https://app.example.test",
+      INTERNATIONAL_CHECKOUT_RUNNER_TOKEN: "a".repeat(64),
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url.pathname, "/internal/international-checkout-runner");
+      controller.abort();
+      assert.equal(options.signal.aborted, true);
+      options.signal.throwIfAborted();
+    },
+  });
+  await assert.rejects(
+    call({ intent: "next" }, undefined, { signal: controller.signal }),
+    { name: "AbortError" },
+  );
+});
 test("agent retries only the same signed result; failed observations close, never report success", async () => {
   for (const purpose of ["deployment", "observer"]) {
     const calls = [];
