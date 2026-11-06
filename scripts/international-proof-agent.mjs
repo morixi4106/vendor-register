@@ -10,6 +10,10 @@ import {
 import { boundedProofBody } from "../app/services/internationalProofGitHub.server.js";
 
 const CONFIG = {
+  checkout: [
+    "/internal/international-checkout-runner",
+    "INTERNATIONAL_CHECKOUT_RUNNER_TOKEN",
+  ],
   deployment: [
     "/internal/international-deployment-runner",
     "INTERNATIONAL_PROOF_DEPLOYMENT_RUNNER_TOKEN",

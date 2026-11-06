@@ -147,6 +147,8 @@ function historical(run) {
     runId: run.id,
     pending: run.status === "CLOSING",
     saleReady: false,
+    completionObserved: false,
+    ...(run.status === "PASSED" ? { level: "NON_FINANCIAL" } : {}),
   };
 }
 
@@ -464,6 +466,7 @@ export function createInternationalCheckoutClosureCommands({
             runId: run.id,
             level: "NON_FINANCIAL",
             saleReady: false,
+            completionObserved: false,
           };
         },
       );

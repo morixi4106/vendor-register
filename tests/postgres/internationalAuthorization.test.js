@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomBytes } from "node:crypto";
+import { checkoutInventoryFixture } from "../helpers/internationalCheckoutFixture.js";
+import { collectInternationalCheckoutInventory } from "../../app/services/internationalCheckoutInventory.server.js";
 import { PrismaClient } from "@prisma/client";
 import { createInternationalAuthorizationCommands } from "../../app/services/internationalAuthorizationRequests.server.js";
 import { internationalHash } from "../../app/services/internationalGateProjection.server.js";
@@ -65,6 +67,18 @@ test(
         requiredCasesHash: "d".repeat(64),
         scenarioVersion: "fixture-v1",
         verifierVersion: "fixture-v1",
+        native: {
+          available: true,
+          validationReady: true,
+          configHash: "b".repeat(64),
+          verificationInventory: collectInternationalCheckoutInventory(
+            checkoutInventoryFixture(),
+          ),
+        },
+        checkoutDescriptor: {
+          runnerDigest: "e".repeat(64),
+          environment: "ISOLATED_STORE",
+        },
         proofReferences: [
           { id: proof.id, revision: 0, evidenceHash: proof.evidenceHash },
         ],
@@ -134,6 +148,65 @@ test(
           reason: "international_operator_stop",
         }),
       );
+
+    await t.test(
+      "preview pins the server plan; confirmation creates cases and summary in the same transaction",
+      async () => {
+        const f = await fixture(),
+          preview = await f.commands.preview(post(), f.input);
+        assert.equal(preview.checkoutPlan.caseCount, 5);
+        await consume(f, preview);
+        const state = await stateOf(f);
+        const run = await db.internationalCheckoutVerificationRun.findUnique({
+          where: { id: state.verificationRunId },
+        });
+        assert.deepEqual(run.planSummaryJson, preview.checkoutPlan);
+        assert.equal(run.requiredCasesHash, preview.checkoutPlan.planHash);
+        assert.equal(
+          await db.internationalCheckoutVerificationCase.count({
+            where: { runId: run.id },
+          }),
+          5,
+        );
+      },
+    );
+    await t.test(
+      "changed runner or native inventory cannot consume an existing preview",
+      async () => {
+        const f = await fixture(),
+          preview = await f.commands.preview(post(), f.input);
+        for (const change of ["runner", "route"]) {
+          const commands = createInternationalAuthorizationCommands({
+            ...f.dependencies,
+            inspectContext: async (...args) => {
+              const context = await f.dependencies.inspectContext(...args);
+              if (change === "runner")
+                context.checkoutDescriptor.runnerDigest = "f".repeat(64);
+              else
+                context.native.verificationInventory[0].routes[0].methodId =
+                  "other";
+              return context;
+            },
+          });
+          await assert.rejects(
+            commands.confirm(post(), {
+              requestId: preview.requestId,
+              nonce: preview.nonce,
+            }),
+            (e) => e.code === "international_checkout_plan_changed",
+          );
+        }
+        assert.equal(
+          (
+            await db.internationalGateAuthorizationRequest.findUnique({
+              where: { id: preview.requestId },
+            })
+          ).consumedAt,
+          null,
+        );
+        assert.equal(await stateOf(f), null);
+      },
+    );
 
     await t.test(
       "nonce is hashed, parallel double confirm creates one generation/job/run",

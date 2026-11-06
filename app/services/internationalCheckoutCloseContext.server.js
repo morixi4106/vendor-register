@@ -61,8 +61,8 @@ export async function inspectInternationalCheckoutCloseContext(
     currencies: auth.currenciesJson,
   };
   const context = await inspectContext(
-    { prismaClient, shopDomain: run.shopDomain, input, now: new Date() },
-    { graphQL: call },
+    { prismaClient, shopDomain: run.shopDomain, input, now: new Date(), env },
+    { graphQL: call, proofOptions: { trust } },
   );
   const source = await readSource({
     prismaClient,

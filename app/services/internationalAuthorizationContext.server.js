@@ -12,10 +12,11 @@ export { inspectInternationalAuthorizationProof } from "./internationalProofRead
 import { inspectInternationalAuthorizationProof } from "./internationalProofReader.server.js";
 
 export async function inspectInternationalAuthorizationContext(
-  { prismaClient, shopDomain, input, now },
+  { prismaClient, shopDomain, input, now, env = process.env },
   {
     graphQL = internationalGraphQL,
     inspectProof = inspectInternationalAuthorizationProof,
+    proofOptions,
   } = {},
 ) {
   const countries = [...new Set(input.scope.flatMap((row) => row.countries))];
@@ -34,13 +35,18 @@ export async function inspectInternationalAuthorizationContext(
       routes.map((row) => [row.scopeId, row.metadataJson?.deliveryProfileId]),
     ),
   });
-  const proof = await inspectProof({
-    shopDomain,
-    input,
-    prismaClient,
-    native,
-    now,
-  });
+  const proof = await inspectProof(
+    {
+      shopDomain,
+      input,
+      prismaClient,
+      native,
+      now,
+      graphQL,
+      env,
+    },
+    proofOptions,
+  );
   if (!native.available || !native.validationReady || !proof.ready)
     return { ready: false, reason: "international_authorization_unverified" };
   const shop = await readInternationalMetafield({
@@ -53,6 +59,7 @@ export async function inspectInternationalAuthorizationContext(
     nativeConfigHash: native.configHash,
     shopTimezone: shop.timezone,
     observedAt: proof.observedAt,
+    native,
   };
 }
 

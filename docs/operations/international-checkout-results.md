@@ -1,7 +1,8 @@
 # International Checkout Result Intake
 
-Implemented scope: 4C-2a result intake and 4C-2b normal-closure lifecycle core.
-Managed-runner/artifact/authorization integration is still incomplete.
+Implemented scope: 4C-2a result intake, 4C-2b normal-closure lifecycle core and
+4C-2c server authorization, authenticated API and bounded agent protocol.
+Browser observations and the managed-verifier artifact qualification remain incomplete.
 This document is not authorization to run a live checkout, migrate
 production, publish, charge, refund, or send monitoring notifications.
 
@@ -94,13 +95,41 @@ evidence of an actual store, payment, refund or international sale.
 
 ## Still Closed
 
-The source capability stays false. Authorization currently does not attach a
-complete checkout plan, and this intake has no HTTP route, scheduler, browser
-runner or installed production trust key. It cannot be enabled by an env flag.
+The source capability stays false. There is no qualified browser adapter,
+scheduler or installed production trust key. It cannot be enabled by an env flag.
 
-Next integration must attach the server-generated plan to authorization/run
-creation, authenticate the dedicated checkout principal and bind its code to
-successful CI. The normal-close lifecycle core is implemented, but its default
+Authorization now pins the server-generated plan summary to the operator snapshot
+at preview, regenerates and compares it at confirmation, and creates the run,
+summary and exact cases atomically with nonce consumption and gate job creation.
+Changes to inventory, routes, generation, executor digest or environment invalidate
+the preview. No schema migration or legacy passing-state backfill was added.
+
+The POST-only `/internal/international-checkout-runner` route uses a dedicated
+`INTERNATIONAL_CHECKOUT_RUNNER_TOKEN`. Other runner tokens and reused secrets are
+rejected. Bodies must be canonical JSON, at most 32 KB; no client plan, URL,
+executor, key registry, context or success flag is accepted. Claim is fenced by
+current authorization, pinned plan, trust key, runtime context, ACTIVE readback,
+source/generation and DB time. Heartbeat and eight-case pagination require the
+OPEN lease; CLOSED operations reject it. Status is historical and nonauthorizing.
+Authenticated failure can request closure even while the source capability is off.
+
+`runInternationalCheckoutAgentOnce` implements the bounded nonfinancial protocol:
+one claim, exact paginated case-set verification, short challenges, constrained
+adapter-output schema, separately signed observations, identical-result retry,
+finish, bounded closure polling, old/new CLOSED observations and finalization.
+OPEN leases are discarded before CLOSED operations. Maximum work time is ten
+minutes; an adapter receives an abort signal and sessions are disposed even on
+failure. There is deliberately no default observer, CLI or automatic scheduler.
+An expectation-based synthetic observer exists only in tests. It is not a
+Shopify browser adapter and must never be substituted into a production runner.
+
+The CONTRACT_ONLY inventory now binds these implementation and test files.
+Artifact export requires actual independent successful Quality/isolated-DB runs
+for the same commit, never the artifact workflow's own run as a substitute.
+The obsolete standalone PostgreSQL workflow reference has been replaced by
+`database-compatibility.yml`; it does not weaken the existing admission guards.
+
+The normal-close lifecycle core is implemented, but its default
 runtime reader deliberately rejects incomplete verifier packages. Connect
 reviewed verifier packaging/coverage and the managed browser before considering
 the full4C-2 integration complete. CLOSED cases cannot use an OPEN lease.

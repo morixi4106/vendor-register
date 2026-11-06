@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomBytes } from "node:crypto";
+import { canonicalProof } from "../../app/utils/internationalProofContract.js";
+import { createInternationalCheckoutRunner } from "../../app/services/internationalCheckoutRunner.server.js";
+import { runInternationalCheckoutAgentOnce } from "../../scripts/international-checkout-agent.mjs";
 import { PrismaClient } from "@prisma/client";
 import { internationalCheckoutResultFixture } from "../helpers/internationalCheckoutResultFixture.js";
 import { createInternationalCheckoutResultCommands } from "../../app/services/internationalCheckoutResults.server.js";
@@ -304,6 +307,250 @@ test(
         closedResult,
       };
     }
+
+    async function runnerFixture() {
+      const f = await fixture();
+      await db.internationalGateAuthorizationRequest.update({
+        where: { id: f.run.authorizationRequestId },
+        data: {
+          operatorJson: {
+            synthetic: true,
+            checkoutPlan: f.run.planSummaryJson,
+          },
+        },
+      });
+      await db.internationalCheckoutVerificationRun.update({
+        where: { id: f.run.id },
+        data: {
+          status: "QUEUED",
+          executorId: null,
+          startedAt: null,
+          heartbeatAt: null,
+          leaseUntil: null,
+          leaseTokenHash: null,
+        },
+      });
+      const env = {
+        SHOPIFY_PRIMARY_SHOP_DOMAIN: f.run.shopDomain,
+        SHOPIFY_API_KEY: "synthetic",
+        INTERNATIONAL_CHECKOUT_RUNNER_TOKEN: "7".repeat(64),
+        INTERNATIONAL_PROOF_OBSERVER_TOKEN: "8".repeat(64),
+      };
+      const deps = {
+        prismaClient: db,
+        env,
+        trust: f.trust,
+        inspectCapability: () => ({ ready: true }),
+        inspectContext: f.inspectContext,
+      };
+      const api = createInternationalCheckoutRunner(deps);
+      const request = (
+        body,
+        lease,
+        token = env.INTERNATIONAL_CHECKOUT_RUNNER_TOKEN,
+      ) =>
+        new Request(
+          "https://example.test/internal/international-checkout-runner",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+              ...(lease ? { "X-International-Lease": lease } : {}),
+            },
+            body: canonicalProof(body),
+          },
+        );
+      const call = async (body, lease) => {
+        const response = await api(request(body, lease));
+        const value = await response.json();
+        assert.equal(
+          response.headers.get("cache-control"),
+          "private, no-store",
+        );
+        if (!response.ok)
+          throw Object.assign(new Error(value.code || value.error), {
+            code: value.code || value.error,
+            status: response.status,
+          });
+        return value;
+      };
+      return { ...f, env, deps, api, request, call };
+    }
+
+    await t.test(
+      "dedicated authenticated API and managed protocol complete the isolated nonfinancial lifecycle",
+      async () => {
+        const f = await runnerFixture();
+        let disposed = false,
+          lost = false;
+        const transport = async (body, lease) => {
+          if (
+            body.intent === "status" &&
+            (await f.getRun()).closureStatus !== "CONFIRMED"
+          )
+            await f.confirmClose();
+          const value = await f.call(body, lease);
+          if (body.intent === "record" && !lost) {
+            lost = true;
+            throw new Error("lost acknowledgement");
+          }
+          return value;
+        };
+        const outcome = await runInternationalCheckoutAgentOnce({
+          transport,
+          ...f.descriptor,
+          key: { id: "checkout-test", privateKey: f.keys.privateKey },
+          observe: async ({ row }) => ({
+            stage: row.expectedStage,
+            outcome: row.expectedOutcome,
+            evidenceHash: proofHash(row.caseKey),
+            sessionHash:
+              row.scenario === "new-checkout-blocked"
+                ? "3".repeat(64)
+                : "2".repeat(64),
+          }),
+          close: async () => {
+            disposed = true;
+          },
+        });
+        assert.equal(outcome.processed, 1);
+        assert.equal(outcome.saleReady, false);
+        assert.equal(disposed, true);
+        assert.equal((await f.getRun()).status, "PASSED");
+        assert.ok(
+          (await f.rows()).every((row) => row.resultCode === "MATCHED"),
+        );
+        assert.equal(
+          (
+            await db.internationalGateSyncState.findUnique({
+              where: { shopDomain: f.run.shopDomain },
+            })
+          ).mode,
+          "STOPPED",
+        );
+        assert.equal(
+          await db.operationalReadinessAttestation.count({
+            where: {
+              scopeId: f.run.shopDomain,
+              checkKey: "INTERNATIONAL_CHECKOUT_RELEASE_VERIFIED",
+            },
+          }),
+          0,
+        );
+      },
+    );
+    await t.test(
+      "runner token separation, exact input, disabled source capability and another tenant are rejected",
+      async () => {
+        const f = await runnerFixture();
+        for (const [body, token, status] of [
+          [{ intent: "next" }, f.env.INTERNATIONAL_PROOF_OBSERVER_TOKEN, 401],
+          [
+            { intent: "claim", runId: f.run.id, executorId: f.args.executorId },
+            f.env.INTERNATIONAL_CHECKOUT_RUNNER_TOKEN,
+            422,
+          ],
+          [
+            { intent: "claim", runId: "other-tenant" },
+            f.env.INTERNATIONAL_CHECKOUT_RUNNER_TOKEN,
+            409,
+          ],
+        ])
+          assert.equal(
+            (await f.api(f.request(body, null, token))).status,
+            status,
+          );
+        const disabled = createInternationalCheckoutRunner({
+          ...f.deps,
+          inspectCapability: undefined,
+        });
+        assert.equal(
+          (await disabled(f.request({ intent: "next" }))).status,
+          422,
+        );
+        assert.equal(
+          (await disabled(f.request({ intent: "status", runId: f.run.id })))
+            .status,
+          200,
+        );
+        assert.equal((await f.getRun()).status, "QUEUED");
+      },
+    );
+    await t.test(
+      "parallel claim has one winner, lease gates data and heartbeat, OPEN lease cannot perform CLOSED observations",
+      async () => {
+        const f = await runnerFixture();
+        const claims = await Promise.allSettled([
+          f.call({ intent: "claim", runId: f.run.id }),
+          f.call({ intent: "claim", runId: f.run.id }),
+        ]);
+        assert.equal(claims.filter((r) => r.status === "fulfilled").length, 1);
+        const task = claims.find((r) => r.status === "fulfilled").value;
+        for (const intent of ["cases", "heartbeat", "closedChallenge"]) {
+          const body = {
+            intent,
+            runId: f.run.id,
+            ...(intent === "cases"
+              ? { offset: 0 }
+              : intent === "closedChallenge"
+                ? { caseKey: f.plan.cases[0].caseKey }
+                : {}),
+          };
+          await assert.rejects(
+            f.call(
+              body,
+              intent === "closedChallenge" ? task.leaseToken : "9".repeat(64),
+            ),
+          );
+        }
+        assert.equal(
+          (
+            await f.call(
+              { intent: "heartbeat", runId: f.run.id },
+              task.leaseToken,
+            )
+          ).ok,
+          true,
+        );
+        const stopped = await f.call(
+          {
+            intent: "fail",
+            runId: f.run.id,
+            code: "international_checkout_not_observed",
+          },
+          task.leaseToken,
+        );
+        assert.equal(stopped.pending, true);
+        assert.equal((await f.getRun()).status, "CLOSING");
+        await assert.rejects(
+          f.call({ intent: "heartbeat", runId: f.run.id }, task.leaseToken),
+        );
+      },
+    );
+    await t.test(
+      "source mutation during external claim read rolls back claim without allocating a lease",
+      async () => {
+        const f = await runnerFixture();
+        const api = createInternationalCheckoutRunner({
+          ...f.deps,
+          inspectContext: async (args) => {
+            const context = await f.inspectContext(args);
+            await db.internationalGateSyncState.update({
+              where: { shopDomain: f.run.shopDomain },
+              data: { sourceHash: "9".repeat(64) },
+            });
+            return context;
+          },
+        });
+        assert.equal(
+          (await api(f.request({ intent: "claim", runId: f.run.id }))).status,
+          409,
+        );
+        assert.equal((await f.getRun()).status, "QUEUED");
+        assert.equal((await f.getRun()).leaseTokenHash, null);
+      },
+    );
 
     await t.test(
       "parallel initialization creates the exact case set once, never changes the run status",

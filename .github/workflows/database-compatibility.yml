@@ -15,6 +15,8 @@ on:
       - app/**
       - tests/postgres/**
       - tests/helpers/**
+      - scripts/international-checkout-agent.mjs
+      - scripts/international-proof-agent.mjs
       - package.json
       - package-lock.json
   workflow_dispatch:

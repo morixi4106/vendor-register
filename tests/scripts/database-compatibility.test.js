@@ -103,6 +103,12 @@ test("application transaction probes bind every application and test helper inpu
   const inputs = internationalApplicationInputs(ROOT);
   assert.ok(inputs.length > 100);
   assert.ok(
+    inputs.some((e) => e.path === "scripts/international-checkout-agent.mjs"),
+  );
+  assert.ok(
+    inputs.some((e) => e.path === "scripts/international-proof-agent.mjs"),
+  );
+  assert.ok(
     inputs.some(
       (e) =>
         e.path === "app/services/internationalAuthorizationRequests.server.js",

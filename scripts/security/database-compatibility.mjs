@@ -147,6 +147,10 @@ export function internationalApplicationInputs(root) {
   };
   for (const directory of ["app", "tests/postgres", "tests/helpers"])
     walk(directory);
+  files.push(
+    "scripts/international-checkout-agent.mjs",
+    "scripts/international-proof-agent.mjs",
+  );
   return files.sort().map((file) => ({
     path: file,
     sha256: sha(bytes(path.join(root, file), 1024 * 1024)),

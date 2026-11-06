@@ -18,8 +18,14 @@ import {
   FUNCTION_UID,
   CHECKOUT_CONTRACT_PATHS,
 } from "../app/utils/internationalProofContract.js";
-import { INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION } from "../app/utils/internationalCurrencyPolicy.js";
-import { INTERNATIONAL_CHECKOUT_SCENARIOS, INTERNATIONAL_CHECKOUT_VERIFIER } from "../app/utils/internationalCheckoutVerification.js";
+import {
+  INTERNATIONAL_CURRENCY_POLICY,
+  INTERNATIONAL_SHOP_PROJECTION_VERSION,
+} from "../app/utils/internationalCurrencyPolicy.js";
+import {
+  INTERNATIONAL_CHECKOUT_SCENARIOS,
+  INTERNATIONAL_CHECKOUT_VERIFIER,
+} from "../app/utils/internationalCheckoutVerification.js";
 import { createInternationalProofGitHub } from "../app/services/internationalProofGitHub.server.js";
 
 export function collectProofDeploymentFiles(root) {
@@ -85,13 +91,69 @@ export function collectCheckoutVerifier(root) {
   const files = CHECKOUT_CONTRACT_PATHS.map((relative) => {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 1 || stat.size > 65536)
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      stat.size < 1 ||
+      stat.size > 65536
+    )
       throw new Error("proof_verifier_source_invalid");
-    return { path: relative, size: stat.size, sha256: byteHash(fs.readFileSync(absolute)) };
+    return {
+      path: relative,
+      size: stat.size,
+      sha256: byteHash(fs.readFileSync(absolute)),
+    };
   });
-  return { v: "international-checkout-verifier-v1", level: "CONTRACT_ONLY",
-    scenarioVersion: INTERNATIONAL_CHECKOUT_SCENARIOS, verifierVersion: INTERNATIONAL_CHECKOUT_VERIFIER,
-    files, digest: proofHash(files) };
+  return {
+    v: "international-checkout-verifier-v1",
+    level: "CONTRACT_ONLY",
+    scenarioVersion: INTERNATIONAL_CHECKOUT_SCENARIOS,
+    verifierVersion: INTERNATIONAL_CHECKOUT_VERIFIER,
+    files,
+    digest: proofHash(files),
+  };
+}
+
+export async function collectInternationalProofChecks({
+  api,
+  headSha,
+  production,
+  ownRunId,
+}) {
+  const checks = {};
+  for (const [name, workflowName] of [
+    ["quality", "quality.yml"],
+    ["postgres", "database-compatibility.yml"],
+  ]) {
+    const list = await api.json(
+      `/actions/workflows/${workflowName}/runs?head_sha=${headSha}&per_page=100`,
+    );
+    const run = list.workflow_runs
+      ?.filter(
+        (row) =>
+          row.head_sha === headSha &&
+          row.path === `.github/workflows/${workflowName}` &&
+          (production
+            ? row.head_branch === "main" &&
+              ["push", "workflow_dispatch"].includes(row.event)
+            : row.event === "pull_request"),
+      )
+      .sort((a, b) => b.id - a.id)[0];
+    if (
+      !run ||
+      run.id === ownRunId ||
+      run.status !== "completed" ||
+      run.conclusion !== "success" ||
+      !Number.isSafeInteger(run.id) ||
+      run.id < 1 ||
+      !Number.isSafeInteger(run.run_attempt) ||
+      run.run_attempt < 1
+    )
+      throw new Error("proof_required_ci_incomplete");
+    checks[name] = { runId: run.id, runAttempt: run.run_attempt };
+  }
+  return checks;
 }
 
 export async function exportInternationalProofArtifact({
@@ -150,25 +212,12 @@ export async function exportInternationalProofArtifact({
   const api =
     github || createInternationalProofGitHub({ token: env.GITHUB_TOKEN });
   const workflow = await api.json(`/actions/runs/${Number(env.GITHUB_RUN_ID)}`);
-  const checks = {};
-  for (const [name, workflowName] of [
-    ["quality", "quality.yml"],
-    ["postgres", "international-authorization-postgres.yml"],
-  ]) {
-    if (production) {
-      const list = await api.json(
-        `/actions/workflows/${workflowName}/runs?head_sha=${headSha}&event=push&per_page=100`,
-      );
-      const run = list.workflow_runs?.sort((a, b) => b.id - a.id)[0];
-      if (!run || run.status !== "completed" || run.conclusion !== "success")
-        throw new Error("proof_required_ci_incomplete");
-      checks[name] = { runId: run.id, runAttempt: run.run_attempt };
-    } else
-      checks[name] = {
-        runId: Number(env.GITHUB_RUN_ID),
-        runAttempt: Number(env.GITHUB_RUN_ATTEMPT),
-      };
-  }
+  const checks = await collectInternationalProofChecks({
+    api,
+    headSha,
+    production,
+    ownRunId: Number(env.GITHUB_RUN_ID),
+  });
   const base = "extensions/marketplace-purchase-control";
   const manifest = validateManifest({
     v: PROOF_VERSION,

@@ -131,10 +131,19 @@ export function internationalProofFixture(
     files: rows,
     deploymentDigest: proofHash(rows),
   };
-  const verifierFiles = CHECKOUT_CONTRACT_PATHS.map((path) => ({ path, size: 7, sha256: byteHash(Buffer.from("fixture")) }));
-  manifest.checkoutVerifier = { v: "international-checkout-verifier-v1", level: "CONTRACT_ONLY",
-    scenarioVersion: "international-checkout-cases-v1", verifierVersion: "international-checkout-contract-v1",
-    files: verifierFiles, digest: proofHash(verifierFiles) };
+  const verifierFiles = CHECKOUT_CONTRACT_PATHS.map((path) => ({
+    path,
+    size: 7,
+    sha256: byteHash(Buffer.from("fixture")),
+  }));
+  manifest.checkoutVerifier = {
+    v: "international-checkout-verifier-v1",
+    level: "CONTRACT_ONLY",
+    scenarioVersion: "international-checkout-cases-v1",
+    verifierVersion: "international-checkout-contract-v1",
+    files: verifierFiles,
+    digest: proofHash(verifierFiles),
+  };
   const archive = proofZip([
     ["manifest.json", Buffer.from(JSON.stringify(manifest))],
     ...files,
@@ -209,7 +218,7 @@ export function internationalProofFixture(
     "/actions/runs/102": {
       ...run,
       id: 102,
-      path: ".github/workflows/international-authorization-postgres.yml",
+      path: ".github/workflows/database-compatibility.yml",
       event: "push",
     },
     "/actions/artifacts/200": {
@@ -234,9 +243,11 @@ export function internationalProofFixture(
     },
     archive: async () => archive,
   };
-  for (const row of verifierFiles) responses[`/contents/${row.path}?ref=${manifest.headSha}`] = {
-    encoding: "base64", content: Buffer.from("fixture").toString("base64"),
-  };
+  for (const row of verifierFiles)
+    responses[`/contents/${row.path}?ref=${manifest.headSha}`] = {
+      encoding: "base64",
+      content: Buffer.from("fixture").toString("base64"),
+    };
   const graph = internationalGraphMemory();
   const graphQL = async (args) => {
     if (args.query.includes("MarketplacePurchaseControlValidations"))

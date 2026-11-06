@@ -153,6 +153,17 @@ export async function inspectInternationalAuthorizationProof(
         run.releaseBinding
     )
       return { ready: false, reason: "international_deployment_changed" };
+    const verifier = manifest.checkoutVerifier;
+    // CONTRACT_ONLY never authorizes a managed checkout executor.
+    if (
+      effective === "VERIFY" &&
+      (verifier?.level !== "NON_FINANCIAL" ||
+        !/^[a-f0-9]{64}$/.test(verifier.digest || ""))
+    )
+      return {
+        ready: false,
+        reason: "international_verification_not_implemented",
+      };
     return {
       ready: true,
       binding: run.releaseBinding,
@@ -166,6 +177,14 @@ export async function inspectInternationalAuthorizationProof(
       expiresAt: row.expiresAt,
       observedAt: new Date(run.observedAt),
       key: INTERNATIONAL_DEPLOYMENT_EVIDENCE_KEY,
+      ...(effective === "VERIFY"
+        ? {
+            checkoutDescriptor: {
+              runnerDigest: verifier.digest,
+              environment: "LIVE_STORE",
+            },
+          }
+        : {}),
     };
   } catch {
     return { ready: false, reason: "international_system_proof_unavailable" };

@@ -14,6 +14,7 @@ const TOKENS = Object.freeze({
   publisher: "INTERNATIONAL_PROOF_PUBLISHER_INGEST_TOKEN",
   deployment: "INTERNATIONAL_PROOF_DEPLOYMENT_RUNNER_TOKEN",
   observer: "INTERNATIONAL_PROOF_OBSERVER_TOKEN",
+  checkout: "INTERNATIONAL_CHECKOUT_RUNNER_TOKEN",
 });
 export function authenticateInternationalRunner(
   request,

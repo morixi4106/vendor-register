@@ -8,23 +8,63 @@ export const PROOF_VERSION = "international-proof-v1";
 export const PROOF_VALIDITY = "international-proof-validity-v1";
 export const PROOF_SCHEMA_MIGRATION_VERSION = "20261107000000";
 export const CHECKOUT_CONTRACT_PATHS = Object.freeze([
+  "app/routes/internal.international-checkout-runner.jsx",
+  "app/services/internationalAuthorizationContext.server.js",
+  "app/services/internationalAuthorizationPolicy.server.js",
+  "app/services/internationalAuthorizationRequests.server.js",
+  "app/services/internationalCheckoutAuthorizationPlan.server.js",
+  "app/services/internationalCheckoutCloseContext.server.js",
+  "app/services/internationalCheckoutClosure.server.js",
   "app/services/internationalCheckoutInventory.server.js",
   "app/services/internationalCheckoutPlan.server.js",
+  "app/services/internationalCheckoutResults.server.js",
+  "app/services/internationalCheckoutRunner.server.js",
+  "app/services/internationalProofGitHub.server.js",
+  "app/services/internationalProofReader.server.js",
+  "app/services/internationalRunnerAuthentication.server.js",
   "app/services/internationalTransactionSnapshot.server.js",
+  "app/utils/internationalCheckoutClosure.js",
+  "app/utils/internationalCheckoutResults.js",
   "app/utils/internationalCheckoutVerification.js",
   "app/utils/internationalCurrencyPolicy.js",
+  "app/utils/internationalProofContract.js",
+  "scripts/international-checkout-agent.mjs",
+  "scripts/international-proof-agent.mjs",
+  "tests/postgres/internationalAuthorization.test.js",
+  "tests/postgres/internationalCheckoutResults.test.js",
+  "tests/scripts/international-checkout-agent.test.js",
+  "tests/services/internationalCheckoutAuthorizationPlan.server.test.js",
+  "tests/services/internationalCheckoutRunner.server.test.js",
 ]);
 
 export function validateCheckoutVerifier(value) {
-  shape(value, ["v", "level", "scenarioVersion", "verifierVersion", "files", "digest"]);
-  if (value.v !== "international-checkout-verifier-v1" || value.level !== "CONTRACT_ONLY" ||
-      value.scenarioVersion !== "international-checkout-cases-v1" ||
-      value.verifierVersion !== "international-checkout-contract-v1" ||
-      !Array.isArray(value.files) || value.files.length !== CHECKOUT_CONTRACT_PATHS.length) throw proofError();
+  shape(value, [
+    "v",
+    "level",
+    "scenarioVersion",
+    "verifierVersion",
+    "files",
+    "digest",
+  ]);
+  if (
+    value.v !== "international-checkout-verifier-v1" ||
+    value.level !== "CONTRACT_ONLY" ||
+    value.scenarioVersion !== "international-checkout-cases-v1" ||
+    value.verifierVersion !== "international-checkout-contract-v1" ||
+    !Array.isArray(value.files) ||
+    value.files.length !== CHECKOUT_CONTRACT_PATHS.length
+  )
+    throw proofError();
   for (const [index, file] of value.files.entries()) {
     shape(file, ["path", "size", "sha256"]);
-    if (file.path !== CHECKOUT_CONTRACT_PATHS[index] || !Number.isSafeInteger(file.size) ||
-        file.size < 1 || file.size > 65536 || !HASH.test(file.sha256)) throw proofError();
+    if (
+      file.path !== CHECKOUT_CONTRACT_PATHS[index] ||
+      !Number.isSafeInteger(file.size) ||
+      file.size < 1 ||
+      file.size > 65536 ||
+      !HASH.test(file.sha256)
+    )
+      throw proofError();
   }
   if (proofHash(value.files) !== value.digest) throw proofError();
   return value;
@@ -127,7 +167,9 @@ export function validateManifest(m) {
     "function",
     "files",
     "deploymentDigest",
-    ...(m?.function?.policy === "international-sale-2026-10-v2" ? ["checkoutVerifier"] : []),
+    ...(m?.function?.policy === "international-sale-2026-10-v2"
+      ? ["checkoutVerifier"]
+      : []),
   ]);
   if (
     m.v !== PROOF_VERSION ||
@@ -188,7 +230,8 @@ export function validateManifest(m) {
     !isInternationalPolicyPair(m.function.policy, m.function.projectionVersion)
   )
     throw proofError();
-  if (m.function.policy === "international-sale-2026-10-v2") validateCheckoutVerifier(m.checkoutVerifier);
+  if (m.function.policy === "international-sale-2026-10-v2")
+    validateCheckoutVerifier(m.checkoutVerifier);
   if (!Array.isArray(m.files) || !m.files.length || m.files.length > 1999)
     throw proofError();
   const names = new Set();

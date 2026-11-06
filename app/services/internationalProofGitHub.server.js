@@ -212,16 +212,23 @@ export async function inspectProofArtifactMetadata({
     throw proofError();
   if (manifest.checkoutVerifier) {
     for (const file of manifest.checkoutVerifier.files) {
-      const source = await get(`/contents/${file.path}?ref=${manifest.headSha}`);
-      if (source.encoding !== "base64" || typeof source.content !== "string" || source.content.length > 100000)
+      const source = await get(
+        `/contents/${file.path}?ref=${manifest.headSha}`,
+      );
+      if (
+        source.encoding !== "base64" ||
+        typeof source.content !== "string" ||
+        source.content.length > 100000
+      )
         throw proofError();
       const bytes = Buffer.from(source.content, "base64");
-      if (bytes.length !== file.size || byteHash(bytes) !== file.sha256) throw proofError();
+      if (bytes.length !== file.size || byteHash(bytes) !== file.sha256)
+        throw proofError();
     }
   }
   for (const [name, path] of [
     ["quality", ".github/workflows/quality.yml"],
-    ["postgres", ".github/workflows/international-authorization-postgres.yml"],
+    ["postgres", ".github/workflows/database-compatibility.yml"],
   ]) {
     const c = manifest.checks[name];
     const check = await get(`/actions/runs/${c.runId}`);

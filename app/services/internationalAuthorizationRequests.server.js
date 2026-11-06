@@ -1,4 +1,9 @@
 import prisma from "../db.server.js";
+import {
+  prepareCheckoutAuthorizationPlan,
+  assertCheckoutAuthorizationPlan,
+  persistAuthorizedCheckoutCases,
+} from "./internationalCheckoutAuthorizationPlan.server.js";
 import { MARKETPLACE_OPERATOR_ROLES as ROLES } from "../utils/marketplaceOperatorRoles.js";
 import { requirePostRequest } from "../utils/internalRouteSecurity.server.js";
 import { invalidateInternationalGates } from "./internationalGateQueue.server.js";
@@ -227,9 +232,20 @@ export function createInternationalAuthorizationCommands({
           });
           if (!source.ready || !/^[a-f0-9]{64}$/.test(source.sourceHash || ""))
             throw authorizationError("international_scope_ineligible", 422);
+          const checkout = prepareCheckoutAuthorizationPlan({
+            shopDomain: actor.shopDomain,
+            input,
+            context,
+            sourceHash: source.sourceHash,
+            generation: (state?.desiredGeneration || 0) + 1,
+          });
           return tx.internationalGateAuthorizationRequest.create({
             data: {
               ...actor,
+              operatorJson: {
+                ...actor.operatorJson,
+                ...(checkout ? { checkoutPlan: checkout.summary } : {}),
+              },
               purpose: input.purpose,
               resumePurpose: input.resumePurpose,
               verificationKind: input.verificationKind,
@@ -265,6 +281,7 @@ export function createInternationalAuthorizationCommands({
         ),
         shopTimezone: row.shopTimezone,
         scopeHash: row.scopeHash,
+        checkoutPlan: row.operatorJson.checkoutPlan || null,
         pending: false,
       };
     },
@@ -385,6 +402,18 @@ export function createInternationalAuthorizationCommands({
           });
           if (!source.ready || source.sourceHash !== current.sourceHash)
             throw authorizationError("international_source_changed");
+          const checkout = prepareCheckoutAuthorizationPlan({
+            shopDomain: actor.shopDomain,
+            input: normalized,
+            context,
+            sourceHash: source.sourceHash,
+            generation: state.desiredGeneration + 1,
+          });
+          if (checkout)
+            assertCheckoutAuthorizationPlan(
+              checkout,
+              current.operatorJson?.checkoutPlan,
+            );
           if (
             await tx.internationalCheckoutVerificationRun.findFirst({
               where: {
@@ -429,18 +458,24 @@ export function createInternationalAuthorizationCommands({
                 kind: current.verificationKind,
                 authorizationRequestId: row.id,
                 initiatedBy: actor.actorKey,
-                scenarioVersion: context.scenarioVersion,
-                verifierVersion: context.verifierVersion,
+                scenarioVersion:
+                  checkout?.plan.version || context.scenarioVersion,
+                verifierVersion:
+                  checkout?.plan.verifierVersion || context.verifierVersion,
                 scopeHash: current.scopeHash,
                 releaseBinding: current.releaseBinding,
                 nativeConfigHash: current.nativeConfigHash,
                 proofReferencesJson: current.proofReferencesJson,
-                requiredCasesHash: context.requiredCasesHash,
+                requiredCasesHash:
+                  checkout?.plan.requiredCasesHash || context.requiredCasesHash,
+                ...(checkout ? { planSummaryJson: checkout.summary } : {}),
                 startGeneration: state.desiredGeneration + 1,
                 activeKey: `${actor.shopDomain}:VERIFY`,
                 expiresAt: current.effectiveExpiresAt,
               },
             });
+          if (run && checkout)
+            await persistAuthorizedCheckoutCases(tx, run, checkout);
           await tx.internationalGateSyncState.update({
             where: { shopDomain: actor.shopDomain },
             data: {

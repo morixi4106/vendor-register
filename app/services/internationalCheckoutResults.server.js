@@ -168,6 +168,11 @@ export async function assertCheckoutDependencies(tx, run, now) {
       auth.sourceHash
   )
     unavailable();
+  if (
+    auth.operatorJson?.checkoutPlan &&
+    proofHash(auth.operatorJson.checkoutPlan) !== proofHash(run.planSummaryJson)
+  )
+    unavailable();
   return auth;
 }
 export function assertCheckoutExecutor(summary, executorId, now, trust) {
