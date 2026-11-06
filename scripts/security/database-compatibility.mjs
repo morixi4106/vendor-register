@@ -145,12 +145,10 @@ export function internationalApplicationInputs(root) {
   };
   for (const directory of ["app", "tests/postgres", "tests/helpers"])
     walk(directory);
-  return files
-    .sort()
-    .map((file) => ({
-      path: file,
-      sha256: sha(bytes(path.join(root, file), 1024 * 1024)),
-    }));
+  return files.sort().map((file) => ({
+    path: file,
+    sha256: sha(bytes(path.join(root, file), 1024 * 1024)),
+  }));
 }
 
 export function selectDatabaseNativeInput(root, downloaded) {
