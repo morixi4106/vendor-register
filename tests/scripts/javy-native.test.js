@@ -13,6 +13,7 @@ import {
   downloadJavyInput,
   checkJavySdkListing,
   verifyJavyPluginTransfer,
+  copyJavyBuildOutput,
 } from "../../scripts/security/test-javy-native.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -309,10 +310,48 @@ test("same-run plugin transfer binds both actual WASM bytes and source, cross to
     );
   }
   write(receipt);
+  const linked = path.join(directory, "linked-plugin.wasm");
+  fs.linkSync(path.join(directory, "plugin.wasm"), linked);
+  assert.throws(
+    () => verifyJavyPluginTransfer(directory, policy, source),
+    /file_invalid/,
+  );
+  fs.unlinkSync(linked);
   fs.writeFileSync(path.join(directory, "plugin.wasm"), wasm("provider"));
   assert.throws(
     () => verifyJavyPluginTransfer(directory, policy, source),
     /plugin_invalid/,
+  );
+});
+
+test("private Cargo hard-linked build outputs are sealed into independent files without relaxing input or path checks", (t) => {
+  const directory = tmp(t);
+  const build = path.join(directory, "build");
+  fs.mkdirSync(build);
+  const source = path.join(build, "plugin.wasm");
+  const bytes = wasm("plugin");
+  fs.writeFileSync(source, bytes);
+  fs.linkSync(source, path.join(build, "cargo-deps.wasm"));
+  assert.equal(fs.lstatSync(source).nlink, 2);
+  const destination = path.join(directory, "sealed.wasm");
+  const result = copyJavyBuildOutput(build, "plugin.wasm", destination);
+  assert.deepEqual(result.bytes, bytes);
+  assert.equal(result.origin.linkCount, 2);
+  assert.equal(fs.lstatSync(destination).nlink, 1);
+  fs.writeFileSync(source, "changed");
+  assert.deepEqual(fs.readFileSync(destination), bytes);
+  assert.throws(
+    () => copyJavyBuildOutput(build, "../sealed.wasm", destination),
+    /escape/,
+  );
+  assert.throws(() => copyJavyBuildOutput(build, ".", destination), /escape/);
+  assert.throws(
+    () => copyJavyBuildOutput(build, "plugin.wasm", destination, 1),
+    /output_invalid/,
+  );
+  assert.throws(
+    () => copyJavyBuildOutput(build, "plugin.wasm", destination),
+    /EEXIST/,
   );
 });
 

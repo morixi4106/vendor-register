@@ -269,6 +269,48 @@ function regular(file, max = 16 * 1024 * 1024) {
   return fs.readFileSync(file);
 }
 
+// Cargo may hard-link its own output into the release directory. Seal a copy
+// before accepting or executing it; downloaded inputs still require nlink=1.
+export function copyJavyBuildOutput(
+  buildRoot,
+  relative,
+  destination,
+  max = 16 * 1024 * 1024,
+) {
+  const root = fs.realpathSync(buildRoot);
+  const file = path.resolve(root, relative);
+  const local = path.relative(root, file);
+  if (
+    !local ||
+    local === ".." ||
+    local.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(local)
+  )
+    throw new Error("javy_native_build_output_escape");
+  const stat = fs.lstatSync(file);
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    !stat.size ||
+    stat.size > max ||
+    fs.realpathSync(file) !== file
+  )
+    throw new Error("javy_native_build_output_invalid");
+  fs.copyFileSync(file, destination, fs.constants.COPYFILE_EXCL);
+  const bytes = regular(destination, max);
+  if (!bytes.equals(fs.readFileSync(file)))
+    throw new Error("javy_native_build_output_changed");
+  return {
+    bytes,
+    origin: {
+      path: relative,
+      linkCount: stat.nlink,
+      size: bytes.length,
+      sha256: hash(bytes),
+    },
+  };
+}
+
 export function verifyJavyPluginTransfer(directory, policy, sourceReport) {
   const receipt = JSON.parse(
     regular(path.join(directory, "plugins.json"), 64 * 1024),
@@ -374,11 +416,13 @@ async function buildPlugins(p, policy, transfer) {
   );
   checkPreparedJavySource(p);
   const plugins = PLUGINS.map((name, i) => {
-    const bytes = regular(
-      path.join(env.CARGO_TARGET_DIR, "wasm32-wasip1/release", name),
+    const { bytes, origin } = copyJavyBuildOutput(
+      env.CARGO_TARGET_DIR,
+      `wasm32-wasip1/release/${name}`,
+      path.join(transfer, name),
     );
+    json(`build-output-${i}.json`, origin);
     const wasm = observeJavyWasm(bytes, i === 0 ? "plugin" : "profiler");
-    fs.writeFileSync(path.join(transfer, name), bytes, { flag: "wx" });
     return { name, wasm };
   });
   const report = {
@@ -424,17 +468,20 @@ async function buildNative(p, policy, transfer, resultDirectory) {
     7_200_000,
   );
   const filename = process.platform === "win32" ? "javy.exe" : "javy";
-  const executable = path.join(env.CARGO_TARGET_DIR, "release", filename);
-  const bytes = regular(executable, 256 * 1024 * 1024);
+  const executable = path.join(resultDirectory, filename);
+  const { bytes, origin } = copyJavyBuildOutput(
+    env.CARGO_TARGET_DIR,
+    `release/${filename}`,
+    executable,
+    256 * 1024 * 1024,
+  );
+  if (process.platform !== "win32") fs.chmodSync(executable, 0o755);
   const identity = { filename, sha256: hash(bytes), size: bytes.length };
-  fs.writeFileSync(path.join(resultDirectory, filename), bytes, {
-    flag: "wx",
-    mode: 0o755,
-  });
   json("native-build.json", {
     ...p.report,
     stage: "compiled-not-probed",
     executable: identity,
+    origin,
     nativePolicySha256: hash(Buffer.from(JSON.stringify(policy))),
     pluginInputSha256: hash(Buffer.from(JSON.stringify(plugins))),
     probesComplete: false,
