@@ -15,6 +15,8 @@ export const BUILD_CONTROL_FILES = Object.freeze([
   "scripts/security/runtime-toolchain.mjs",
   "scripts/security/toolchain-targets.mjs",
   "scripts/security/production-build.mjs",
+  "scripts/security/function-build.mjs",
+  "extensions/marketplace-purchase-control/shopify.extension.toml",
   "scripts/security/build-control-evidence.mjs",
   "scripts/security/toolchain-risk-scope.mjs",
   "scripts/security/risk-acceptance-provenance.mjs",
