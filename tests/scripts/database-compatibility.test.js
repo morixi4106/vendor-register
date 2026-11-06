@@ -305,15 +305,15 @@ test("native reuse cannot substitute a current unrelated build or treat prior ap
     /evidence_invalid/,
   );
   assert.deepEqual(DATABASE_NATIVE_INPUT, {
-    run: "42038861752",
-    head: "58db7772b94d294202ae4961d65b8c72d5ca57e2",
-    artifactId: "13421125529",
+    run: "42300766846",
+    head: "373617a9dbddbf08b6a6d26313888d6e04e586cc",
+    artifactId: "13544862506",
     policySha256:
-      "2da8f59fe8bf52764c1097bbf5f77766313ea7e9bd94857aa0f6c9cee904d217",
+      "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
     librarySha256:
-      "097b6f7d68a6ea3770d599b9f7b38544c38489e1c1b3775e3d2736407b9e2aa5",
+      "ee2bbaabe415c0a77e44872cd7a481838b68bd17475383a1c89e003b73ca847e",
     schemaSha256:
-      "61ebb54084936ef7679d0b6c2e8f34a16d00aad6196e9c892833e0c990f6ee3f",
+      "c3ce18388631e8e9b2e1d83de6c3303344732bb848305ae4f0ceeb330fc8864f",
   });
   assert.equal(
     DATABASE_NATIVE_INPUT.policySha256,

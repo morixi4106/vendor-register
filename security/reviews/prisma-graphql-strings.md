@@ -38,15 +38,15 @@ quotes are unescaped before line processing.
 
 `vendor/native/prisma/graphql-strings.patch` changes only `src/common.rs`.
 `security/prisma-graphql-strings.json` binds the base engine policy, original
-and candidate bytes, patch, and both test fixtures. The existing GraphQL-only
-isolated runner now first runs three diagnostic baseline tests against the
+and candidate bytes, patch, and both test fixtures. The historical GraphQL-only
+isolated runner first ran three diagnostic baseline tests against the
 unchanged parser, including two caught panics, then nine fixed-decoder tests
 and all library units with the candidate patch. The bounded corpus includes
 96 indentation/Unicode combinations through both query and schema entries.
 Counts for this corpus are not additional Rust test functions.
 
-The runner checks every owned `src` file before/after patching, requires that
-only common.rs changed, and restores the base source and fixture registration
+That runner checked every owned `src` file before/after patching, required that
+only common.rs changed, and restored the base source and fixture registration
 even after an error. Its receipt distinguishes baseline, candidate and full
 library results. Both OS jobs must pass; Node-only source/receipt tests are
 not execution of Rust code.
@@ -65,8 +65,16 @@ N-API probe also requires four actual GraphQL/SQL string results, including the
 original failing Unicode patterns and bare-CR normalization, each bracketed by
 healthy SELECT1 controls. Older depth-only reports are rejected.
 
-Rebuild both release-native artifacts, independently verify their bytes, then
-refresh the DB/runtime evidence and fixed pins. Until those steps are verified,
-do not claim the old pinned binaries contain this fix. Production/native
-approvals remain false. Do not weaken a binding to reuse an older binary.
+[Release-native CI42300766846](https://github.com/morixi4106/vendor-register/actions/runs/42300766846)
+rebuilt both platforms at373617a with the original fat-LTO release profiles.
+Both actual binaries, source policy, compiler outputs, receipts and probe logs
+were independently verified. Linux SQLite/strict-TLS PostgreSQL and Windows
+SQLite passed Unicode4/control26; a fresh local Windows SQLite run also passed.
+DB/runtime pins now select the new Linux artifact13544862506, N-APIee2bbaab and
+schema c3ce1838, not the older depth-only artifact. Their separate final-head
+database/container workflows must still succeed; this source record does not
+substitute for those reports or imply production installation.
+
+Production/native approvals remain false. Do not weaken a binding to reuse an
+older binary or promote a selected regression test to whole-source approval.
 Remaining parser/driver source reviews and provider provenance remain separate.

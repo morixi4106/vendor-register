@@ -38,9 +38,9 @@
       "repository": "prisma/graphql-parser",
       "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
       "releaseRoots": ["query-engine-node-api"],
-      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42038861757",
-      "completed": "Depth boundaries and Unicode decoder fix are adopted into the main source patch and ten byte-bound inputs; the original candidate baseline/replay remains historical. Nine exact decoder contracts and actual N-API Unicode controls are required by the current recipes. See security/reviews/prisma-graphql-strings.md.",
-      "remaining": "Rebuild and independently verify the release-native artifacts and refresh DB/runtime pins for the adopted source before treating it as present in a binary. Remaining parser source review and whole-engine/provider/production approval are separate; old depth-only binary success cannot satisfy the new Unicode controls."
+      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42300766846",
+      "completed": "Depth boundaries and Unicode decoder fix are adopted into the main source patch and ten byte-bound inputs. Both actual fat-LTO release artifacts and native Unicode4/control26 results were independently verified; DB/runtime pins select those new bytes. Parser42300767043 also verifies18 depth,9 decoder and61 overlapping library units per OS. See security/reviews/prisma-graphql-strings.md.",
+      "remaining": "Final-head database/container evidence must independently bind the new pins; this ledger does not replace those reports. Remaining parser source review and whole-engine/provider/production approval are separate. Historical candidate and old depth-only binary success cannot satisfy the current Unicode controls."
     },
     {
       "packages": ["mysql_async"],
