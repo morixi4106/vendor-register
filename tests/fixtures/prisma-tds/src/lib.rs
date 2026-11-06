@@ -139,7 +139,9 @@ mod tests {
 
     #[tokio::test]
     async fn colinfo_is_handled_without_unimplemented_panic() {
-        let mut input = prelogin(2); input.extend(packet(&[0xa5, 0, 0])); input.extend(done());
+        // COLINFO and DONE are part of the same response, before its EOM.
+        let mut payload = vec![0xa5, 0, 0]; payload.extend_from_slice(&done()[8..]);
+        let mut input = prelogin(2); input.extend(packet(&payload));
         let (result, writes) = connect(input, EncryptionLevel::NotSupported).await;
         result.unwrap();
         assert_eq!(written_types(&writes), [0x12, 0x10]);
