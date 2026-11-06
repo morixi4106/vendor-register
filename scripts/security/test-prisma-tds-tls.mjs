@@ -172,6 +172,120 @@ export function verifyTdsTlsResult(stdout, stderr) {
     rejectedConnectionsWithTdsData: 0,
   };
 }
+export function validateClassicTdsTlsPolicy(p) {
+  assert.deepEqual(
+    Object.keys(p).sort(),
+    [
+      "schemaVersion",
+      "strictTlsPolicySha256",
+      "fixturePath",
+      "fixtureSha256",
+      "clientModes",
+      "serverModes",
+      "serverProtocol",
+      "testCount",
+      "connectCalls",
+      "successfulEncryptedLogins",
+      "certificateRejections",
+      "registryPackages",
+      "wholeEngineVerified",
+      "sourceReviewComplete",
+      "productionApproved",
+      "systemTrustStoreModified",
+      "artifactStatus",
+    ].sort(),
+  );
+  assert.equal(p.schemaVersion, 1);
+  assert.equal(
+    p.strictTlsPolicySha256,
+    "834698fd65c5d943f4fd5a07efa55370491b615c27ee68d657bcca644d150b31",
+  );
+  assert.equal(p.fixturePath, "tests/fixtures/prisma-tds-classic/lib.rs");
+  assert.match(p.fixtureSha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(p.clientModes, ["On", "Required"]);
+  assert.deepEqual(p.serverModes, [1, 3]);
+  assert.equal(p.serverProtocol, "TLSv1.2");
+  assert.equal(p.testCount, 5);
+  assert.equal(p.connectCalls, 20);
+  assert.equal(p.successfulEncryptedLogins, 4);
+  assert.equal(p.certificateRejections, 16);
+  assert.equal(p.registryPackages, 134);
+  for (const key of [
+    "wholeEngineVerified",
+    "sourceReviewComplete",
+    "productionApproved",
+    "systemTrustStoreModified",
+  ])
+    assert.equal(p[key], false);
+  assert.equal(p.artifactStatus, "NOT_VERIFIED");
+  return p;
+}
+export function verifyClassicTdsTlsResult(stdout, stderr) {
+  const names = [
+    "trusted_classic_modes_complete_encrypted_login",
+    "untrusted_classic_modes_reject_before_login",
+    "wrong_hostname_classic_modes_reject_before_login",
+    "expired_classic_modes_reject_before_login",
+    "future_classic_modes_reject_before_login",
+  ];
+  assert.match(
+    stdout,
+    /test result: ok\. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out/,
+  );
+  for (const name of names)
+    assert.equal(
+      stdout
+        .split(/\r?\n/)
+        .filter((line) => line === `test tests::${name} ... ok`).length,
+      1,
+    );
+  const lines = stderr.split(/\r?\n/);
+  const markers = lines.filter((line) => line.startsWith("OJA_TDS_CLASSIC "));
+  const errors = lines.filter((line) =>
+    line.startsWith("OJA_TDS_CLASSIC_ERROR "),
+  );
+  assert.equal(markers.length, 20);
+  assert.equal(errors.length, 16);
+  for (const scenario of [
+    "trusted",
+    "untrusted",
+    "hostname",
+    "expired",
+    "future",
+  ])
+    for (const client of ["On", "Required"])
+      for (const server of [1, 3]) {
+        const prefix = `scenario=${scenario} client=${client} server=${server}`;
+        const selected = markers.filter((line) =>
+          line.startsWith(`OJA_TDS_CLASSIC ${prefix} `),
+        );
+        assert.equal(selected.length, 1);
+        const success = scenario === "trusted";
+        assert.match(
+          selected[0],
+          new RegExp(
+            `^OJA_TDS_CLASSIC ${prefix} success=${success} clear_prelogin=1 encrypted_login=${success ? 1 : 0} received=([1-9][0-9]?) sent=([1-9][0-9]?)$`,
+          ),
+        );
+        const detail = errors.filter((line) =>
+          line.startsWith(`OJA_TDS_CLASSIC_ERROR ${prefix} detail=`),
+        );
+        assert.equal(detail.length, success ? 0 : 1);
+        if (!success) assert.ok(detail[0].split(" detail=")[1].trim());
+      }
+  assert.doesNotMatch(
+    stdout + stderr,
+    /panicked at|thread .* panicked|stack overflow/,
+  );
+  return {
+    tests: 5,
+    connectCalls: 20,
+    successfulEncryptedLogins: 4,
+    certificateRejections: 16,
+    plaintextPrelogins: 20,
+    rejectedConnectionsWithLogin: 0,
+  };
+}
 export function checkTdsTlsMetadata(m, fixture, platform) {
   assert.ok(TARGETS[platform]);
   const locals = m.packages.filter((x) => !x.source);
@@ -227,18 +341,26 @@ export function checkTdsTlsMetadata(m, fixture, platform) {
   return node.features;
 }
 
-export async function testPrismaTdsTls(root = ROOT) {
+export async function testPrismaTdsTls(root = ROOT, { classic = false } = {}) {
+  assert.equal(typeof classic, "boolean");
   assert.equal(process.env.CI, "true");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.ok(TARGETS[process.platform]);
-  const policyBytes = read(
+  const strictPolicyBytes = read(
     path.join(root, "security/prisma-tds-tls-contracts.json"),
   );
-  const p = validateTdsTlsPolicy(JSON.parse(policyBytes));
+  const strictPolicy = validateTdsTlsPolicy(JSON.parse(strictPolicyBytes));
+  const policyBytes = classic
+    ? read(path.join(root, "security/prisma-tds-classic-contracts.json"))
+    : strictPolicyBytes;
+  const p = classic
+    ? validateClassicTdsTlsPolicy(JSON.parse(policyBytes))
+    : strictPolicy;
+  if (classic) assert.equal(sha(strictPolicyBytes), p.strictTlsPolicySha256);
   const originalBytes = read(
     path.join(root, "security/prisma-tds-contracts.json"),
   );
-  assert.equal(sha(originalBytes), p.originalTdsPolicySha256);
+  assert.equal(sha(originalBytes), strictPolicy.originalTdsPolicySha256);
   const original = JSON.parse(originalBytes);
   const engineBytes = read(
     path.join(root, "security/prisma-source-contracts.json"),
@@ -246,11 +368,18 @@ export async function testPrismaTdsTls(root = ROOT) {
   assert.equal(sha(engineBytes), original.sourcePolicySha256);
   const engine = JSON.parse(engineBytes);
   const home = fs.mkdtempSync(
-    path.join(checkedNativeDirectory(root, ".audit/prisma-tds-tls"), "run-"),
+    path.join(
+      checkedNativeDirectory(
+        root,
+        classic ? ".audit/prisma-tds-classic" : ".audit/prisma-tds-tls",
+      ),
+      "run-",
+    ),
   );
   const save = (name, bytes) =>
     fs.writeFileSync(path.join(home, name), bytes, { flag: "wx" });
   save("policy.json", policyBytes);
+  if (classic) save("strict-tls-policy.json", strictPolicyBytes);
   save("original-tds-policy.json", originalBytes);
   save("engine-policy.json", engineBytes);
   const tools = await prepareRustToolchain(root);
@@ -259,13 +388,19 @@ export async function testPrismaTdsTls(root = ROOT) {
   fs.mkdirSync(fixture);
   fs.mkdirSync(path.join(fixture, "vendor"));
   const fixtureSource = path.join(root, "tests/fixtures/prisma-tds-tls");
-  const certificates = verifyCertificateFixtures(fixtureSource, p);
-  for (const file of p.fixtureFiles) {
+  const certificates = verifyCertificateFixtures(fixtureSource, strictPolicy);
+  for (const file of strictPolicy.fixtureFiles) {
     const target = path.join(fixture, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     const b = read(path.join(fixtureSource, file.path));
     fs.writeFileSync(target, b, { flag: "wx" });
     save(file.path.replaceAll("/", "-"), b);
+  }
+  if (classic) {
+    const bytes = read(path.join(root, p.fixturePath));
+    assert.equal(sha(bytes), p.fixtureSha256);
+    fs.writeFileSync(path.join(fixture, "src/lib.rs"), bytes);
+    save("classic-src-lib.rs", bytes);
   }
   const commands = [];
   const execute = (executable, args, cwd, name) => {
@@ -401,7 +536,7 @@ export async function testPrismaTdsTls(root = ROOT) {
   );
   const sealed = path.join(
     home,
-    process.platform === "win32" ? "tds-tls-probes.exe" : "tds-tls-probes",
+    `${classic ? "tds-classic" : "tds-tls"}-probes${process.platform === "win32" ? ".exe" : ""}`,
   );
   fs.copyFileSync(executable, sealed, fs.constants.COPYFILE_EXCL);
   const executableBytes = read(sealed, 64_000_000);
@@ -412,7 +547,7 @@ export async function testPrismaTdsTls(root = ROOT) {
     fixture,
     "native-tests",
   );
-  const result = verifyTdsTlsResult(
+  const result = (classic ? verifyClassicTdsTlsResult : verifyTdsTlsResult)(
     stdout,
     read(path.join(home, "native-tests.stderr.log")).toString(),
   );
@@ -439,14 +574,17 @@ export async function testPrismaTdsTls(root = ROOT) {
     executableBytes: executableBytes.length,
     commands,
     result,
-    allTdsTlsContractsVerified: true,
+    ...(classic
+      ? { allClassicTdsTlsContractsVerified: true }
+      : { allTdsTlsContractsVerified: true }),
     wholeEngineVerified: false,
     sourceReviewComplete: false,
     productionApproved: false,
     systemTrustStoreModified: false,
     artifactStatus: "NOT_VERIFIED",
-    scope:
-      "Original fixed Tiberius Strict-mode TLS 1.2 certificate handshakes over memory-only duplex streams. Test-only CA and identities, no sockets or SQL Server, no system trust changes; not classic TDS-wrapped TLS, integrated authentication, full source or production approval.",
+    scope: classic
+      ? "Original fixed Tiberius classic PRELOGIN-wrapped TLS 1.2 certificate handshakes, client On/Required and server On/Required, fragmented memory-only duplex streams. Test-only CA/identities, no sockets or SQL Server, no system trust changes; not TLS1.3, integrated authentication, full source or production approval."
+      : "Original fixed Tiberius Strict-mode TLS 1.2 certificate handshakes over memory-only duplex streams. Test-only CA and identities, no sockets or SQL Server, no system trust changes; not classic TDS-wrapped TLS, integrated authentication, full source or production approval.",
   };
   save("receipt.json", JSON.stringify(report, null, 2) + "\n");
   console.log(
@@ -454,7 +592,9 @@ export async function testPrismaTdsTls(root = ROOT) {
       home,
       platform: process.platform,
       ...result,
-      allTdsTlsContractsVerified: true,
+      ...(classic
+        ? { allClassicTdsTlsContractsVerified: true }
+        : { allTdsTlsContractsVerified: true }),
       productionApproved: false,
     }),
   );
@@ -464,6 +604,9 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  assert.equal(process.argv.length, 2);
-  await testPrismaTdsTls();
+  assert.ok(
+    process.argv.length === 2 ||
+      (process.argv.length === 3 && process.argv[2] === "--classic"),
+  );
+  await testPrismaTdsTls(ROOT, { classic: process.argv[2] === "--classic" });
 }
