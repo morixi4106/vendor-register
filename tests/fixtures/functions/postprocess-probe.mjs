@@ -9,10 +9,12 @@ assert.equal(process.platform, "linux");
 assert.equal(process.getuid() > 0, true);
 assert.deepEqual(
   Object.keys(process.env).filter(
-    (k) => !["HOME", "PATH", "NODE_VERSION", "YARN_VERSION"].includes(k),
+    (k) =>
+      !["HOME", "PATH", "NODE_VERSION", "YARN_VERSION", "HOSTNAME"].includes(k),
   ),
   [],
 );
+assert.match(process.env.HOSTNAME, /^[a-f0-9]{12}$/);
 assert.throws(
   () => fs.writeFileSync("/inputs/denied", "x"),
   (e) => ["EROFS", "EACCES"].includes(e.code),
@@ -131,6 +133,7 @@ const nodeSha256 = sha(fs.readFileSync(process.execPath));
 const report = {
   success: true,
   uid: process.getuid(),
+  hostname: process.env.HOSTNAME,
   node: {
     version: process.versions.node,
     platform: process.platform,

@@ -379,6 +379,19 @@ export async function postprocessFunctions(root = ROOT) {
     fs.writeFileSync(path.join(inputs, destination), bytes, { flag: "wx" });
   }
   const esbuild = verifyRebuiltEsbuild(root);
+  const esbuildEvidence = path.join(home, "esbuild-evidence");
+  fs.mkdirSync(esbuildEvidence);
+  for (const suffix of [
+    "",
+    ".receipt.json",
+    ".buildinfo.json",
+    ".cdx.json",
+    ".sarif",
+  ]) {
+    const name = `esbuild-linux-x64${suffix}`;
+    const b = regular(path.join(root, ".audit/native-esbuild", name));
+    fs.writeFileSync(path.join(esbuildEvidence, name), b, { flag: "wx" });
+  }
   const esbuildPath = path.join(
     root,
     "node_modules/@esbuild/linux-x64/bin/esbuild",
@@ -544,6 +557,36 @@ export async function postprocessFunctions(root = ROOT) {
     report = JSON.parse(regular(path.join(work, "report.json")));
     assert.equal(report.success, true);
     assert.equal(report.uid, settings.uid);
+    assert.equal(report.hostname, container.slice(0, 12));
+    assert.equal(report.readonlyInputWriteDenied, true);
+    assert.equal(report.readonlyRootWriteDenied, true);
+    assert.match(report.version, /^wasm-opt version 133\b/);
+    for (const flag of [
+      "wholeCompilerVerified",
+      "fullFunctionVerified",
+      "productionApproved",
+    ])
+      assert.equal(report[flag], false);
+    assert.deepEqual(
+      report.commands.map((c) => c.name),
+      [
+        "version",
+        "empty-valid",
+        "invalid",
+        "optimize-security",
+        "truncated-security",
+        "optimize-international",
+        "truncated-international",
+      ],
+    );
+    for (const command of report.commands) {
+      assert.equal(command.error, null);
+      assert.equal(command.signal, null);
+      assert.equal(
+        command.status,
+        /^(invalid|truncated-)/.test(command.name) ? 1 : 0,
+      );
+    }
     assert.equal(
       evaluateNodeRuntime(
         report.node,
