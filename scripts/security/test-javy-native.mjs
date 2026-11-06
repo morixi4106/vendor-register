@@ -426,6 +426,19 @@ async function buildNative(p, policy, transfer, resultDirectory) {
   const filename = process.platform === "win32" ? "javy.exe" : "javy";
   const executable = path.join(env.CARGO_TARGET_DIR, "release", filename);
   const bytes = regular(executable, 256 * 1024 * 1024);
+  const identity = { filename, sha256: hash(bytes), size: bytes.length };
+  fs.writeFileSync(path.join(resultDirectory, filename), bytes, {
+    flag: "wx",
+    mode: 0o755,
+  });
+  json("native-build.json", {
+    ...p.report,
+    stage: "compiled-not-probed",
+    executable: identity,
+    nativePolicySha256: hash(Buffer.from(JSON.stringify(policy))),
+    pluginInputSha256: hash(Buffer.from(JSON.stringify(plugins))),
+    probesComplete: false,
+  });
   const version = execute(
     executable,
     ["--version"],
@@ -453,6 +466,10 @@ async function buildNative(p, policy, transfer, resultDirectory) {
   const embeddedObservation = observeJavyWasm(embeddedBytes, "plugin");
   if (!embeddedBytes.equals(regular(path.join(inputs, "plugin_wizened.wasm"))))
     throw new Error("javy_native_embedded_plugin_mismatch");
+  fs.writeFileSync(path.join(resultDirectory, "embedded.wasm"), embeddedBytes, {
+    flag: "wx",
+  });
+  json("embedded-observation.json", embeddedObservation);
   const js = path.join(home, "smoke.js");
   fs.writeFileSync(js, "console.log('oja-javy-native-ok');\n", { flag: "wx" });
   const provider = path.join(home, "shopify-provider.wasm");
@@ -508,18 +525,11 @@ async function buildNative(p, policy, transfer, resultDirectory) {
       hash(regular(path.join(inputs, name))) !== plugins.plugins[i].wasm.sha256
     )
       throw new Error("javy_native_plugin_input_changed");
-  fs.writeFileSync(path.join(resultDirectory, filename), bytes, {
-    flag: "wx",
-    mode: 0o755,
-  });
-  fs.writeFileSync(path.join(resultDirectory, "embedded.wasm"), embeddedBytes, {
-    flag: "wx",
-  });
   return {
     ...p.report,
     stage: "native",
     version,
-    executable: { filename, sha256: hash(bytes), size: bytes.length },
+    executable: identity,
     embedded: embeddedObservation,
     provider: providerObservation,
     outputs,
@@ -537,6 +547,7 @@ export async function testJavyNative(stage, root = ROOT) {
     ),
   );
   const p = await prepareJavySource(root);
+  p.json("native-policy.json", policy);
   if (
     p.report.policySha256 !== policy.sourcePolicySha256 ||
     p.receipt.version !== policy.rustStd.version
@@ -554,7 +565,6 @@ export async function testJavyNative(stage, root = ROOT) {
       ? await buildPlugins(p, policy, transfer)
       : await buildNative(p, policy, transfer, results);
   const completed = { ...report, observedAt: new Date().toISOString() };
-  p.json("native-policy.json", policy);
   p.json("native-receipt.json", completed);
   return completed;
 }
