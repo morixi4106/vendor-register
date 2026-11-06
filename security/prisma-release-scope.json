@@ -31,7 +31,7 @@
       "releaseRoots": ["query-engine-node-api", "schema-engine-cli"],
       "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42239392283",
       "completed": "Six positive consumer tests and ten exact compile-error rejections per OS, with original source and lock bindings retained.",
-      "remaining": "Complete compile-time macro source review and recorded adoption decision; positive/negative examples alone are not complete review."
+      "remaining": "The four owned macro files were already read and bounded in security/prisma-macro-contracts.json and CI42239392283; do not repeat them as unfinished. Compiler/transitive and release artifact adoption remain open; no whole-engine approval."
     },
     {
       "packages": ["graphql-parser"],
@@ -39,8 +39,8 @@
       "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
       "releaseRoots": ["query-engine-node-api"],
       "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42038861757",
-      "completed": "Patched parser/depth boundaries, upstream units, actual request-handler consumers and release native bindings.",
-      "remaining": "Complete original Git source review and confirmation that the rebuilt release paths use the bounded parser behavior; absence of advisory matches is not approval."
+      "completed": "Patched depth boundaries, original units, request-handler consumers and prior native bindings. Additional decoder read-through identified a UTF-8 byte-boundary panic; a separately bound candidate patch and baseline/regression replay are recorded in security/reviews/prisma-graphql-strings.md.",
+      "remaining": "The new string fix is candidate-only and is not applied to the native engine inputs or old binary/DB pins. Complete its actual-source adoption/rebuild/pin verification and the remaining parser source review; prior depth success does not fix this decoder panic."
     },
     {
       "packages": ["mysql_async"],

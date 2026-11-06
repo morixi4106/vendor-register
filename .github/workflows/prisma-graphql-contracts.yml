@@ -5,12 +5,15 @@ on:
     paths:
       - .github/workflows/prisma-graphql-contracts.yml
       - security/prisma-source-contracts.json
+      - security/prisma-graphql-strings.json
       - security/rust-toolchain.json
       - scripts/security/*prisma*.mjs
       - scripts/security/rust-toolchain.mjs
       - scripts/security/rust-source-audit.mjs
       - vendor/native/prisma/**
       - tests/scripts/prisma-graphql-source.test.js
+      - tests/scripts/prisma-graphql-strings.test.js
+      - tests/fixtures/prisma/graphql-string-*.rs
   workflow_dispatch:
 
 permissions:
@@ -41,7 +44,7 @@ jobs:
       - name: Install without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify bindings and rejection cases
-        run: node --test tests/scripts/prisma-graphql-source.test.js tests/scripts/prisma-git-assessment.test.js
+        run: node --test tests/scripts/prisma-graphql-source.test.js tests/scripts/prisma-graphql-strings.test.js tests/scripts/prisma-git-assessment.test.js
       - name: Test the actual patched parser and original library units
         run: node scripts/security/test-prisma-source.mjs --graphql-only
       - name: Reject tracked changes

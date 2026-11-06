@@ -15,6 +15,9 @@ vendor/native/function-runner/* text eol=lf
 tests/fixtures/native-runner/* text eol=lf
 security/prisma-source-contracts.json text eol=lf
 vendor/native/prisma/* text eol=lf
+security/prisma-graphql-strings.json text eol=lf
+scripts/security/prisma-graphql-strings.mjs text eol=lf
+tests/fixtures/prisma/graphql-string-*.rs text eol=lf
 vendor/minimatch/** text eol=lf
 vendor/minimatch/*.tgz binary
 security/minimatch-backport.json text eol=lf

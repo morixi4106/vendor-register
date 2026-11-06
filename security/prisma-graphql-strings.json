@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "basePolicySha256": "2da8f59fe8bf52764c1097bbf5f77766313ea7e9bd94857aa0f6c9cee904d217",
+  "commonBeforeSha256": "e17bfd404e1746db94962fa77002168c9e32731f4bb00edfeae0a0810d96c8c9",
+  "commonAfterSha256": "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2",
+  "patch": {
+    "path": "vendor/native/prisma/graphql-strings.patch",
+    "sha256": "9c2fce2f6bbbb50c99ab1c6a90444bcf504a1c31b8c5bdc3fe80be91079bfb74"
+  },
+  "baseline": {
+    "path": "tests/fixtures/prisma/graphql-string-baseline.rs",
+    "sha256": "445449213c2dce67c9f603a53e4470c7e52b067847649d41effeb5183c7a9337"
+  },
+  "regressions": {
+    "path": "tests/fixtures/prisma/graphql-string-regressions.rs",
+    "sha256": "8c55d9929a733c21ede8d274a719a3d2b0145862314a5e04edb7f0ed7462255e"
+  },
+  "baselineTests": 3,
+  "regressionTests": 9,
+  "productionPatchApplied": false,
+  "wholeEngineVerified": false,
+  "productionApproved": false
+}
