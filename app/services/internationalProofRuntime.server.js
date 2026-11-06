@@ -4,7 +4,10 @@ import {
   readInternationalMetafield,
 } from "./internationalGateTransport.server.js";
 import { internationalHash } from "./internationalGateProjection.server.js";
-import { INTERNATIONAL_CURRENCY_POLICY, INTERNATIONAL_SHOP_PROJECTION_VERSION } from "../utils/internationalCurrencyPolicy.js";
+import {
+  INTERNATIONAL_CURRENCY_POLICY,
+  INTERNATIONAL_SHOP_PROJECTION_VERSION,
+} from "../utils/internationalCurrencyPolicy.js";
 import {
   proofError,
   proofHash,
@@ -24,7 +27,8 @@ export async function inspectInternationalProofRuntime({
 }) {
   if (
     manifest.function.policy !== INTERNATIONAL_CURRENCY_POLICY ||
-    manifest.function.projectionVersion !== INTERNATIONAL_SHOP_PROJECTION_VERSION ||
+    manifest.function.projectionVersion !==
+      INTERNATIONAL_SHOP_PROJECTION_VERSION ||
     env.SHOPIFY_API_KEY !== receipt.appId ||
     (env.RENDER_GIT_COMMIT || env.GIT_COMMIT) !== receipt.headSha ||
     env.SHOPIFY_APP_VERSION !== receipt.versionTag ||
@@ -69,6 +73,7 @@ export async function inspectInternationalProofRuntime({
     byteHash(Buffer.from(actual.inputQuery)) !== query?.sha256
   )
     throw proofError("international_deployment_unverified");
+  let closedShopHash;
   if (closed) {
     const shop = await readInternationalMetafield({
       shopDomain,
@@ -84,11 +89,14 @@ export async function inspectInternationalProofRuntime({
       value.s !== "PREPARING" ||
       value.p !== manifest.function.policy ||
       value.v !== manifest.function.projectionVersion ||
-      !Array.isArray(value.u) || value.u.length !== 1 || value.u[0] !== "JPY" ||
+      !Array.isArray(value.u) ||
+      value.u.length !== 1 ||
+      value.u[0] !== "JPY" ||
       !Array.isArray(value.c) ||
       value.c.length
     )
       throw proofError("international_stop_unverified");
+    closedShopHash = h;
   }
   const dto = {
     validationId: v.id,
@@ -99,7 +107,12 @@ export async function inspectInternationalProofRuntime({
     enabled: true,
     blockOnFailure: true,
   };
-  return { dto, nativeConfigHash: proofHash(dto), observedAt: new Date() };
+  return {
+    dto,
+    nativeConfigHash: proofHash(dto),
+    observedAt: new Date(),
+    ...(closed ? { closedShopHash } : {}),
+  };
 }
 export function internationalReleaseBinding(manifest, receipt, dto) {
   return proofHash({

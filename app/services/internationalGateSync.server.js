@@ -254,19 +254,11 @@ export async function runInternationalGateSync(
             break;
           }
           if (state.mode === "STOPPED") {
+            await assertCurrent();
             await internationalGateTransaction(prismaClient, (tx) => recordInternationalRunClosure(tx, {
               state, generation: job.generation, protected: protectedState, now: new Date(),
+              job, leaseToken, observedShopHash: closed.h,
             }));
-            await prismaClient.internationalGateSyncState.updateMany({
-              where: {
-                shopDomain: state.shopDomain,
-                desiredGeneration: job.generation,
-              },
-              data: { phase: "BLOCKED", appliedGeneration: job.generation },
-            });
-            await finish(protectedState ? { status: "VERIFIED", verifiedAt: new Date() } : {
-              status: "RETRY", nextAttemptAt: new Date(Date.now() + 30000), lastErrorCode: "international_stop_unverified",
-            });
             break;
           }
           const currentAuthorization = await inspectAuthorization({ prismaClient, state, now: new Date() });

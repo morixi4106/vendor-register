@@ -120,10 +120,14 @@ export async function expireInternationalVerificationRuns({
       const runs = await tx.internationalCheckoutVerificationRun.findMany({
         where: {
           ...(shopDomain ? { shopDomain } : {}),
-          status: { in: ["QUEUED", "RUNNING"] },
           OR: [
-            { expiresAt: { lte: now } },
+            { status: { in: ["QUEUED", "RUNNING"] }, expiresAt: { lte: now } },
             { status: "RUNNING", leaseUntil: { lte: now } },
+            {
+              status: "CLOSING",
+              outcomeCode: "PRE_CLOSE_VERIFIED",
+              expiresAt: { lte: now },
+            },
           ],
         },
         take: 20,
@@ -192,9 +196,20 @@ export async function requestInternationalVerificationClosure({
 
 export async function recordInternationalRunClosure(
   tx,
-  { state, generation, protected: protectedState, now },
+  {
+    state,
+    generation,
+    protected: protectedState,
+    now,
+    job,
+    leaseToken,
+    observedShopHash,
+  },
 ) {
-  if (!tx.internationalCheckoutVerificationRun) return;
+  if (job && tx.$queryRaw) {
+    const [clock] = await tx.$queryRaw`SELECT clock_timestamp() AS now`;
+    now = new Date(clock.now);
+  }
   const current = await tx.internationalGateSyncState.findUnique({
     where: { shopDomain: state.shopDomain },
   });
@@ -206,11 +221,74 @@ export async function recordInternationalRunClosure(
       (state.authorizationRequestId || null)
   )
     throw authorizationError("international_authorization_changed");
+  if (job) {
+    const changed = await tx.internationalGateSyncJob.updateMany({
+      where: {
+        id: job.id,
+        shopDomain: state.shopDomain,
+        generation,
+        targetType: "RECONCILE",
+        authorizationRequestId: current.authorizationRequestId || null,
+        status: "RUNNING",
+        leaseToken,
+        leaseUntil: { gt: now },
+      },
+      data: protectedState
+        ? {
+            status: "VERIFIED",
+            verifiedAt: now,
+            leaseToken: null,
+            leaseUntil: null,
+            lastErrorCode: null,
+          }
+        : {
+            status: "RETRY",
+            verifiedAt: null,
+            leaseToken: null,
+            leaseUntil: null,
+            nextAttemptAt: new Date(+now + 30000),
+            lastErrorCode: "international_stop_unverified",
+          },
+    });
+    if (changed.count !== 1)
+      throw authorizationError("international_job_superseded");
+    await tx.internationalGateSyncState.update({
+      where: { shopDomain: state.shopDomain },
+      data: {
+        phase: protectedState ? "BLOCKED" : "PREPARING",
+        ...(protectedState ? { appliedGeneration: generation } : {}),
+        protectedAt: protectedState ? now : null,
+        verifiedAt: protectedState ? now : null,
+        observedShopHash,
+        lastErrorCode: protectedState ? null : "international_stop_unverified",
+      },
+    });
+  }
+  if (!tx.internationalCheckoutVerificationRun) return;
+  if (job)
+    await tx.internationalCheckoutVerificationRun.updateMany({
+      where: {
+        shopDomain: state.shopDomain,
+        kind: "NON_FINANCIAL",
+        status: "CLOSING",
+        id: current.verificationRunId || "",
+        authorizationRequestId: current.authorizationRequestId || null,
+        outcomeCode: "PRE_CLOSE_VERIFIED",
+        closureGeneration: generation,
+      },
+      data: protectedState
+        ? { closureStatus: "CONFIRMED", closedAt: now }
+        : { closureStatus: "UNVERIFIED", closedAt: null },
+    });
   await tx.internationalCheckoutVerificationRun.updateMany({
     where: {
       shopDomain: state.shopDomain,
       status: "CLOSING",
       closureGeneration: generation,
+      OR: [
+        { outcomeCode: null },
+        { outcomeCode: { not: "PRE_CLOSE_VERIFIED" } },
+      ],
     },
     data: protectedState
       ? {

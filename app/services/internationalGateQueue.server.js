@@ -64,6 +64,12 @@ export async function invalidateInternationalGates(
       },
     });
     if (updated.count !== 1) throw staleInternationalEvidence();
+    if (state.mode === "STOPPED" && client.internationalCheckoutVerificationRun)
+      await client.internationalCheckoutVerificationRun.updateMany({
+        where: { shopDomain: state.shopDomain, status: "CLOSING", outcomeCode: "PRE_CLOSE_VERIFIED" },
+        data: { outcomeCode: "FAILED", failureCode: "international_source_changed",
+          closureGeneration: generation, closureStatus: "PENDING", closedAt: null },
+      });
     await client.internationalGateSyncJob.updateMany({
       where: {
         shopDomain: state.shopDomain,
@@ -221,7 +227,8 @@ export async function stopInternationalGateInTransaction(tx, {
     });
     await tx.internationalCheckoutVerificationRun.updateMany({
       where: { shopDomain, status: "CLOSING" },
-      data: { closureGeneration: state.desiredGeneration + 1 },
+      data: { closureGeneration: state.desiredGeneration + 1, outcomeCode: "FAILED", failureCode: reason,
+        closureStatus: "PENDING", closedAt: null, leaseTokenHash: null, leaseUntil: null },
     });
   }
   return { generation: state.desiredGeneration + 1 };

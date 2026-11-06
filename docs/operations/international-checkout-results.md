@@ -1,7 +1,8 @@
 # International Checkout Result Intake
 
-Implemented scope: 4C-2a, server-side nonfinancial result persistence and
-validation. This document is not authorization to run a live checkout, migrate
+Implemented scope: 4C-2a result intake and 4C-2b normal-closure lifecycle core.
+Managed-runner/artifact/authorization integration is still incomplete.
+This document is not authorization to run a live checkout, migrate
 production, publish, charge, refund, or send monitoring notifications.
 
 ## Implemented
@@ -39,6 +40,45 @@ production, publish, charge, refund, or send monitoring notifications.
   observations matched. Artifact, closure, completion and sale flags remain
   false. The service never writes PASSED, an attestation or a sale-ready proof.
 
+## Normal Closure Core
+
+`createInternationalCheckoutClosureCommands` adds internal finish, closed-case
+challenge/record, and nonfinancial finalization commands. Server dependencies are
+constructor-owned; callers cannot supply a context, callback or success flag.
+
+1. Finish revalidates signed OPEN observations, current dependencies, lease,
+   executor and bounded runtime/artifact context. It atomically fixes the
+   candidate, changes the gate to STOPPED, queues the next closure generation,
+   sets CLOSING/PRE_CLOSE_VERIFIED and erases the OPEN lease. It does not revoke
+   the consumed approval or release the active key. Retries return history.
+2. Full sync worker readback atomically fences the job lease/generation and
+   records BLOCKED/applied generation, job completion and normal-run closure.
+   A protected readback alone never marks a normal run PASSED. stopOnly is not
+   full applied closure; unprotected closure remains pending with the key held.
+3. CLOSED cases require fresh same-release closed context, the applied closure
+   generation and a separate short challenge, not the erased OPEN lease. The
+   old checkout must match its originally observed session digest; the new
+   checkout cannot reuse any OPEN session or another new-checkout case.
+4. Finalization re-reads external context outside the DB transaction, then
+   atomically revalidates its freshness, signatures, all cases, immutable
+   candidate, current dependencies and exact STOPPED closure state. Only the
+   NON_FINANCIAL level can pass/release its key. It never creates a SALE
+   attestation, observes payment completion or reopens the gate. Timestamp and
+   signer-expiry fences are checked again before commit.
+
+General STOP/revocation changes a pending normal candidate to failure. Source
+invalidation supersedes it; expiry still closes as EXPIRED, never PASSED. Late
+jobs cannot finalize another generation. Closed observations and failure
+recovery do not regain purchase permission.
+
+The default runtime reader rejects today's CONTRACT_ONLY verifier package
+before network calls. A complete reviewed managed-verifier artifact contract
+and its original CI coverage must be connected before it can produce a valid
+normal-close context. That contract/packaging is not implemented here; do not
+change the level string or inject a ready context to deploy around it. Synthetic
+DB tests inject a strictly bound context and ephemeral signature keys to test
+the lifecycle, not to prove a real artifact or store observation.
+
 ## Privacy And Trust
 
 The result schema accepts fixed identifiers, enums, UTC timestamps and digests,
@@ -60,11 +100,11 @@ runner or installed production trust key. It cannot be enabled by an env flag.
 
 Next integration must attach the server-generated plan to authorization/run
 creation, authenticate the dedicated checkout principal and bind its code to
-successful CI. Add the dedicated normal-close transition, immutable candidate,
-same-release fresh readback, separately fenced old/new checkout challenges and
-atomic finalization. CLOSED cases deliberately cannot use an OPEN lease.
-General STOP, revocation, expiration and failed closure retain their existing
-failure behavior. Do not promote an intake digest into a successful closure.
+successful CI. The normal-close lifecycle core is implemented, but its default
+runtime reader deliberately rejects incomplete verifier packages. Connect
+reviewed verifier packaging/coverage and the managed browser before considering
+the full4C-2 integration complete. CLOSED cases cannot use an OPEN lease.
+Do not promote an intake digest or a fixture context into a successful closure.
 
 Artifact/WASM evidence, real browser observations, transaction correspondence,
 financial reconciliation/refund coverage and final SALE proof remain separate
@@ -79,6 +119,10 @@ time boundaries. The isolated database workflow also runs
 versions, alongside the previous three actual application suites, using the
 same immutable patched N-API and private client. It covers concurrent
 initialization/challenges/recording, atomic rollback, retries, dependency
-revocation, STOP races, SQL constraints and tampering. Consult the current
+revocation, STOP races, SQL constraints and tampering. Additional closure tests
+exercise atomic finish/readback/finalize, stopOnly versus full sync, original/new
+sessions, lost-response retries, signer revocation, source/STOP/expiry and late-job
+fencing. Pure closure contracts cover context/candidate substitutions and privacy
+fields. Consult the current
 launch progress memo and portable PR evidence for actual run conclusions;
 the presence of these tests alone is not a passing result.

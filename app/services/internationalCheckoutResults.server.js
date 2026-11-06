@@ -31,7 +31,7 @@ import { assertInternationalRunDelivery } from "./internationalProofDeliveryStat
 function unavailable() {
   throw proofError("international_checkout_run_unavailable", 409);
 }
-function assertArgs(args) {
+export function assertCheckoutResultArgs(args) {
   assertInternationalShop(args.shopDomain);
   if (
     !ID.test(args.runId || "") ||
@@ -39,7 +39,7 @@ function assertArgs(args) {
   )
     unavailable();
 }
-async function readRun(tx, args) {
+export async function readCheckoutResultRun(tx, args) {
   const run = await tx.internationalCheckoutVerificationRun.findFirst({
     where: { id: args.runId, shopDomain: args.shopDomain },
   });
@@ -52,15 +52,11 @@ async function readRun(tx, args) {
     unavailable();
   return run;
 }
-async function assertCurrentRun(tx, args, run, now) {
+export async function assertCurrentCheckoutRun(tx, args, run, now) {
   const state = await tx.internationalGateSyncState.findUnique({
     where: { shopDomain: args.shopDomain },
   });
-  const auth =
-    run.authorizationRequestId &&
-    (await tx.internationalGateAuthorizationRequest.findUnique({
-      where: { id: run.authorizationRequestId },
-    }));
+  const auth = await assertCheckoutDependencies(tx, run, now);
   if (
     run.status !== "RUNNING" ||
     run.revokedAt ||
@@ -96,6 +92,29 @@ async function assertCurrentRun(tx, args, run, now) {
     state.authorizationExpiresAt < run.expiresAt ||
     !state.verifiedAt ||
     state.verifiedAt > now
+  )
+    unavailable();
+  return auth;
+}
+export async function assertCheckoutDependencies(tx, run, now) {
+  const auth =
+    run.authorizationRequestId &&
+    (await tx.internationalGateAuthorizationRequest.findUnique({
+      where: { id: run.authorizationRequestId },
+    }));
+  if (
+    !auth ||
+    auth.shopDomain !== run.shopDomain ||
+    !auth.consumedAt ||
+    auth.revokedAt ||
+    auth.effectiveExpiresAt <= now ||
+    auth.effectiveExpiresAt < run.expiresAt ||
+    auth.consumedGeneration !== run.startGeneration ||
+    auth.scopeHash !== run.scopeHash ||
+    auth.releaseBinding !== run.releaseBinding ||
+    auth.nativeConfigHash !== run.nativeConfigHash ||
+    auth.verificationKind !== run.kind ||
+    (auth.purpose === "RESUME" ? auth.resumePurpose : auth.purpose) !== "VERIFY"
   )
     unavailable();
   const references = run.proofReferencesJson;
@@ -151,7 +170,7 @@ async function assertCurrentRun(tx, args, run, now) {
     unavailable();
   return auth;
 }
-function assertExecutor(summary, executorId, now, trust) {
+export function assertCheckoutExecutor(summary, executorId, now, trust) {
   const eligible = trust.checkoutVerifier?.filter(
     (key) =>
       !key.revokedAt &&
@@ -170,7 +189,7 @@ const caseWhere = (args) => ({
   shopDomain: args.shopDomain,
   runId: args.runId,
 });
-const readCases = (tx, args) =>
+export const readCheckoutCases = (tx, args) =>
   tx.internationalCheckoutVerificationCase.findMany({
     where: caseWhere(args),
     orderBy: { ordinal: "asc" },
@@ -184,19 +203,19 @@ export function createInternationalCheckoutResultCommands({
 } = {}) {
   return {
     async initialize(args, plan, descriptor) {
-      assertArgs(args);
+      assertCheckoutResultArgs(args);
       return internationalAuthorizationTransaction(
         prismaClient,
         async (tx, now) => {
-          const run = await readRun(tx, args);
-          const auth = await assertCurrentRun(tx, args, run, now);
+          const run = await readCheckoutResultRun(tx, args);
+          const auth = await assertCurrentCheckoutRun(tx, args, run, now);
           const summary = checkoutPlanSummary(plan, run, descriptor);
           if (summary.sourceHash !== auth.sourceHash) unavailable();
-          assertExecutor(summary, args.executorId, now, trust);
+          assertCheckoutExecutor(summary, args.executorId, now, trust);
           if (run.planSummaryJson) {
             if (proofHash(run.planSummaryJson) !== proofHash(summary))
               unavailable();
-            inspectCheckoutCaseSet(run, await readCases(tx, args));
+            inspectCheckoutCaseSet(run, await readCheckoutCases(tx, args));
             return { ok: true, replayed: true, caseCount: summary.caseCount };
           }
           if (
@@ -225,18 +244,18 @@ export function createInternationalCheckoutResultCommands({
     },
 
     async challenge(args, caseKey) {
-      assertArgs(args);
+      assertCheckoutResultArgs(args);
       if (!HASH.test(caseKey || "")) unavailable();
       return internationalAuthorizationTransaction(
         prismaClient,
         async (tx, now) => {
-          const run = await readRun(tx, args);
-          await assertCurrentRun(tx, args, run, now);
+          const run = await readCheckoutResultRun(tx, args);
+          await assertCurrentCheckoutRun(tx, args, run, now);
           const summary = validateCheckoutSummary(run.planSummaryJson, run);
-          assertExecutor(summary, args.executorId, now, trust);
+          assertCheckoutExecutor(summary, args.executorId, now, trust);
           const row = inspectCheckoutCaseSet(
             run,
-            await readCases(tx, args),
+            await readCheckoutCases(tx, args),
           ).find((row) => row.caseKey === caseKey);
           if (!row || row.status !== "PENDING") unavailable();
           // Closed-checkout observations need the separate closure lifecycle, never an OPEN lease.
@@ -273,7 +292,7 @@ export function createInternationalCheckoutResultCommands({
     },
 
     async record(args, envelopes) {
-      assertArgs(args);
+      assertCheckoutResultArgs(args);
       if (
         !Array.isArray(envelopes) ||
         !envelopes.length ||
@@ -286,8 +305,11 @@ export function createInternationalCheckoutResultCommands({
       return internationalAuthorizationTransaction(
         prismaClient,
         async (tx, now) => {
-          const run = await readRun(tx, args);
-          const rows = inspectCheckoutCaseSet(run, await readCases(tx, args));
+          const run = await readCheckoutResultRun(tx, args);
+          const rows = inspectCheckoutCaseSet(
+            run,
+            await readCheckoutCases(tx, args),
+          );
           const selected = envelopes.map((envelope) => {
             const row = rows.find(
               (row) => row.caseKey === envelope?.payload?.caseKey,
@@ -303,8 +325,13 @@ export function createInternationalCheckoutResultCommands({
           // Exact retry is history only, even after expiry/STOP; it cannot re-arm or renew anything.
           if (selected.every(({ row }) => row.status === "RECORDED"))
             return { ok: true, replayed: true, historical: true };
-          await assertCurrentRun(tx, args, run, now);
-          assertExecutor(run.planSummaryJson, args.executorId, now, trust);
+          await assertCurrentCheckoutRun(tx, args, run, now);
+          assertCheckoutExecutor(
+            run.planSummaryJson,
+            args.executorId,
+            now,
+            trust,
+          );
           for (const { envelope, row } of selected) {
             if (row.status === "RECORDED") continue;
             const result = validateCheckoutCaseResult(envelope, {
@@ -346,19 +373,22 @@ export function createInternationalCheckoutResultCommands({
     },
 
     async inspect(args) {
-      assertArgs(args);
+      assertCheckoutResultArgs(args);
       return internationalAuthorizationTransaction(
         prismaClient,
         async (tx, now) => {
-          const run = await readRun(tx, args);
-          await assertCurrentRun(tx, args, run, now);
-          assertExecutor(
+          const run = await readCheckoutResultRun(tx, args);
+          await assertCurrentCheckoutRun(tx, args, run, now);
+          assertCheckoutExecutor(
             validateCheckoutSummary(run.planSummaryJson, run),
             args.executorId,
             now,
             trust,
           );
-          const rows = inspectCheckoutCaseSet(run, await readCases(tx, args));
+          const rows = inspectCheckoutCaseSet(
+            run,
+            await readCheckoutCases(tx, args),
+          );
           for (const row of rows.filter((row) => row.status === "RECORDED")) {
             verifyProofSignature(
               row.resultJson,
