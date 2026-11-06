@@ -83,6 +83,7 @@ export async function createManagedCheckoutBrowserProcess({
   let pending = null,
     stopped = false,
     exited = false,
+    broken = false,
     closing,
     active,
     runId = null,
@@ -99,7 +100,13 @@ export async function createManagedCheckoutBrowserProcess({
     active?.abort();
     rejectPending();
   };
-  child.on("error", childEnded);
+  child.on("error", () => {
+    broken = true;
+    active?.abort();
+    rejectPending();
+    // A channel error is not proof that the process exited.
+    child.kill();
+  });
   child.on("exit", childEnded);
   child.on("message", (value) => {
     if (!pending) return;
@@ -113,6 +120,7 @@ export async function createManagedCheckoutBrowserProcess({
     new Promise((resolve, reject) => {
       if (
         (stopped && message.intent !== "close") ||
+        broken ||
         exited ||
         pending ||
         signal?.aborted ||
@@ -144,7 +152,8 @@ export async function createManagedCheckoutBrowserProcess({
     rejectPending();
     closing = (async () => {
       try {
-        if (child.connected && !exited)
+        if (broken && !exited) child.kill();
+        else if (child.connected && !exited)
           await rpc({ intent: "close" }, null, 3000);
       } catch {
         child.kill();
@@ -193,6 +202,7 @@ export async function createManagedCheckoutBrowserProcess({
       );
       if (
         stopped ||
+        broken ||
         exited ||
         observing ||
         (runId && runId !== input.runId) ||

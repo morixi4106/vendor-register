@@ -388,3 +388,24 @@ test("old-checkout generation mismatch is rejected before independent facts are 
   assert.equal(reads, 1);
   await f.process.close();
 });
+
+test("a channel error retires and kills a child but is not mistaken for an exit event", async () => {
+  const f = await fixture();
+  let kills = 0;
+  f.child.kill = () => {
+    kills++;
+    if (kills === 1) return true;
+    setImmediate(() => {
+      assert.equal(fs.existsSync(f.options.cwd), true);
+      f.child.exitCode = 0;
+      f.child.connected = false;
+      f.child.emit("exit", 0);
+    });
+    return true;
+  };
+  f.child.emit("error", new Error("private canary"));
+  await assert.rejects(f.process.observe(f.input));
+  await f.process.close();
+  assert.equal(kills, 2);
+  assert.equal(fs.existsSync(f.options.cwd), false);
+});
