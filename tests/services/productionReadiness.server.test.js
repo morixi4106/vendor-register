@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  domesticCheckoutContext,
+  inspectDomesticNativeScope,
+} from "../fixtures/checkoutCommerceContext.js";
 import test from "node:test";
 
 import {
@@ -59,6 +63,7 @@ function getProductionReadiness(options = {}) {
   return getProductionReadinessImpl({
     shopDomain: "example.myshopify.com",
     now: TEST_NOW,
+    inspectNativeScopeImpl: inspectDomesticNativeScope,
     ...options,
     env: {
       ...TEST_RELEASE_ENV,
@@ -1023,6 +1028,28 @@ test("getProductionReadiness still rejects payout evidence older than 90 days", 
   assert.equal(result.canGoLive, false);
 });
 
+test("readiness cannot treat a native-only foreign market or failed native inspection as domestic standard checkout", async () => {
+  for (const internationalConfigured of [true, false]) {
+    const result = await getProductionReadiness({
+      prismaClient: createFakePrisma(),
+      env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+      inspectNativeScopeImpl: async (args) => {
+        assert.equal(args.shopDomain, "example.myshopify.com");
+        return {
+          ...inspectDomesticNativeScope(args),
+          internationalConfigured,
+          available: internationalConfigured,
+        };
+      },
+    });
+    const check = result.checks.find(
+      (entry) => entry.id === "platform_direct_checkout_scope",
+    );
+    assert.equal(check.status, "fail");
+    assert.equal(result.codeCanGoLive, false);
+  }
+});
+
 test("getProductionReadiness allows manual payout flow without seller Stripe accounts", async () => {
   const result = await getProductionReadiness({
     prismaClient: createFakePrisma({
@@ -1538,6 +1565,11 @@ test("includeCheckoutValidationInProductionReadiness blocks launch until fail-cl
 
 test("standard direct readiness requires the marketplace validation to be inactive", () => {
   const base = {
+    operationalReadiness: {
+      checkoutMode: domesticCheckoutContext({
+        env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+      }).mode,
+    },
     checks: [],
     summary: {
       totalChecks: 0,

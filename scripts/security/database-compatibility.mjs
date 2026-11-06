@@ -60,6 +60,7 @@ export const DATABASE_CHECKS = Object.freeze([
   "international-defaults-and-authorization",
   "international-proof-delivery",
   "international-run-closure-and-tenancy",
+  "international-application-transactions",
   "compatibility-pool",
   "prepared-pool",
   "cleanup",
@@ -121,6 +122,35 @@ export function applicationDatabaseInputs(root) {
   return files
     .sort()
     .map((file) => ({ path: file, sha256: sha(bytes(path.join(root, file))) }));
+}
+
+export function internationalApplicationInputs(root) {
+  const files = [];
+  const walk = (relative) => {
+    const directory = path.join(root, relative);
+    if (fs.realpathSync(directory) !== directory)
+      throw new Error("international_application_path_invalid");
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!/^[A-Za-z0-9_.$-]+$/.test(entry.name))
+        throw new Error("international_application_path_invalid");
+      const file = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) walk(file);
+      else if (entry.isFile() && /\.(?:js|jsx)$/.test(entry.name))
+        files.push(file);
+      else if (!entry.isFile())
+        throw new Error("international_application_path_invalid");
+      if (files.length > 2000)
+        throw new Error("international_application_input_limit");
+    }
+  };
+  for (const directory of ["app", "tests/postgres", "tests/helpers"])
+    walk(directory);
+  return files
+    .sort()
+    .map((file) => ({
+      path: file,
+      sha256: sha(bytes(path.join(root, file), 1024 * 1024)),
+    }));
 }
 
 export function selectDatabaseNativeInput(root, downloaded) {
@@ -308,6 +338,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
     "schemaEngineInvocations",
     "historyRegression",
     "international",
+    "internationalApplication",
     "poolers",
     "productionApproved",
     "wholeEngineVerified",
@@ -355,6 +386,23 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
         rejections: 24,
         defaultsDisabled: true,
       }) ||
+    report.internationalApplication?.networkFetchAllowed !== false ||
+    report.internationalApplication?.databaseRemoved !== true ||
+    !Number.isInteger(report.internationalApplication?.nativeLoads) ||
+    report.internationalApplication.nativeLoads < 3 ||
+    report.internationalApplication.suites?.length !== 3 ||
+    !report.internationalApplication.suites.every(
+      (suite, index) =>
+        suite.name ===
+          [
+            "internationalAuthorization",
+            "internationalProofIssuance",
+            "internationalRunnerInterface",
+          ][index] &&
+        Number.isInteger(suite.passed) &&
+        suite.passed > 1 &&
+        suite.skipped === 0,
+    ) ||
     report.poolers?.length !== 2 ||
     !report.poolers.every(
       (p, i) =>

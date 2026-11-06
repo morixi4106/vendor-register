@@ -10,6 +10,7 @@ import {
 } from "../services/privacyOperations.server.js";
 
 import { reconcileShopifyProductCatalog } from "../services/shopifyProductSync.server.js";
+import { runInternationalGateSync } from "../services/internationalGateSync.server.js";
 import {
   backfillMarketplaceCheckoutPolicies,
   getShopifyPublicationDiagnostics,
@@ -78,6 +79,7 @@ export async function action({ request }) {
       const shopDomain = await resolveShopDomain(
         process.env.SHOPIFY_PRIMARY_SHOP_DOMAIN || null,
       );
+      await runInternationalGateSync({ shopDomain });
       const result = await reconcileShopifyProductCatalog(shopDomain, {
         limit,
       });

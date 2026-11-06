@@ -14,12 +14,13 @@ assert.equal(fs.realpathSync(process.cwd()),fs.realpathSync(input.project));
 for(const key of Object.keys(process.env))assert.ok(!/^(DATABASE_URL|DIRECT_URL|SHOPIFY_|KOMOJU_|RESEND_|GITHUB_TOKEN|GH_TOKEN)/i.test(key));
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 const url=(database,port=input.postgresPort)=>{
-  assert.ok(["oja_probe","oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe"].includes(database));
+  assert.ok(["oja_probe","oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe","vendor_register_auth_test_ci"].includes(database));
   assert.ok(Number.isInteger(port)&&port>0&&port<=65535);
   const value=new URL(`postgresql://localhost:${port}/${database}`);
   value.username="oja_probe";value.password="oja-ephemeral-test-only";
   value.searchParams.set("sslmode","require");value.searchParams.set("sslaccept","strict");value.searchParams.set("sslcert",input.tls.caFile);
   value.searchParams.set("connection_limit","1");value.searchParams.set("connect_timeout","5");
+  if(database==="vendor_register_auth_test_ci")value.searchParams.set("schema","intl_auth_test_0123456789abcdef");
   return value.href;
 };
 const env={...process.env,DATABASE_URL:url("oja_app_probe"),PRISMA_QUERY_ENGINE_LIBRARY:input.library,PRISMA_SCHEMA_ENGINE_BINARY:input.schema,
@@ -44,7 +45,7 @@ command(input.project,["generate"]);
 const {PrismaClient,Prisma}=require("@prisma/client");
 assert.equal(Prisma.prismaVersion.client,"6.19.3");
 const admin=new PrismaClient({datasourceUrl:url("oja_probe"),log:[]});
-let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[],postgres,international;
+let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[],postgres,international,internationalApplication;
 try{
   await record("native-identity",async()=>{
     await admin.$connect();assert.deepEqual([...loaded],[input.librarySha256]);assert.equal(admin._engine.versionInfo.commit,input.sourceCommit);
@@ -54,7 +55,7 @@ try{
     assert.equal(row.version_num,input.tls.serverVersionNum);assert.equal(row.ssl,true);assert.ok(["TLSv1.2","TLSv1.3"].includes(row.version));
     postgres={image:input.tls.image,serverVersionNum:row.version_num,encrypted:row.ssl,tlsVersion:row.version};
     fs.writeFileSync(path.join(input.project,"postgres-identity.json"),JSON.stringify(postgres));
-    for(const database of ["oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe"])await admin.$executeRawUnsafe(`CREATE DATABASE ${database}`);
+    for(const database of ["oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe","vendor_register_auth_test_ci"])await admin.$executeRawUnsafe(`CREATE DATABASE ${database}`);
   });
   await record("original-history-regression",()=>{
     const output=command(input.historyProject,["migrate","deploy"],"oja_history_probe",1);
@@ -127,6 +128,24 @@ try{
     await client.marketplaceOrder.delete({where:{id:order.id}});assert.equal(await client.sellerOrderLine.count(),0);await client.ledgerEntry.deleteMany();await client.session.deleteMany();
   });
   international=await probeInternational({client,PrismaClient,input,url,command,record});
+  await record("international-application-transactions",async()=>{
+    for(const entry of input.codeInputs)assert.equal(sha(path.join(input.root,entry.path)),entry.sha256);
+    command(input.project,["migrate","deploy"],"vendor_register_auth_test_ci");
+    const suites=["internationalAuthorization","internationalProofIssuance","internationalRunnerInterface"];
+    const results=[];
+    for(const name of suites){
+      const r=spawnSync(process.execPath,["--import",path.join(input.root,"tests/fixtures/database/international-client-hook.mjs"),"--test",path.join(input.root,`tests/postgres/${name}.test.js`)],{cwd:input.root,env:{...env,DATABASE_URL:url("vendor_register_auth_test_ci"),INTERNATIONAL_AUTHORIZATION_TEST_DATABASE_URL:url("vendor_register_auth_test_ci"),SHOPIFY_API_KEY:"ci-api-key",SHOPIFY_API_SECRET:"ci-placeholder-secret-not-production",SHOPIFY_APP_URL:"https://example.test",SCOPES:"read_products"},encoding:"utf8",timeout:90000,maxBuffer:8*1024*1024});
+      fs.writeFileSync(path.join(input.project,`${name}.stdout.log`),r.stdout||"");fs.writeFileSync(path.join(input.project,`${name}.stderr.log`),r.stderr||"");
+      assert.equal(r.error,undefined);assert.equal(r.status,0,r.stderr+"\n"+r.stdout);
+      const count=key=>{const match=(r.stdout||"").match(new RegExp(`(?:#|ℹ) ${key} ([0-9]+)`));assert.ok(match,`${name}:${key}`);return Number(match[1]);};
+      assert.equal(count("fail"),0);assert.equal(count("skipped"),0);assert.ok(count("pass")>1);results.push({name,passed:count("pass"),skipped:0});
+    }
+    const loads=fs.readFileSync(path.join(input.project,"international-native-loads.jsonl"),"utf8").trim().split("\n").map(JSON.parse);assert.ok(loads.length>=3);assert.ok(loads.every(r=>r.sha256===input.librarySha256));
+    command(input.project,["migrate","diff","--from-url",url("vendor_register_auth_test_ci"),"--to-schema-datamodel",path.join(input.project,"prisma/schema.prisma"),"--exit-code"],"vendor_register_auth_test_ci");
+    for(const entry of input.codeInputs)assert.equal(sha(path.join(input.root,entry.path)),entry.sha256);
+    await admin.$executeRawUnsafe("DROP DATABASE vendor_register_auth_test_ci");
+    internationalApplication={suites:results,nativeLoads:loads.length,networkFetchAllowed:false,databaseRemoved:true};
+  });
   for(const [index,pooler]of input.poolers.entries())await record(index===0?"compatibility-pool":"prepared-pool",async()=>{
     const pooled=new URL(url("oja_app_probe",pooler.port));if(!pooler.prepared)pooled.searchParams.set("pgbouncer","true");
     const clients=[],pids=new Set();let serverTlsVersion;
@@ -158,4 +177,4 @@ const invocations=fs.readFileSync(path.join(input.project,"schema-engine-invocat
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 console.log(JSON.stringify({checks,sourceCommit:input.sourceCommit,librarySha256:input.librarySha256,schemaSha256:input.schemaSha256,loadedLibrarySha256:[...loaded][0],
   clientVersion:Prisma.prismaVersion.client,postgres,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
-  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,international,poolers,productionApproved:false,wholeEngineVerified:false}));
+  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,international,internationalApplication,poolers,productionApproved:false,wholeEngineVerified:false}));

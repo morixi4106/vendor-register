@@ -14,6 +14,7 @@ import {
   sha,
   databaseCompatibilityOptions,
   applicationDatabaseInputs,
+  internationalApplicationInputs,
   beforeInternationalInputs,
   selectDatabaseNativeInput,
   prepareApplicationProject,
@@ -95,6 +96,7 @@ export async function testDatabaseCompatibility(root, postgresPort) {
     return r.stdout;
   };
   const inputs = applicationDatabaseInputs(root);
+  const codeInputs = internationalApplicationInputs(root);
   fs.writeFileSync(
     path.join(work, "application-inputs.json"),
     JSON.stringify(inputs, null, 2),
@@ -236,6 +238,7 @@ export async function testDatabaseCompatibility(root, postgresPort) {
       historyProject: path.join(work, "old-history"),
       upgradeProject: path.join(work, "before-international"),
       inputs,
+      codeInputs,
       postgresPort,
       tls,
       poolers,
@@ -259,6 +262,11 @@ export async function testDatabaseCompatibility(root, postgresPort) {
     );
     verifyDatabaseCompatibilityReport(report, inputs, native, tls);
     if (
+      JSON.stringify(internationalApplicationInputs(root)) !==
+      JSON.stringify(codeInputs)
+    )
+      throw new Error("international_application_input_changed");
+    if (
       JSON.stringify(applicationDatabaseInputs(root)) !== JSON.stringify(inputs)
     )
       throw new Error("application_database_input_changed");
@@ -266,6 +274,7 @@ export async function testDatabaseCompatibility(root, postgresPort) {
       nativeInput: DATABASE_NATIVE_INPUT,
       native,
       applicationInputs: inputs,
+      applicationCodeInputs: codeInputs,
       pooler: { ...POOLER_SOURCE, binarySha256: sha(fs.readFileSync(binary)) },
       poolers,
       report,
@@ -275,6 +284,14 @@ export async function testDatabaseCompatibility(root, postgresPort) {
           path.join(
             root,
             "tests/fixtures/database/international-constraints.mjs",
+          ),
+        ),
+      ),
+      internationalClientHookSha256: sha(
+        fs.readFileSync(
+          path.join(
+            root,
+            "tests/fixtures/database/international-client-hook.mjs",
           ),
         ),
       ),

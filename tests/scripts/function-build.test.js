@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import test from "node:test";
 import crypto from "node:crypto";
+import yaml from "js-yaml";
 import {
   verifyFunctionBuildConfig,
   verifyFunctionBuildSources,
@@ -116,4 +117,38 @@ test("an unrelated or edited test receipt is never accepted as a build input", (
   assert.throws(() => inspectFinalFunction(root, dir), /receipt_changed/);
   fs.mkdirSync(path.join(dir, "function-final-tests/run-extra"));
   assert.throws(() => inspectFinalFunction(root, dir), /input_invalid/);
+});
+
+test("international proof builds are manual-only and require current incident/admission before any native build", () => {
+  const workflow = yaml.load(
+    fs.readFileSync(
+      path.join(root, ".github/workflows/international-proof-artifact.yml"),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  assert.deepEqual(workflow.permissions, { contents: "read", actions: "read" });
+  const steps = workflow.jobs.artifact.steps,
+    runs = steps.map((s) => s.run || "");
+  const install = runs.indexOf("npm ci --ignore-scripts --no-audit --no-fund");
+  const incident = runs.indexOf("node scripts/security/incident-audit.mjs");
+  const admission = runs.findIndex((s) =>
+    s.includes("assertProductionBuildAdmission();"),
+  );
+  const generate = runs.indexOf(
+    "node scripts/security/safe-build.mjs generate",
+  );
+  assert.ok(
+    install >= 0 &&
+      incident > install &&
+      admission > incident &&
+      generate > admission,
+  );
+  assert.ok(runs.indexOf("npm run build:extensions") > generate);
+  assert.ok(!runs.includes("npm run build:production"));
+  assert.ok(
+    !runs.some(
+      (s) => s.includes("shopify app release") || s.includes("migrate deploy"),
+    ),
+  );
 });

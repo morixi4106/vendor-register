@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import prisma from "../../db.server.js";
+import { writeInternationalProduct } from "../internationalGateQueue.server.js";
 import { privateErrorCode } from "../../utils/privateData.server.js";
 import { shopifyGraphQLWithOfflineSession } from "../../utils/shopifyAdmin.server.js";
 import { summarizeVendorDeliveryPolicy } from "../../utils/productCountryPolicy.js";
@@ -625,7 +626,7 @@ export async function deleteVendorProductForStore({
       };
     }
   }
-  await prisma.product.delete({
+  await writeInternationalProduct(prisma, "delete", {
     where: {
       id: normalizedProductId
     }

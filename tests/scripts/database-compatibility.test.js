@@ -13,6 +13,7 @@ import {
   sha,
   databaseCompatibilityOptions,
   applicationDatabaseInputs,
+  internationalApplicationInputs,
   beforeInternationalInputs,
   INTERNATIONAL_MIGRATIONS,
   selectDatabaseNativeInput,
@@ -96,6 +97,27 @@ test("application migration inventory binds every unchanged schema/SQL byte and 
   assert.notDeepEqual(applicationDatabaseInputs(root), before);
   fs.writeFileSync(path.join(root, "prisma/migrations/stray"), "unsafe");
   assert.throws(() => applicationDatabaseInputs(root), /input_invalid/);
+});
+
+test("application transaction probes bind every application and test helper input, not only the migration SQL", () => {
+  const inputs = internationalApplicationInputs(ROOT);
+  assert.ok(inputs.length > 100);
+  assert.ok(
+    inputs.some(
+      (e) =>
+        e.path === "app/services/internationalAuthorizationRequests.server.js",
+    ),
+  );
+  assert.ok(
+    inputs.some(
+      (e) => e.path === "tests/postgres/internationalRunnerInterface.test.js",
+    ),
+  );
+  for (const entry of inputs)
+    assert.equal(
+      entry.sha256,
+      sha(fs.readFileSync(path.join(ROOT, entry.path))),
+    );
 });
 
 test("migration inputs reject hardlinked SQL and undocumented files", (t) => {
@@ -365,6 +387,16 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
       rejections: 24,
       defaultsDisabled: true,
     },
+    internationalApplication: {
+      suites: [
+        "internationalAuthorization",
+        "internationalProofIssuance",
+        "internationalRunnerInterface",
+      ].map((name) => ({ name, passed: 2, skipped: 0 })),
+      nativeLoads: 3,
+      networkFetchAllowed: false,
+      databaseRemoved: true,
+    },
     poolers: [false, true].map((prepared) => ({
       mode: prepared ? "prepared" : "compatibility",
       clientConnections: 12,
@@ -420,6 +452,10 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     (r) => (r.international.rejections = 0),
     (r) => (r.international.rowsPreserved = 0),
     (r) => (r.international.defaultsDisabled = false),
+    (r) => delete r.internationalApplication,
+    (r) => (r.internationalApplication.nativeLoads = 0),
+    (r) => (r.internationalApplication.networkFetchAllowed = true),
+    (r) => (r.internationalApplication.suites[0].skipped = 1),
     (r) => r.poolers.pop(),
     (r) => (r.poolers[0].clientConnections = 1),
     (r) => (r.poolers[0].backendProcesses = 12),

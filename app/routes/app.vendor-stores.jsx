@@ -4,6 +4,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useState } from "react";
 
 import prisma from "../db.server.js";
+import { writeInternationalProduct } from "../services/internationalGateQueue.server.js";
 export { privateDocumentHeaders as headers } from "../utils/privateHeaders.js";
 import { readVendorContacts } from "../utils/privateData.server.js";
 import {
@@ -143,7 +144,7 @@ export const action = async ({ request }) => {
     );
   }
 
-  await prisma.product.deleteMany({ where: { vendorStoreId: id } });
+  await writeInternationalProduct(prisma, "deleteMany", { where: { vendorStoreId: id } });
   await prisma.vendorStore.delete({ where: { id } });
   return redirect("/app/vendor-stores");
 };

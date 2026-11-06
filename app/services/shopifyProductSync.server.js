@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { writeInternationalProduct } from "./internationalGateQueue.server.js";
 import {
   normalizeShopDomain,
   shopifyGraphQLWithOfflineSession,
@@ -672,7 +673,7 @@ export async function syncShopifyProductPayload(
 
     const changed = Object.keys(updateData).length > 0;
     const product = changed
-      ? await prismaClient.product.update({
+      ? await writeInternationalProduct(prismaClient, "update", {
           where: { id: existingProduct.id },
           data: updateData,
         })

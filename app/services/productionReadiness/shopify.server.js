@@ -38,3 +38,30 @@ export function buildShopifyChecks({
     action: grantedScopes.length > 0 && grantedMissingScopes.length === 0 ? "" : "Open the app in Shopify admin and approve the new permissions, or uninstall/reinstall if re-authorization does not appear."
   })];
 }
+export function buildShopifyReadiness({
+  configuredScopes,
+  grantedScopes,
+  normalizedShopDomain,
+  targetOfflineSession,
+  shopifyProductSync,
+  productShippingProfiles,
+  sessions,
+}) {
+  return {
+    configuredScopes,
+    grantedScopes,
+    evaluatedShopDomain: normalizedShopDomain || null,
+    offlineSessionFound: Boolean(targetOfflineSession),
+    productSync: shopifyProductSync,
+    productShipping: {
+      available: productShippingProfiles.available === true,
+      internationalProductCount: Number.isInteger(productShippingProfiles.airPacketCount)
+        ? productShippingProfiles.airPacketCount
+        : null,
+      requiredCountryCount: Number.isInteger(productShippingProfiles.serviceAvailability?.requiredCountryCount)
+        ? productShippingProfiles.serviceAvailability.requiredCountryCount
+        : null,
+    },
+    offlineSessionShops: sessions.map((session) => session.shop).filter(Boolean),
+  };
+}

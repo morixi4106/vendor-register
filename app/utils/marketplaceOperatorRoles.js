@@ -34,3 +34,25 @@ export function resolveProductionReadinessOperatorRole(intent) {
     MARKETPLACE_OPERATOR_ROLES.ADMIN
   );
 }
+
+export function resolveInternationalShippingOperatorRole(intent) {
+  switch (String(intent || "")) {
+    case "saveShipping":
+    case "saveMarketEvidence":
+    case "revokeMarketEvidence":
+    case "recordInternationalSurfaceEvidence":
+    case "revokeInternationalProof":
+    case "revokeInternationalProofDelivery":
+      return MARKETPLACE_OPERATOR_ROLES.COMPLIANCE_REVIEWER;
+    case "syncInternationalSaleGate":
+    case "prepareInternationalDeployment":
+    case "refreshInternationalProofObservation":
+    case "previewInternationalAuthorization":
+    case "confirmInternationalAuthorization":
+      return MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER;
+    case "stopInternationalSaleGate":
+      return MARKETPLACE_OPERATOR_ROLES.INCIDENT_COMMANDER;
+    default:
+      return null;
+  }
+}
