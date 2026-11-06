@@ -20,6 +20,31 @@ export const POOLER_SOURCE = Object.freeze({
   sha256: "00886a2994b4844cd37110970df777772cfc42a74c400522c82fba509a3f42d9",
 });
 export const FOUNDATION = "20260409000000_restore_legacy_foundation";
+export const INTERNATIONAL_MIGRATIONS = Object.freeze({
+  "20261015123000_international_gate_sync":
+    "f9aa2e38617a6391a4769f4171478715028984601524aabfa2ebe958fb21136f",
+  "20261016120000_international_authorization":
+    "05be8e7908cd2702c8ac9bb3047ee79ffab69e74a1a96171d19b791885b3446e",
+  "20261016140000_international_proof_issuance":
+    "6838b3e005204340774a4eb8bc6dbf8af6f4383c41759acff64cf0dbfcdf6b3c",
+  "20261017000000_international_runner_interface":
+    "d425fa62f9d50f3eef8d0690095652e7d78ee0058558b60f80f9e9b1d3de7434",
+});
+export function beforeInternationalInputs(inputs) {
+  for (const [name, digest] of Object.entries(INTERNATIONAL_MIGRATIONS)) {
+    if (
+      inputs.find((e) => e.path === `prisma/migrations/${name}/migration.sql`)
+        ?.sha256 !== digest
+    )
+      throw new Error("international_migration_source_changed");
+  }
+  return inputs.filter(
+    (e) =>
+      !Object.keys(INTERNATIONAL_MIGRATIONS).some(
+        (name) => e.path === `prisma/migrations/${name}/migration.sql`,
+      ),
+  );
+}
 export const DATABASE_CHECKS = Object.freeze([
   "native-identity",
   "postgres-server-identity",
@@ -31,6 +56,10 @@ export const DATABASE_CHECKS = Object.freeze([
   "foundation-partial-rejected",
   "foundation-later-history-rejected",
   "application-types-and-relations",
+  "international-upgrade-existing-data",
+  "international-defaults-and-authorization",
+  "international-proof-delivery",
+  "international-run-closure-and-tenancy",
   "compatibility-pool",
   "prepared-pool",
   "cleanup",
@@ -278,6 +307,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
     "existingHistoryUpgraded",
     "schemaEngineInvocations",
     "historyRegression",
+    "international",
     "poolers",
     "productionApproved",
     "wholeEngineVerified",
@@ -316,6 +346,15 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
     report.historyRegression?.code !== "P3018" ||
     report.historyRegression?.sqlState !== "42P01" ||
     report.historyRegression.missingTable !== "Product" ||
+    JSON.stringify(report.international) !==
+      JSON.stringify({
+        baselineMigrations:
+          inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 4,
+        migrationsAdded: 4,
+        rowsPreserved: 2,
+        rejections: 24,
+        defaultsDisabled: true,
+      }) ||
     report.poolers?.length !== 2 ||
     !report.poolers.every(
       (p, i) =>

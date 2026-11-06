@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import {createRequire} from "node:module";
 import {spawnSync} from "node:child_process";
 import {FOUNDATION, DATABASE_CHECKS} from "../../../scripts/security/database-compatibility.mjs";
+import { probeInternational } from "./international-constraints.mjs";
 const input=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
 const hash=bytes=>crypto.createHash("sha256").update(bytes).digest("hex");
 const sha=file=>hash(fs.readFileSync(file));
@@ -13,7 +14,7 @@ assert.equal(fs.realpathSync(process.cwd()),fs.realpathSync(input.project));
 for(const key of Object.keys(process.env))assert.ok(!/^(DATABASE_URL|DIRECT_URL|SHOPIFY_|KOMOJU_|RESEND_|GITHUB_TOKEN|GH_TOKEN)/i.test(key));
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 const url=(database,port=input.postgresPort)=>{
-  assert.ok(["oja_probe","oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe"].includes(database));
+  assert.ok(["oja_probe","oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe"].includes(database));
   assert.ok(Number.isInteger(port)&&port>0&&port<=65535);
   const value=new URL(`postgresql://localhost:${port}/${database}`);
   value.username="oja_probe";value.password="oja-ephemeral-test-only";
@@ -43,7 +44,7 @@ command(input.project,["generate"]);
 const {PrismaClient,Prisma}=require("@prisma/client");
 assert.equal(Prisma.prismaVersion.client,"6.19.3");
 const admin=new PrismaClient({datasourceUrl:url("oja_probe"),log:[]});
-let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[],postgres;
+let client,modelsChecked=0,historyRegression,poolers=[],baselineState=[],postgres,international;
 try{
   await record("native-identity",async()=>{
     await admin.$connect();assert.deepEqual([...loaded],[input.librarySha256]);assert.equal(admin._engine.versionInfo.commit,input.sourceCommit);
@@ -53,7 +54,7 @@ try{
     assert.equal(row.version_num,input.tls.serverVersionNum);assert.equal(row.ssl,true);assert.ok(["TLSv1.2","TLSv1.3"].includes(row.version));
     postgres={image:input.tls.image,serverVersionNum:row.version_num,encrypted:row.ssl,tlsVersion:row.version};
     fs.writeFileSync(path.join(input.project,"postgres-identity.json"),JSON.stringify(postgres));
-    for(const database of ["oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe"])await admin.$executeRawUnsafe(`CREATE DATABASE ${database}`);
+    for(const database of ["oja_app_probe","oja_history_probe","oja_partial_probe","oja_late_probe","oja_upgrade_probe"])await admin.$executeRawUnsafe(`CREATE DATABASE ${database}`);
   });
   await record("original-history-regression",()=>{
     const output=command(input.historyProject,["migrate","deploy"],"oja_history_probe",1);
@@ -92,7 +93,7 @@ try{
     assert.equal(product.costAmount.toString(),"12.34");
     const before=await client.$queryRawUnsafe("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname");
     // Only this disposable DB: emulate an existing installation with the original
-    // 49 applied migrations and real-shaped data, then deploy the missing one.
+    // applied migrations and real-shaped data, then deploy the missing one.
     const historyBefore=await client.$queryRawUnsafe('SELECT id,migration_name,checksum,finished_at FROM "_prisma_migrations" ORDER BY migration_name');
     assert.equal(await client.$executeRaw`DELETE FROM "_prisma_migrations" WHERE migration_name = ${FOUNDATION}`,1);
     command(input.project,["migrate","deploy"]);
@@ -125,6 +126,7 @@ try{
     const session=await client.session.create({data:{id:"synthetic-session",shop:"synthetic.invalid",state:"synthetic",accessToken:"synthetic-not-credential",userId:9007199254740993n}});assert.equal(session.userId,9007199254740993n);
     await client.marketplaceOrder.delete({where:{id:order.id}});assert.equal(await client.sellerOrderLine.count(),0);await client.ledgerEntry.deleteMany();await client.session.deleteMany();
   });
+  international=await probeInternational({client,PrismaClient,input,url,command,record});
   for(const [index,pooler]of input.poolers.entries())await record(index===0?"compatibility-pool":"prepared-pool",async()=>{
     const pooled=new URL(url("oja_app_probe",pooler.port));if(!pooler.prepared)pooled.searchParams.set("pgbouncer","true");
     const clients=[],pids=new Set();let serverTlsVersion;
@@ -156,4 +158,4 @@ const invocations=fs.readFileSync(path.join(input.project,"schema-engine-invocat
 for(const role of ["library","schema"])assert.equal(sha(input[role]),input[`${role}Sha256`]);
 console.log(JSON.stringify({checks,sourceCommit:input.sourceCommit,librarySha256:input.librarySha256,schemaSha256:input.schemaSha256,loadedLibrarySha256:[...loaded][0],
   clientVersion:Prisma.prismaVersion.client,postgres,applicationInputSha256:hash(JSON.stringify(input.inputs)),migrationsApplied:input.inputs.filter(e=>e.path.endsWith("/migration.sql")).length,
-  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,poolers,productionApproved:false,wholeEngineVerified:false}));
+  modelsChecked,rowsRemaining:0,seedRowsPreserved:3,baselineStateSha256:hash(JSON.stringify(baselineState)),existingHistoryUpgraded:true,schemaEngineInvocations:invocations.length,historyRegression,international,poolers,productionApproved:false,wholeEngineVerified:false}));

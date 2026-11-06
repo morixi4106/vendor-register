@@ -14,6 +14,7 @@ import {
   sha,
   databaseCompatibilityOptions,
   applicationDatabaseInputs,
+  beforeInternationalInputs,
   selectDatabaseNativeInput,
   prepareApplicationProject,
   poolerConfiguration,
@@ -183,6 +184,11 @@ export async function testDatabaseCompatibility(root, postgresPort) {
   );
   prepareApplicationProject(root, path.join(work, "application"), inputs);
   prepareApplicationProject(root, path.join(work, "old-history"), inputs, true);
+  prepareApplicationProject(
+    root,
+    path.join(work, "before-international"),
+    beforeInternationalInputs(inputs),
+  );
   fs.writeFileSync(
     path.join(root, ".audit/prisma-tls-lab/pooler-users.txt"),
     '"oja_probe" "oja-ephemeral-test-only"\n',
@@ -228,6 +234,7 @@ export async function testDatabaseCompatibility(root, postgresPort) {
       root,
       project: path.join(work, "application"),
       historyProject: path.join(work, "old-history"),
+      upgradeProject: path.join(work, "before-international"),
       inputs,
       postgresPort,
       tls,
@@ -263,6 +270,14 @@ export async function testDatabaseCompatibility(root, postgresPort) {
       poolers,
       report,
       scriptSha256: sha(fs.readFileSync(script)),
+      internationalProbeSha256: sha(
+        fs.readFileSync(
+          path.join(
+            root,
+            "tests/fixtures/database/international-constraints.mjs",
+          ),
+        ),
+      ),
       orchestratorSha256: sha(fs.readFileSync(new URL(import.meta.url))),
       contractSha256: sha(
         fs.readFileSync(

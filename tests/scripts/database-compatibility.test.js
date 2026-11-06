@@ -13,6 +13,8 @@ import {
   sha,
   databaseCompatibilityOptions,
   applicationDatabaseInputs,
+  beforeInternationalInputs,
+  INTERNATIONAL_MIGRATIONS,
   selectDatabaseNativeInput,
   prepareApplicationProject,
   poolerConfiguration,
@@ -173,6 +175,28 @@ test("changed input digests are rejected before generating a client", (t) => {
   );
 });
 
+test("international upgrade retains the original four migration bytes and excludes only those from the populated baseline", () => {
+  const inputs = applicationDatabaseInputs(ROOT),
+    baseline = beforeInternationalInputs(inputs);
+  assert.equal(inputs.length - baseline.length, 4);
+  for (const [name, digest] of Object.entries(INTERNATIONAL_MIGRATIONS)) {
+    const file = `prisma/migrations/${name}/migration.sql`;
+    assert.equal(sha(fs.readFileSync(path.join(ROOT, file))), digest);
+    assert.ok(!baseline.some((e) => e.path === file));
+    const changed = structuredClone(inputs);
+    changed.find((e) => e.path === file).sha256 = "0".repeat(64);
+    assert.throws(() => beforeInternationalInputs(changed), /source_changed/);
+    assert.throws(
+      () => beforeInternationalInputs(inputs.filter((e) => e.path !== file)),
+      /source_changed/,
+    );
+  }
+  assert.deepEqual(
+    baseline.filter((e) => !e.path.endsWith("/migration.sql")),
+    inputs.filter((e) => !e.path.endsWith("/migration.sql")),
+  );
+});
+
 test("pooler configuration is transaction-only, loopback-only and strict TLS in both directions", (t) => {
   const directory = fixture(t);
   for (const prepared of [false, true]) {
@@ -300,13 +324,7 @@ test("foundation restores only the historical missing tables without changing ex
 });
 
 test("database receipts reject missing tests, drift, partial migrations, swapped native bytes and production approval", () => {
-  const inputs = [
-      { path: "prisma/schema.prisma", sha256: "1".repeat(64) },
-      {
-        path: `prisma/migrations/${FOUNDATION}/migration.sql`,
-        sha256: "2".repeat(64),
-      },
-    ],
+  const inputs = applicationDatabaseInputs(ROOT),
     native = {
       sourceCommit: "c".repeat(40),
       librarySha256: "3".repeat(64),
@@ -326,7 +344,8 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
       tlsVersion: "TLSv1.3",
     },
     applicationInputSha256: sha(JSON.stringify(inputs)),
-    migrationsApplied: 1,
+    migrationsApplied: inputs.filter((e) => e.path.endsWith("/migration.sql"))
+      .length,
     modelsChecked: 100,
     rowsRemaining: 0,
     seedRowsPreserved: 3,
@@ -337,6 +356,14 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
       code: "P3018",
       sqlState: "42P01",
       missingTable: "Product",
+    },
+    international: {
+      baselineMigrations:
+        inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 4,
+      migrationsAdded: 4,
+      rowsPreserved: 2,
+      rejections: 24,
+      defaultsDisabled: true,
     },
     poolers: [false, true].map((prepared) => ({
       mode: prepared ? "prepared" : "compatibility",
@@ -388,6 +415,11 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     (r) => (r.existingHistoryUpgraded = false),
     (r) => delete r.baselineStateSha256,
     (r) => (r.historyRegression.code = "P1001"),
+    (r) => delete r.international,
+    (r) => (r.international.baselineMigrations = 0),
+    (r) => (r.international.rejections = 0),
+    (r) => (r.international.rowsPreserved = 0),
+    (r) => (r.international.defaultsDisabled = false),
     (r) => r.poolers.pop(),
     (r) => (r.poolers[0].clientConnections = 1),
     (r) => (r.poolers[0].backendProcesses = 12),
