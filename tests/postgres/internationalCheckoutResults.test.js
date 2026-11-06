@@ -516,6 +516,7 @@ test(
         const f = await fixture(),
           row = (await f.rows())[0];
         const { id: _id, createdAt: _created, ...copy } = row;
+      delete copy.resultJson;
         await assert.rejects(
           db.internationalCheckoutVerificationCase.create({ data: copy }),
           { code: "P2002" },

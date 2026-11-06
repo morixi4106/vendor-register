@@ -322,6 +322,7 @@ export async function probeInternational({
       // Prisma's JSON null is not SQL NULL; leave the optional observation absent.
       delete duplicate.observationJson;
       delete duplicate.resultsJson;
+      delete duplicate.planSummaryJson;
       await rejected(
         client.internationalCheckoutVerificationRun.create({ data: duplicate }),
         "P2002",
