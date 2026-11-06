@@ -1,0 +1,51 @@
+name: Fixed Prisma TDS source probes
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-tds-contracts.yml
+      - scripts/security/test-prisma-tds.mjs
+      - security/prisma-tds-contracts.json
+      - tests/fixtures/prisma-tds/**
+      - tests/scripts/prisma-tds.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject unreviewed fork sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify source and probe rejection contracts
+        run: node --test tests/scripts/prisma-tds.test.js
+      - name: Build and run fixed public API probes over synthetic memory streams
+        run: node scripts/security/test-prisma-tds.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload bounded source and native evidence without approving the engine
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: prisma-tds-${{ github.run_id }}
+          path: .audit/prisma-tds/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 45
