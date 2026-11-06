@@ -114,6 +114,25 @@ test("the actual locked graph contains patched profiler and main engines without
   assert.match(wirm, /\+version = "=50\.0\.1"/);
 });
 
+test("the profiler keeps instrumented module bytes and success/error diagnostics with whamm2", () => {
+  const patch = runnerInput(root, policy.patch).toString("utf8");
+  assert.match(patch, /diff --git a\/crates\/profiler\/src\/lib\.rs/);
+  assert.match(patch, /\+ {8}instrumented: instrumented\.module,/);
+  assert.match(patch, /\+ {12}eprint!\("\{\}", e\.render\(false\)\);/);
+  assert.match(patch, /\+ {4}if !instrumented\.diagnostics\.is_empty\(\) \{/);
+  assert.match(
+    patch,
+    /\+ {8}eprint!\("\{\}", instrumented\.diagnostics\.render\(false\)\);/,
+  );
+  assert.doesNotMatch(
+    patch,
+    /^\+.*(?:\.report\(\)|let mut e|no_report\s*[:=]\s*true)/m,
+  );
+  assert.ok(
+    policy.sourceFiles.some((f) => f.path === "crates/profiler/src/lib.rs"),
+  );
+});
+
 function fixture(t) {
   const source = fs.mkdtempSync(path.join(os.tmpdir(), "javy-source-"));
   t.after(() => fs.rmSync(source, { recursive: true, force: true }));

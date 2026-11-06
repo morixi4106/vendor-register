@@ -36,7 +36,7 @@ export function validateJavyNativePolicy(p) {
     p.schemaVersion !== 1 ||
     p.role !== "javy-native-lab" ||
     p.sourcePolicySha256 !==
-      "da7b84f7d69b985766b1256f0e56dce65e10a69c0e7198c94ece3a70cbe01de7" ||
+      "b551fbe92e1f0e7f83cd91d3c18ac3c14ba449bece13632b7dc583231be2727a" ||
     !exact(p.rustStd, ["version", "date", "target", "sha256"]) ||
     p.rustStd.version !== "1.99.1" ||
     p.rustStd.date !== "2026-10-15" ||
