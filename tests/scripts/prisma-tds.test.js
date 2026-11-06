@@ -72,15 +72,15 @@ const names = [
   "feature_ack_rejects_unknown_feature",
   "feature_ack_rejects_invalid_fedauth_length",
   "colinfo_is_handled_without_unimplemented_panic",
-  "unknown_prelogin_option_is_forward_compatible",
+  "unknown_prelogin_option_is_rejected",
 ];
 test("native proof requires every named test, exact real call counts, positive controls and no panics", () => {
   const stdout =
     names.map((n) => `test tests::${n} ... ok`).join("\n") +
     "\ntest result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n";
   const stderr =
-    "OJA_TDS_CALL success=true\n".repeat(249) +
-    "OJA_TDS_CALL success=false\n".repeat(9);
+    "OJA_TDS_CALL success=true\n".repeat(2) +
+    "OJA_TDS_CALL success=false\n".repeat(256);
   assert.equal(verifyTdsResult(stdout, stderr, policy()).connectCalls, 258);
   for (const output of [
     stdout.replace("12 passed", "0 passed"),

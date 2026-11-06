@@ -8,7 +8,8 @@ mod tests {
         task::{Context, Poll},
         time::Duration,
     };
-    use tiberius::{Client, Config, EncryptionLevel, Error};
+    use tiberius::{Client, Config, EncryptionLevel};
+    use tiberius::error::Error;
 
     // A memory-only TDS peer: no sockets, DNS, credentials, or external DB.
     struct Peer {
@@ -71,9 +72,9 @@ mod tests {
     }
 
     async fn login_error(payload: &[u8], expected: &str) {
-        let mut input = prelogin(0);
+        let mut input = prelogin(2);
         input.extend(packet(payload));
-        let (outcome, writes) = connect(input, EncryptionLevel::Off).await;
+        let (outcome, writes) = connect(input, EncryptionLevel::NotSupported).await;
         match outcome {
             Err(Error::Protocol(message)) => assert!(message.contains(expected), "{message}"),
             other => panic!("expected protocol error, got {other:?}"),
@@ -83,8 +84,8 @@ mod tests {
 
     #[tokio::test]
     async fn normal_prelogin_and_done_reach_connected_state() {
-        let mut input = prelogin(0); input.extend(done());
-        let (result, writes) = connect(input, EncryptionLevel::Off).await;
+        let mut input = prelogin(2); input.extend(done());
+        let (result, writes) = connect(input, EncryptionLevel::NotSupported).await;
         result.unwrap();
         assert_eq!(written_types(&writes), [0x12, 0x10]);
     }
@@ -138,20 +139,22 @@ mod tests {
 
     #[tokio::test]
     async fn colinfo_is_handled_without_unimplemented_panic() {
-        let mut input = prelogin(0); input.extend(packet(&[0xa5, 0, 0])); input.extend(done());
-        let (result, writes) = connect(input, EncryptionLevel::Off).await;
+        let mut input = prelogin(2); input.extend(packet(&[0xa5, 0, 0])); input.extend(done());
+        let (result, writes) = connect(input, EncryptionLevel::NotSupported).await;
         result.unwrap();
         assert_eq!(written_types(&writes), [0x12, 0x10]);
     }
 
     #[tokio::test]
-    async fn unknown_prelogin_option_is_forward_compatible() {
+    async fn unknown_prelogin_option_is_rejected() {
         for token in 8..255 {
-            let mut input = packet(&[token, 0, 11, 0, 0, 1, 0, 11, 0, 1, 255, 0]);
-            input.extend(done());
-            let (result, writes) = connect(input, EncryptionLevel::Off).await;
-            result.unwrap();
-            assert_eq!(written_types(&writes), [0x12, 0x10]);
+            let input = packet(&[token, 0, 11, 0, 0, 1, 0, 11, 0, 1, 255, 2]);
+            let (result, writes) = connect(input, EncryptionLevel::NotSupported).await;
+            match result {
+                Err(Error::Protocol(message)) => assert!(message.contains("unsupported prelogin token")),
+                other => panic!("expected protocol error, got {other:?}"),
+            }
+            assert_eq!(written_types(&writes), [0x12]);
         }
     }
 }

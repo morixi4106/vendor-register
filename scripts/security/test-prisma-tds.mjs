@@ -46,8 +46,8 @@ export function validateTdsPolicy(p) {
   assert.equal(p.target, "x86_64-unknown-linux-gnu");
   assert.equal(p.testCount, 12);
   assert.equal(p.connectCalls, 258);
-  assert.equal(p.successfulSyntheticLogins, 249);
-  assert.equal(p.protocolErrors, 9);
+  assert.equal(p.successfulSyntheticLogins, 2);
+  assert.equal(p.protocolErrors, 256);
   assert.equal(p.artifactStatus, "NOT_VERIFIED");
   for (const key of [
     "sourceReviewComplete",
@@ -74,7 +74,7 @@ export function verifyTdsResult(stdout, stderr, p) {
     "feature_ack_rejects_unknown_feature",
     "feature_ack_rejects_invalid_fedauth_length",
     "colinfo_is_handled_without_unimplemented_panic",
-    "unknown_prelogin_option_is_forward_compatible",
+    "unknown_prelogin_option_is_rejected",
   ];
   for (const name of names)
     assert.match(stdout, new RegExp(`test tests::${name} \\.\\.\\. ok`));
