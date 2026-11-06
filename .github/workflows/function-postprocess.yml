@@ -1,0 +1,70 @@
+name: Isolated patched Function optimizer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/function-postprocess.yml
+      - scripts/security/function-postprocess.mjs
+      - security/function-postprocess.json
+      - tests/fixtures/functions/postprocess-probe.mjs
+      - tests/scripts/function-postprocess.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Check out immutable international source without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          ref: 7731ab6e863580f6ed7ba6118a04a5234e8769df
+          path: .audit/function-international-source
+          persist-credentials: false
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node and install without lifecycle scripts
+        run: |
+          npm run runtime:version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify optimizer isolation and rejection contracts
+        run: node --test tests/scripts/function-postprocess.test.js
+      - name: Rebuild pinned esbuild with patched Go and current binary scans
+        run: node scripts/security/rebuild-esbuild.mjs
+      - name: Download immutable independently verified Linux Javy input
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13497266437
+          run-id: 42203451075
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/function-native-input
+      - name: Optimize both fixed Function candidates in a network-disabled non-root container
+        run: node scripts/security/function-postprocess.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload final bytes and evidence without installing or approving them
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: function-postprocess-${{ github.run_id }}
+          path: .audit/function-postprocess/
+          if-no-files-found: error
+          retention-days: 45

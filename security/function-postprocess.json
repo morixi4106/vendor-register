@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "optimizer": {
+    "version": "133",
+    "commit": "fba5005a132d85d578be5bd010e0487ed8e2ce3e",
+    "url": "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-node.tar.gz",
+    "archiveSize": 2300450,
+    "archiveSha256": "3507aedecef25c46f2889530a7da304677e97122869274125f782b586cb508ab",
+    "jsSha256": "31b57f29cc4fb1ffe06b027a5ba125dcc6717b85b0951b81830884a153bfe7ba",
+    "wasmSha256": "0328adf330dc852245f8c7af1e05a410554b379ea848abd4f4c993e4b409587c",
+    "includedFixes": [
+      "4f52bff8c4075b5630422f902dd92a0af2c9f398",
+      "1251efbc1ea471c1311d2726b2bbe061ff2a291c"
+    ]
+  },
+  "native": {
+    "run": 42203451075,
+    "artifact": 13497266437,
+    "head": "e7781b4aeab5a934cebbdc020b8e18195ed35121",
+    "binarySha256": "f75a0ad1ad323a2e41215bf9f409abf50850303e8b0642a697567f0799e59911",
+    "receiptSha256": "869f276cffdfdc6c3426a0a4041163d822d975f97b75566302d4b7804da0fa90"
+  },
+  "sdkSha256": "6f9e114f199ed6075101f31b3ab47531d749910238b4f06b7386efca94168dab",
+  "candidates": [
+    {
+      "name": "security",
+      "head": "e7781b4aeab5a934cebbdc020b8e18195ed35121",
+      "bundleSha256": "5498f38a5d214242aaeb0a29d53fbac462d33144dedde0e9a0fed41cb2f552a9"
+    },
+    {
+      "name": "international",
+      "head": "7731ab6e863580f6ed7ba6118a04a5234e8769df",
+      "bundleSha256": "ced881b321772e1d8e446fd9ace702f44fd6c35c75092570f339faa6492d2195"
+    }
+  ],
+  "artifactStatus": "NOT_VERIFIED",
+  "wholeCompilerVerified": false,
+  "fullFunctionVerified": false,
+  "productionApproved": false
+}
