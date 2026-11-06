@@ -548,11 +548,15 @@ test(
             data: { planSummaryJson: { huge: "x".repeat(4200) } },
           }),
         );
+        await db.internationalGateSyncState.delete({
+          where: { shopDomain: f.run.shopDomain },
+        });
         await assert.rejects(
-          db.internationalCheckoutVerificationRun.delete({
-            where: { id: f.run.id },
-          }),
-          { code: "P2003" },
+          db.$executeRaw`DELETE FROM "InternationalCheckoutVerificationRun" WHERE id=${f.run.id}`,
+          (error) =>
+            error.code === "P2010" &&
+            ["23503", "23001"].includes(error.meta?.code) &&
+            error.meta?.message.includes("intl_case_run_fkey"),
         );
       },
     );
