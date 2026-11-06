@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import test from "node:test";
 import yaml from "js-yaml";
+import { verifyOptimizerRejection } from "../fixtures/functions/postprocess-probe.mjs";
 import {
   OPTIMIZER_FLAGS,
   postprocessOptions,
@@ -309,4 +310,26 @@ test("optimizer download pins the release, bounds bytes and HTTPS redirects and 
     /download_exists/,
   );
   assert.equal(fs.readFileSync(file, "utf8"), "keep");
+});
+
+test("invalid input requires explicit parser rejection, not a timeout, signal, assertion or memory failure", () => {
+  const parserExit = {
+    status: 1,
+    error: undefined,
+    signal: null,
+    stderr:
+      "Fatal: invalid.wasm:1:0: error: unrecognized module field\nAborted()\nRuntimeError: unreachable\n",
+  };
+  assert.equal(verifyOptimizerRejection(parserExit), undefined);
+  for (const patch of [
+    { status: 0 },
+    { status: 2 },
+    { signal: "SIGSEGV" },
+    { error: new Error("timeout") },
+    { stderr: "RuntimeError: unreachable" },
+    { stderr: "Fatal: Assertion failed" },
+    { stderr: "Fatal: memory access out of bounds" },
+    { stderr: "Fatal: stack overflow" },
+  ])
+    assert.throws(() => verifyOptimizerRejection({ ...parserExit, ...patch }));
 });
