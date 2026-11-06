@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
@@ -24,15 +25,24 @@ const browser = await chromium.launch({
 });
 const results = [];
 try {
-  const response = await fetch(
-    `${base.origin}/.audit/international-runner-preview/results.json`,
-  );
-  assert.equal(
-    response.status,
-    403,
-    "Fixture server must not expose local evidence files",
-  );
-  assert.ok(!(await response.text()).includes('"fixtureOnly"'));
+  const canary = `blocked-${randomBytes(8).toString("hex")}.json`;
+  const canaryPath = path.join(output, canary);
+  writeFileSync(canaryPath, JSON.stringify({ fixtureOnly: true }), {
+    flag: "wx",
+  });
+  try {
+    const response = await fetch(
+      `${base.origin}/.audit/international-runner-preview/${canary}`,
+    );
+    assert.equal(
+      response.status,
+      403,
+      "Fixture server must not expose existing local evidence files",
+    );
+    assert.ok(!(await response.text()).includes('"fixtureOnly"'));
+  } finally {
+    unlinkSync(canaryPath);
+  }
   for (const width of [320, 375, 1440]) {
     for (const [role, phase] of [
       ["admin", "EMPTY"],
@@ -47,11 +57,24 @@ try {
       const errors = [];
       const mutations = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      if (process.env.INTERNATIONAL_UI_TRACE === "true") {
+        page.on("request", (request) => console.log("request", request.url()));
+        page.on("response", (response) =>
+          console.log("response", response.status(), response.url()),
+        );
+        page.on("requestfailed", (request) =>
+          console.log(
+            "requestfailed",
+            request.failure()?.errorText,
+            request.url(),
+          ),
+        );
+      }
       page.on("request", (request) => {
         if (request.method() === "POST") mutations.push(request);
       });
       await page.goto(`${base.origin}/?role=${role}&phase=${phase}`, {
-        waitUntil: "networkidle",
+        waitUntil: "domcontentloaded",
       });
       await page.getByRole("heading", { name: "国際配送の受付状況" }).waitFor();
       assert.equal(errors.length, 0, errors.join("\n"));

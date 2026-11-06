@@ -65,6 +65,7 @@ const server = await createServer({
     host: "127.0.0.1",
     port: Number(process.env.INTERNATIONAL_PREVIEW_PORT || 4179),
     cors: false,
+    watch: { ignored: ["**/.audit/**", "**/.codex-temp/**"] },
     fs: {
       strict: true,
       allow: [root],
@@ -130,8 +131,11 @@ const server = await createServer({
     },
   ],
   optimizeDeps: {
+    noDiscovery: true,
+    entries: [],
     include: [
       "react",
+      "react/jsx-runtime",
       "react-dom/client",
       "react-router",
       "@shopify/polaris",

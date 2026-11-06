@@ -57,8 +57,8 @@
       "commit": "dc68c4f47a3dbcd511f605135ac7c948775a3ab9",
       "releaseRoots": ["query-engine-node-api"],
       "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42038861757",
-      "completed": "Four original package identities, bounded generation/default-value contracts and actual release native probes.",
-      "remaining": "Whole original source review of all four identities and explicit adoption record; generated identifiers are not authorization credentials."
+      "completed": "Four identities: all twelve owned runtime/bin Rust sources and five manifests read, matched to the original complete Git tree and current patched policy; selected default-generation/interactive-transaction consumers reviewed. See security/reviews/prisma-cuid.md.",
+      "remaining": "Artifact adoption and transitive/whole-engine approval remain open. An unused CUID1 validator has a source-derived UTF-8 boundary panic; do not expose it to customer input without fixing/rebuilding. Selected generator review is not blanket library approval."
     },
     {
       "packages": [
