@@ -1,0 +1,58 @@
+name: Function SDK and provider origin
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/function-runtime-origin.yml
+      - scripts/security/function-runtime-origin.mjs
+      - security/function-runtime-origin.json
+      - tests/scripts/function-runtime-origin.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  origin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out review candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject unreviewed fork sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node and bundled verification libraries without project installation
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+      - name: Verify runtime and origin rejection contracts
+        run: |
+          node scripts/security/node-runtime.mjs
+          node --test tests/scripts/function-runtime-origin.test.js
+      - name: Download fixed independently verified final-byte evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13504146003
+          run-id: 42221077360
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/function-origin-input
+      - name: Verify signed SDK release and provider sections without guest execution
+        run: node scripts/security/function-runtime-origin.mjs .audit/function-origin-input
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload origin evidence without source or production approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: function-runtime-origin-${{ github.run_id }}
+          path: .audit/function-runtime-origin-*/
+          if-no-files-found: error
+          retention-days: 45
