@@ -3,6 +3,9 @@
 Implemented scope: 4C-2a result intake, 4C-2b normal-closure lifecycle core and
 4C-2c server authorization, authenticated API and bounded agent protocol.
 Browser observations and the managed-verifier artifact qualification remain incomplete.
+The optional read-only browser/child-process engine and synthetic browser CI are
+implemented in [the browser scope document](international-checkout-browser.md).
+There is no default live Shopify prepare/read provider or qualified DOM profile.
 This document is not authorization to run a live checkout, migrate
 production, publish, charge, refund, or send monitoring notifications.
 
@@ -125,6 +128,7 @@ Shopify browser adapter and must never be substituted into a production runner.
 
 The CONTRACT_ONLY inventory now binds these implementation and test files.
 Artifact export requires actual independent successful Quality/isolated-DB runs
+and checkout-browser CI
 for the same commit, never the artifact workflow's own run as a substitute.
 The obsolete standalone PostgreSQL workflow reference has been replaced by
 `database-compatibility.yml`; it does not weaken the existing admission guards.

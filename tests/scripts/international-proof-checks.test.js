@@ -3,18 +3,20 @@ import test from "node:test";
 import { collectInternationalProofChecks } from "../../scripts/international-proof-artifact.mjs";
 const headSha = "a".repeat(40);
 function fixture(production = false) {
-  const rows = ["quality.yml", "database-compatibility.yml"].map(
-    (name, index) => ({
-      id: index + 10,
-      path: `.github/workflows/${name}`,
-      head_sha: headSha,
-      run_attempt: 1,
-      event: production ? "workflow_dispatch" : "pull_request",
-      head_branch: production ? "main" : "agent/test",
-      status: "completed",
-      conclusion: "success",
-    }),
-  );
+  const rows = [
+    "quality.yml",
+    "database-compatibility.yml",
+    "international-checkout-browser.yml",
+  ].map((name, index) => ({
+    id: index + 10,
+    path: `.github/workflows/${name}`,
+    head_sha: headSha,
+    run_attempt: 1,
+    event: production ? "workflow_dispatch" : "pull_request",
+    head_branch: production ? "main" : "agent/test",
+    status: "completed",
+    conclusion: "success",
+  }));
   const api = {
     json: async (path) => ({
       workflow_runs: [
@@ -32,6 +34,7 @@ test("proof exporter requires independent Quality and reviewed isolated database
     assert.deepEqual(await collectInternationalProofChecks(f.options), {
       quality: { runId: 10, runAttempt: 1 },
       postgres: { runId: 11, runAttempt: 1 },
+      checkoutBrowser: { runId: 12, runAttempt: 1 },
     });
   }
 });
@@ -58,6 +61,9 @@ test("exporter cannot substitute itself, old standalone DB workflow, stale sourc
     },
     (f) => {
       f.rows[1].run_attempt = 0;
+    },
+    (f) => {
+      f.rows[2].conclusion = "failure";
     },
   ]) {
     const f = fixture();

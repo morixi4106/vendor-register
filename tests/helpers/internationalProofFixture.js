@@ -112,6 +112,7 @@ export function internationalProofFixture(
     checks: {
       quality: { runId: 101, runAttempt: 1 },
       postgres: { runId: 102, runAttempt: 1 },
+      checkoutBrowser: { runId: 103, runAttempt: 1 },
     },
     caseIds: ["fixture:test"],
     casesHash: proofHash(["fixture:test"]),
@@ -220,6 +221,12 @@ export function internationalProofFixture(
       id: 102,
       path: ".github/workflows/database-compatibility.yml",
       event: "push",
+    },
+    "/actions/runs/103": {
+      ...run,
+      id: 103,
+      path: ".github/workflows/international-checkout-browser.yml",
+      event: "workflow_dispatch",
     },
     "/actions/artifacts/200": {
       id: 200,

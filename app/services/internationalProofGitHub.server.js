@@ -229,6 +229,14 @@ export async function inspectProofArtifactMetadata({
   for (const [name, path] of [
     ["quality", ".github/workflows/quality.yml"],
     ["postgres", ".github/workflows/database-compatibility.yml"],
+    ...(manifest.checkoutVerifier
+      ? [
+          [
+            "checkoutBrowser",
+            ".github/workflows/international-checkout-browser.yml",
+          ],
+        ]
+      : []),
   ]) {
     const c = manifest.checks[name];
     const check = await get(`/actions/runs/${c.runId}`);

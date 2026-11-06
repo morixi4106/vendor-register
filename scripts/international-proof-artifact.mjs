@@ -125,6 +125,7 @@ export async function collectInternationalProofChecks({
   for (const [name, workflowName] of [
     ["quality", "quality.yml"],
     ["postgres", "database-compatibility.yml"],
+    ["checkoutBrowser", "international-checkout-browser.yml"],
   ]) {
     const list = await api.json(
       `/actions/workflows/${workflowName}/runs?head_sha=${headSha}&per_page=100`,

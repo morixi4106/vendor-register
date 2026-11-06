@@ -45,6 +45,7 @@ test("policy/version compatibility is exact; historical schema is not current ru
   f.manifest.function.policy = "international-sale-2026-10-v1";
   f.manifest.function.projectionVersion = 2;
   delete f.manifest.checkoutVerifier;
+  delete f.manifest.checks.checkoutBrowser;
   assert.equal(validateManifest(f.manifest), f.manifest);
   let calls = 0;
   await assert.rejects(

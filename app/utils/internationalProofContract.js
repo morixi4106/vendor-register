@@ -29,12 +29,24 @@ export const CHECKOUT_CONTRACT_PATHS = Object.freeze([
   "app/utils/internationalCurrencyPolicy.js",
   "app/utils/internationalProofContract.js",
   "scripts/international-checkout-agent.mjs",
+  "scripts/international-checkout-browser.mjs",
+  "scripts/international-checkout-browser-policy.mjs",
+  "scripts/international-checkout-browser-process.mjs",
+  "scripts/international-checkout-browser-worker.mjs",
   "scripts/international-proof-agent.mjs",
+  "scripts/test-international-checkout-browser.mjs",
   "tests/postgres/internationalAuthorization.test.js",
   "tests/postgres/internationalCheckoutResults.test.js",
   "tests/scripts/international-checkout-agent.test.js",
   "tests/services/internationalCheckoutAuthorizationPlan.server.test.js",
   "tests/services/internationalCheckoutRunner.server.test.js",
+  "tests/scripts/international-checkout-browser-policy.test.js",
+  "tests/scripts/international-checkout-browser-process.test.js",
+  "tests/helpers/internationalCheckoutBrowserFixture.js",
+  "tests/fixtures/internationalCheckoutBrowserPage.js",
+  "tools/international-checkout-browser/package.json",
+  "tools/international-checkout-browser/package-lock.json",
+  ".github/workflows/international-checkout-browser.yml",
 ]);
 
 export function validateCheckoutVerifier(value) {
@@ -199,7 +211,11 @@ export function validateManifest(m) {
   )
     throw proofError();
   proofDate(m.createdAt);
-  shape(m.checks, ["quality", "postgres"]);
+  shape(m.checks, [
+    "quality",
+    "postgres",
+    ...(m.checkoutVerifier ? ["checkoutBrowser"] : []),
+  ]);
   for (const check of Object.values(m.checks)) {
     shape(check, ["runId", "runAttempt"]);
     if (
