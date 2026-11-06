@@ -23,6 +23,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
+      - name: Preserve fixed source bytes on this disposable runner
+        run: git config --global core.autocrlf false
       - name: Check out candidate without persistent credentials
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
