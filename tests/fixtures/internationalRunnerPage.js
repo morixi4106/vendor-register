@@ -72,3 +72,48 @@ export function internationalRunnerPageFixture(
     },
   };
 }
+
+export function internationalCompatibilityPageFixture(mode = "NON_PLUS") {
+  const observedAt = new Date(Date.now() - (mode === "EXPIRED" ? 600000 : 0));
+  const plan = ["PLUS", "NON_PLUS"].includes(mode) ? mode : "UNVERIFIED";
+  return {
+    version: "international-checkout-compatibility-v1",
+    apiVersion: "2026-04",
+    shopDomain: "fixture.myshopify.com",
+    status: plan === "UNVERIFIED" ? "UNAVAILABLE" : "OBSERVED",
+    plan,
+    developmentStore: plan === "UNVERIFIED" ? null : false,
+    observedAt: observedAt.toISOString(),
+    expiresAt: new Date(+observedAt + 300000).toISOString(),
+    paths: [
+      {
+        id: "STOREFRONT_CART",
+        status: "INSUFFICIENT",
+        reason: "ESTIMATES_AND_ROUTE_BINDING_UNVERIFIED",
+      },
+      {
+        id: "CHECKOUT_UI_EXTENSION",
+        status:
+          plan === "PLUS"
+            ? "UNVERIFIED"
+            : plan === "NON_PLUS"
+              ? "UNAVAILABLE"
+              : "UNKNOWN",
+        reason:
+          plan === "PLUS"
+            ? "PLAN_ONLY_OBSERVED"
+            : plan === "NON_PLUS"
+              ? "PLUS_REQUIRED"
+              : "PLAN_UNVERIFIED",
+      },
+      {
+        id: "WEB_PIXEL",
+        status: "INSUFFICIENT",
+        reason: "ANALYTICS_NOT_INDEPENDENT_CHECKOUT_PROOF",
+      },
+    ],
+    readOnly: true,
+    verificationReady: false,
+    saleReady: false,
+  };
+}

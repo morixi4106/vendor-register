@@ -20,6 +20,10 @@ import {
 import { createInternationalRunnerInterface } from "../../app/services/internationalRunnerInterface.server.js";
 import { dispatchInternationalRunnerAdmin } from "../../app/services/internationalRunnerAdmin.server.js";
 import { loadInternationalRunnerAdmin } from "../../app/services/internationalRunnerAdminRead.server.js";
+import {
+  inspectInternationalCheckoutCompatibility,
+  CHECKOUT_COMPATIBILITY_QUERY,
+} from "../../app/services/internationalCheckoutCompatibility.server.js";
 import { saveInternationalSurfaceEvidence } from "../../app/services/internationalSurfaceEvidence.server.js";
 import { internationalEvidenceVersion } from "../../app/utils/internationalEvidenceVersion.js";
 import {
@@ -843,6 +847,68 @@ test(
           ).status,
           "REVOKED",
         );
+      },
+    );
+    await t.test(
+      "read-only compatibility diagnosis cannot create evidence, authorize a run or modify gate state",
+      async () => {
+        const f = await fixture();
+        const snapshot = async () => ({
+          proofs: await db.operationalReadinessAttestation.findMany({
+            where: { scopeType: "SHOP", scopeId: f.shopDomain },
+            orderBy: { id: "asc" },
+          }),
+          auths: await db.internationalGateAuthorizationRequest.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          runs: await db.internationalCheckoutVerificationRun.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          jobs: await db.internationalGateSyncJob.count({
+            where: { shopDomain: f.shopDomain },
+          }),
+          state: await db.internationalGateSyncState.findUnique({
+            where: { shopDomain: f.shopDomain },
+          }),
+        });
+        const before = await snapshot(),
+          formData = new FormData();
+        formData.set("intent", "inspectInternationalCheckoutCompatibility");
+        let reads = 0;
+        const response = await dispatchInternationalRunnerAdmin({
+          request: new Request(
+            "https://app.example.test/app/international-shipping-commands",
+            { method: "POST" },
+          ),
+          formData,
+          prismaClient: db,
+          requireOperator: f.deps.requireOperator,
+          inspectCheckoutCompatibility: (args) =>
+            inspectInternationalCheckoutCompatibility({
+              ...args,
+              graphQL: async (input) => {
+                reads++;
+                assert.equal(input.shopDomain, f.shopDomain);
+                assert.equal(input.query, CHECKOUT_COMPATIBILITY_QUERY);
+                return {
+                  data: {
+                    shop: {
+                      myshopifyDomain: f.shopDomain,
+                      plan: { shopifyPlus: true, partnerDevelopment: false },
+                    },
+                  },
+                };
+              },
+            }),
+        });
+        assert.equal(response.status, 200);
+        const result = await response.json();
+        assert.equal(result.readOnly, true);
+        assert.equal(result.compatibility.plan, "PLUS");
+        assert.equal(result.compatibility.verificationReady, false);
+        assert.equal(result.compatibility.saleReady, false);
+        assert.equal(reads, 1);
+        assert.deepEqual(await snapshot(), before);
       },
     );
     await t.test(

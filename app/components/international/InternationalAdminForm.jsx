@@ -69,11 +69,13 @@ export function InternationalActionProvider({ children, pending = false }) {
         </Banner>
       ) : null}
       {result?.ok ? (
-        <Banner tone="success">
+        <Banner tone={result.readOnly ? "info" : "success"}>
           <p>
-            {result.pending
-              ? "要求を受け付けました。反映・保護確認は未完了です。"
-              : "処理結果を記録しました。販売開始の承認ではありません。"}
+            {result.readOnly
+              ? "対応状況を取得しました。販売開始の承認ではありません。"
+              : result.pending
+                ? "要求を受け付けました。反映・保護確認は未完了です。"
+                : "処理結果を記録しました。販売開始の承認ではありません。"}
           </p>
         </Banner>
       ) : null}

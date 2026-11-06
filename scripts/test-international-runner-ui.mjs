@@ -159,6 +159,103 @@ try {
       await page.close();
     }
   }
+  for (const width of [320, 375, 1440]) {
+    for (const mode of ["PLUS", "NON_PLUS", "UNAVAILABLE", "EXPIRED"]) {
+      const page = await browser.newPage({ viewport: { width, height: 1000 } });
+      const errors = [],
+        posts = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("request", (request) => {
+        if (request.method() === "POST") posts.push(request);
+      });
+      try {
+        await page.goto(
+          `${base.origin}/?role=release&phase=EMPTY&diagnostic=${mode}`,
+          { waitUntil: "domcontentloaded" },
+        );
+        await page
+          .getByRole("heading", { name: "チェックアウト対応診断", exact: true })
+          .waitFor();
+        assert.equal(
+          posts.length,
+          0,
+          "diagnosis must never run automatically on GET",
+        );
+        const response = page.waitForResponse((r) =>
+          r.url().endsWith("/app/international-shipping-commands"),
+        );
+        await page
+          .getByRole("button", { name: "対応状況を取得", exact: true })
+          .click();
+        assert.equal((await response).status(), 200);
+        await page
+          .getByText("対応状況を取得しました。販売開始の承認ではありません。", {
+            exact: true,
+          })
+          .waitFor();
+        const expected =
+          mode === "PLUS"
+            ? "店舗プラン: Shopify Plus"
+            : mode === "NON_PLUS"
+              ? "店舗プラン: Plus以外"
+              : mode === "UNAVAILABLE"
+                ? "店舗プラン: 未確認"
+                : "診断結果は期限切れ、または未確認です。";
+        await page.getByText(expected, { exact: true }).waitFor();
+        if (mode === "PLUS")
+          await page
+            .getByText(
+              "購入直前のUI拡張: プラン条件のみ確認、購入検証は未確認",
+              { exact: true },
+            )
+            .waitFor();
+        assert.equal(
+          await page
+            .getByText(
+              "処理結果を記録しました。販売開始の承認ではありません。",
+              { exact: true },
+            )
+            .count(),
+          0,
+        );
+        assert.equal(
+          await page
+            .getByRole("button", { name: "承認内容を確認", exact: true })
+            .isDisabled(),
+          true,
+        );
+        assert.equal(posts.length, 1);
+        assert.deepEqual(
+          [...new URLSearchParams(posts[0].postData()).keys()],
+          ["intent"],
+        );
+        assert.equal(
+          posts[0].headers().authorization,
+          "Bearer fixture.header.token",
+        );
+        assert.equal(errors.length, 0, errors.join("\n"));
+        assert.ok(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth + 1,
+          ),
+        );
+        await page.screenshot({
+          path: path.join(output, `compatibility-${mode}-${width}.png`),
+          fullPage: true,
+        });
+        results.push({
+          diagnostic: mode,
+          width,
+          overflow: false,
+          pageErrors: errors.length,
+          automaticallyStarted: false,
+          saleReady: false,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+  }
   writeFileSync(
     path.join(output, "results.json"),
     JSON.stringify({ fixtureOnly: true, results }, null, 2),

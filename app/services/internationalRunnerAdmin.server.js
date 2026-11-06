@@ -15,8 +15,10 @@ import {
   HASH,
 } from "../utils/internationalProofContract.js";
 import { resolveInternationalShippingOperatorRole } from "../utils/marketplaceOperatorRoles.js";
+import { inspectInternationalCheckoutCompatibility } from "./internationalCheckoutCompatibility.server.js";
 
 const FIELDS = {
+  inspectInternationalCheckoutCompatibility: [],
   recordInternationalSurfaceEvidence: [
     "evidenceReference",
     "evidenceHash",
@@ -48,6 +50,7 @@ export async function dispatchInternationalRunnerAdmin({
   requireOperator,
   prismaClient,
   env = process.env,
+  inspectCheckoutCompatibility = inspectInternationalCheckoutCompatibility,
 }) {
   const intent = formData.get("intent");
   const fields = Object.hasOwn(FIELDS, intent) ? FIELDS[intent] : null;
@@ -70,6 +73,7 @@ export async function dispatchInternationalRunnerAdmin({
     [
       "prepareInternationalDeployment",
       "refreshInternationalProofObservation",
+      "inspectInternationalCheckoutCompatibility",
     ].includes(intent)
   )
     await limitInternationalRequests(prismaClient, actor, intent, 5);
@@ -78,7 +82,16 @@ export async function dispatchInternationalRunnerAdmin({
   if (input.deliveryId && !ID.test(input.deliveryId))
     throw proofError("international_input_invalid", 422);
   let result;
-  if (intent === "recordInternationalSurfaceEvidence")
+  if (intent === "inspectInternationalCheckoutCompatibility")
+    result = {
+      ok: true,
+      readOnly: true,
+      compatibility: await inspectCheckoutCompatibility({
+        shopDomain: actor.shopDomain,
+        signal: request.signal,
+      }),
+    };
+  else if (intent === "recordInternationalSurfaceEvidence")
     result = await saveInternationalSurfaceEvidence(prismaClient, actor, input);
   else if (intent === "revokeInternationalProofDelivery")
     result = await revokeInternationalProofDelivery(prismaClient, actor, input);

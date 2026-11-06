@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
+import { internationalCompatibilityPageFixture } from "../tests/fixtures/internationalRunnerPage.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const route = "app/routes/app.international-shipping.jsx";
@@ -107,14 +108,28 @@ const server = await createServer({
             const valid =
               req.headers.authorization === "Bearer fixture.header.token" &&
               !body.includes("fixture.header.token");
-            res.writeHead(valid ? 202 : 401, {
+            const diagnostic =
+              form.get("intent") ===
+              "inspectInternationalCheckoutCompatibility";
+            const mode = new URL(
+              req.headers.referer || "/",
+              "http://127.0.0.1",
+            ).searchParams.get("diagnostic");
+            res.writeHead(valid ? (diagnostic ? 200 : 202) : 401, {
               "Content-Type": "application/json",
               "Cache-Control": "no-store",
             });
             res.end(
               JSON.stringify({
                 ok: valid,
-                pending: valid,
+                pending: valid && !diagnostic,
+                ...(valid && diagnostic
+                  ? {
+                      readOnly: true,
+                      compatibility:
+                        internationalCompatibilityPageFixture(mode),
+                    }
+                  : {}),
                 intent: form.get("intent"),
                 fixture: true,
               }),
@@ -146,8 +161,17 @@ const server = await createServer({
 });
 await server.listen();
 server.printUrls();
-for (const signal of ["SIGINT", "SIGTERM"])
-  process.once(signal, async () => {
-    await server.close();
-    process.exit();
+if (process.send)
+  process.send({
+    type: "preview-ready",
+    port: server.httpServer.address().port,
   });
+const shutdown = async () => {
+  await server.close();
+  process.exit();
+};
+process.on("message", (message) => {
+  if (message?.intent === "close") void shutdown();
+});
+if (process.send) process.once("disconnect", () => void shutdown());
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, shutdown);

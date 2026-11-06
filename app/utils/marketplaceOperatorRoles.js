@@ -47,6 +47,7 @@ export function resolveInternationalShippingOperatorRole(intent) {
     case "syncInternationalSaleGate":
     case "prepareInternationalDeployment":
     case "refreshInternationalProofObservation":
+    case "inspectInternationalCheckoutCompatibility":
     case "previewInternationalAuthorization":
     case "confirmInternationalAuthorization":
       return MARKETPLACE_OPERATOR_ROLES.RELEASE_MANAGER;

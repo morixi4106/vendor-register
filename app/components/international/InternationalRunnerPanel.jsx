@@ -19,6 +19,7 @@ import {
   InternationalAdminForm as Form,
   useInternationalActionResult,
 } from "./InternationalAdminForm.jsx";
+import InternationalCheckoutCompatibilityPanel from "./InternationalCheckoutCompatibilityPanel.jsx";
 
 const labels = {
   QUEUED: "閉鎖検査待ち",
@@ -46,6 +47,7 @@ export default function InternationalRunnerPanel({
   return (
     <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
       <BlockStack gap="500">
+        <InternationalCheckoutCompatibilityPanel canInspect={can.release} />
         <section>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center" wrap>
