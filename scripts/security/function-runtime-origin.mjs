@@ -202,7 +202,7 @@ export function sdkMemberPath(name) {
 }
 
 export async function reviewRuntimeOrigin(input, root = ROOT) {
-  assertNodeRuntime();
+  const runtime = assertNodeRuntime();
   const pBytes = read(path.join(root, "security/function-runtime-origin.json"));
   const p = validateRuntimeOriginPolicy(JSON.parse(pBytes));
   const base = path.join(root, ".audit");
@@ -392,7 +392,7 @@ export async function reviewRuntimeOrigin(input, root = ROOT) {
     input: p.input,
     verifier: {
       node: process.version,
-      nodeSha256: hash(read(process.execPath)),
+      nodeSha256: runtime.sha256,
       npm: "11.19.1",
       sigstore: "4.1.1",
       tar: "7.5.22",

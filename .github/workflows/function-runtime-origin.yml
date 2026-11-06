@@ -54,5 +54,6 @@ jobs:
         with:
           name: function-runtime-origin-${{ github.run_id }}
           path: .audit/function-runtime-origin-*/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 45

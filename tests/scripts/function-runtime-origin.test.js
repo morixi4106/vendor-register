@@ -302,6 +302,7 @@ test("origin workflow is read-only, scoped and cannot publish, install or execut
   assert.match(workflow, /run-id: 42221077360/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /include-hidden-files: true/);
   assert.doesNotMatch(
     workflow,
     /schedule:|pull_request_target:|secrets\.|npm ci|shopify app deploy|docker run|npm publish/,
