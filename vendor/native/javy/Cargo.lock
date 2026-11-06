@@ -3969,7 +3969,7 @@ dependencies = [
  "wasmtime-internal-core 48.0.8",
  "wasmtime-internal-cranelift 48.0.8",
  "wasmtime-internal-fiber 48.0.8",
- "wasmtime-internal-jit-debug 48.0.8",
+ "wasmtime-internal-jit-debug 48.0.8+oja.1",
  "wasmtime-internal-jit-icache-coherence 48.0.8",
  "wasmtime-internal-unwinder 48.0.8",
  "wasmtime-internal-versioned-export-macros 48.0.8",
@@ -4281,14 +4281,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-debug"
-version = "48.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "895f3231b24ce0c12c8a7bb129a9f6ddc6772ec78e59748e53af743dcdd733d1"
+version = "48.0.8+oja.1"
 dependencies = [
- "cc",
- "object 0.39.1",
- "rustix",
- "wasmtime-internal-versioned-export-macros 48.0.8",
+ "wasmtime-internal-jit-debug 50.0.1",
 ]
 
 [[package]]

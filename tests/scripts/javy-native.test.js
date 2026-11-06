@@ -125,6 +125,14 @@ test("only CI builds real release plugins and a profiler-enabled CLI without fea
     ],
   ]);
   assert.throws(() => javyNativePlans("skip"), /stage_invalid/);
+  const script = fs.readFileSync(
+    path.join(root, "scripts/security/test-javy-native.mjs"),
+    "utf8",
+  );
+  assert.match(
+    script,
+    /\["dynamic", \["-C", "dynamic", "-C", `plugin=\$\{embedded\}`\]\]/,
+  );
 });
 
 test("SDK tar validation permits internal aliases but rejects escaping links and special entries before extraction", () => {

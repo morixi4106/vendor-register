@@ -16,11 +16,11 @@
   },
   "patch": {
     "path": "vendor/native/javy/javy.patch",
-    "sha256": "598fbb562b969e9fdf33d4c93ff98f182a43d8714a6473696a60d856c5c3b1f2"
+    "sha256": "dfd12675f59a82ee216f8f1a5dd44759b88d31a26e6f81037bbbc33896569f3e"
   },
   "lockfile": {
     "path": "vendor/native/javy/Cargo.lock",
-    "sha256": "d0985c6bafe6d0476d96834820fa0153d94becf87a5700316457835c3c61f441"
+    "sha256": "19d4cc9241ccb614d7d75b9aa5a910ee4348dac4e7bdc5cff64b52556bef3521"
   },
   "wirm": {
     "upstreamVersion": "5.1.0",
@@ -49,7 +49,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "2d127613d77c99373c5af5fe2b4b37cf2bfe892e825e0259eb6eac9b96080687"
+      "sha256": "6f97ee682dc04d58a3f91517358d0db8e545c6b90f0d44653b2c447ff660b938"
     },
     {
       "path": ".cargo/config.toml",
@@ -114,6 +114,14 @@
     {
       "path": "vendor/wirm/tests/common/validate.rs",
       "sha256": "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f"
+    },
+    {
+      "path": "vendor/jit-debug-bridge/Cargo.toml",
+      "sha256": "db0fb5475e925a10607311da32a9411fd8a9ca7b47d21c9b45006e0805df04f1"
+    },
+    {
+      "path": "vendor/jit-debug-bridge/src/lib.rs",
+      "sha256": "a5edd1296b5d525cad85e7966d7f264ceb4330ddae8f4a109d802f9523a949e5"
     }
   ]
 }

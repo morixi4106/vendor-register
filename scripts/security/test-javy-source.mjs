@@ -38,6 +38,8 @@ const SOURCE_FILES = [
   "vendor/wirm/src/ir/instr_tests.rs",
   "vendor/wirm/tests/common/wast_iter.rs",
   "vendor/wirm/tests/common/validate.rs",
+  "vendor/jit-debug-bridge/Cargo.toml",
+  "vendor/jit-debug-bridge/src/lib.rs",
 ];
 const LOCAL = [
   ["javy", "9.0.0-alpha.1", "crates/javy"],
@@ -56,6 +58,29 @@ const LOCAL = [
   ["javy-test-plugin-wasip1", "0.0.0", "crates/test-plugin-wasip1"],
   ["javy-test-plugin-wasip2", "0.0.0", "crates/test-plugin-wasip2"],
   ["wirm", "5.1.0+oja.1", "vendor/wirm"],
+  ["wasmtime-internal-jit-debug", "48.0.8+oja.1", "vendor/jit-debug-bridge"],
+];
+const JIT_DEBUG_FILES = [
+  [
+    "build.rs",
+    "36f1e33fce5fa3818571aad7576814b8cc40331953f99d42c13b48b7e9dcfdf7",
+  ],
+  [
+    "gdbjit.c",
+    "1cea67a77f89c587a513f48a9ca38134df81e2112c35bd2b7b1b200622180b5d",
+  ],
+  [
+    "src/lib.rs",
+    "18e57d22977782d03beaf394b5e1bc86d97299b6048ce919d0ea0df516766ac3",
+  ],
+  [
+    "src/gdb_jit_int.rs",
+    "26ee0085443b3b456d09028de58332379f8d463fdfaf0c29d99e058b6f0e2a73",
+  ],
+  [
+    "src/perf_jitdump.rs",
+    "9efb77bf4ea5f0da7e139c92434fed9775007604b348be49e66dd7b3950bd09a",
+  ],
 ];
 const exact = (value, names) =>
   value &&
@@ -201,6 +226,29 @@ export function checkJavyWirmTestOrigin(
   };
 }
 
+export function checkJavyJitDebugApis(
+  original,
+  shared,
+  readInput = runnerInput,
+) {
+  for (const [root, version] of [
+    [original, "48.0.8"],
+    [shared, "50.0.1"],
+  ])
+    if (
+      toml.parse(fs.readFileSync(path.join(root, "Cargo.toml"), "utf8")).package
+        .version !== version
+    )
+      throw new Error("javy_jit_debug_api_invalid");
+  const files = JIT_DEBUG_FILES.map(([file, sha256]) => {
+    const input = { path: file, sha256 };
+    if (!readInput(original, input).equals(readInput(shared, input)))
+      throw new Error("javy_jit_debug_api_invalid");
+    return input;
+  });
+  return { originalVersion: "48.0.8", sharedVersion: "50.0.1", files };
+}
+
 export function checkJavyWiring(source, policy, readInput = runnerInput) {
   validateJavyPolicy(policy);
   for (const f of policy.sourceFiles) readInput(source, f);
@@ -211,7 +259,10 @@ export function checkJavyWiring(source, policy, readInput = runnerInput) {
     workspace.workspace.package.version !== policy.version ||
     workspace.workspace.members.length !== LOCAL.length ||
     !workspace.workspace.members.includes("vendor/wirm") ||
+    !workspace.workspace.members.includes("vendor/jit-debug-bridge") ||
     workspace.patch?.["crates-io"]?.wirm?.path !== "vendor/wirm" ||
+    workspace.patch?.["crates-io"]?.["wasmtime-internal-jit-debug"]?.path !==
+      "vendor/jit-debug-bridge" ||
     ["wasmtime", "wasmtime-wasi", "wasmtime-wizer"].some(
       (n) => workspace.workspace.dependencies[n] !== "=50.0.1",
     ) ||
@@ -221,7 +272,14 @@ export function checkJavyWiring(source, policy, readInput = runnerInput) {
     throw new Error("javy_source_wiring_invalid");
   const wirm = manifest("vendor/wirm/Cargo.toml");
   const cli = manifest("crates/cli/Cargo.toml");
+  const bridge = manifest("vendor/jit-debug-bridge/Cargo.toml");
   if (
+    bridge.package.version !== "48.0.8+oja.1" ||
+    bridge.dependencies.shared.package !== "wasmtime-internal-jit-debug" ||
+    bridge.dependencies.shared.version !== "=50.0.1" ||
+    bridge.dependencies.shared["default-features"] !== false ||
+    JSON.stringify(bridge.features) !==
+      '{"std":["shared/std"],"gdb_jit_int":["shared/gdb_jit_int"],"perf_jitdump":["shared/perf_jitdump","std"]}' ||
     wirm.package.version !== policy.wirm.version ||
     wirm.dependencies.paste.package !== "pastey" ||
     wirm.dependencies.paste.version !== "=0.2.3" ||
@@ -319,7 +377,12 @@ export function checkJavyMetadata(m, source, policy) {
         ((p.name.startsWith("wasmtime") ||
           p.name.startsWith("wiggle") ||
           p.name.startsWith("pulley-")) &&
-          !["48.0.8", "50.0.1"].includes(p.version)),
+          !["48.0.8", "50.0.1"].includes(p.version) &&
+          !(
+            p.name === "wasmtime-internal-jit-debug" &&
+            p.version === "48.0.8+oja.1" &&
+            !p.source
+          )),
     )
   )
     throw new Error("javy_wasmtime_unpatched");
@@ -370,11 +433,49 @@ export function checkJavyMetadata(m, source, policy) {
   edge("whamm", "2.0.1", "wasmtime-wasi", "48.0.8");
   edge("whamm", "2.0.1", "wirm", policy.wirm.version);
   edge("wirm", policy.wirm.version, "pastey", "0.2.3", "paste");
+  edge(
+    "wasmtime",
+    "48.0.8",
+    "wasmtime-internal-jit-debug",
+    "48.0.8+oja.1",
+    "wasmtime_jit_debug",
+  );
+  edge(
+    "wasmtime-internal-jit-debug",
+    "48.0.8+oja.1",
+    "wasmtime-internal-jit-debug",
+    "50.0.1",
+    "shared",
+  );
+  for (const version of ["48.0.8+oja.1", "50.0.1"]) {
+    const features = nodes.get(
+      pkg("wasmtime-internal-jit-debug", version).id,
+    ).features;
+    if (
+      ["std", "gdb_jit_int", "perf_jitdump"].some((f) => !features.includes(f))
+    )
+      throw new Error("javy_features_removed");
+  }
   return true;
 }
 
 export function javySourceTestPlans() {
   return [
+    {
+      name: "jit-debug-bridge",
+      args: [
+        "test",
+        "--locked",
+        "--package",
+        "wasmtime-internal-jit-debug@48.0.8+oja.1",
+        "--features",
+        "std,gdb_jit_int,perf_jitdump",
+        "--lib",
+        "--",
+        "--test-threads=1",
+      ],
+      count: 2,
+    },
     {
       name: "codegen",
       args: ["test", "--locked", "--package", "javy-codegen", "--lib"],
@@ -558,7 +659,7 @@ export async function prepareJavySource(root = ROOT) {
     policy.wirm.sha256,
   );
   const wirm = extract(wirmArchive, "wirm-5.1.0", home);
-  fs.mkdirSync(path.join(source, "vendor"));
+  fs.mkdirSync(path.join(source, "vendor"), { recursive: true });
   fs.cpSync(wirm, path.join(source, "vendor/wirm"), {
     recursive: true,
     errorOnExist: true,
@@ -631,6 +732,25 @@ export async function prepareJavySource(root = ROOT) {
   );
   checkJavyMetadata(metadata, source, policy);
   json("metadata.json", metadata);
+  const originalJitDebug = path.join(home, "jit-debug-original.crate");
+  await downloadRustInput(
+    "https://static.crates.io/crates/wasmtime-internal-jit-debug/wasmtime-internal-jit-debug-48.0.8.crate",
+    originalJitDebug,
+    "895f3231b24ce0c12c8a7bb129a9f6ddc6772ec78e59748e53af743dcdd733d1",
+  );
+  const originalJitSource = extract(
+    originalJitDebug,
+    "wasmtime-internal-jit-debug-48.0.8",
+    home,
+  );
+  const sharedJitSource = metadata.packages.find(
+    (p) => p.name === "wasmtime-internal-jit-debug" && p.version === "50.0.1",
+  );
+  const jitDebugApis = checkJavyJitDebugApis(
+    originalJitSource,
+    path.dirname(sharedJitSource.manifest_path),
+  );
+  json("jit-debug-apis.json", jitDebugApis);
   const report = {
     schemaVersion: 1,
     observedAt: new Date().toISOString(),
@@ -644,6 +764,7 @@ export async function prepareJavySource(root = ROOT) {
     sourceBindings: before,
     wirmTestSource: testSourcePolicy,
     wirmTestOriginSha256: sha(JSON.stringify(wirmTestOrigin)),
+    jitDebugApis,
     registryPackageCount: assessment.packageCount,
     registryAdvisoryMatches: 0,
     artifactStatus: "NOT_VERIFIED",

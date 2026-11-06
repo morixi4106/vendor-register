@@ -8,6 +8,7 @@ import {
   validateJavyPolicy,
   checkJavyWiring,
   checkJavyWirmTestOrigin,
+  checkJavyJitDebugApis,
   checkJavyMetadata,
   javySourceTestPlans,
   javyTestTotals,
@@ -89,7 +90,7 @@ test("Javy recipe distinguishes the CLI release from the development candidate a
 test("the actual locked graph contains patched profiler and main engines without Git or paste", () => {
   const lock = runnerInput(root, policy.lockfile).toString("utf8");
   const parsed = rustRegistryPackages(lock);
-  assert.equal(parsed.packages.length, 483);
+  assert.equal(parsed.packages.length, 482);
   assert.deepEqual(parsed.unresolved, []);
   for (const name of ["wasmtime", "wasmtime-wasi"])
     assert.deepEqual(
@@ -108,7 +109,8 @@ test("the actual locked graph contains patched profiler and main engines without
   );
   const patch = runnerInput(root, policy.patch).toString("utf8");
   assert.match(patch, /\+whamm = "=2\.0\.1"/);
-  assert.doesNotMatch(patch, /^[-+]\s*(?:default-features|profiler\s*=)/m);
+  assert.doesNotMatch(patch, /^[-+]\s*profiler\s*=/m);
+  assert.doesNotMatch(patch, /^[-+]\s*default-features\s*=/m);
   const wirm = runnerInput(root, policy.wirm.patch).toString("utf8");
   assert.match(wirm, /\+package = "pastey"/);
   assert.match(wirm, /\+version = "=50\.0\.1"/);
@@ -153,6 +155,7 @@ function fixture(t) {
     ["javy-test-plugin-wasip1", "0.0.0", "crates/test-plugin-wasip1"],
     ["javy-test-plugin-wasip2", "0.0.0", "crates/test-plugin-wasip2"],
     ["wirm", policy.wirm.version, "vendor/wirm"],
+    ["wasmtime-internal-jit-debug", "48.0.8+oja.1", "vendor/jit-debug-bridge"],
   ];
   const packages = locals.map(([name, version, dir]) => {
     const manifest_path = path.join(source, dir, "Cargo.toml");
@@ -175,6 +178,7 @@ function fixture(t) {
     ["whamm", "2.0.1"],
     ["pastey", "0.2.3"],
     ["deterministic-wasi-ctx", "4.0.9"],
+    ["wasmtime-internal-jit-debug", "50.0.1"],
   ])
     packages.push({
       id: `${name}@${version}`,
@@ -191,7 +195,9 @@ function fixture(t) {
           ? p.version === "50.0.1"
             ? ["default", "p1", "p2", "p3"]
             : ["default", "p1", "p2"]
-          : [],
+          : p.name === "wasmtime-internal-jit-debug"
+            ? ["std", "gdb_jit_int", "perf_jitdump"]
+            : [],
     deps: [],
   }));
   const node = (name) => nodes.find((n) => n.id === name);
@@ -229,9 +235,19 @@ function fixture(t) {
   edge("whamm@2.0.1", "wasmtime-wasi@48.0.8");
   edge("whamm@2.0.1", `wirm@${policy.wirm.version}`);
   edge(`wirm@${policy.wirm.version}`, "pastey@0.2.3", "paste");
+  edge(
+    "wasmtime@48.0.8",
+    "wasmtime-internal-jit-debug@48.0.8+oja.1",
+    "wasmtime_jit_debug",
+  );
+  edge(
+    "wasmtime-internal-jit-debug@48.0.8+oja.1",
+    "wasmtime-internal-jit-debug@50.0.1",
+    "shared",
+  );
   fs.writeFileSync(
     path.join(source, "Cargo.toml"),
-    `[workspace]\nmembers=${JSON.stringify(locals.map((l) => l[2]))}\n[workspace.package]\nversion="${policy.version}"\n[workspace.dependencies]\nwasmtime="=50.0.1"\nwasmtime-wasi="=50.0.1"\nwasmtime-wizer="=50.0.1"\ndeterministic-wasi-ctx="=4.0.9"\n[patch.crates-io]\nwirm={path="vendor/wirm"}\n`,
+    `[workspace]\nmembers=${JSON.stringify(locals.map((l) => l[2]))}\n[workspace.package]\nversion="${policy.version}"\n[workspace.dependencies]\nwasmtime="=50.0.1"\nwasmtime-wasi="=50.0.1"\nwasmtime-wizer="=50.0.1"\ndeterministic-wasi-ctx="=4.0.9"\n[patch.crates-io]\nwirm={path="vendor/wirm"}\nwasmtime-internal-jit-debug={path="vendor/jit-debug-bridge"}\n`,
   );
   fs.writeFileSync(
     path.join(source, "crates/profiler/Cargo.toml"),
@@ -244,6 +260,10 @@ function fixture(t) {
   fs.writeFileSync(
     path.join(source, "vendor/wirm/Cargo.toml"),
     `[package]\nversion="${policy.wirm.version}"\n[dependencies.paste]\npackage="pastey"\nversion="=0.2.3"\n[dev-dependencies.wasmtime]\nversion="=50.0.1"\n`,
+  );
+  fs.writeFileSync(
+    path.join(source, "vendor/jit-debug-bridge/Cargo.toml"),
+    '[package]\nversion="48.0.8+oja.1"\n[dependencies]\nshared={package="wasmtime-internal-jit-debug",version="=50.0.1",default-features=false}\n[features]\nstd=["shared/std"]\ngdb_jit_int=["shared/gdb_jit_int"]\nperf_jitdump=["shared/perf_jitdump","std"]\n',
   );
   return { source, metadata: { packages, resolve: { nodes } } };
 }
@@ -275,6 +295,46 @@ test("source wiring requires all hashes and preserves the optional profiler", (t
     () => checkJavyWiring(source, policy, () => {}),
     /wiring_invalid/,
   );
+});
+
+test("shared JIT debug APIs require both exact upstream versions and all byte-identical files", (t) => {
+  const { source } = fixture(t);
+  const original = path.join(source, "debug-original"),
+    shared = path.join(source, "debug-shared");
+  for (const [root, version] of [
+    [original, "48.0.8"],
+    [shared, "50.0.1"],
+  ]) {
+    fs.mkdirSync(root);
+    fs.writeFileSync(
+      path.join(root, "Cargo.toml"),
+      `[package]\nversion="${version}"\n`,
+    );
+  }
+  const calls = [];
+  const report = checkJavyJitDebugApis(original, shared, (root, file) => {
+    calls.push({ root, ...file });
+    return Buffer.from(file.path);
+  });
+  assert.equal(report.files.length, 5);
+  assert.equal(calls.length, 10);
+  assert.ok(calls.every((c) => /^[a-f0-9]{64}$/.test(c.sha256)));
+  assert.throws(
+    () => checkJavyJitDebugApis(original, shared, (root) => Buffer.from(root)),
+    /api_invalid/,
+  );
+  assert.throws(
+    () =>
+      checkJavyJitDebugApis(original, shared, () => {
+        throw new Error("changed_api");
+      }),
+    /changed_api/,
+  );
+  fs.writeFileSync(
+    path.join(shared, "Cargo.toml"),
+    '[package]\nversion="50.0.0"\n',
+  );
+  assert.throws(() => checkJavyJitDebugApis(original, shared), /api_invalid/);
 });
 
 test("restored wirm test helpers must come from the published crate's exact source commit", (t) => {
@@ -407,6 +467,21 @@ test("actual metadata must retain both patched engines, their consumers and buil
     },
     (m) => {
       m.resolve.nodes.find(
+        (n) => n.id === "wasmtime-internal-jit-debug@48.0.8+oja.1",
+      ).deps = [];
+    },
+    (m) => {
+      m.resolve.nodes.find(
+        (n) => n.id === "wasmtime-internal-jit-debug@50.0.1",
+      ).features = ["std"];
+    },
+    (m) => {
+      m.packages.find(
+        (p) => p.id === "wasmtime-internal-jit-debug@48.0.8+oja.1",
+      ).source = registry;
+    },
+    (m) => {
+      m.resolve.nodes.find(
         (n) => n.id === `wirm@${policy.wirm.version}`,
       ).deps[0].name = "pastey";
     },
@@ -421,6 +496,7 @@ test("source tests require exact successful nonignored totals and keep the compi
   assert.deepEqual(
     javySourceTestPlans().map((p) => [p.name, p.count]),
     [
+      ["jit-debug-bridge", 2],
       ["codegen", 25],
       ["plugin-processing", 1],
       ["wirm-instructions", 8],

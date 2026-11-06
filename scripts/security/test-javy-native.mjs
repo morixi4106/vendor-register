@@ -36,7 +36,7 @@ export function validateJavyNativePolicy(p) {
     p.schemaVersion !== 1 ||
     p.role !== "javy-native-lab" ||
     p.sourcePolicySha256 !==
-      "b551fbe92e1f0e7f83cd91d3c18ac3c14ba449bece13632b7dc583231be2727a" ||
+      "274a54a28bbc0db812b880001cb9d3b97127057aedfe5b6b3616051e9078facb" ||
     !exact(p.rustStd, ["version", "date", "target", "sha256"]) ||
     p.rustStd.version !== "1.99.1" ||
     p.rustStd.date !== "2026-10-15" ||
@@ -530,7 +530,7 @@ async function buildNative(p, policy, transfer, resultDirectory) {
   const outputs = [];
   for (const [role, flags] of [
     ["static", []],
-    ["dynamic", ["-C", "dynamic"]],
+    ["dynamic", ["-C", "dynamic", "-C", `plugin=${embedded}`]],
     ["shopify", ["-C", "dynamic", "-C", `plugin=${provider}`]],
   ]) {
     const output = path.join(home, `${role}.wasm`);
