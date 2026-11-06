@@ -197,10 +197,10 @@ test("changed input digests are rejected before generating a client", (t) => {
   );
 });
 
-test("international upgrade retains the original four migration bytes and excludes only those from the populated baseline", () => {
+test("international upgrade pins the original four migrations plus the new case migration, preserving the 50-migration baseline", () => {
   const inputs = applicationDatabaseInputs(ROOT),
     baseline = beforeInternationalInputs(inputs);
-  assert.equal(inputs.length - baseline.length, 4);
+  assert.equal(inputs.length - baseline.length, 5);
   for (const [name, digest] of Object.entries(INTERNATIONAL_MIGRATIONS)) {
     const file = `prisma/migrations/${name}/migration.sql`;
     assert.equal(sha(fs.readFileSync(path.join(ROOT, file))), digest);
@@ -381,8 +381,8 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     },
     international: {
       baselineMigrations:
-        inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 4,
-      migrationsAdded: 4,
+        inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 5,
+      migrationsAdded: 5,
       rowsPreserved: 2,
       rejections: 24,
       defaultsDisabled: true,
@@ -392,8 +392,9 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
         "internationalAuthorization",
         "internationalProofIssuance",
         "internationalRunnerInterface",
+        "internationalCheckoutResults",
       ].map((name) => ({ name, passed: 2, skipped: 0 })),
-      nativeLoads: 3,
+      nativeLoads: 4,
       networkFetchAllowed: false,
       databaseRemoved: true,
     },

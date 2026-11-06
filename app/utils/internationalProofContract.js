@@ -6,7 +6,7 @@ export const PROOF_WORKFLOW =
   ".github/workflows/international-proof-artifact.yml";
 export const PROOF_VERSION = "international-proof-v1";
 export const PROOF_VALIDITY = "international-proof-validity-v1";
-export const PROOF_SCHEMA_MIGRATION_VERSION = "20261017000000";
+export const PROOF_SCHEMA_MIGRATION_VERSION = "20261107000000";
 export const CHECKOUT_CONTRACT_PATHS = Object.freeze([
   "app/services/internationalCheckoutInventory.server.js",
   "app/services/internationalCheckoutPlan.server.js",

@@ -29,6 +29,8 @@ export const INTERNATIONAL_MIGRATIONS = Object.freeze({
     "6838b3e005204340774a4eb8bc6dbf8af6f4383c41759acff64cf0dbfcdf6b3c",
   "20261017000000_international_runner_interface":
     "d425fa62f9d50f3eef8d0690095652e7d78ee0058558b60f80f9e9b1d3de7434",
+  "20261107000000_international_checkout_cases":
+    "8d7c2b6d77b0a794dd685cabc4e7c132f37eddfacc83658f1a817b1b0d103bb9",
 });
 export function beforeInternationalInputs(inputs) {
   for (const [name, digest] of Object.entries(INTERNATIONAL_MIGRATIONS)) {
@@ -378,8 +380,8 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
     JSON.stringify(report.international) !==
       JSON.stringify({
         baselineMigrations:
-          inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 4,
-        migrationsAdded: 4,
+          inputs.filter((e) => e.path.endsWith("/migration.sql")).length - 5,
+        migrationsAdded: 5,
         rowsPreserved: 2,
         rejections: 24,
         defaultsDisabled: true,
@@ -387,8 +389,8 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
     report.internationalApplication?.networkFetchAllowed !== false ||
     report.internationalApplication?.databaseRemoved !== true ||
     !Number.isInteger(report.internationalApplication?.nativeLoads) ||
-    report.internationalApplication.nativeLoads < 3 ||
-    report.internationalApplication.suites?.length !== 3 ||
+    report.internationalApplication.nativeLoads < 4 ||
+    report.internationalApplication.suites?.length !== 4 ||
     !report.internationalApplication.suites.every(
       (suite, index) =>
         suite.name ===
@@ -396,6 +398,7 @@ export function verifyDatabaseCompatibilityReport(report, inputs, native, tls) {
             "internationalAuthorization",
             "internationalProofIssuance",
             "internationalRunnerInterface",
+            "internationalCheckoutResults",
           ][index] &&
         Number.isInteger(suite.passed) &&
         suite.passed > 1 &&

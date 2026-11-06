@@ -2585,7 +2585,7 @@ model InternationalGateAuthorizationRequest {
 }
 
 model InternationalCheckoutVerificationRun {
-  id                            String                                 @id @default(cuid())
+  id                            String                                  @id @default(cuid())
   shopDomain                    String
   kind                          String
   authorizationRequestId        String?
@@ -2600,9 +2600,9 @@ model InternationalCheckoutVerificationRun {
   requiredCasesHash             String
   startGeneration               Int
   closureGeneration             Int?
-  activeKey                     String?                                @unique
-  status                        String                                 @default("QUEUED")
-  closureStatus                 String                                 @default("PENDING")
+  activeKey                     String?                                 @unique
+  status                        String                                  @default("QUEUED")
+  closureStatus                 String                                  @default("PENDING")
   expiresAt                     DateTime
   startedAt                     DateTime?
   heartbeatAt                   DateTime?
@@ -2614,6 +2614,7 @@ model InternationalCheckoutVerificationRun {
   outcomeCode                   String?
   failureCode                   String?
   resultsJson                   Json?
+  planSummaryJson               Json?
   artifactReference             String?
   artifactHash                  String?
   artifactExpiresAt             DateTime?
@@ -2631,15 +2632,42 @@ model InternationalCheckoutVerificationRun {
   observationFailureCode        String?
   proofDeliveryId               String?
   preparationRequestKey         String?
-  createdAt                     DateTime                               @default(now())
-  authorizationRequest          InternationalGateAuthorizationRequest? @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
-  currentStates                 InternationalGateSyncState[]           @relation("CurrentVerification")
-  proofDelivery                 InternationalProofDelivery?            @relation(fields: [shopDomain, proofDeliveryId], references: [shopDomain, id], onDelete: Restrict, map: "intl_run_delivery_fkey")
+  createdAt                     DateTime                                @default(now())
+  authorizationRequest          InternationalGateAuthorizationRequest?  @relation(fields: [shopDomain, authorizationRequestId], references: [shopDomain, id], onDelete: Restrict)
+  currentStates                 InternationalGateSyncState[]            @relation("CurrentVerification")
+  proofDelivery                 InternationalProofDelivery?             @relation(fields: [shopDomain, proofDeliveryId], references: [shopDomain, id], onDelete: Restrict, map: "intl_run_delivery_fkey")
+  cases                         InternationalCheckoutVerificationCase[]
 
   @@unique([shopDomain, id])
   @@unique([shopDomain, preparationRequestKey], map: "intl_run_preparation_key")
   @@index([shopDomain, proofDeliveryId], map: "intl_run_delivery_idx")
   @@index([shopDomain, status, expiresAt])
+}
+
+model InternationalCheckoutVerificationCase {
+  id                 String                               @id @default(cuid())
+  shopDomain         String
+  runId              String
+  ordinal            Int
+  caseKey            String
+  phase              String
+  expectedJson       Json
+  expectedHash       String
+  status             String                               @default("PENDING")
+  challengeSequence  Int                                  @default(0)
+  challengeHash      String?
+  challengeIssuedAt  DateTime?
+  challengeExpiresAt DateTime?
+  resultJson         Json?
+  resultHash         String?
+  resultCode         String?
+  recordedAt         DateTime?
+  createdAt          DateTime                             @default(now())
+  run                InternationalCheckoutVerificationRun @relation(fields: [shopDomain, runId], references: [shopDomain, id], onDelete: Restrict, map: "intl_case_run_fkey")
+
+  @@unique([shopDomain, runId, caseKey], map: "intl_case_key")
+  @@unique([shopDomain, runId, ordinal], map: "intl_case_ordinal_key")
+  @@index([shopDomain, runId, status], map: "intl_case_pending_idx")
 }
 
 model InternationalProofDelivery {

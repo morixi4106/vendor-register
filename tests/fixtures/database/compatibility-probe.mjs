@@ -131,7 +131,7 @@ try{
   await record("international-application-transactions",async()=>{
     for(const entry of input.codeInputs)assert.equal(sha(path.join(input.root,entry.path)),entry.sha256);
     command(input.project,["migrate","deploy"],"vendor_register_auth_test_ci");
-    const suites=["internationalAuthorization","internationalProofIssuance","internationalRunnerInterface"];
+    const suites=["internationalAuthorization","internationalProofIssuance","internationalRunnerInterface","internationalCheckoutResults"];
     const results=[];
     for(const name of suites){
       const r=spawnSync(process.execPath,["--import",path.join(input.root,"tests/fixtures/database/international-client-hook.mjs"),"--test",path.join(input.root,`tests/postgres/${name}.test.js`)],{cwd:input.root,env:{...env,DATABASE_URL:url("vendor_register_auth_test_ci"),INTERNATIONAL_AUTHORIZATION_TEST_DATABASE_URL:url("vendor_register_auth_test_ci"),SHOPIFY_API_KEY:"ci-api-key",SHOPIFY_API_SECRET:"ci-placeholder-secret-not-production",SHOPIFY_APP_URL:"https://example.test",SCOPES:"read_products"},encoding:"utf8",timeout:90000,maxBuffer:8*1024*1024});
@@ -140,7 +140,7 @@ try{
       const count=key=>{const match=(r.stdout||"").match(new RegExp(`(?:#|ℹ) ${key} ([0-9]+)`));assert.ok(match,`${name}:${key}`);return Number(match[1]);};
       assert.equal(count("fail"),0);assert.equal(count("skipped"),0);assert.ok(count("pass")>1);results.push({name,passed:count("pass"),skipped:0});
     }
-    const loads=fs.readFileSync(path.join(input.project,"international-native-loads.jsonl"),"utf8").trim().split("\n").map(JSON.parse);assert.ok(loads.length>=3);assert.ok(loads.every(r=>r.sha256===input.librarySha256));
+    const loads=fs.readFileSync(path.join(input.project,"international-native-loads.jsonl"),"utf8").trim().split("\n").map(JSON.parse);assert.ok(loads.length>=4);assert.ok(loads.every(r=>r.sha256===input.librarySha256));
     command(input.project,["migrate","diff","--from-url",url("vendor_register_auth_test_ci"),"--to-schema-datamodel",path.join(input.project,"prisma/schema.prisma"),"--exit-code"],"vendor_register_auth_test_ci");
     for(const entry of input.codeInputs)assert.equal(sha(path.join(input.root,entry.path)),entry.sha256);
     await admin.$executeRawUnsafe("DROP DATABASE vendor_register_auth_test_ci");

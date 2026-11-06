@@ -12,6 +12,9 @@ on:
       - tests/fixtures/database/**
       - tests/fixtures/prisma/probe-cli-hook.cjs
       - tests/scripts/database-compatibility.test.js
+      - app/**
+      - tests/postgres/**
+      - tests/helpers/**
       - package.json
       - package-lock.json
   workflow_dispatch:

@@ -40,7 +40,7 @@ export async function probeInternational({
       const before = await upgrade.$queryRawUnsafe(
         'SELECT id,migration_name,checksum,finished_at FROM "_prisma_migrations" ORDER BY migration_name',
       );
-      assert.equal(before.length, migrationCount - 4);
+      assert.equal(before.length, migrationCount - 5);
       await upgrade.$executeRaw`INSERT INTO operational_readiness_attestations (id,"checkKey",notes,"updatedAt") VALUES ('synthetic-attestation','synthetic-check','preserve evidence',${now})`;
       await upgrade.$executeRaw`INSERT INTO international_shipping_country_availabilities (id,"countryCode",note,"updatedAt") VALUES ('synthetic-shipping','ZZ','preserve availability',${now})`;
       command(input.project, ["migrate", "deploy"], "oja_upgrade_probe");
@@ -341,8 +341,8 @@ export async function probeInternational({
     });
     assert.equal(rejections, 24);
     return {
-      baselineMigrations: migrationCount - 4,
-      migrationsAdded: 4,
+      baselineMigrations: migrationCount - 5,
+      migrationsAdded: 5,
       rowsPreserved: 2,
       rejections,
       defaultsDisabled: true,
