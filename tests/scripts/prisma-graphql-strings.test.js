@@ -32,6 +32,7 @@ test("string candidate binds fixed original source and all three byte-exact inpu
   for (const input of [policy.patch, policy.baseline, policy.regressions])
     assert.ok(prismaSourceInput(root, input).length > 100);
   const patch = prismaSourceInput(root, policy.patch).toString();
+  assert.match(patch, /^@@ -149,38 \+149,21 @@$/m);
   assert.deepEqual(
     [...patch.matchAll(/^diff --git (.+)$/gm)].map((m) => m[1]),
     ["a/src/common.rs b/src/common.rs"],

@@ -2,7 +2,7 @@ diff --git a/src/common.rs b/src/common.rs
 index 531b03e..c9f1176 100644
 --- a/src/common.rs
 +++ b/src/common.rs
-@@ -1,38 +1,21 @@
+@@ -149,38 +149,21 @@
  fn unquote_block_string<'a>(src: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
      debug_assert!(src.starts_with("\"\"\"") && src.ends_with("\"\"\""));
 -    let indent = src[3..src.len() - 3]

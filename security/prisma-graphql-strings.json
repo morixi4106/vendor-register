@@ -5,7 +5,7 @@
   "commonAfterSha256": "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2",
   "patch": {
     "path": "vendor/native/prisma/graphql-strings.patch",
-    "sha256": "9c2fce2f6bbbb50c99ab1c6a90444bcf504a1c31b8c5bdc3fe80be91079bfb74"
+    "sha256": "b004262f0da291fbef3e0fe4ca06cda643942ddf7cd48de800d62e772d369443"
   },
   "baseline": {
     "path": "tests/fixtures/prisma/graphql-string-baseline.rs",
