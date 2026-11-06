@@ -1,0 +1,57 @@
+name: Verified Function build input
+on:
+  pull_request:
+    paths:
+      - .github/workflows/function-build-input.yml
+      - scripts/security/function-build.mjs
+      - scripts/security/test-function-build.mjs
+      - tests/scripts/function-build.test.js
+      - extensions/marketplace-purchase-control/**
+      - security/function-final-tests.json
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verified-input:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork inputs
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify source and fallback rejection contracts
+        run: node --test tests/scripts/function-build.test.js
+      - name: Download immutable previously tested final bytes
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13504146003
+          run-id: 42221077360
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/function-release-input
+      - name: Stage exact tested bytes only in a disposable directory
+        run: node scripts/security/test-function-build.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload candidate staging evidence, not release approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: function-build-input-${{ github.run_id }}
+          path: .audit/function-build-probe/
+          if-no-files-found: error
+          retention-days: 45

@@ -1,4 +1,10 @@
 import prisma from "../db.server.js";
+import {
+  assertInternationalEvidenceVersion,
+  internationalGateTransaction,
+  invalidateInternationalGates,
+  flushInternationalGateStops,
+} from "./internationalGateQueue.server.js";
 import { resolveJapanPostAirPacketZone } from "./japanPostAirPacket.server.js";
 import {
   INTERNATIONAL_SERVICE_STATUS,
@@ -32,7 +38,8 @@ export function evaluateInternationalShippingAvailability(
     ? new Date(availability.checkedAt)
     : null;
   const checkedAtValid = checkedAt && !Number.isNaN(checkedAt.getTime());
-  const checkedAtInFuture = checkedAtValid && checkedAt.getTime() > now.getTime();
+  const checkedAtInFuture =
+    checkedAtValid && checkedAt.getTime() > now.getTime();
   const staleBefore = new Date(
     now.getTime() - Number(maxAgeDays) * 24 * 60 * 60 * 1000,
   );
@@ -65,9 +72,14 @@ export async function getInternationalShippingCountryAvailability({
   service = INTERNATIONAL_SHIPPING_SERVICE,
   prismaClient = prisma,
 } = {}) {
-  const normalizedCountryCode = String(countryCode || "").trim().toUpperCase();
+  const normalizedCountryCode = String(countryCode || "")
+    .trim()
+    .toUpperCase();
 
-  if (!normalizedCountryCode || !resolveJapanPostAirPacketZone(normalizedCountryCode)) {
+  if (
+    !normalizedCountryCode ||
+    !resolveJapanPostAirPacketZone(normalizedCountryCode)
+  ) {
     return {
       countryCode: normalizedCountryCode || null,
       service,
@@ -77,14 +89,15 @@ export async function getInternationalShippingCountryAvailability({
     };
   }
 
-  const record = await prismaClient.internationalShippingCountryAvailability.findUnique({
-    where: {
-      countryCode_service: {
-        countryCode: normalizedCountryCode,
-        service,
+  const record =
+    await prismaClient.internationalShippingCountryAvailability.findUnique({
+      where: {
+        countryCode_service: {
+          countryCode: normalizedCountryCode,
+          service,
+        },
       },
-    },
-  });
+    });
 
   if (!record) {
     return {
@@ -119,11 +132,15 @@ export async function saveInternationalShippingCountryAvailability({
   deliveryProfileId = null,
   carrierConfirmations = {},
   routeAuditConfirmations = {},
+  expectedVersion,
+  expectedEvidenceVersions,
   service = INTERNATIONAL_SHIPPING_SERVICE,
   prismaClient = prisma,
   now = new Date(),
 } = {}) {
-  const normalizedCountryCode = String(countryCode || "").trim().toUpperCase();
+  const normalizedCountryCode = String(countryCode || "")
+    .trim()
+    .toUpperCase();
   const normalizedStatus = normalizeInternationalServiceStatus(status);
 
   if (!resolveJapanPostAirPacketZone(normalizedCountryCode)) {
@@ -131,10 +148,36 @@ export async function saveInternationalShippingCountryAvailability({
   }
 
   async function persist(client) {
+    if (
+      expectedVersion !== undefined &&
+      (!expectedEvidenceVersions ||
+        [
+          "INTERNATIONAL_CARRIER_SERVICE_STATUS",
+          "INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT",
+        ].some((code) => typeof expectedEvidenceVersions[code] !== "string"))
+    ) {
+      throw new Error("international_shipping_evidence_versions_required");
+    }
+    if (expectedVersion !== undefined)
+      assertInternationalEvidenceVersion(
+        await client.internationalShippingCountryAvailability.findUnique({
+          where: {
+            countryCode_service: {
+              countryCode: normalizedCountryCode,
+              service,
+            },
+          },
+        }),
+        expectedVersion,
+      );
     if (normalizedStatus === INTERNATIONAL_SERVICE_STATUS.ACTIVE) {
-      const normalizedDeliveryProfileId = String(deliveryProfileId || "").trim();
+      const normalizedDeliveryProfileId = String(
+        deliveryProfileId || "",
+      ).trim();
       if (!normalizedDeliveryProfileId) {
-        throw new Error("Shopify delivery profile ID is required for an active international route.");
+        throw new Error(
+          "Shopify delivery profile ID is required for an active international route.",
+        );
       }
       await saveInternationalMarketEvidence({
         countryCode: normalizedCountryCode,
@@ -146,6 +189,9 @@ export async function saveInternationalShippingCountryAvailability({
         confirmations: carrierConfirmations,
         notes: note,
         metadata: { service },
+        expectedVersion:
+          expectedEvidenceVersions?.INTERNATIONAL_CARRIER_SERVICE_STATUS,
+        enqueueSync: false,
         prismaClient: client,
         now,
       });
@@ -162,6 +208,9 @@ export async function saveInternationalShippingCountryAvailability({
           service,
           deliveryProfileId: normalizedDeliveryProfileId,
         },
+        expectedVersion:
+          expectedEvidenceVersions?.INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT,
+        enqueueSync: false,
         prismaClient: client,
         now,
       });
@@ -171,6 +220,9 @@ export async function saveInternationalShippingCountryAvailability({
         requirementCode: "INTERNATIONAL_CARRIER_SERVICE_STATUS",
         confirmedBy,
         notes: note || `Shipping service changed to ${normalizedStatus}`,
+        expectedVersion:
+          expectedEvidenceVersions?.INTERNATIONAL_CARRIER_SERVICE_STATUS,
+        enqueueSync: false,
         prismaClient: client,
         now,
       });
@@ -179,36 +231,44 @@ export async function saveInternationalShippingCountryAvailability({
         requirementCode: "INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT",
         confirmedBy,
         notes: note || `Shipping route changed to ${normalizedStatus}`,
+        expectedVersion:
+          expectedEvidenceVersions?.INTERNATIONAL_SHOPIFY_DELIVERY_ROUTE_AUDIT,
+        enqueueSync: false,
         prismaClient: client,
         now,
       });
     }
 
-    return client.internationalShippingCountryAvailability.upsert({
-      where: {
-        countryCode_service: {
+    const result = await client.internationalShippingCountryAvailability.upsert(
+      {
+        where: {
+          countryCode_service: {
+            countryCode: normalizedCountryCode,
+            service,
+          },
+        },
+        create: {
           countryCode: normalizedCountryCode,
           service,
+          status: normalizedStatus,
+          note: String(note || "").trim() || null,
+          sourceUrl: String(sourceUrl || "").trim() || null,
+          checkedAt: now,
+        },
+        update: {
+          revision: { increment: 1 },
+          status: normalizedStatus,
+          note: String(note || "").trim() || null,
+          sourceUrl: String(sourceUrl || "").trim() || null,
+          checkedAt: now,
         },
       },
-      create: {
-        countryCode: normalizedCountryCode,
-        service,
-        status: normalizedStatus,
-        note: String(note || "").trim() || null,
-        sourceUrl: String(sourceUrl || "").trim() || null,
-        checkedAt: now,
-      },
-      update: {
-        status: normalizedStatus,
-        note: String(note || "").trim() || null,
-        sourceUrl: String(sourceUrl || "").trim() || null,
-        checkedAt: now,
-      },
-    });
+    );
+    await invalidateInternationalGates(client, { now });
+    return result;
   }
 
-  return typeof prismaClient.$transaction === "function"
-    ? prismaClient.$transaction((transaction) => persist(transaction))
-    : persist(prismaClient);
+  const result = await internationalGateTransaction(prismaClient, persist);
+  await flushInternationalGateStops(prismaClient);
+  return result;
 }

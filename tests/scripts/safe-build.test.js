@@ -29,7 +29,10 @@ test("build environment drops secrets and uses an isolated profile and fixed res
   };
   const env = createBuildEnvironment("isolated", source);
   assert.equal(env.HOME, "isolated");
-  assert.equal(env.PATH, "path");
+  assert.equal(
+    env.PATH,
+    `${path.dirname(process.execPath)}${path.delimiter}path`,
+  );
   assert.equal(env.GITHUB_TOKEN, undefined);
   assert.equal(env.RENDER_API_KEY, undefined);
   assert.equal(env.PRIVACY_ENCRYPTION_KEY, undefined);

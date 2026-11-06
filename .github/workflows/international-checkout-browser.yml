@@ -1,0 +1,60 @@
+name: Isolated checkout browser
+on:
+  pull_request:
+    paths:
+      - .github/workflows/international-checkout-browser.yml
+      - tools/international-checkout-browser/**
+      - scripts/international-checkout-browser*.mjs
+      - scripts/test-international-checkout-browser.mjs
+      - app/utils/internationalProofContract.js
+      - app/utils/internationalCheckoutResults.js
+      - app/utils/internationalCheckoutCapacity.js
+      - tests/utils/internationalCheckoutCapacity.test.js
+      - tests/scripts/international-checkout-browser*.test.js
+      - tests/helpers/internationalCheckoutBrowserFixture.js
+      - tests/fixtures/internationalCheckoutBrowserPage.js
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.audit/checkout-browser-cache
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork inputs
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+      - name: Verify Node runtime bytes
+        run: node scripts/security/node-runtime.mjs
+      - name: Install only separately locked browser driver without lifecycle scripts
+        run: npm ci --prefix tools/international-checkout-browser --ignore-scripts --no-audit --no-fund
+      - name: Install pinned browser and platform dependencies
+        run: node tools/international-checkout-browser/node_modules/playwright-core/cli.js install chromium --only-shell --with-deps
+      - name: Run browser policy and sanitized-process contracts
+        run: node --test tests/scripts/international-checkout-browser-policy.test.js tests/scripts/international-checkout-browser-process.test.js tests/utils/internationalCheckoutCapacity.test.js
+      - name: Observe synthetic checkout pages in actual sandboxed browser
+        run: node scripts/test-international-checkout-browser.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload aggregate synthetic evidence only
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: checkout-browser-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/checkout-browser-probe/receipt.json
+          if-no-files-found: error
+          retention-days: 45

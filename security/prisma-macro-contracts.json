@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "originalTdsPolicySha256": "ebd344db5c49c3ae1366ec2078557850ff0e1ed6800829a0d6af94b7424d5ca6",
+  "fixtureSha256": "a30770b83d744d47f7b1cea5b88d303fa006df3b934ef7623c736c49eaa8d260",
+  "invalidCasesSha256": "995d30f764170c11ef209824c427ba83c3ed910afd32600067a1be45352c24b1",
+  "nativeTests": 6,
+  "compilerRejections": 10,
+  "registryPackages": 133,
+  "targets": {
+    "linux": "x86_64-unknown-linux-gnu",
+    "win32": "x86_64-pc-windows-msvc"
+  },
+  "macroSourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "0c89a2f3eae85d0da51f5335cbbe378d6a2ad869d61bd139106aeabc08a7e9d9"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "6dab8db74efcad037e686a28648698661a5d0c1f8022bb000dc9726ee171d1d5"
+    },
+    {
+      "path": "src/attr.rs",
+      "sha256": "d75235a5dafa179b41e1aacb40a5e7c095011d523c5a6315e3877fe7f4880bfc"
+    },
+    {
+      "path": "src/table_value_param.rs",
+      "sha256": "d902c8c5317fbe394f64ff19a862ab4933ea7bd1753878d56f328c0290752fbb"
+    }
+  ],
+  "manualReviewScope": "Four owned manifest/source files were read: compile-time DeriveInput parsing, helper-attribute validation and typed quote generation only; no owned filesystem/network/unsafe operations observed. Compiler and transitive library implementation review is not completed by this check.",
+  "wholeEngineVerified": false,
+  "sourceReviewComplete": false,
+  "productionApproved": false,
+  "artifactStatus": "NOT_VERIFIED"
+}

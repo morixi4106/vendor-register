@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "strictTlsPolicySha256": "8f548616f48db7c04e9171f967521a772e314b5893aa82b39f80ee50e761ac4d",
+  "fixturePath": "tests/fixtures/prisma-tds-classic/lib.rs",
+  "fixtureSha256": "c3d61ffa9b0c1c7e9d8a62b65ce007585aa7f9cafcaa9ab2f7d1c790d9044061",
+  "clientModes": ["On", "Required"],
+  "serverModes": [1, 3],
+  "serverProtocol": "TLSv1.2",
+  "testCount": 5,
+  "connectCalls": 20,
+  "successfulEncryptedLogins": 4,
+  "certificateRejections": 16,
+  "registryPackages": 134,
+  "wholeEngineVerified": false,
+  "sourceReviewComplete": false,
+  "productionApproved": false,
+  "systemTrustStoreModified": false,
+  "artifactStatus": "NOT_VERIFIED"
+}

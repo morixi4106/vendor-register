@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { withInternationalGateInvalidation } from "../services/internationalGateQueue.server.js";
 import {
   listOfflineShopDomains,
   normalizeShopDomain,
@@ -58,19 +59,20 @@ export const action = async ({ request }) => {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const [deleted] = await db.$transaction([
-    db.product.deleteMany({
+  const deleted = await withInternationalGateInvalidation(db, async (tx) => {
+    const deleted = await tx.product.deleteMany({
       where: {
         OR: matchers,
       },
-    }),
-    db.shopifyProductSyncIssue.deleteMany({
+    });
+    await tx.shopifyProductSyncIssue.deleteMany({
       where: {
         shopDomain,
         shopifyProductId: { in: candidates },
       },
-    }),
-  ]);
+    });
+    return deleted;
+  }, { shopDomain });
 
   console.log(
     `products/delete webhook removed ${deleted.count} local product(s) for ids: ${candidates.join(", ")}`

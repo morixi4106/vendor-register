@@ -1,0 +1,57 @@
+name: Fixed Prisma macro consumer probes
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-macro-contracts.yml
+      - scripts/security/test-prisma-macros.mjs
+      - security/prisma-macro-contracts.json
+      - tests/fixtures/prisma-macro-contracts/**
+      - tests/scripts/prisma-macros.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macros:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Preserve fixed source bytes on this disposable runner
+        run: git config --global core.autocrlf false
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject unreviewed fork sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify macro source and rejection evidence contracts
+        run: node --test tests/scripts/prisma-macros.test.js
+      - name: Execute actual macro expansions and case-specific compiler rejections
+        run: node scripts/security/test-prisma-macros.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload bounded original source and actual compiler evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: prisma-macros-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/prisma-macros/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 45

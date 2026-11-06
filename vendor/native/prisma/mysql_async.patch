@@ -1,0 +1,89 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 1c4c8de..83fdbb7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -7,7 +7,7 @@ license = "MIT/Apache-2.0"
+ name = "mysql_async"
+ readme = "README.md"
+ repository = "https://github.com/blackbeam/mysql_async"
+-version = "0.31.3"
++version = "0.31.3+oja.1"
+ exclude = ["test/*"]
+ edition = "2018"
+ categories = ["asynchronous", "database"]
+@@ -20,9 +20,9 @@ futures-core = "0.3"
+ futures-util = "0.3"
+ futures-sink = "0.3"
+ lazy_static = "1"
+-lru = "0.8.1"
++lru = "=0.18.2"
+ mio = { version = "0.8.0", features = ["os-poll", "net"] }
+-mysql_common = { version = "0.29.2", default-features = false }
++mysql_common = { path = "../mysql_common", version = "=0.29.2+oja.1", default-features = false }
+ once_cell = "1.7.2"
+ pem = "1.0.1"
+ percent-encoding = "2.1.0"
+@@ -38,7 +38,7 @@ tracing = { version = "0.1.37", default-features = false, features = ["attribute
+ twox-hash = "1"
+ url = "2.1"
+ regex = "1.10.3"
+-lexical = "6.1.0"
++lexical = "=7.0.5"
+ 
+ [dependencies.tokio-rustls]
+ version = "0.23.4"
+@@ -76,6 +76,7 @@ tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
+ rand = "0.8.0"
+ 
+ [features]
++oja-security-contracts = []
+ default = [
+     "flate2/zlib",
+     "mysql_common/bigdecimal03",
+diff --git a/src/lib.rs b/src/lib.rs
+index f28b8ce..c9078e8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -640,3 +640,6 @@ pub mod test_misc {
+         ["true", "1"].contains(&&*env::var("SSL").unwrap_or_default())
+     }
+ }
++#[cfg(feature = "oja-security-contracts")]
++#[doc(hidden)]
++pub mod oja_security_contracts;
+diff --git a/src/oja_security_contracts.rs b/src/oja_security_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/src/oja_security_contracts.rs
+@@ -0,0 +1,31 @@
++use crate::{conn::stmt_cache::StmtCache, queryable::stmt::StmtInner};
++use std::sync::Arc;
++
++// No connection is constructed: only real statement packet parsing and cache methods run.
++pub struct StatementCache(StmtCache);
++
++impl StatementCache {
++    pub fn new(capacity: usize) -> Self {
++        Self(StmtCache::new(capacity))
++    }
++
++    pub fn put(&mut self, id: u32, query: &[u8]) -> Option<u32> {
++        let mut packet = [0_u8; 12];
++        packet[1..5].copy_from_slice(&id.to_le_bytes());
++        let query: Arc<[u8]> = Arc::from(query);
++        let stmt = Arc::new(StmtInner::from_payload(&packet, 1, query.clone()).unwrap());
++        self.0.put(query, stmt).map(|stmt| stmt.id())
++    }
++
++    pub fn get(&mut self, query: &[u8]) -> Option<u32> {
++        self.0.by_query(query).map(|entry| entry.stmt.id())
++    }
++
++    pub fn remove(&mut self, id: u32) {
++        self.0.remove(id);
++    }
++
++    pub fn clear(&mut self) {
++        self.0.clear();
++    }
++}

@@ -1,0 +1,17 @@
+[package]
+name = "oja-prisma-tds-tls-probes"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+exclude = ["vendor/tiberius"]
+
+[dependencies]
+tiberius = { path = "vendor/tiberius", default-features = false, features = ["tds73", "winauth", "native-tls", "chrono", "bigdecimal", "sql-browser-tokio"] }
+tokio = { version = "=1.54.1", features = ["macros", "rt", "sync", "time", "io-util"] }
+tokio-util = { version = "=0.7.20", features = ["compat"] }
+native-tls = "=0.2.18"
+tokio-native-tls = "=0.3.1"
+
+[patch.crates-io]
+winauth = { path = "vendor/winauth" }

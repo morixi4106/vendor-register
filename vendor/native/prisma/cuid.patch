@@ -1,0 +1,100 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index a133c04..471db13 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -10,9 +10,9 @@ homepage = "https://github.com/mplanchard/cuid-rust"
+ repository = "https://github.com/mplanchard/cuid-rust"
+
+ [workspace.dependencies]
+-cuid-util = { path = "./crates/cuid-util", version = "0.1.1" }
+-cuid1 = { path = "./crates/cuid1", version = "0.1.0" }
+-cuid2 = { path = "./crates/cuid2", version = "0.1.3" }
++cuid-util = { path = "./crates/cuid-util", version = "=0.1.1+oja.1" }
++cuid1 = { path = "./crates/cuid1", version = "=0.1.0+oja.1" }
++cuid2 = { path = "./crates/cuid2", version = "=0.1.3+oja.1" }
+ proptest = "1.0.0"
+ rand = "0.8"
+ criterion = "0.5.0"
+diff --git a/crates/cuid/Cargo.toml b/crates/cuid/Cargo.toml
+index 0ea190e..11f4ace 100644
+--- a/crates/cuid/Cargo.toml
++++ b/crates/cuid/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cuid"
+-version = "1.3.3"
++version = "1.3.3+oja.1"
+ description = "An ipmlementation of CUID protocol in rust"
+ documentation = "https://docs.rs/cuid/latest/cuid/"
+ resolver = "2"
+@@ -16,7 +16,7 @@ cuid2.workspace = true
+
+ # WASM-only deps
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+-getrandom = { version = "0", features = ["js"] }
++getrandom = { version = "=0.2.17", features = ["js"] }
+
+ [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+ criterion.workspace = true
+diff --git a/crates/cuid-util/Cargo.toml b/crates/cuid-util/Cargo.toml
+index af3f0c2..3ca85c2 100644
+--- a/crates/cuid-util/Cargo.toml
++++ b/crates/cuid-util/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cuid-util"
+-version = "0.1.1"
++version = "0.1.1+oja.1"
+ description = "Shared utilities for the cuid and cuid2 crates"
+ resolver = "2"
+ edition.workspace = true
+diff --git a/crates/cuid1/Cargo.toml b/crates/cuid1/Cargo.toml
+index f10756b..44f93bd 100644
+--- a/crates/cuid1/Cargo.toml
++++ b/crates/cuid1/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cuid1"
+-version = "0.1.0"
++version = "0.1.0+oja.1"
+ resolver = "2"
+ edition.workspace = true
+ authors.workspace = true
+@@ -9,7 +9,6 @@ homepage.workspace = true
+ repository.workspace = true
+
+ [dependencies]
+-base36 = "0.0.1"
+ cuid-util.workspace = true
+ num = { version = "0.4.0", features = ["num-bigint"] }
+ once_cell = "1.19.0"
+@@ -22,7 +21,7 @@ hostname = "0.4.0"
+
+ # WASM-only deps
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+-getrandom = { version = "0", features = ["js"] }
++getrandom = { version = "=0.2.17", features = ["js"] }
+
+ [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+ criterion.workspace = true
+diff --git a/crates/cuid2/Cargo.toml b/crates/cuid2/Cargo.toml
+index 08e54ce..ffb21c4 100644
+--- a/crates/cuid2/Cargo.toml
++++ b/crates/cuid2/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cuid2"
+-version = "0.1.3"
++version = "0.1.3+oja.1"
+ description = "An implementation of the CUID2 protocol in rust"
+ documentation = "https://docs.rs/cuid/latest/cuid2/"
+ resolver = "2"
+@@ -31,7 +31,7 @@ sha3 = "0.10.6"
+
+ # WASM-only deps
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+-getrandom = { version = "0", features = ["js"] }
++getrandom = { version = "=0.2.17", features = ["js"] }
+
+ [dev-dependencies]
+ num_cpus = "1.15.0"

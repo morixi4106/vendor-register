@@ -10,6 +10,7 @@ import {
 } from "./runtime-toolchain.mjs";
 import { TOOLCHAIN_TARGETS } from "./toolchain-targets.mjs";
 import { runSafeBuildCommand } from "./safe-build.mjs";
+import { stageVendorPatches } from "./vendor-patches.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FORBIDDEN = new Set([
@@ -17,6 +18,10 @@ const FORBIDDEN = new Set([
   "@shopify/cli",
   "@shopify/shopify_function",
   "@shopify/ui-extensions",
+  "vite",
+  "vite-tsconfig-paths",
+  "esbuild",
+  "rollup",
 ]);
 const sha = (value) =>
   crypto.createHash("sha256").update(value).digest("hex").toUpperCase();
@@ -183,6 +188,7 @@ export function prepareRuntimePackage({
   const tempBase = fs.realpathSync(os.tmpdir());
   const stage = fs.mkdtempSync(path.join(tempBase, "vendor-register-runtime-"));
   try {
+    stageVendorPatches(root, stage);
     fs.writeFileSync(
       path.join(stage, "package.json"),
       JSON.stringify(plan.manifest, null, 2) + "\n",

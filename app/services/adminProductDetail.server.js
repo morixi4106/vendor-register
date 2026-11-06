@@ -1,5 +1,6 @@
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import prisma from "../db.server";
+import { writeInternationalProduct } from "./internationalGateQueue.server.js";
 import { getDeliveryPolicyTemplateByKey, normalizeProductCountryPolicy, parseCountryCodeSelection } from "../utils/productCountryPolicy";
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server";
 import { syncAndRecordShopifyVariantWeight } from "./shopifyInventoryWeight.server";
@@ -278,7 +279,7 @@ export async function createShopifyProductFromDbProduct(product) {
   };
 }
 export async function claimShopifyProductCreation(productId) {
-  const result = await prisma.product.updateMany({
+  const result = await writeInternationalProduct(prisma, "updateMany", {
     where: {
       id: productId,
       shopifyProductId: null,
@@ -293,7 +294,7 @@ export async function claimShopifyProductCreation(productId) {
   return result.count === 1;
 }
 export async function resetShopifyProductCreationClaim(productId, approvalStatus) {
-  await prisma.product.updateMany({
+  await writeInternationalProduct(prisma, "updateMany", {
     where: {
       id: productId,
       shopifyProductId: null,

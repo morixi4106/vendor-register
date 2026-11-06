@@ -13,5 +13,6 @@ description = "t:description"
   export = "cart-validations-generate-run"
 
   [extensions.build]
-  command = ""
+  command = "node ../../scripts/security/function-build.mjs"
   path = "dist/function.wasm"
+  wasm_opt = false

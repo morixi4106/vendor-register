@@ -34,8 +34,8 @@ function fixture() {
           "brace-expansion": "^2.0.2",
         },
         dev: true,
-        name: "minimatch",
-        version: "9.0.9",
+        name: "@oja/minimatch",
+        version: "9.0.9-oja.1",
       },
     },
     version: "0.0.0",
@@ -53,14 +53,17 @@ function fixture() {
     {
       from: ["node_modules/tool"],
       location: "node_modules/minimatch",
-      name: "minimatch",
+      name: "@oja/minimatch",
       to: ["node_modules/brace-expansion"],
-      version: "9.0.9",
+      version: "9.0.9-oja.1",
     },
   ];
   return {
     explainBrace: queryBrace,
-    explainMinimatch: queryMinimatch,
+    explainMinimatch: queryMinimatch.map((node) => ({
+      ...node,
+      name: "minimatch",
+    })),
     lockfile,
     lsTree: {
       dependencies: {
@@ -72,7 +75,7 @@ function fixture() {
                   version: "2.1.7",
                 },
               },
-              version: "9.0.9",
+              version: "9.0.9-oja.1",
             },
           },
         },
@@ -98,6 +101,46 @@ test("accepts npm query, explain, ls, SBOM, and lockfile agreement", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
   assert.equal(result.summary.rootRuntimeToolchainCount, 0);
+});
+
+test("scoped backport identities do not hide old copies, runtime edges or SBOM components", () => {
+  const old = fixture();
+  old.lockfile.packages["node_modules/hidden/node_modules/minimatch"] = {
+    name: "minimatch",
+    version: "9.0.9",
+  };
+  assert.ok(
+    verifyNpmTreeEvidence(old).errors.includes(
+      "minimatch:lock_physical_count_mismatch",
+    ),
+  );
+  const wrong = fixture();
+  wrong.lockfile.packages["node_modules/minimatch"].name = "minimatch";
+  assert.ok(
+    verifyNpmTreeEvidence(wrong).errors.includes(
+      "minimatch:lock_identity_mismatch",
+    ),
+  );
+  const runtime = fixture();
+  runtime.lockfile.packages[""].dependencies["@oja/minimatch"] = "9.0.9-oja.1";
+  runtime.lockfile.packages["node_modules/@oja/minimatch"] = {
+    name: "@oja/minimatch",
+    version: "9.0.9-oja.1",
+  };
+  const errors = verifyNpmTreeEvidence(runtime).errors;
+  assert.ok(errors.includes("minimatch:lock_physical_count_mismatch"));
+  assert.ok(errors.includes("minimatch:root_runtime_reachable"));
+  const sbom = fixture();
+  sbom.sbom.components.push({
+    group: "@oja",
+    name: "minimatch",
+    version: "9.0.9-oja.1",
+  });
+  assert.ok(
+    verifyNpmTreeEvidence(sbom).errors.includes(
+      "toolchain_target_present_in_production_sbom",
+    ),
+  );
 });
 
 test("reports all independent evidence mismatches together", () => {
@@ -258,10 +301,10 @@ test("collects all npm evidence before comparing it", () => {
   const data = fixture();
   const outputs = new Map([
     ["explain brace-expansion --json", data.explainBrace],
-    ["explain minimatch --json", data.explainMinimatch],
+    ["explain node_modules/minimatch --json", data.explainMinimatch],
     ["ls minimatch brace-expansion --all --json", data.lsTree],
     ["query #brace-expansion", data.queryBrace],
-    ["query #minimatch", data.queryMinimatch],
+    ['query :is(#minimatch,[name="@oja/minimatch"])', data.queryMinimatch],
     ["sbom --omit=dev --sbom-format cyclonedx", data.sbom],
   ]);
   const seen = [];

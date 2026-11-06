@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "runner": {
+    "run": 41814202050,
+    "artifact": 13313318892,
+    "head": "be952e3283df80097598ee6954cb0e75e6d4a848",
+    "version": "9.2.2+oja.2",
+    "binarySha256": "57c6c1491e7644a312517060636063d06f41f39d9cb20ea8916171194c652b32",
+    "receiptSha256": "62f1d43a45590b3331c8ff907c8b022df090f8eff48b974f8f2752686a23967f"
+  },
+  "candidates": [
+    {
+      "name": "security",
+      "head": "e7781b4aeab5a934cebbdc020b8e18195ed35121",
+      "wasmSha256": "dd1f186d81ce877f76a724c6d3921ad6f393a0d4d42edec2ed5d22336773cc6d",
+      "testSha256": "e6789e6dc34cfe99fb19a04c23b591e2e5b8aef29bbd4d40ab3bcc172afbe1b4",
+      "testCount": 51,
+      "runnerCalls": 12
+    },
+    {
+      "name": "international",
+      "head": "7731ab6e863580f6ed7ba6118a04a5234e8769df",
+      "wasmSha256": "d9bc6dcd2a659126bdcf0d6e143f41598d615a5ed0f1ab8be9e218729c9f2d1b",
+      "testSha256": "5c21952057b0f95ae94e2157aaae565a2d542f3a84b54f0dadfbe56523f1a78b",
+      "testCount": 92,
+      "runnerCalls": 24
+    }
+  ],
+  "artifactStatus": "NOT_VERIFIED",
+  "wholeCompilerVerified": false,
+  "fullFunctionVerified": false,
+  "productionApproved": false
+}

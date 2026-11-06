@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { readVendorContacts } from "../utils/privateData.server.js";
 
 import prisma from "../db.server.js";
+import { invalidateInternationalGates, withInternationalGateInvalidation, flushInternationalGateStops } from "./internationalGateQueue.server.js";
 import { hashPrivateIdentifier } from "../utils/privacyHash.server.js";
 import {
   INTERNATIONAL_REQUIREMENT_VERSION,
@@ -883,11 +884,11 @@ export async function upsertProductComplianceProfile(
     reviewedAt: values.approvalStatus === "APPROVED" ? now : null,
     reviewedBy: values.approvalStatus === "APPROVED" ? reviewedBy : null,
   };
-  const profile = await prismaClient.productComplianceProfile.upsert({
+  const profile = await withInternationalGateInvalidation(prismaClient, (tx) => tx.productComplianceProfile.upsert({
     where: { productId },
     create: { productId, ...data },
     update: data,
-  });
+  }));
   return { ok: true, profile };
 }
 
@@ -994,7 +995,7 @@ export async function recordProductComplianceEvidence(
       submittedAt: now.toISOString(),
     }),
   );
-  const evidence = await prismaClient.productComplianceEvidence.create({
+  const evidence = await withInternationalGateInvalidation(prismaClient, (tx) => tx.productComplianceEvidence.create({
     data: {
       evidenceKey,
       productId,
@@ -1017,7 +1018,7 @@ export async function recordProductComplianceEvidence(
       sourceCheckedAt: normalizedStatus === "VERIFIED" ? now : null,
       notes: normalizeText(notes),
     },
-  });
+  }));
   return { ok: true, evidence };
 }
 
@@ -1151,6 +1152,7 @@ export async function recordProductComplianceDecision(
           data: { approvalStatus: "HOLD" },
         });
       }
+      await invalidateInternationalGates(tx, { now });
       return { ok: true, decision: created, profile: null };
     }
     const profile = await tx.productComplianceProfile.upsert({
@@ -1182,10 +1184,12 @@ export async function recordProductComplianceDecision(
           : {}),
       },
     });
+    await invalidateInternationalGates(tx, { now });
     return { ok: true, decision: created, profile };
     },
   );
 
+  if (result.ok) await flushInternationalGateStops(prismaClient);
   return result;
 }
 

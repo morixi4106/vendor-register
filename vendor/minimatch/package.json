@@ -1,0 +1,55 @@
+{
+  "bugs": {
+    "url": "https://github.com/isaacs/minimatch/issues"
+  },
+  "main": "./dist/commonjs/index.js",
+  "name": "@oja/minimatch",
+  "type": "module",
+  "types": "./dist/commonjs/index.d.ts",
+  "author": {
+    "url": "http://blog.izs.me",
+    "name": "Isaac Z. Schlueter",
+    "email": "i@izs.me"
+  },
+  "module": "./dist/esm/index.js",
+  "engines": {
+    "node": ">=16 || 14 >=14.17"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/index.d.ts",
+        "default": "./dist/commonjs/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "funding": {
+    "url": "https://github.com/sponsors/isaacs"
+  },
+  "license": "ISC",
+  "homepage": "https://github.com/isaacs/minimatch#readme",
+  "repository": {
+    "url": "git://github.com/isaacs/minimatch.git",
+    "type": "git"
+  },
+  "description": "a glob matcher in javascript",
+  "directories": {},
+  "dependencies": {
+    "brace-expansion": "^2.0.2"
+  },
+  "publishConfig": {
+    "tag": "legacy-v9"
+  },
+  "version": "9.0.9-oja.1",
+  "private": true,
+  "files": [
+    "dist",
+    "LICENSE",
+    "provenance.json"
+  ]
+}

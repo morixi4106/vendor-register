@@ -1,0 +1,688 @@
+{
+  "schemaVersion": 1,
+  "role": "prisma-source-contracts",
+  "prismaVersion": "6.19.3",
+  "source": {
+    "repository": "prisma/prisma-engines",
+    "commit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+    "sha256": "588e7a91d67996daf75009a6f684685045d8579eeff1841b8b0aa0c640556708"
+  },
+  "patch": {
+    "path": "vendor/native/prisma/engine.patch",
+    "sha256": "399b1d3c99f7bb3717430268a1107e2b0b8493fc0483d939a5634a96bd0c0495"
+  },
+  "lockfile": {
+    "path": "vendor/native/prisma/Cargo.lock",
+    "sha256": "9496122a73a7aa96056aaf4040b569046943a339241f0f1a2d93ad809395ad23"
+  },
+  "contractLockfile": {
+    "path": "vendor/native/prisma/contracts.Cargo.lock",
+    "sha256": "168508480fc79f6a76ea0c79eeb3eba98cefca961f2212f35c25765d1222037e"
+  },
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2317ffbafa7ce052b5bdc0b722a6393e5bed263070e153ad4b76d86d88e47ed0"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/mod.rs",
+      "sha256": "b1706381f70f2166b4d0c68f1b146cacefb564de4f30d130b40b5c6e2890a1c6"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/manager.rs",
+      "sha256": "16fb9835cb93f054d096b3fa4bf80a8964a78a59c07c4b0b82aeac26d3df35c8"
+    },
+    {
+      "path": "query-engine/core/src/interactive_transactions/cache_capacity.rs",
+      "sha256": "02002397bfaef3bed5a3f37d50418b040f683fc4bcef342daeff0d6c9a0275d4"
+    },
+    {
+      "path": "security-contracts/Cargo.toml",
+      "sha256": "db66679eff11764b5e27a30c3adeaa8e1333ff5b08de7bacd0fd67d05ed8e5bb"
+    },
+    {
+      "path": "security-contracts/src/lib.rs",
+      "sha256": "173ad999392e5b82086ed52a35773cba88fa279b00e50ae4481caf2d77288b9b"
+    },
+    {
+      "path": "query-engine/core/Cargo.toml",
+      "sha256": "e8a24a1888c3d14230bd9df513074d28e4814657eb36f2356cf7625777316ef0"
+    },
+    {
+      "path": "schema-engine/connectors/schema-connector/src/checksum.rs",
+      "sha256": "544f5a92ff8b669b3eecbbf5f8f3793af355c1c43d7bc7af45e1d580d0611341"
+    },
+    {
+      "path": "security-contracts/src/mongodb_compression.rs",
+      "sha256": "d08f1681aa055ca70177d8a8f8ea4aaf859376c52a6e72c06991b90fb8dba791"
+    },
+    {
+      "path": "security-contracts/src/mysql_contracts.rs",
+      "sha256": "442cfbd264b413f7caa5d3856bd85462326d2d800c0f0892d16800f456ff78cc"
+    },
+    {
+      "path": "security-contracts/src/mysql_crypto.rs",
+      "sha256": "7cc6cb390cd4aa21850c8b714c84ddc62597c066e05eec8361571d7a737a0197"
+    },
+    {
+      "path": "security-contracts/src/cuid_contracts.rs",
+      "sha256": "a07144e25a84ced3d3ddbcd1cb9f093fd67d11c7328ae3b346da01bc003b35d0"
+    },
+    {
+      "path": "query-engine/query-structure/Cargo.toml",
+      "sha256": "2ea509734b9d62d0d3fe6a90317d20d33ba87882fea4da5dc68dc8761a5d5cc7"
+    },
+    {
+      "path": "query-engine/query-structure/src/default_value.rs",
+      "sha256": "9020b9565f603a17f22e70705da0298d35c3c8bfded90108e917b8e7f9017cd3"
+    },
+    {
+      "path": "query-engine/query-engine/Cargo.toml",
+      "sha256": "86d624c34d0c9ed33aa9109b0eb6756de0d342c213ec9e99d0de25a107373dde"
+    },
+    {
+      "path": "query-engine/query-engine/src/main.rs",
+      "sha256": "4b2599b2a1be2066292b2319e4f26824050520dc7b42131f033c2f1b58bfa006"
+    },
+    {
+      "path": "query-engine/query-engine/src/opt.rs",
+      "sha256": "40893244e52bb8f207ccc1a9abd010809bb235e1b3a77b3c05f8a5e25d3a1929"
+    },
+    {
+      "path": "schema-engine/cli/Cargo.toml",
+      "sha256": "1c238952a7d6211ab9415e50d2e8fca10c1ec8fdc78309403abd49972175d286"
+    },
+    {
+      "path": "schema-engine/cli/src/main.rs",
+      "sha256": "dcf06aed346399a6dfb82f421e6147006e558e371a2d07702345d85f2a8c75d9"
+    },
+    {
+      "path": "schema-engine/cli/src/commands.rs",
+      "sha256": "d2c67e2b5c02ee1827cb81368cff55ab9317e05abdf8cdce4df06df81cc33cc4"
+    },
+    {
+      "path": "prisma-fmt/Cargo.toml",
+      "sha256": "7ae787c75779259be66778d84aa26d6b492ff23448f1aa6387c6f99ea125cbdf"
+    },
+    {
+      "path": "prisma-fmt/src/main.rs",
+      "sha256": "abc987f911fcca363bddfccf6447633e44730b1f680f08649830f7c849dd1b80"
+    },
+    {
+      "path": "quaint/src/connector/mssql/native/conversion.rs",
+      "sha256": "5bd56d18d23e2188a19334b2251414b31a17f468ff8ec52203cc1f87f58ed33b"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/mod.rs",
+      "sha256": "272985f87ac547fe028bff063b23672fbf32b2dc7a83e551b81e223efebd604e"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/oja_http_client_contracts.rs",
+      "sha256": "435cde2360e68edebbf710c4f3ed7b0273fb192d7e0a517a38c613bc55381f1e"
+    },
+    {
+      "path": "query-engine/black-box-tests/Cargo.toml",
+      "sha256": "d69b3812d43e4d1b494b693061a2f24b736234df2fca8f272fc919302f4716f3"
+    },
+    {
+      "path": "query-engine/black-box-tests/tests/protocols/mismatched.rs",
+      "sha256": "29b4d839c8c620ee45a524a345d9c969ae22ef0db3180e88abe03fc37137f162"
+    },
+    {
+      "path": "query-engine/black-box-tests/tests/metrics/smoke_tests.rs",
+      "sha256": "7c79f205845a2bc39751bf5e9f988d4828b3c90589393bce39c67c74f8b378fa"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/transport.rs",
+      "sha256": "06992fa91645eee41e72a07078267b04781ca8672ed0257e645ee1166f0dff0b"
+    },
+    {
+      "path": "query-engine/query-engine/src/server/oja_http_server_contracts.rs",
+      "sha256": "ee863adcded1c6b606f1056343354ab651db639b7f47e93f06962b2b2f20e159"
+    },
+    {
+      "path": "query-engine/connector-test-kit-rs/query-tests-setup/Cargo.toml",
+      "sha256": "fbb1d16f59d05b041b0da65d7d8fde1ea442033d95a3af0c83bc4d6ebd463f2d"
+    },
+    {
+      "path": "quaint/Cargo.toml",
+      "sha256": "c4b609a208923fb5ff112de9c16243704b9cda21bac8407c26542cb57d5d343e"
+    },
+    {
+      "path": "security-contracts/src/winauth_contracts.rs",
+      "sha256": "8a8ec915c2d2221091d1f9e1444997037f1e2623ac646b6fd4a5cce780181658"
+    },
+    {
+      "path": "security-contracts/src/winauth_parser_contracts.rs",
+      "sha256": "9d8d1e878994abe365422cf32540baa8f9bf41f868359b40db86f0e6c532d9d0"
+    },
+    {
+      "path": "security-contracts/src/paste_contracts.rs",
+      "sha256": "e7dd83e32cd8d0d6dc892a55fb2f8997d7044b3403693578919ad4343902c40c"
+    },
+    {
+      "path": "query-engine/schema/Cargo.toml",
+      "sha256": "4e7700f9ad2f7048f01ddf022d967ef015ab9c78efdb2d588a5da48b4213c2f5"
+    },
+    {
+      "path": "query-engine/schema/benches/schema_builder_bench.rs",
+      "sha256": "2c9c29bf15cad086db0e4dbebdc76e154cd2dace0bb4ce29711746359fd3d024"
+    },
+    {
+      "path": "query-engine/request-handlers/Cargo.toml",
+      "sha256": "6b46fb4e40a6cd68af93c8c4832ed06cd67bfc703d72f2e32f047628c37bab5c"
+    },
+    {
+      "path": "query-engine/request-handlers/benches/query_planning_bench.rs",
+      "sha256": "acf6c74a79aa5db7b07d1615745bf477df16e2cc81ec5404a31fa9bbdd9cce97"
+    },
+    {
+      "path": "query-engine/connector-test-kit-rs/query-engine-tests/Cargo.toml",
+      "sha256": "42bc4b82c56779309cc03cc718e5b3275ac033800c3fd4b70b7fee36cd4e3588"
+    },
+    {
+      "path": "schema-engine/sql-migration-tests/Cargo.toml",
+      "sha256": "0a7eb33a7faac14bf6d3a5d9958521e427a81d35e7632acb118a59e2bbc6f501"
+    },
+    {
+      "path": "quaint/src/macros.rs",
+      "sha256": "b3a1c0d566f42cb7dea3ee2f91d54e37702371d7072e5d1dc55be813837cb8dd"
+    },
+    {
+      "path": "security-contracts/src/postgres_contracts.rs",
+      "sha256": "ba6490f8d5cc0a3467032966bf5deed29a924f9520dbb56b352fd852f62c97ff"
+    }
+  ],
+  "dependencies": {
+    "lru": "0.18.2",
+    "sha2": "0.11.1"
+  },
+  "overrides": [
+    {
+      "name": "mongodb",
+      "upstreamVersion": "3.9.1",
+      "version": "3.9.1+oja.1",
+      "sha256": "af84443ae9878f59a6818686f339064479f42cdf293c4c637d8fc9c0a8c5eed6",
+      "patch": {
+        "path": "vendor/native/prisma/mongodb.patch",
+        "sha256": "be125d4bcb6c14ccac4b8357fc5363347fd00c3527c3007a56603f5fc3b8d664"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "6050c943310d515f66f520a27af01c6c30b10f0f3ae8b487e9be610a2d92e9b0"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7e075f0a7eed5f5ce1dfde39aaf7b3592997c87916a18f7f672174c13aef2e9b"
+        },
+        {
+          "path": "src/compression.rs",
+          "sha256": "6976d09aa106c80d04d5008838367cca45fb5a23146abb73449d96c718e12f48"
+        },
+        {
+          "path": "src/compression/compress.rs",
+          "sha256": "3dc90246e4dea93272457b75fcc7a73bc10f760e2801f778349aaf34f9932e3d"
+        },
+        {
+          "path": "src/compression/decompress.rs",
+          "sha256": "f939bb5c37a2f5796c25a13e895b179f33e34e99a312e051836dc30325f55392"
+        },
+        {
+          "path": "src/compression/compressors.rs",
+          "sha256": "0f6d91e6a47b27c0e7b62c29210905a630df408a2eb27d3deef4701014309793"
+        }
+      ],
+      "dependencies": {
+        "zstd": "0.14.3",
+        "zstd-safe": "8.2.0"
+      }
+    }
+  ],
+  "mysqlSources": [
+    {
+      "name": "mysql_async",
+      "upstreamVersion": "0.31.3",
+      "version": "0.31.3+oja.1",
+      "sha256": "e39cdf905b1311926fb7a299c1d08fb99c4b0645bd2c196117ed50be7e156067",
+      "patch": {
+        "path": "vendor/native/prisma/mysql_async.patch",
+        "sha256": "0e73b652a5b31701fe35d06a0cff37199f74b66839f6c0a0a2fe6f27b8bac00d"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "8453c64e48d9587f2ff7adeb57ee8c2a1346ceda49703a0166752df8717892b2"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "adcbad18f86a917d74666aef5077770a84accad675152967b6ba1bca444ba565"
+        },
+        {
+          "path": "src/conn/stmt_cache.rs",
+          "sha256": "e44a098873f03f37558933789473575efee92fb16b4b630f6b1db344a56249d5"
+        },
+        {
+          "path": "src/conn/mod.rs",
+          "sha256": "5085f1878c1ccaf83fab9ca157812843c9798cdbff49d32813f24181825c912c"
+        },
+        {
+          "path": "src/queryable/stmt.rs",
+          "sha256": "9eac7d7ff851213ff386fcd2e7f88b83632a12a3c9caefeb7ccb1aba1fb75cc4"
+        },
+        {
+          "path": "src/oja_security_contracts.rs",
+          "sha256": "b0181be1e4d04d7d41c007e71ce4bc9bd028dddd3179435d291f0bd0383fe413"
+        }
+      ],
+      "dependencies": {
+        "lru": "0.18.2",
+        "lexical": "7.0.5",
+        "mysql_common": "0.29.2+oja.1"
+      },
+      "gitSource": {
+        "repository": "prisma/mysql_async",
+        "commit": "c4c841c9d03e361df7377264a075335a823534ee",
+        "reviewStatus": "UNREVIEWED"
+      }
+    },
+    {
+      "name": "mysql_common",
+      "upstreamVersion": "0.29.2",
+      "version": "0.29.2+oja.1",
+      "sha256": "9006c95034ccf7b903d955f210469119f6c3477fc9c9e7a7845ce38a3e665c2a",
+      "patch": {
+        "path": "vendor/native/prisma/mysql_common.patch",
+        "sha256": "3e36d94877d13b3a86b25898339b828929e7c51054d95bb690a5f23f05cb337e"
+      },
+      "sourceFiles": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "0800a31b174f777b1aa2974586b2f960e73e0b349df86e99745217197030161a"
+        },
+        {
+          "path": "build.rs",
+          "sha256": "4ed07679c3262af6d16f0a22c30929fe0ecd30d1cf00f9eb9dd831cb6e56e744"
+        },
+        {
+          "path": "src/scramble.rs",
+          "sha256": "b119a9493b17ca499299817318a8d02b304db4826cac908ec852c7a83f5ea972"
+        },
+        {
+          "path": "src/crypto/rsa.rs",
+          "sha256": "ed5810ea6891ac7a5e6e9ada16e40e7d111969394c5828a802689a24dd5cf5a2"
+        },
+        {
+          "path": "src/crypto/der.rs",
+          "sha256": "74845c05a55b2f5236614c5a1aa538419b336c17a5b57753a3249c6ba1e74439"
+        },
+        {
+          "path": "src/misc/mod.rs",
+          "sha256": "8657f6d9b32cdda463802e664058887c4b7e669dde1062f866b00e7d306ef748"
+        },
+        {
+          "path": "src/value/convert/mod.rs",
+          "sha256": "53955c1cebb8dfde916b3a843f48376fd5678866c2515aba05617891efb44bae"
+        },
+        {
+          "path": "src/packets/mod.rs",
+          "sha256": "ae2b54c77b48f935d859c119e118e3751713c8c58d540c48fc849c6164e235bb"
+        }
+      ],
+      "dependencies": {
+        "lexical": "7.0.5",
+        "sha1": "0.11.0",
+        "sha2": "0.11.1",
+        "bindgen": "0.72.1"
+      }
+    }
+  ],
+  "cuidSource": {
+    "repository": "prisma/cuid-rust",
+    "commit": "dc68c4f47a3dbcd511f605135ac7c948775a3ab9",
+    "sha256": "ee0c0f0a235bfd09e3fc42407ef0966759a7ef869dc2df01c8a57b54edd1afc5",
+    "reviewStatus": "UNREVIEWED",
+    "patch": {
+      "path": "vendor/native/prisma/cuid.patch",
+      "sha256": "68449e2b24fedf53d845101c853ee4a130746eb449fbbe03f568853bd4fb1cb5"
+    },
+    "packages": [
+      {
+        "name": "cuid",
+        "upstreamVersion": "1.3.3",
+        "version": "1.3.3+oja.1"
+      },
+      {
+        "name": "cuid-util",
+        "upstreamVersion": "0.1.1",
+        "version": "0.1.1+oja.1"
+      },
+      {
+        "name": "cuid1",
+        "upstreamVersion": "0.1.0",
+        "version": "0.1.0+oja.1"
+      },
+      {
+        "name": "cuid2",
+        "upstreamVersion": "0.1.3",
+        "version": "0.1.3+oja.1"
+      }
+    ],
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "cf586e4348d0faf91c7b8843c66ebf63dfbe4487f60ffe3f78180870509a27ac"
+      },
+      {
+        "path": "crates/cuid/Cargo.toml",
+        "sha256": "99ae2103f754b96a9c3b3535b1748591336d5cecf74f2823c329d1e12485ec79"
+      },
+      {
+        "path": "crates/cuid/src/bin.rs",
+        "sha256": "6a3aa405dabb5e326ccaf9120293ed79c7345dc7acaefecf7dce7761f81763a9"
+      },
+      {
+        "path": "crates/cuid/src/lib.rs",
+        "sha256": "e8ac013a0952f497c9cf8035c705bfaae466b30af8156ba5bec37d8dc5b05b58"
+      },
+      {
+        "path": "crates/cuid-util/Cargo.toml",
+        "sha256": "f7915417be85997449c97565470e53e22bbc00b708b735200b84889376fc2dac"
+      },
+      {
+        "path": "crates/cuid-util/src/lib.rs",
+        "sha256": "8cb49bfe916563ce0ef63a5d5d16f23ca5de33f5762b878a171107fd917cedab"
+      },
+      {
+        "path": "crates/cuid1/Cargo.toml",
+        "sha256": "49f7724f48fd97fad564ab9bd20ef08dd74c40e5be671c56b522a4915651ca04"
+      },
+      {
+        "path": "crates/cuid1/src/bin.rs",
+        "sha256": "e5ea114bae3a88a5230a10cd11f19744d642b1f46460d5e8ee0219112ec7dc16"
+      },
+      {
+        "path": "crates/cuid1/src/counter.rs",
+        "sha256": "df08469d51d6e29c6b00b3f0b739e4889a50b688d5db0b5e439ff8d7056c7c92"
+      },
+      {
+        "path": "crates/cuid1/src/fingerprint.rs",
+        "sha256": "8824a9d5cd53bd7f26e48cf389777e11c2c0a35101cd20b38853ac842fb01581"
+      },
+      {
+        "path": "crates/cuid1/src/lib.rs",
+        "sha256": "72e9fa78f13eb214c0bd0574506393ca2fb5f26023b94f412990dde7c541011b"
+      },
+      {
+        "path": "crates/cuid1/src/random.rs",
+        "sha256": "202a0a3421a22611eaab2fb1a4b1df56064311a22a5e85da066570da7f9a9b05"
+      },
+      {
+        "path": "crates/cuid1/src/text.rs",
+        "sha256": "37b3825419aa13de7f85308d67ed09646b60b0906b0b65f2a714804d06d22ca1"
+      },
+      {
+        "path": "crates/cuid1/src/time.rs",
+        "sha256": "ada621a6096af8a27d38e91a28922fd2b24a02bc2529fec9fc701100521b70e1"
+      },
+      {
+        "path": "crates/cuid2/Cargo.toml",
+        "sha256": "9c35deeed068d9dd4ca9b396d8ccc97a41dee52f9adb5a856081b7b44b6e7c5b"
+      },
+      {
+        "path": "crates/cuid2/src/bin.rs",
+        "sha256": "84489450b62bfa35f8f91f91b134e763b261fc76a91b1a69e53800f2239dfeff"
+      },
+      {
+        "path": "crates/cuid2/src/lib.rs",
+        "sha256": "9cc80a26a3148fc321883647be9ed7757a9c8e3d9cb3cb5d0ea6549db48f4654"
+      }
+    ]
+  },
+  "cliVersion": "4.6.7",
+  "httpClientVersion": "0.12.28",
+  "httpServerDependencies": {
+    "hyper": "1.12.0",
+    "hyper-util": "0.1.21",
+    "http-body-util": "0.1.5",
+    "h2": "0.4.20"
+  },
+  "winauthSource": {
+    "name": "winauth",
+    "upstreamVersion": "0.0.5",
+    "version": "0.0.5+oja.2",
+    "sha256": "0e03c9d0fde636447315ff38695b14c85c6ccc738ade05a400a3ce568a557021",
+    "patch": {
+      "path": "vendor/native/prisma/winauth.patch",
+      "sha256": "0ee2c329b9da590e70195c0deb205cd0469feb6259ff63b03c1567c0b96baae4"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "d9fd98ad247a7c9ed3e697a5fe3963b0be22a39b0d0f905b9f01189daa77ec0e"
+      },
+      {
+        "path": "Cargo.toml.orig",
+        "sha256": "b8268f6fd65aa8c8fe2796c1f93b06216cf6cef16cf725c2d8ba2d11440a1dec"
+      },
+      {
+        "path": "src/lib.rs",
+        "sha256": "09fc85013c3aaa3d03dad4394142d85b0a05e06cbfcad197963f74dbdadc4146"
+      },
+      {
+        "path": "src/windows.rs",
+        "sha256": "1978af92e9e92ae257d7fa5fc725630c2b27462edb53271427174a42c42dafbf"
+      },
+      {
+        "path": "src/md4.rs",
+        "sha256": "82d883e09865cc2ca456cce2eedd6f4e5330470d65df09635c08d58d7c3e1c84"
+      },
+      {
+        "path": "src/hmac.rs",
+        "sha256": "412511adb6158cbae2e14cb66cf730953ba11d3885d00b012a92c67b7994fb15"
+      },
+      {
+        "path": "src/rc4.rs",
+        "sha256": "29081c5fa027418cfb239f0070c9d050996cd755fd082d3b8da30e8e0e167f0a"
+      },
+      {
+        "path": "src/http/mod.rs",
+        "sha256": "817c47f0ba7dcb2b5b88b582af44eb83952dc6e003c928309d2eb4bbbfb71231"
+      },
+      {
+        "path": "src/oja_security_contracts.rs",
+        "sha256": "e00851252c35fa2271dfd943ee284c99a23afb5fd90b0af35835fb234198b093"
+      },
+      {
+        "path": "src/oja_parser_contracts.rs",
+        "sha256": "bfe605809ed888babbed789c30f0de20e81973bcfac87eaf0a2a78767288ec04"
+      }
+    ],
+    "randVersion": "0.8.8"
+  },
+  "maintenanceDependencies": {
+    "pastey": "0.2.3",
+    "codspeed-criterion-compat": "6.0.0",
+    "codspeed-criterion-compat-walltime": "6.0.0"
+  },
+  "graphqlSource": {
+    "name": "graphql-parser",
+    "upstreamVersion": "0.3.0",
+    "version": "0.3.0+oja.1",
+    "repository": "prisma/graphql-parser",
+    "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
+    "sha256": "178523e71418f058b4b0eeb829b2c8b36064378d77eb83707130fb2e9916653e",
+    "reviewStatus": "UNREVIEWED",
+    "maximumNesting": 50,
+    "referenceCommit": "d19155f5f9206662964e388e80c68b85f3edb09a",
+    "patch": {
+      "path": "vendor/native/prisma/graphql.patch",
+      "sha256": "840a7fbada34b485b114c4b362235b04ca00573a30da6b7a26fcd9f839cc89b2"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "c622a8b459ce31db68c4ddbc0f02218c8c3f456710daa623aaae7ecfc8675011"
+      },
+      {
+        "path": "LICENSE-APACHE",
+        "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+      },
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "245066e084429ef1829fdf2dd80ea223342cd62ccfac5b92d9921de350a3af9f"
+      },
+      {
+        "path": "src/lib.rs",
+        "sha256": "09eb96201f33eb5deebfa0984153c17dd4745204ea145349eeb5f5b93e875f51"
+      },
+      {
+        "path": "src/tokenizer.rs",
+        "sha256": "da5fb5ad022b2bce9d92369549b34878d89a442268fd0561164f1d6fd8eef16d"
+      },
+      {
+        "path": "src/query/grammar.rs",
+        "sha256": "b6a6366c4b57496788dce65321b41af3f007893d79fd8c89f46b80dff58105d9"
+      },
+      {
+        "path": "src/schema/grammar.rs",
+        "sha256": "3c9623cd24d35849312f9cfe9b765729863e7df408c20ce9e3568dc6741cafab"
+      },
+      {
+        "path": "src/oja_security_contracts.rs",
+        "sha256": "c0714c30e2dc78b86aaa06e5a96f80f6cdfdd039a2ec42d0dd40463afb4bbbaf"
+      },
+      {
+        "path": "src/common.rs",
+        "sha256": "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2"
+      },
+      {
+        "path": "src/oja_string_review.rs",
+        "sha256": "8c55d9929a733c21ede8d274a719a3d2b0145862314a5e04edb7f0ed7462255e"
+      }
+    ]
+  },
+  "postgresSource": {
+    "repository": "prisma/rust-postgres",
+    "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
+    "sha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
+    "reviewStatus": "UNREVIEWED",
+    "patch": {
+      "path": "vendor/native/prisma/postgres.patch",
+      "sha256": "19b9167b1422d2ebb53c12a2331c9238e2812d356f8b1b30041e7c5fd678f756"
+    },
+    "packages": [
+      {
+        "name": "postgres-protocol",
+        "upstreamVersion": "0.6.8",
+        "version": "0.6.8+oja.1"
+      },
+      {
+        "name": "postgres-types",
+        "upstreamVersion": "0.2.9",
+        "version": "0.2.9+oja.1"
+      },
+      {
+        "name": "postgres-native-tls",
+        "upstreamVersion": "0.5.1",
+        "version": "0.5.1+oja.1"
+      },
+      {
+        "name": "tokio-postgres",
+        "upstreamVersion": "0.7.13",
+        "version": "0.7.13+oja.1"
+      }
+    ],
+    "fixes": {
+      "RUSTSEC-2026-0178": "7a00ffa9ad4d951ec0a4564b52f1780fa9d353c1",
+      "RUSTSEC-2026-0179": "d40097a36a85068ea50a3afbf0ce154ba439e7f0",
+      "RUSTSEC-2026-0180": "a7cf84b5c46431cbca9d8ff50508c23f446efa7d"
+    },
+    "sourceFiles": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "3927c4f3ceb761a3f3374f370d33e78142b5af18d434f73a6db7c6658ea36060"
+      },
+      {
+        "path": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "4d033ae2577fa5055e26ed7e4aa3b885522f20570d18366bbc0178e0ddc19e0f"
+      },
+      {
+        "path": "postgres-protocol/Cargo.toml",
+        "sha256": "d589b792410a5b21b85667d798a1f7658d1bc4fca5ef8b10cf56fe0b31dcf1a4"
+      },
+      {
+        "path": "postgres-types/Cargo.toml",
+        "sha256": "43439c785f15d9d7228d7329f1524b38ecdeb0046cb9e2e7b91e1134e61a0f9f"
+      },
+      {
+        "path": "postgres-native-tls/Cargo.toml",
+        "sha256": "988dacfcd58959df01ccbc0b0fc893471827de1c602cdcd59dccf8a19b6e4051"
+      },
+      {
+        "path": "tokio-postgres/Cargo.toml",
+        "sha256": "d4b19acf986da205d2e22dea9516a55311e17af8abbffa5d84b71f3b9daa2ecd"
+      },
+      {
+        "path": "postgres-protocol/src/authentication/sasl.rs",
+        "sha256": "c703eb519c676896748e20638bad7c7a0fc1380c8d2824fe1aad02427c8dca72"
+      },
+      {
+        "path": "postgres-protocol/src/types/mod.rs",
+        "sha256": "6a42dd4fd1498f6b19b9d4d09d70b75405904910950050d09541223b296b09ab"
+      },
+      {
+        "path": "postgres-protocol/src/message/backend.rs",
+        "sha256": "c94ef585e01830a2d423fd4906f726440ac3046d6a87ac4bdd619b0688c82fc3"
+      },
+      {
+        "path": "postgres-types/src/lib.rs",
+        "sha256": "ef63e4af527203d9ff3095cd9868a17200bbcae6b365bfdc3cac7d3cae7d6673"
+      },
+      {
+        "path": "postgres-native-tls/src/lib.rs",
+        "sha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273"
+      },
+      {
+        "path": "tokio-postgres/src/row.rs",
+        "sha256": "a413f4b90ea5829cd5ea5dda8a13be582cea00ad5081cd5792cbde72da5c4ae7"
+      },
+      {
+        "path": "tokio-postgres/src/row/oja_security_contracts.rs",
+        "sha256": "81de14b2641d6b0c3e3994907eba3a238ca81facb1903baaefedd690eea7d9b9"
+      },
+      {
+        "path": "tokio-postgres/src/client.rs",
+        "sha256": "b66e3231800583111525e958d4e793c26a61b30ea33a9f7ae458b5bdfb1941b4"
+      },
+      {
+        "path": "tokio-postgres/src/config.rs",
+        "sha256": "45084a12e92a1761a2452eae3331116081f1e7d0a2ea196ffab1d7b585f6f69c"
+      },
+      {
+        "path": "tokio-postgres/src/connect_raw.rs",
+        "sha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e"
+      },
+      {
+        "path": "tokio-postgres/src/connect_tls.rs",
+        "sha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6"
+      },
+      {
+        "path": "tokio-postgres/src/query.rs",
+        "sha256": "fe5b4f5487990105e7bbeb022b231fffde323701e27f675ffa26767141c03b1c"
+      },
+      {
+        "path": "tokio-postgres/src/simple_query.rs",
+        "sha256": "eec6bacdd42d2d19c1166e65389472c232d9341e4e32be17c711c1731f15d303"
+      },
+      {
+        "path": "tokio-postgres/src/statement.rs",
+        "sha256": "b4816c834b429e1ceed7708a067ab713cd35e75a632073e630c947b6565615fd"
+      }
+    ]
+  }
+}

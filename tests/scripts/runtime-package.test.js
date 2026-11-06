@@ -34,10 +34,23 @@ test("runtime plan removes workspaces and development tools without changing pro
   );
   assert.equal(plan.lockfile.packages["node_modules/braces"], undefined);
   assert.equal(plan.lockfile.packages["node_modules/@shopify/cli"], undefined);
+  for (const tool of ["vite", "vite-tsconfig-paths", "esbuild", "rollup"])
+    assert.equal(plan.lockfile.packages[`node_modules/${tool}`], undefined);
   assert.equal(
     plan.lockfile.packages["node_modules/@prisma/client"].version,
     "6.19.3",
   );
+});
+
+test("the scoped minimatch backport cannot enter a runtime under a different folder name", (t) => {
+  const root = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "runtime-backport-"),
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  pkg(root, "disguised-helper", "@oja/minimatch", "9.0.9-oja.1");
+  const result = inspectRuntimeToolchain(root, { checkAncestors: false });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.forbiddenPackages, ["@oja/minimatch"]);
 });
 
 test("runtime plan rejects unresolved, linked, extraneous and forbidden production paths", () => {
@@ -141,6 +154,19 @@ test("runtime startup rejects outside module lookup paths", () => {
     if (previous === undefined) delete process.env.NODE_PATH;
     else process.env.NODE_PATH = previous;
   }
+});
+
+test("runtime rejects build-only bundlers even when installed under aliases", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-bundler-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const tool of ["vite", "vite-tsconfig-paths", "esbuild", "rollup"])
+    pkg(root, `alias-${tool}`, tool);
+  assert.deepEqual(inspectRuntimeToolchain(root).forbiddenPackages, [
+    "esbuild",
+    "rollup",
+    "vite",
+    "vite-tsconfig-paths",
+  ]);
 });
 
 test("partial copy failure cleans staged modules without removing original modules", () => {

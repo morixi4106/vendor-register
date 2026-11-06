@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "role": "javy-source",
+  "version": "9.1.0+oja.1",
+  "source": {
+    "repository": "bytecodealliance/javy",
+    "commit": "66f04f1fa2065123e0f712cddcee20770f58b13e",
+    "sha256": "5f51e3c3109a6321e619182e23da64961d6746201834e9d1c941390e866ce17e"
+  },
+  "baseline": {
+    "version": "9.0.0",
+    "repository": "bytecodealliance/javy",
+    "commit": "03458aaa9ed3e56d9a2baffcf646ac38f69664b5",
+    "manifestSha256": "b310cbce35730bce014c5f78fa3340a632393be208011fa3244985ad300b1b8c",
+    "lockfileSha256": "fc1329878e52f3b282b768518e5909d4807c4c311079383b9f55c77d86d54121"
+  },
+  "patch": {
+    "path": "vendor/native/javy/javy.patch",
+    "sha256": "dfd12675f59a82ee216f8f1a5dd44759b88d31a26e6f81037bbbc33896569f3e"
+  },
+  "lockfile": {
+    "path": "vendor/native/javy/Cargo.lock",
+    "sha256": "19d4cc9241ccb614d7d75b9aa5a910ee4348dac4e7bdc5cff64b52556bef3521"
+  },
+  "wirm": {
+    "upstreamVersion": "5.1.0",
+    "version": "5.1.0+oja.1",
+    "sha256": "cbf24563802785ba2885e5357ab24d56a3b13b9884d9102347fe663d712df462",
+    "patch": {
+      "path": "vendor/native/javy/wirm.patch",
+      "sha256": "8d983601eec62a963db509cca64660d292b5d9471a5a6ae8dd20a8232fd5e3fa"
+    },
+    "testSource": {
+      "repository": "composablesys/wirm",
+      "commit": "a03a3eb0466e8a7950ce601481505749b10f660c",
+      "sha256": "6c018a7e6f4b484d0affd22641005b7074f6f953bb820c71b5e216edfe4861ec",
+      "files": [
+        {
+          "path": "tests/common/wast_iter.rs",
+          "sha256": "4944e1371d6ebb84595125b256aa25e68e0a9f7ca3798467111057941b123907"
+        },
+        {
+          "path": "tests/common/validate.rs",
+          "sha256": "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f"
+        }
+      ]
+    }
+  },
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6f97ee682dc04d58a3f91517358d0db8e545c6b90f0d44653b2c447ff660b938"
+    },
+    {
+      "path": ".cargo/config.toml",
+      "sha256": "5332d890c6d74a4e866612f4a667f878108818f02e01f4bcbe8a928452608336"
+    },
+    {
+      "path": "crates/cli/Cargo.toml",
+      "sha256": "de639e9e350efe6d76f96cde7d8e46402f3a0cd13220a4e9f2e08b8c83339fff"
+    },
+    {
+      "path": "crates/cli/build.rs",
+      "sha256": "893598d7352009abf4098f66e0542b84b95b8a062d8f60b84ba0f5e9253afdbd"
+    },
+    {
+      "path": "crates/codegen/Cargo.toml",
+      "sha256": "17dac2eccc6cc17bdc1a2d283d1fec75f66adaa4b6006576b6a06d32b446913e"
+    },
+    {
+      "path": "crates/codegen/src/lib.rs",
+      "sha256": "27401a64a1f2b4b61fb8e576879e7afcc519bd2af4a7dfcbc806edca7cb17d0a"
+    },
+    {
+      "path": "crates/codegen/src/plugin.rs",
+      "sha256": "94fbc16fe874a62c6260a900c404421a914fb0aaef843c67de640cd453a9e8d0"
+    },
+    {
+      "path": "crates/codegen/src/js.rs",
+      "sha256": "d921879a72a679601a5282d049e6e1ce8bcdd074b80f85b18dad43d92513de77"
+    },
+    {
+      "path": "crates/plugin/Cargo.toml",
+      "sha256": "b59508d82700cd83744598dd9d56cf698b9b86f4d9d49df98a2adec3b176b2f6"
+    },
+    {
+      "path": "crates/plugin-processing/Cargo.toml",
+      "sha256": "ce1a88386b402a423d08c7edf2f8605a8341e52efb2452625b87a7f94589901b"
+    },
+    {
+      "path": "crates/plugin-processing/src/lib.rs",
+      "sha256": "7a0f9cfb0fe3a63baf9458ba4a225a5790579bdcf48a76b46c4dbfdfd18772fa"
+    },
+    {
+      "path": "crates/profiler/Cargo.toml",
+      "sha256": "257589bf016ea3c4c7f09a5ef2e946b32b49b3b8cdf90f6cdb7a42f92d45900a"
+    },
+    {
+      "path": "crates/profiler/src/lib.rs",
+      "sha256": "ec25cb7b474637af0ab4f6a617518d80e75c8cea14d29c22d30a0beb5d769357"
+    },
+    {
+      "path": "vendor/wirm/Cargo.toml",
+      "sha256": "d544c10ebc86504cba1400ab1da46ec0444de898b4a57f3ed66386950046398d"
+    },
+    {
+      "path": "vendor/wirm/src/ir/instr_tests.rs",
+      "sha256": "638348988542968c14a1ba624af6a3c7e8257cbc6a5b2b83753b7ad156f08fb8"
+    },
+    {
+      "path": "vendor/wirm/tests/common/wast_iter.rs",
+      "sha256": "4944e1371d6ebb84595125b256aa25e68e0a9f7ca3798467111057941b123907"
+    },
+    {
+      "path": "vendor/wirm/tests/common/validate.rs",
+      "sha256": "be90edeef139858381189070ba6605a129049aa86b739a2dfbd009f3de54d37f"
+    },
+    {
+      "path": "vendor/jit-debug-bridge/Cargo.toml",
+      "sha256": "db0fb5475e925a10607311da32a9411fd8a9ca7b47d21c9b45006e0805df04f1"
+    },
+    {
+      "path": "vendor/jit-debug-bridge/src/lib.rs",
+      "sha256": "a5edd1296b5d525cad85e7966d7f264ceb4330ddae8f4a109d802f9523a949e5"
+    }
+  ]
+}

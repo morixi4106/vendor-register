@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { domesticCheckoutContext } from "../fixtures/checkoutCommerceContext.js";
 
 import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../../app/services/checkoutValidationLiveProbe.js";
 
@@ -492,6 +493,9 @@ test("standard direct checkout requires one payment projection instead of market
 
   const inspection = await inspectOperationalReadiness({
     prismaClient,
+    checkoutContext: domesticCheckoutContext({
+      env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+    }),
     env: {
       PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
       MULTI_SELLER_STOREFRONT_CHECKOUT_ENABLED: "false",
@@ -522,8 +526,7 @@ test("standard direct checkout requires one payment projection instead of market
   );
   assert.equal(
     inspection.rows.find(
-      (row) =>
-        row.definition.key === "INDEPENDENT_SALES_STOP_DRILL_COMPLETED",
+      (row) => row.definition.key === "INDEPENDENT_SALES_STOP_DRILL_COMPLETED",
     ).definition.supplemental,
     true,
   );
@@ -695,7 +698,15 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
         return 0;
       },
     },
+    internationalShippingCountryAvailability: {
+      async findMany() {
+        return [];
+      },
+    },
     product: {
+      async findMany() {
+        return [];
+      },
       async count() {
         return 0;
       },
@@ -753,6 +764,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
     prismaClient,
     env,
     now: new Date("2026-08-08T00:00:00Z"),
+    checkoutContext: domesticCheckoutContext({ env }),
   });
   const strictRow = inspection.rows.find(
     (row) => row.definition.key === LIVE_ORDER_REFUND_E2E_CHECK_KEY,
@@ -789,6 +801,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
 
   const expandedScope = await inspectOperationalReadiness({
     prismaClient,
+    checkoutContext: domesticCheckoutContext({ env: { ...env, PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true" } }),
     env: {
       ...env,
       PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: "true",
@@ -822,6 +835,7 @@ test("a current limited launch substitutes only the strict order-refund E2E chec
   });
   const cancelled = await inspectOperationalReadiness({
     prismaClient,
+    checkoutContext: domesticCheckoutContext({ env }),
     env,
     now: new Date("2026-08-08T00:00:00Z"),
   });

@@ -81,6 +81,7 @@ export function buildShopifyProductSyncChecks(syncState) {
 }
 export async function inspectProductShippingProfiles({
   prismaClient = prisma,
+  shopDomain = null,
   now = new Date()
 } = {}) {
   if (!prismaClient.product?.findMany) {
@@ -113,6 +114,7 @@ export async function inspectProductShippingProfiles({
     const products = await prismaClient.product.findMany({
       where: {
         approvalStatus: "approved",
+        ...(shopDomain ? { shopDomain: normalizeShopDomain(shopDomain) } : {}),
         vendorStore: {
           is: {
             isTestStore: false
@@ -301,6 +303,13 @@ export async function inspectProductShippingProfiles({
       internationalRequirementCatalogMissing,
       euShippingBlocked,
       airPacketCount: airPacketProducts.length,
+      internationalConfigured: activeRows.length > 0 || products.some(product =>
+        product.internationalShippingMethod === PRODUCT_SHIPPING_METHOD.AIR_PACKET ||
+        EU_PRODUCT_ALLOWED_STATUSES.has(product.productEuStatus) ||
+        (Array.isArray(product.countryPolicy?.allowedCountries) && product.countryPolicy.allowedCountries.some(country =>
+          String(country || "").trim() && String(country).trim().toUpperCase() !== "JP"
+        ))
+      ),
       multiVariantAirPacket,
       weightSyncIssues,
       serviceAvailability: {
