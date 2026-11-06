@@ -7,7 +7,7 @@ edition = "2021"
 exclude = ["vendor/tiberius"]
 
 [dependencies]
-tiberius = { path = "vendor/tiberius", default-features = false, features = ["tds73", "winauth", "native-tls", "vendored-openssl", "chrono", "bigdecimal", "sql-browser-tokio"] }
+tiberius = { path = "vendor/tiberius", default-features = false, features = ["tds73", "winauth", "native-tls", "chrono", "bigdecimal", "sql-browser-tokio"] }
 tokio = { version = "=1.54.1", features = ["macros", "rt", "sync", "time"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std", "io", "sink", "async-await"] }
 

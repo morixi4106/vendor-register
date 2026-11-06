@@ -164,13 +164,11 @@ test("metadata binds exact local identities, proc macro consumer and original TL
             "bigdecimal_",
             "chrono",
             "native-tls",
-            "opentls",
             "rustls-pki-types",
             "sql-browser-tokio",
             "tds73",
             "tokio",
             "tokio-util",
-            "vendored-openssl",
             "winauth",
           ],
           deps: [{ pkg: "macro" }],
@@ -194,6 +192,9 @@ test("metadata binds exact local identities, proc macro consumer and original TL
     },
     (j) => {
       j.resolve.nodes[0].deps = [];
+    },
+    (j) => {
+      j.resolve.nodes[0].features.push("vendored-openssl");
     },
     (j) => {
       j.packages[2].targets[0].kind = ["lib"];

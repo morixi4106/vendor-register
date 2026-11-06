@@ -125,10 +125,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn row_without_metadata_is_rejected() { login_error(&[0xd1], "metadata").await; }
+    async fn row_without_metadata_is_rejected() { login_error(&[0xd1], "COLMETADATA").await; }
 
     #[tokio::test]
-    async fn nbcrow_without_metadata_is_rejected() { login_error(&[0xd2], "metadata").await; }
+    async fn nbcrow_without_metadata_is_rejected() { login_error(&[0xd2], "COLMETADATA").await; }
 
     #[tokio::test]
     async fn feature_ack_rejects_unknown_feature() { login_error(&[0xae, 1], "unsupported feature").await; }

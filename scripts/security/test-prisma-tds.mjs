@@ -137,13 +137,11 @@ export function checkTdsMetadata(metadata, fixture) {
       "bigdecimal_",
       "chrono",
       "native-tls",
-      "opentls",
       "rustls-pki-types",
       "sql-browser-tokio",
       "tds73",
       "tokio",
       "tokio-util",
-      "vendored-openssl",
       "winauth",
     ].sort(),
   );
@@ -308,17 +306,26 @@ export async function testPrismaTds(root = ROOT) {
     fixture,
     "compile",
   );
-  const artifacts = built
+  const messages = built
     .trim()
     .split(/\r?\n/)
-    .map((line) => JSON.parse(line))
-    .filter(
-      (x) =>
-        x.reason === "compiler-artifact" &&
-        x.target.name === "oja_prisma_tds_probes" &&
-        x.profile.test &&
-        x.executable,
-    );
+    .map((line) => JSON.parse(line));
+  const compiledTds = messages.filter(
+    (x) => x.reason === "compiler-artifact" && x.target.name === "tiberius",
+  );
+  assert.equal(compiledTds.length, 1);
+  const tdsId = metadata.packages.find((x) => x.name === "tiberius").id;
+  assert.deepEqual(
+    [...compiledTds[0].features].sort(),
+    [...metadata.resolve.nodes.find((x) => x.id === tdsId).features].sort(),
+  );
+  const artifacts = messages.filter(
+    (x) =>
+      x.reason === "compiler-artifact" &&
+      x.target.name === "oja_prisma_tds_probes" &&
+      x.profile.test &&
+      x.executable,
+  );
   assert.equal(artifacts.length, 1);
   const executable = fs.realpathSync(artifacts[0].executable);
   assert.ok(executable.startsWith(fs.realpathSync(tools.home) + path.sep));
@@ -351,6 +358,7 @@ export async function testPrismaTds(root = ROOT) {
       read(path.join(home, "registry-assessment.json")),
     ),
     executableSha256: sha(executableBytes),
+    compiledTdsFeatures: compiledTds[0].features,
     executableBytes: executableBytes.length,
     commands,
     result,
