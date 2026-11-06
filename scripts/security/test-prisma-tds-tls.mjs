@@ -54,7 +54,7 @@ export function validateTdsTlsPolicy(p) {
   assert.equal(p.schemaVersion, 1);
   assert.equal(
     p.originalTdsPolicySha256,
-    "29754a14f358762b17bf3ebb9985e8a509c2642fcae33baa6b7ec88e20a409ec",
+    "ebd344db5c49c3ae1366ec2078557850ff0e1ed6800829a0d6af94b7424d5ca6",
   );
   assert.deepEqual(p.targets, TARGETS);
   assert.equal(p.encryptionMode, "Strict");
@@ -198,7 +198,7 @@ export function validateClassicTdsTlsPolicy(p) {
   assert.equal(p.schemaVersion, 1);
   assert.equal(
     p.strictTlsPolicySha256,
-    "834698fd65c5d943f4fd5a07efa55370491b615c27ee68d657bcca644d150b31",
+    "8f548616f48db7c04e9171f967521a772e314b5893aa82b39f80ee50e761ac4d",
   );
   assert.equal(p.fixturePath, "tests/fixtures/prisma-tds-classic/lib.rs");
   assert.match(p.fixtureSha256, /^[a-f0-9]{64}$/);

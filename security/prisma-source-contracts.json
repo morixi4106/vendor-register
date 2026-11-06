@@ -517,7 +517,7 @@
     "referenceCommit": "d19155f5f9206662964e388e80c68b85f3edb09a",
     "patch": {
       "path": "vendor/native/prisma/graphql.patch",
-      "sha256": "17fbff50840d7c5c067df236e432bcfcaa64aa07cece35e554526dcca6d5d358"
+      "sha256": "840a7fbada34b485b114c4b362235b04ca00573a30da6b7a26fcd9f839cc89b2"
     },
     "sourceFiles": [
       {
@@ -534,7 +534,7 @@
       },
       {
         "path": "src/lib.rs",
-        "sha256": "aa6a66b1212126e674035a5ae15a653f634ccd138ce6f53f1bd2dde247628d1d"
+        "sha256": "09eb96201f33eb5deebfa0984153c17dd4745204ea145349eeb5f5b93e875f51"
       },
       {
         "path": "src/tokenizer.rs",
@@ -551,6 +551,14 @@
       {
         "path": "src/oja_security_contracts.rs",
         "sha256": "c0714c30e2dc78b86aaa06e5a96f80f6cdfdd039a2ec42d0dd40463afb4bbbaf"
+      },
+      {
+        "path": "src/common.rs",
+        "sha256": "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2"
+      },
+      {
+        "path": "src/oja_string_review.rs",
+        "sha256": "8c55d9929a733c21ede8d274a719a3d2b0145862314a5e04edb7f0ed7462255e"
       }
     ]
   },

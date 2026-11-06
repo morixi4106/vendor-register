@@ -21,12 +21,14 @@ diff --git a/src/lib.rs b/src/lib.rs
 index 3649bdf..04d8572 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -99,6 +99,8 @@ mod common;
+@@ -99,6 +99,10 @@ mod common;
  mod format;
  mod position;
  mod tokenizer;
 +#[cfg(test)]
 +mod oja_security_contracts;
++#[cfg(test)]
++mod oja_string_review;
  mod helpers;
  pub mod query;
  pub mod schema;
@@ -149,5 +151,148 @@ index 0000000..6174745
 +        assert_eq!(parse_query::<String>(&query).is_ok(), depth <= 50);
 +        let schema = format!("type Q{{a:{}Int{}}}", "[".repeat(depth), "]".repeat(depth));
 +        assert_eq!(parse_schema::<String>(&schema).is_ok(), depth < 50);
++    }
++}
+diff --git a/src/common.rs b/src/common.rs
+index 531b03e..c9f1176 100644
+--- a/src/common.rs
++++ b/src/common.rs
+@@ -149,38 +149,21 @@
+ fn unquote_block_string<'a>(src: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
+     debug_assert!(src.starts_with("\"\"\"") && src.ends_with("\"\"\""));
+-    let indent = src[3..src.len() - 3]
+-        .lines()
+-        .skip(1)
+-        .filter_map(|line| {
+-            let trimmed = line.trim_start().len();
+-            if trimmed > 0 {
+-                Some(line.len() - trimmed)
+-            } else {
+-                None // skip whitespace-only lines
+-            }
+-        })
+-        .min()
+-        .unwrap_or(0);
+-    let mut result = String::with_capacity(src.len() - 6);
+-    let mut lines = src[3..src.len() - 3].lines();
+-    if let Some(first) = lines.next() {
+-        let stripped = first.trim();
+-        if !stripped.is_empty() {
+-            result.push_str(stripped);
+-            result.push('\n');
+-        }
++    // GraphQL indentation is ASCII space/tab, not Rust's Unicode whitespace.
++    let raw = src[3..src.len() - 3]
++        .replace(r#"\""""#, r#"""""#)
++        .replace("\r\n", "\n")
++        .replace('\r', "\n");
++    let mut lines: Vec<&str> = raw.split('\n').collect();
++    let indent = lines.iter().skip(1).filter_map(|line| {
++        let n = line.bytes().take_while(|b| *b == b' ' || *b == b'\t').count();
++        if n < line.len() { Some(n) } else { None }
++    }).min().unwrap_or(0);
++    for line in lines.iter_mut().skip(1) {
++        // Content lines start with at least indent ASCII bytes; shorter lines are blank.
++        *line = &line[indent.min(line.len())..];
+     }
+-    let mut last_line = 0;
+-    for line in lines {
+-        last_line = result.len();
+-        if line.len() > indent {
+-            result.push_str(&line[indent..].replace(r#"\""""#, r#"""""#));
+-        }
+-        result.push('\n');
+-    }
+-    if result[last_line..].trim().is_empty() {
+-        result.truncate(last_line);
+-    }
+-
+-    Ok(result)
++    let blank = |line: &&str| line.bytes().all(|b| b == b' ' || b == b'\t');
++    let start = lines.iter().position(|line| !blank(line)).unwrap_or(lines.len());
++    let end = lines.iter().rposition(|line| !blank(line)).map_or(start, |i| i + 1);
++    Ok(lines[start..end].join("\n"))
+ }
+diff --git a/src/oja_string_review.rs b/src/oja_string_review.rs
+new file mode 100644
+--- /dev/null
++++ b/src/oja_string_review.rs
+@@ -0,0 +1,78 @@
++use crate::{parse_query, parse_schema};
++use crate::query::{Definition, OperationDefinition, Selection, Value};
++
++fn decoded(raw: &str) -> String {
++    let query = format!("{{a(value:\"\"\"{}\"\"\")}}", raw);
++    let doc = parse_query::<String>(&query).unwrap();
++    let Definition::Operation(OperationDefinition::SelectionSet(set)) = &doc.definitions[0]
++        else { panic!("unexpected document") };
++    let Selection::Field(field) = &set.items[0] else { panic!("unexpected field") };
++    let Value::String(value) = &field.arguments[0].1 else { panic!("unexpected value") };
++    value.clone()
++}
++
++#[test]
++fn mixed_unicode_indentation_is_safe() {
++    assert_eq!(decoded("\n   A\n \u{2003}B\n"), "  A\n\u{2003}B");
++    assert_eq!(decoded("\n  A\n \u{a0}B\n"), " A\n\u{a0}B");
++}
++
++#[test]
++fn unicode_whitespace_is_content_not_indentation() {
++    for c in ['\u{a0}', '\u{1680}', '\u{2000}', '\u{2003}', '\u{202f}', '\u{205f}', '\u{3000}'] {
++        assert_eq!(decoded(&format!("\n{}\n", c)), c.to_string());
++    }
++}
++
++#[test]
++fn first_line_content_and_trailing_spaces_are_preserved() {
++    assert_eq!(decoded("  first  \n  second\n"), "  first  \nsecond");
++    assert_eq!(decoded(" first "), " first ");
++}
++
++#[test]
++fn only_ascii_blank_boundary_lines_are_removed() {
++    assert_eq!(decoded(" \t\n\n  A\n\n \t\n"), "A");
++    assert_eq!(decoded("\n  A\n\n  B\n"), "A\n\nB");
++}
++
++#[test]
++fn empty_and_ascii_whitespace_only_strings_are_empty() {
++    for raw in ["", " ", "\t", "\n", "\r", "\r\n", " \t\r\n\t\r \n"] {
++        assert_eq!(decoded(raw), "");
++    }
++}
++
++#[test]
++fn tab_and_space_indentation_counts_characters() {
++    assert_eq!(decoded("\n\t A\n\t B\n"), "A\nB");
++    assert_eq!(decoded("\n\t A\n   B\n"), "A\n B");
++    assert_eq!(decoded("\n    A\n \n    B\n"), "A\n\nB");
++}
++
++#[test]
++fn carriage_return_line_endings_are_normalized() {
++    assert_eq!(decoded("\r  A\r  B\r"), "A\nB");
++    assert_eq!(decoded("\r\n  A\r  B\n  C\r\n"), "A\nB\nC");
++}
++
++#[test]
++fn escaped_triple_quotes_are_decoded_on_every_line() {
++    assert_eq!(decoded("first \\\"\"\"\n  next \\\"\"\"\n"), "first \"\"\"\nnext \"\"\"");
++}
++
++#[test]
++fn unicode_indent_corpus_covers_query_and_schema_entries() {
++    for c in ['\u{a0}', '\u{2003}', '\u{3000}', '\u{1f642}', '\u{e9}', '\u{301}'] {
++        for indent in 0..16 {
++            let raw = format!("\n{}A\n {}B\n", " ".repeat(indent), c);
++            let expected = format!("{}A\n{}{}B", " ".repeat(indent.saturating_sub(1)), if indent == 0 { " " } else { "" }, c);
++            assert_eq!(decoded(&raw), expected);
++            let schema = format!("\"\"\"{}\"\"\" type Q {{ a: String }}", raw);
++            let doc = parse_schema::<String>(&schema).unwrap();
++            let crate::schema::Definition::TypeDefinition(crate::schema::TypeDefinition::Object(obj)) =
++                &doc.definitions[0] else { panic!("unexpected schema") };
++            assert_eq!(obj.description.as_ref().unwrap(), &expected);
++        }
 +    }
 +}

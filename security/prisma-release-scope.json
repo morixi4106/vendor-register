@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "enginePolicySha256": "2da8f59fe8bf52764c1097bbf5f77766313ea7e9bd94857aa0f6c9cee904d217",
+  "enginePolicySha256": "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
   "metadata": {
     "linux": "717a3da40cc08853d6acd8f8adc5c1d04c67d2a9e5eb5e9b83699e17dfe34a10",
     "windows": "efa10eb2d7bf25efe3ec49d32916e3ddd8d5030ca76004cf6b7eecf6f5b0d653"
@@ -39,8 +39,8 @@
       "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
       "releaseRoots": ["query-engine-node-api"],
       "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42038861757",
-      "completed": "Patched depth boundaries, original units, request-handler consumers and prior native bindings. Additional decoder read-through identified a UTF-8 byte-boundary panic; a separately bound candidate patch and baseline/regression replay are recorded in security/reviews/prisma-graphql-strings.md.",
-      "remaining": "The new string fix is candidate-only and is not applied to the native engine inputs or old binary/DB pins. Complete its actual-source adoption/rebuild/pin verification and the remaining parser source review; prior depth success does not fix this decoder panic."
+      "completed": "Depth boundaries and Unicode decoder fix are adopted into the main source patch and ten byte-bound inputs; the original candidate baseline/replay remains historical. Nine exact decoder contracts and actual N-API Unicode controls are required by the current recipes. See security/reviews/prisma-graphql-strings.md.",
+      "remaining": "Rebuild and independently verify the release-native artifacts and refresh DB/runtime pins for the adopted source before treating it as present in a binary. Remaining parser source review and whole-engine/provider/production approval are separate; old depth-only binary success cannot satisfy the new Unicode controls."
     },
     {
       "packages": ["mysql_async"],

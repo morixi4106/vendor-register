@@ -51,16 +51,22 @@ even after an error. Its receipt distinguishes baseline, candidate and full
 library results. Both OS jobs must pass; Node-only source/receipt tests are
 not execution of Rust code.
 
-## Adoption Is Still Required
+## Actual Source Adoption
 
-The candidate patch is **not** part of `graphql.patch` or the native engine
-policy. No release build automatically applies it. Existing engine/native/DB
-pins still represent the old decoder; prior depth/DB success is not evidence
-that this new bug is fixed in those binaries. Production/native approvals
-remain false and must not be granted against that old input.
+The reviewed decoder fix and its nine tests are now part of `graphql.patch`
+and the main engine source policy. Ten byte-bound inputs include common.rs,
+the test registration and the regression module. Existing dependency versions,
+locks and depth50 behavior are unchanged. The old candidate policy/patch and
+baseline fixture remain historical attribution, not the release recipe.
 
-After the isolated replay succeeds, fold the reviewed fix into the actual
-engine source policy, rebuild both release-native artifacts, independently
-verify their new bytes, and refresh the DB/runtime evidence and fixed pins.
-Do not weaken a binding to reuse an older binary. Remaining parser/driver
-source reviews and provider provenance remain independent requirements.
+The actual source recipe runs the nine adopted string tests and all61 library
+units without temporarily applying or restoring a candidate. The release
+N-API probe also requires four actual GraphQL/SQL string results, including the
+original failing Unicode patterns and bare-CR normalization, each bracketed by
+healthy SELECT1 controls. Older depth-only reports are rejected.
+
+Rebuild both release-native artifacts, independently verify their bytes, then
+refresh the DB/runtime evidence and fixed pins. Until those steps are verified,
+do not claim the old pinned binaries contain this fix. Production/native
+approvals remain false. Do not weaken a binding to reuse an older binary.
+Remaining parser/driver source reviews and provider provenance remain separate.

@@ -9,6 +9,7 @@ import {
   checkPrismaGraphqlWiring,
   checkPrismaGraphqlMetadata,
   prismaGraphqlArguments,
+  prismaGraphqlStringArguments,
 } from "../../scripts/security/prisma-graphql-source.mjs";
 import { prismaSourceInput } from "../../scripts/security/test-prisma-source.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
@@ -60,7 +61,18 @@ test("GraphQL recipe binds the original fork, upstream reference, limits and tes
       .length,
     2,
   );
-  assert.equal([...patch.matchAll(/^\+#\[test\]/gm)].length, 18);
+  assert.equal([...patch.matchAll(/^\+#\[test\]/gm)].length, 27);
+  assert.ok(
+    entry.sourceFiles.some(
+      (f) =>
+        f.path === "src/common.rs" &&
+        f.sha256 ===
+          "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2",
+    ),
+  );
+  assert.ok(
+    entry.sourceFiles.some((f) => f.path === "src/oja_string_review.rs"),
+  );
   assert.ok(patch.includes("#[cfg(test)]"));
   assert.deepEqual(prismaGraphqlArguments(), [
     "test",
@@ -69,6 +81,14 @@ test("GraphQL recipe binds the original fork, upstream reference, limits and tes
     "graphql-parser",
     "--lib",
     "oja_security_contracts",
+  ]);
+  assert.deepEqual(prismaGraphqlStringArguments(), [
+    "test",
+    "--locked",
+    "--package",
+    "graphql-parser",
+    "--lib",
+    "oja_string_review",
   ]);
 });
 
@@ -85,7 +105,7 @@ function fixture(t) {
   );
   fs.writeFileSync(
     path.join(source, "vendor/graphql/src/lib.rs"),
-    "#[cfg(test)]\nmod oja_security_contracts;\n",
+    "#[cfg(test)]\nmod oja_security_contracts;\n#[cfg(test)]\nmod oja_string_review;\n",
   );
   const pkg = {
     id: "graphql",
@@ -116,7 +136,7 @@ test("GraphQL source wiring requires the actual path dependency and all bound so
   checkPrismaGraphqlWiring(source, entry, (base, f) =>
     calls.push({ base, ...f }),
   );
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 10);
   assert.ok(calls.every((f) => f.base === path.join(source, "vendor/graphql")));
   assert.deepEqual(
     calls.map((f) => f.sha256),

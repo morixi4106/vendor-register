@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourcePolicySha256": "2da8f59fe8bf52764c1097bbf5f77766313ea7e9bd94857aa0f6c9cee904d217",
+  "sourcePolicySha256": "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
   "repository": "prisma/tiberius",
   "commit": "35605c90adb38cc107d35c3432fd2643d9d6e1e6",
   "archiveSha256": "9626ec79fc37ae412cc5eb354c0baab3c2eae7d9e3581fe06e9dd375ce9534f2",

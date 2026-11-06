@@ -13,6 +13,8 @@ const FILES = [
   "src/query/grammar.rs",
   "src/schema/grammar.rs",
   "src/oja_security_contracts.rs",
+  "src/common.rs",
+  "src/oja_string_review.rs",
 ];
 const HASH = /^[a-f0-9]{64}$/;
 const exact = (value, keys) =>
@@ -124,7 +126,10 @@ export function checkPrismaGraphqlWiring(source, entry, input) {
     manifest.features ||
     !fs
       .readFileSync(path.join(vendor, "src/lib.rs"), "utf8")
-      .includes("#[cfg(test)]\nmod oja_security_contracts;")
+      .includes("#[cfg(test)]\nmod oja_security_contracts;") ||
+    !fs
+      .readFileSync(path.join(vendor, "src/lib.rs"), "utf8")
+      .includes("#[cfg(test)]\nmod oja_string_review;")
   )
     throw new Error("prisma_graphql_wiring_invalid");
 }
@@ -168,5 +173,16 @@ export function prismaGraphqlArguments() {
     "graphql-parser",
     "--lib",
     "oja_security_contracts",
+  ];
+}
+
+export function prismaGraphqlStringArguments() {
+  return [
+    "test",
+    "--locked",
+    "--package",
+    "graphql-parser",
+    "--lib",
+    "oja_string_review",
   ];
 }

@@ -511,7 +511,8 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
       maximumNesting: 50,
       rejected: 6,
       acceptedLexicalCases: 3,
-      controlQueries: 18,
+      controlQueries: 26,
+      unicodeCases: 4,
     },
   };
   const verify = (value) =>
@@ -524,6 +525,15 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
   assert.equal(verify(report), report);
   for (const mutate of [
     (r) => r.checks.pop(),
+    (r) => {
+      delete r.graphql.unicodeCases;
+    },
+    (r) => {
+      r.graphql.unicodeCases = 0;
+    },
+    (r) => {
+      r.graphql.controlQueries = 18;
+    },
     (r) => {
       r.graphql.controlQueries = 0;
     },

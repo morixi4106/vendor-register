@@ -133,8 +133,22 @@ try {
         await control();
       }
       for (const query of accepted) { await control(); healthy(await request(single(query))); await control(); }
-      graphql = { maximumNesting: 50, rejected: 6, acceptedLexicalCases: 3, controlQueries: controls };
-      assert.equal(controls, 18);
+      const unicode = [
+        ["\n   SELECT 'A\n \u2003B' AS probe\n", "A\n\u2003B"],
+        ["\n  SELECT 'A\n \u00a0B' AS probe\n", "A\n\u00a0B"],
+        ["\r  SELECT 'A\r  B' AS probe\r", "A\nB"],
+        ["\n  SELECT 'A\n \u3000\n  B' AS probe\n", "A\n\u3000\n B"],
+      ];
+      for (const [sql, expected] of unicode) {
+        await control();
+        const result = await request(single(raw(sql, true)));
+        assert.equal(result.errors, undefined);
+        assert.deepEqual(result.data.queryRaw.columns, ["probe"]);
+        assert.deepEqual(result.data.queryRaw.rows, [[expected]]);
+        await control();
+      }
+      graphql = { maximumNesting: 50, rejected: 6, acceptedLexicalCases: 3, unicodeCases: unicode.length, controlQueries: controls };
+      assert.equal(controls, 26);
     } finally { await engine.disconnect("{}", "2000"); }
   });
   await record("migration-history", async () => {

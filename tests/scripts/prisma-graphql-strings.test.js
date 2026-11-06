@@ -27,7 +27,7 @@ function output(phase) {
   );
 }
 
-test("string candidate binds fixed original source and all three byte-exact inputs, without native adoption", () => {
+test("historical string candidate binds original source and replay inputs without implying current native adoption", () => {
   assert.equal(validateGraphqlStringPolicy(policy), policy);
   for (const input of [policy.patch, policy.baseline, policy.regressions])
     assert.ok(prismaSourceInput(root, input).length > 100);

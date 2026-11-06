@@ -269,11 +269,12 @@ export function verifyPrismaNativeProbeReport(
     Object.keys(report.graphql || {})
       .sort()
       .join() !==
-      "acceptedLexicalCases,controlQueries,maximumNesting,rejected" ||
+      "acceptedLexicalCases,controlQueries,maximumNesting,rejected,unicodeCases" ||
     report.graphql.maximumNesting !== 50 ||
     report.graphql.rejected !== 6 ||
     report.graphql.acceptedLexicalCases !== 3 ||
-    report.graphql.controlQueries !== 18 ||
+    report.graphql.controlQueries !== 26 ||
+    report.graphql.unicodeCases !== 4 ||
     report.loadedLibrarySha256 !== artifacts.library.sha256 ||
     report.migrationsApplied !== 2 ||
     report.rowsRemaining !== 0 ||

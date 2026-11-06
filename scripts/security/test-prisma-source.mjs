@@ -18,8 +18,9 @@ import {
   checkPrismaGraphqlWiring,
   checkPrismaGraphqlMetadata,
   prismaGraphqlArguments,
+  prismaGraphqlStringArguments,
 } from "./prisma-graphql-source.mjs";
-import { testGraphqlStringCandidate } from "./prisma-graphql-strings.mjs";
+import { verifyGraphqlStringOutput } from "./prisma-graphql-strings.mjs";
 import {
   validatePrismaMysqlSources,
   preparePrismaMysqlSources,
@@ -1328,7 +1329,17 @@ export async function testPrismaSource(
         "graphql-upstream",
         900_000,
       ),
-      52,
+      61,
+    );
+    tests.graphqlStrings = verifyGraphqlStringOutput(
+      execute(
+        cargo,
+        prismaGraphqlStringArguments(),
+        source,
+        "graphql-strings",
+        900_000,
+      ),
+      "regressions",
     );
   }
   if (!assessOnly && !nativeProbe && !graphqlOnly) {
@@ -1437,15 +1448,6 @@ export async function testPrismaSource(
     throw new Error("prisma_lock_changed_during_test");
   checkPrismaSourceWiring(source, policy);
   checkPrismaGraphqlWiring(source, policy.graphqlSource, prismaSourceInput);
-  if (graphqlOnly) {
-    tests.graphqlStringCandidate = testGraphqlStringCandidate({
-      root,
-      source,
-      cargo,
-      execute,
-    });
-    checkPrismaGraphqlWiring(source, policy.graphqlSource, prismaSourceInput);
-  }
   const receipt = {
     ...prismaSourceReceipt(
       policy,
@@ -1461,7 +1463,7 @@ export async function testPrismaSource(
     overrideSourceAuditOk: overrides.sourceAuditOk,
     gitIdentityAssessmentSha256: digest(JSON.stringify(gitAssessment)),
     testScope: graphqlOnly
-      ? "actual patched GraphQL parser contracts, original units and separately bound string candidate; not complete engine, NAPI, database or production approval"
+      ? "actual adopted GraphQL depth/string contracts and complete library units; not complete engine, NAPI, database or production approval"
       : nativeProbe
         ? "native NAPI/schema and synthetic migrations/client probes; explicit optional release/TLS evidence only; not PgBouncer, actual app migrations, whole-engine or production approval"
         : "source modules; not NAPI, migrations, database or production approval",
