@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "run": 42221077360,
+    "artifact": 13504146003,
+    "head": "0a248d50318f63e36379f45ca1ab8a32c9469b4f",
+    "optimizerReceiptSha256": "54c29a073f0f6585ca65952ff0036579bdfdb4bace10bde2b4d17156e3c3c6c3",
+    "finalReceiptSha256": "25ddd0dc6f425957fb6a9d81e22a2f4ed60df6b366773edfb0512142c6d30b76",
+    "runnerSha256": "57c6c1491e7644a312517060636063d06f41f39d9cb20ea8916171194c652b32"
+  },
+  "sdk": {
+    "name": "@shopify/shopify_function",
+    "version": "2.0.1",
+    "repository": "Shopify/shopify-function-javascript",
+    "commit": "40e8dc49ff5b29b6add4babe89e538c3d19df30d",
+    "archiveSha256": "eff48c5ceb71dd1d34f4bafd6c6e8b6adf0bbc2929dd952dd20e0fc4732b836b",
+    "integrity": "sha512-MEqIm1RJuF28ppuOqXpPeJ3SDSowtgmDGS5GYZ5j85izovmQ2HxK0oFKZyjmfYMvzZairRKVvHp+YYdPdqdp4g==",
+    "fileCount": 14,
+    "unpackedSize": 9864,
+    "runtimeFiles": [
+      {
+        "path": "index.ts",
+        "bytes": 171,
+        "sha256": "d3f96c3e2d0f5df8af974d9aabc4cddeffd5320a71e1ab1af9ba8574a7ac3728",
+        "gitBlob": "523d31747959f50f4cb9c9eeab8495062e3b9384"
+      },
+      {
+        "path": "run.ts",
+        "bytes": 654,
+        "sha256": "6f9e114f199ed6075101f31b3ab47531d749910238b4f06b7386efca94168dab",
+        "gitBlob": "1bc3c50911485a9d5054c0540cb3ad8e65a32f55"
+      }
+    ]
+  },
+  "provider": {
+    "size": 1233749,
+    "namespace": "shopify_functions_javy_v4",
+    "compilerSha256": "b1b5f0d38cb5cd1692fa027db8186b73c3673cacd337bf3d6ee8cf16cac70087",
+    "compilerGitHashClaim": "0a6b23a166f55dafddd944550271a94d8d6a16be",
+    "runnerSha256": "2d00688d1d3068dfe243d7d17b039a95a3cbc0ae271566b504e8e9f544156a88",
+    "runnerGitHashClaim": "3365965aea7979ef7226f4d77b6571960a634b08",
+    "runnerSourceCommit": "47dca499b04de5158822cc451cd4daf61dfd0fd0",
+    "runnerGitBlob": "8e27424146ebae909fd968315f5c7c51d9f6b64e"
+  },
+  "providerSourceProvenanceVerified": false,
+  "providerSbomVerified": false,
+  "wholeCompilerVerified": false,
+  "fullFunctionVerified": false,
+  "productionApproved": false,
+  "artifactStatus": "NOT_VERIFIED"
+}

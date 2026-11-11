@@ -1,0 +1,32 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "esbuild",
+      "version": "0.25.12-oja.go1.27.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9ab5d52253e50299b7220c9a3790b7825ddf14381415f56eb32eae127e6cb977"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/evanw/esbuild/commit/208f539945b145e7c9d6d844290f81c3fe5af320"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "stdlib",
+      "version": "go1.27.4",
+      "purl": "pkg:golang/stdlib@1.27.4"
+    }
+  ]
+}

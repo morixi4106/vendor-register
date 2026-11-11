@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-11-11",
+  "repository": "prisma/graphql-parser",
+  "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
+  "archiveSha256": "178523e71418f058b4b0eeb829b2c8b36064378d77eb83707130fb2e9916653e",
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
+  "reviewScope": "Runtime portions of all sixteen owned Rust source files and the package manifest, not all tests/benches/dependencies",
+  "ownedRuntimeStatus": "READ_WITH_FINDINGS",
+  "files": [
+    {
+      "path": "src/common.rs",
+      "originalGitBlob": "b8fd9cedb93cf842ef93039b003688ab9ad4526b",
+      "originalSha256": "e17bfd404e1746db94962fa77002168c9e32731f4bb00edfeae0a0810d96c8c9",
+      "adoptedSha256": "be807ebef156b7cdd98cf51b8b5a69a4394c70089614604a927d1c4ba2f6c7a2"
+    },
+    {
+      "path": "src/format.rs",
+      "originalGitBlob": "62f2f9d6a9e512b6ceada9a292bd5be2819952ea",
+      "originalSha256": "0b5a62495841b1411edf7960df19321325d103738dd1c678d532bbf499398995",
+      "adoptedSha256": "0b5a62495841b1411edf7960df19321325d103738dd1c678d532bbf499398995"
+    },
+    {
+      "path": "src/helpers.rs",
+      "originalGitBlob": "079cbd282473108ad01f671ef82658ebf1f56831",
+      "originalSha256": "a09bdcdd6e46eb4acc7cc74dc05a164e4f3016ca522a7793c2cb7532701b1544",
+      "adoptedSha256": "a09bdcdd6e46eb4acc7cc74dc05a164e4f3016ca522a7793c2cb7532701b1544"
+    },
+    {
+      "path": "src/lib.rs",
+      "originalGitBlob": "3649bdfe2e5afd7801db6068ce30b4ea58b7cf2f",
+      "originalSha256": "ce1925732d29666c33eb09413aa5d02ff7bbd00fd4c4e3b001d0c8f78ff327df",
+      "adoptedSha256": "09eb96201f33eb5deebfa0984153c17dd4745204ea145349eeb5f5b93e875f51"
+    },
+    {
+      "path": "src/position.rs",
+      "originalGitBlob": "a3aaf12d42471d8dd99b7e152aaa1082da50fc4a",
+      "originalSha256": "6ad8e70d83188f32a59eb7be06bc44ba432769551dcff90b1b485aa2f6a07bdb",
+      "adoptedSha256": "6ad8e70d83188f32a59eb7be06bc44ba432769551dcff90b1b485aa2f6a07bdb"
+    },
+    {
+      "path": "src/query/ast.rs",
+      "originalGitBlob": "62e2674ea1f00dc04d6b3a6b15c81c99abbfd1f4",
+      "originalSha256": "16d06cae2db7f7b4067d2e2a75955cf6c44a3884d5782f2a158fbe6dca55587d",
+      "adoptedSha256": "16d06cae2db7f7b4067d2e2a75955cf6c44a3884d5782f2a158fbe6dca55587d"
+    },
+    {
+      "path": "src/query/error.rs",
+      "originalGitBlob": "6907e552e94614d1c6f9f35406f80c3002700f52",
+      "originalSha256": "0a5e4b468797700e66cb9376b725098ed065e37ce358c7d42223aafbca37b389",
+      "adoptedSha256": "0a5e4b468797700e66cb9376b725098ed065e37ce358c7d42223aafbca37b389"
+    },
+    {
+      "path": "src/query/format.rs",
+      "originalGitBlob": "11833c4888428b57a5b33ce3ca9cd0554e38451c",
+      "originalSha256": "9146aedeaacbeebdae90443e6ef939847763bdb861bec2395cd55ba7e262bf83",
+      "adoptedSha256": "9146aedeaacbeebdae90443e6ef939847763bdb861bec2395cd55ba7e262bf83"
+    },
+    {
+      "path": "src/query/grammar.rs",
+      "originalGitBlob": "08c69ce138325cecc0cbe7574ee0ee14ec04f4e3",
+      "originalSha256": "f034204b26ea846c60999d209a5113bac2fac6a56afbd8874b4466363f8394c3",
+      "adoptedSha256": "b6a6366c4b57496788dce65321b41af3f007893d79fd8c89f46b80dff58105d9"
+    },
+    {
+      "path": "src/query/mod.rs",
+      "originalGitBlob": "d1cfcf009688f0bbc0422e91ded230564fed2145",
+      "originalSha256": "0b73164aa9f55a46f718521aa8d9dc31df510ec442c820bae40c5ccba2aab5ac",
+      "adoptedSha256": "0b73164aa9f55a46f718521aa8d9dc31df510ec442c820bae40c5ccba2aab5ac"
+    },
+    {
+      "path": "src/schema/ast.rs",
+      "originalGitBlob": "824703b0f48ad58567dd2dcdd5bcfe5919e84f67",
+      "originalSha256": "ca386016527b728334cd91d738b4648b91c81568833cb13195c0076384b74e06",
+      "adoptedSha256": "ca386016527b728334cd91d738b4648b91c81568833cb13195c0076384b74e06"
+    },
+    {
+      "path": "src/schema/error.rs",
+      "originalGitBlob": "53ad541ec88af1d17c973d7db170266f7959366f",
+      "originalSha256": "f067b8c54a9e80688ad45c79168963afd6b0fe8a3755006c00d6303849aeaeac",
+      "adoptedSha256": "f067b8c54a9e80688ad45c79168963afd6b0fe8a3755006c00d6303849aeaeac"
+    },
+    {
+      "path": "src/schema/format.rs",
+      "originalGitBlob": "2fcfd840a1f8beb30cb8c966f455999d0c7d1581",
+      "originalSha256": "f128d40f1dd781b3bb92618b8882b1299521964d5d6554d60b051db6cb8a4221",
+      "adoptedSha256": "f128d40f1dd781b3bb92618b8882b1299521964d5d6554d60b051db6cb8a4221"
+    },
+    {
+      "path": "src/schema/grammar.rs",
+      "originalGitBlob": "4dc4788e16abbf149b19168af251d7c8969ba5d4",
+      "originalSha256": "4204d979a694ca540eeb889f17230a3c8ecf84a9d2158a270d1df312de51064b",
+      "adoptedSha256": "3c9623cd24d35849312f9cfe9b765729863e7df408c20ce9e3568dc6741cafab"
+    },
+    {
+      "path": "src/schema/mod.rs",
+      "originalGitBlob": "49d5e9dcecc6fb518a524a738eb5fd6a7e64af89",
+      "originalSha256": "7cea76f06f509ecad945d577c63561fb259a626bcc29b3608c1a2e8fc585bf19",
+      "adoptedSha256": "7cea76f06f509ecad945d577c63561fb259a626bcc29b3608c1a2e8fc585bf19"
+    },
+    {
+      "path": "src/tokenizer.rs",
+      "originalGitBlob": "72cea087bb01b5804b172a06129bff3d915038e9",
+      "originalSha256": "d431d0e46eb42c6e20314c08a86350ed0da92343dca7af85fa4f3f7094c56157",
+      "adoptedSha256": "da5fb5ad022b2bce9d92369549b34878d89a442268fd0561164f1d6fd8eef16d"
+    }
+  ],
+  "engineCommit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+  "consumers": [
+    {
+      "path": "query-engine/query-engine-node-api/src/engine.rs",
+      "gitBlob": "29286d12cded783a588d72347bafefbdde15043e",
+      "sha256": "f1db4cb965e52c120a15d9f0f7e23b21183bfe80a96c916a21ed4eb73e46b2ea"
+    },
+    {
+      "path": "query-engine/request-handlers/src/protocols/mod.rs",
+      "gitBlob": "56b72d883e43fbc693ccfb71f8efd9fff43e6c71",
+      "sha256": "bba8b397a0b675e803c03ab6582b8340c25eb7c8101a01f6e49d80d18eb2f011"
+    },
+    {
+      "path": "query-engine/request-handlers/src/protocols/graphql/body.rs",
+      "gitBlob": "9446002824faa5041219d3ea7644ff04e837abf5",
+      "sha256": "13f9f8de311208276cffbd84d5152c9a93c4a56b938342d6498a1a9dbb2b94ad"
+    },
+    {
+      "path": "query-engine/request-handlers/src/protocols/graphql/protocol_adapter.rs",
+      "gitBlob": "313e7cb15f05a476f6978c38b2adc210712c99d0",
+      "sha256": "6989dc1c71ac645bc8a6ca2847ad9b83b458620f50eab2d328b125e94fe75312"
+    }
+  ],
+  "application": {
+    "path": "app/db.server.js",
+    "sha256": "d68e6af6836790015cc73cda1fc4a7780645725288af7eead8fbfbe521eb08f1",
+    "lineEndings": "LF",
+    "clientVersion": "6.19.3",
+    "clientRuntimePath": "node_modules/@prisma/client/runtime/library.js",
+    "clientRuntimeSha256": "abdeb84cf9f11bbfba2ac6a009c94fea8657aa3c35a7975a1c63e71a41b96b05",
+    "observedConstructorProtocol": "json"
+  },
+  "findings": [
+    {
+      "id": "BACKSPACE_DECODES_AS_U0010",
+      "evidence": "ACTUAL_WINDOWS_NATIVE",
+      "scope": "EXPLICIT_GRAPHQL_PROTOCOL",
+      "disposition": "Correct before enabling a direct GraphQL client; JSON client round-trip is separately tested"
+    },
+    {
+      "id": "SURROGATE_PAIR_REJECTED",
+      "evidence": "ACTUAL_WINDOWS_NATIVE",
+      "scope": "EXPLICIT_GRAPHQL_PROTOCOL",
+      "disposition": "Correct before claiming escaped supplementary-plane character support; raw UTF-8 and JSON are distinct paths"
+    },
+    {
+      "id": "FORMATTER_ESCAPE_AND_ROUNDTRIP",
+      "evidence": "SOURCE_ONLY",
+      "scope": "FORMATTER_API_NOT_IN_BOUND_REQUEST_PATH",
+      "disposition": "Decimal escape formatting and non-BMP/multiline round-trip need correction before exposing formatter APIs"
+    },
+    {
+      "id": "NUMERIC_AND_LEXICAL_COMPATIBILITY",
+      "evidence": "SOURCE_ONLY",
+      "scope": "GENERAL_GRAPHQL_CONFORMANCE",
+      "disposition": "Legacy exponent/control-character grammar is not complete modern-spec conformance; not a demonstrated production exploit"
+    }
+  ],
+  "nativeEvidence": {
+    "run": "42300766846",
+    "sourceHead": "373617a9dbddbf08b6a6d26313888d6e04e586cc",
+    "windowsLibrarySha256": "8d5f0bfa41c102c5a5903f549eebab2dc624bd20564878e43f7afe62da2f039d",
+    "scope": "Fresh synthetic Windows SQLite diagnostic, not a new build or production attestation"
+  },
+  "sourceReviewComplete": false,
+  "wholeEngineVerified": false,
+  "productionApproved": false
+}

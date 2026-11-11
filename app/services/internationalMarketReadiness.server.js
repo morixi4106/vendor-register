@@ -1,4 +1,10 @@
 import prisma from "../db.server.js";
+import {
+  assertInternationalEvidenceVersion,
+  internationalGateTransaction,
+  invalidateInternationalGates,
+  flushInternationalGateStops,
+} from "./internationalGateQueue.server.js";
 import { normalizeCountryCode } from "../utils/deliveryEligibility.js";
 import {
   evaluateInternationalMarketReadiness,
@@ -81,6 +87,8 @@ export async function saveInternationalMarketEvidence({
   confirmations = {},
   notes = null,
   metadata = {},
+  expectedVersion,
+  enqueueSync = true,
   prismaClient = prisma,
   now = new Date(),
 } = {}) {
@@ -133,22 +141,43 @@ export async function saveInternationalMarketEvidence({
     },
   };
 
-  return prismaClient.operationalReadinessAttestation.upsert({
-    where: {
-      checkKey_scopeType_scopeId: {
-        checkKey: definition.code,
-        scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
-        scopeId: country,
-      },
+  const outcome = await internationalGateTransaction(
+    prismaClient,
+    async (tx) => {
+      const where = {
+        checkKey_scopeType_scopeId: {
+          checkKey: definition.code,
+          scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+          scopeId: country,
+        },
+      };
+      if (expectedVersion !== undefined)
+        assertInternationalEvidenceVersion(
+          await tx.operationalReadinessAttestation.findUnique({ where }),
+          expectedVersion,
+        );
+      const result = await tx.operationalReadinessAttestation.upsert({
+        where: {
+          checkKey_scopeType_scopeId: {
+            checkKey: definition.code,
+            scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+            scopeId: country,
+          },
+        },
+        create: {
+          checkKey: definition.code,
+          scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+          scopeId: country,
+          ...data,
+        },
+        update: { ...data, revision: { increment: 1 } },
+      });
+      if (enqueueSync) await invalidateInternationalGates(tx, { now });
+      return result;
     },
-    create: {
-      checkKey: definition.code,
-      scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
-      scopeId: country,
-      ...data,
-    },
-    update: data,
-  });
+  );
+  if (enqueueSync) await flushInternationalGateStops(prismaClient);
+  return outcome;
 }
 
 export async function revokeInternationalMarketEvidence({
@@ -156,6 +185,8 @@ export async function revokeInternationalMarketEvidence({
   requirementCode,
   confirmedBy,
   notes,
+  expectedVersion,
+  enqueueSync = true,
   prismaClient = prisma,
   now = new Date(),
 } = {}) {
@@ -164,33 +195,55 @@ export async function revokeInternationalMarketEvidence({
   if (!country || !definition) {
     throw new Error("国または確認項目が不正です。");
   }
-  return prismaClient.operationalReadinessAttestation.upsert({
-    where: {
-      checkKey_scopeType_scopeId: {
-        checkKey: definition.code,
-        scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
-        scopeId: country,
-      },
+  const outcome = await internationalGateTransaction(
+    prismaClient,
+    async (tx) => {
+      const where = {
+        checkKey_scopeType_scopeId: {
+          checkKey: definition.code,
+          scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+          scopeId: country,
+        },
+      };
+      if (expectedVersion !== undefined)
+        assertInternationalEvidenceVersion(
+          await tx.operationalReadinessAttestation.findUnique({ where }),
+          expectedVersion,
+        );
+      const result = await tx.operationalReadinessAttestation.upsert({
+        where: {
+          checkKey_scopeType_scopeId: {
+            checkKey: definition.code,
+            scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+            scopeId: country,
+          },
+        },
+        create: {
+          checkKey: definition.code,
+          scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
+          scopeId: country,
+          status: "REVOKED",
+          confirmedBy: normalizeText(confirmedBy),
+          confirmedAt: now,
+          notes: normalizeText(notes),
+          metadataJson: {
+            countryCode: country,
+            requirementVersion: INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
+          },
+        },
+        update: {
+          revision: { increment: 1 },
+          status: "REVOKED",
+          confirmedBy: normalizeText(confirmedBy),
+          confirmedAt: now,
+          expiresAt: now,
+          notes: normalizeText(notes),
+        },
+      });
+      if (enqueueSync) await invalidateInternationalGates(tx, { now });
+      return result;
     },
-    create: {
-      checkKey: definition.code,
-      scopeType: INTERNATIONAL_MARKET_EVIDENCE_SCOPE,
-      scopeId: country,
-      status: "REVOKED",
-      confirmedBy: normalizeText(confirmedBy),
-      confirmedAt: now,
-      notes: normalizeText(notes),
-      metadataJson: {
-        countryCode: country,
-        requirementVersion: INTERNATIONAL_MARKET_REQUIREMENT_VERSION,
-      },
-    },
-    update: {
-      status: "REVOKED",
-      confirmedBy: normalizeText(confirmedBy),
-      confirmedAt: now,
-      expiresAt: now,
-      notes: normalizeText(notes),
-    },
-  });
+  );
+  if (enqueueSync) await flushInternationalGateStops(prismaClient);
+  return outcome;
 }

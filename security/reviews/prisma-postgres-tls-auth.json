@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-11-11",
+  "repository": "prisma/rust-postgres",
+  "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
+  "archiveSha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
+  "reviewScope": "Selected native TLS bridge, connection startup/authentication and SCRAM runtime; not complete review of four driver identities",
+  "selectedPathStatus": "READ_WITH_FINDINGS",
+  "files": [
+    {
+      "path": "postgres-native-tls/Cargo.toml",
+      "originalGitBlob": "318f3b1bf147f796b6a3dbd595d19ec19587a91b",
+      "originalSha256": "177ed6f3186e374415be22314047886a176a7c49dc940e2581c5fba474fe294a",
+      "adoptedSha256": "988dacfcd58959df01ccbc0b0fc893471827de1c602cdcd59dccf8a19b6e4051",
+      "readScope": "MANIFEST"
+    },
+    {
+      "path": "postgres-native-tls/src/lib.rs",
+      "originalGitBlob": "9ee7da653ac3876e35aa7071a36763f4899592b5",
+      "originalSha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273",
+      "adoptedSha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "tokio-postgres/src/connect_tls.rs",
+      "originalGitBlob": "d220cd3b5e99b09eca39724783d99eb28d3cc88d",
+      "originalSha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6",
+      "adoptedSha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "tokio-postgres/src/connect_raw.rs",
+      "originalGitBlob": "1931691e3651dc397f425d451b0c8834de1d1a79",
+      "originalSha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e",
+      "adoptedSha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "postgres-protocol/src/authentication/sasl.rs",
+      "originalGitBlob": "ccd40e8d0464b020fa8aa32e14d5d16488d9fdd6",
+      "originalSha256": "e81954f816cf18310e908a40c3b855b535a4e924a7958f53ee78002b25866893",
+      "adoptedSha256": "50a4bda4feeacf611df687123505b11faaf7222e001a3d9f874a8735aaeb8448",
+      "readScope": "RUNTIME_BEFORE_TEST_MODULE"
+    }
+  ],
+  "engineCommit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+  "consumers": [
+    {
+      "path": "quaint/src/connector/postgres/url.rs",
+      "gitBlob": "dfdb40d88a9780fe9d9146404bc012f8933e1860",
+      "sha256": "3a40cb006e0e61f146fd8add6b9edf253e0a8ef67cadddaa8fa1298c543788e0",
+      "readScope": "TLS_DEFAULTS_QUERY_PARAMETERS_AND_HOST_SELECTION"
+    },
+    {
+      "path": "quaint/src/connector/postgres/native/mod.rs",
+      "gitBlob": "60a77310b49c363316b734007a7d8adfed4cccc9",
+      "sha256": "067532f5e564dfa42719c97492730f3ffb24d1e81debc6963e955fcc27390b1a",
+      "readScope": "SSL_AUTH_TO_CONFIG_CONNECTION_AND_CONNECTOR_MANAGER"
+    }
+  ],
+  "findings": [
+    {
+      "id": "NATIVE_URL_DEFAULTS_DO_NOT_REQUIRE_VERIFIED_TLS",
+      "evidence": "SOURCE_ONLY",
+      "disposition": "Candidate readiness now requires explicit sslmode=require and sslaccept=strict, without modifying the connection or claiming a verified live handshake"
+    },
+    {
+      "id": "DUPLICATE_AND_DIALECT_AMBIGUITY",
+      "evidence": "SOURCE_ONLY",
+      "disposition": "Candidate static policy rejects duplicate/case-ambiguous TLS parameters, host overrides and libpq-only verification mode names"
+    },
+    {
+      "id": "SCRAM_GRAMMAR_CORRECTED_PENDING_NATIVE_ADOPTION",
+      "evidence": "COMPILED_RUST_LIBRARY_BOTH_PLATFORMS",
+      "disposition": "Candidate rejects zero/leading-zero iteration syntax and fixes nonempty server-error values. Eight new named real-library regressions pass on both OSes. Nonce prefix checking is retained as specified for clients. New release-native artifacts on both OSes adopt this source and the independently verified SQLite backport; immutable CI inputs now bind their actual bytes. This is not an authentication-bypass reproduction, complete SCRAM conformance or production approval."
+    }
+  ],
+  "grammarCorrection": {
+    "sourceHead": "f1b35a87f21504e61569093a9ad654fd222c0290",
+    "sourceRun": "43023329951",
+    "patchSha256": "fb9e1914e0618de2fa1d237ee6140e3ec5c891ce3ffa3b8c5ca0700bcb62e310",
+    "fixtureSha256": "947c5063c9e97f59b11c7bc3ae8ee4b4df62f5a5cd1d346ab4d8b6457784a1d3",
+    "newRegressions": 8,
+    "postgresRegressions": 32,
+    "bothPlatformSourceTestsVerified": true,
+    "releaseNativeAdoptionVerified": true,
+    "nonceChecksUnchanged": true,
+    "cryptographyAndStateMachineUnchanged": true
+  },
+  "productionConfigurationObserved": false,
+  "productionConnectionVerified": false,
+  "sourceReviewComplete": false,
+  "wholeEngineVerified": false,
+  "productionApproved": false
+}

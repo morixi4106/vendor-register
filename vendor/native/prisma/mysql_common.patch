@@ -1,0 +1,44 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 7d74bd5..4d6aa7d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,7 +12,7 @@
+ [package]
+ edition = "2018"
+ name = "mysql_common"
+-version = "0.29.2"
++version = "0.29.2+oja.1"
+ authors = ["blackbeam <aikorsky@gmail.com>"]
+ exclude = [
+     "/lib",
+@@ -81,7 +81,7 @@ optional = true
+ version = "1"
+ 
+ [dependencies.lexical]
+-version = "6.0.1"
++version = "=7.0.5"
+ 
+ [dependencies.num-bigint]
+ version = "0.4"
+@@ -110,10 +110,10 @@ version = "1"
+ version = "1"
+ 
+ [dependencies.sha1]
+-version = "0.10.0"
++version = "=0.11.0"
+ 
+ [dependencies.sha2]
+-version = "0.10.0"
++version = "=0.11.1"
+ 
+ [dependencies.smallvec]
+ version = "1.6.1"
+@@ -146,7 +146,7 @@ optional = true
+ version = "1.0"
+ 
+ [build-dependencies.bindgen]
+-version = "0.59.2"
++version = "=0.72.1"
+ features = ["runtime"]
+ default-features = false
+ 

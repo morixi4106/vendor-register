@@ -1,6 +1,7 @@
 import { shopifyGraphQLWithOfflineSession } from "../utils/shopifyAdmin.server.js";
 import { SHOPIFY_API_VERSION } from "../utils/shopifyApiVersion.js";
 import prisma from "../db.server.js";
+import { writeInternationalProduct } from "./internationalGateQueue.server.js";
 import { SHOPIFY_WEIGHT_SYNC_STATUS } from "../utils/productShippingProfile.js";
 
 function normalizePositiveInteger(value) {
@@ -113,7 +114,7 @@ export async function syncAndRecordShopifyVariantWeight({
     }
 
     const syncedAt = new Date();
-    await prismaClient.product.update({
+    await writeInternationalProduct(prismaClient, "update", {
       where: { id: productId },
       data: {
         shopifyWeightSyncStatus: SHOPIFY_WEIGHT_SYNC_STATUS.SYNCED,
@@ -125,7 +126,7 @@ export async function syncAndRecordShopifyVariantWeight({
     return { ...result, syncedAt };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await prismaClient.product.update({
+    await writeInternationalProduct(prismaClient, "update", {
       where: { id: productId },
       data: {
         shopifyWeightSyncStatus: SHOPIFY_WEIGHT_SYNC_STATUS.ERROR,

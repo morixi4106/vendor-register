@@ -248,6 +248,10 @@ export function evaluateInternationalMarketEvidence(
   }
   if (!String(attestation?.confirmedBy || "").trim()) {
     reasons.push("market_evidence_confirmer_missing");
+  } else if (
+    /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(String(attestation.confirmedBy).trim())
+  ) {
+    reasons.push("market_evidence_confirmer_reverification_required");
   }
   if (!confirmedAt || confirmedAt.getTime() > now.getTime()) {
     reasons.push("market_evidence_confirmation_time_invalid");

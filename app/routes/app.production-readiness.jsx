@@ -1,6 +1,6 @@
-
 import ProductionReadinessPage from "../components/readiness/ProductionReadinessPage.jsx";
 import { CHECKOUT_VALIDATION_LIVE_PROBE_SCENARIOS } from "../services/checkoutValidationLiveProbe.js";
+import { resolveMonitorNotificationMode } from "../services/monitorNotificationPolicy.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -73,7 +73,19 @@ export const loader = async ({ request }) => {
     actorKey: operator.actorKey,
   });
 
-  return Response.json({ ...result, liveProbeChallenge });
+  return Response.json(
+    {
+      ...result,
+      liveProbeChallenge,
+      monitorNotificationMode: resolveMonitorNotificationMode(process.env),
+    },
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Referrer-Policy": "no-referrer",
+      },
+    },
+  );
 };
 
 export const action = async ({ request }) => {
@@ -242,9 +254,9 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "disable_checkout_validation_for_standard_direct") {
-    const { inspectPlatformDirectCheckoutMode } =
-      await import("../services/platformDirectCheckoutMode.server.js");
-    const mode = inspectPlatformDirectCheckoutMode();
+    const { inspectCheckoutCommerceContext } =
+      await import("../services/checkoutCommerceContext.server.js");
+    const { mode } = await inspectCheckoutCommerceContext({ shopDomain: session.shop });
     if (!mode.standardDirectReady) {
       return Response.json(
         {
@@ -325,7 +337,10 @@ export const action = async ({ request }) => {
         session.shop,
       );
       if (!inspection.ok) {
-        return Response.json({ checkoutValidation: inspection }, { status: 400 });
+        return Response.json(
+          { checkoutValidation: inspection },
+          { status: 400 },
+        );
       }
       if (!inspection.exists) {
         const staged = await stageMarketplaceCheckoutValidation(session.shop);
@@ -395,7 +410,7 @@ export const action = async ({ request }) => {
         inspectCheckoutValidationActivationEvidence,
         inspectOperationalReadiness,
       } = await import("../services/operationalReadiness.server.js");
-      const operationalReadiness = await inspectOperationalReadiness();
+      const operationalReadiness = await inspectOperationalReadiness({ shopDomain: session.shop });
       const activationEvidence =
         inspectCheckoutValidationActivationEvidence(operationalReadiness);
       if (!activationEvidence.ok) {

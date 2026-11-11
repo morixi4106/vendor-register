@@ -1,0 +1,11 @@
+(module
+  (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "environ_sizes_get" (func $environment (param i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 32) "{\22operations\22:[]}")
+  (func (export "_start")
+    (drop (call $environment (i32.const 16) (i32.const 20)))
+    (if (i32.load (i32.const 16)) (then unreachable))
+    (i32.store (i32.const 0) (i32.const 32))
+    (i32.store (i32.const 4) (i32.const 17))
+    (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))))

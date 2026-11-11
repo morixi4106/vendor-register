@@ -1,5 +1,6 @@
 import { DEFAULT_PAYMENT_PROVIDER, DEFAULT_SELLER_PAYOUT_PROVIDER, PAYMENT_PROVIDER_LABELS, SELLER_PAYOUT_PROVIDER_LABELS, STRIPE_CONNECT_PRODUCTION_ENABLED_VALUES, SUPPORTED_PAYMENT_PROVIDERS, SUPPORTED_SELLER_PAYOUT_PROVIDERS, createCheck, detectStripeKeyMode, extractEmailAddress, isEnabledEnvFlag, normalizeText, requiredOrWarningStatus } from "./common.js";
 import { isDomesticMarketplacePilotEnabled } from "../domesticMarketplacePilot.server.js";
+import { inspectPostgresTlsConfiguration } from "../../utils/postgresTlsPolicy.js";
 const MULTI_SELLER_SETTLEMENT_FLAGS = [{
   key: "MULTI_SELLER_SHOPIFY_ORDER_SETTLEMENT_ENABLED",
   label: "paid"
@@ -147,6 +148,15 @@ export function buildEnvironmentChecks({
 }) {
   const checks = [];
   const isProductionRuntime = env.NODE_ENV === "production";
+  const databaseTls = inspectPostgresTlsConfiguration(env.DATABASE_URL);
+  checks.push(createCheck({
+    id: "database_tls_configuration",
+    category: "app",
+    status: databaseTls.ready ? "pass" : isProductionRuntime ? "fail" : "warning",
+    title: "Database TLS configuration",
+    detail: databaseTls.ready ? "DATABASE_URL explicitly requires TLS and certificate validation. Configuration only; the live certificate, hostname, trust chain and connection have not been verified." : `DATABASE_URL does not establish the required native Prisma TLS policy (${databaseTls.reason}). Connection details are not displayed.`,
+    action: databaseTls.ready ? "Verify the actual endpoint, CA trust and hostname using the production runtime before release." : "Review the native PostgreSQL connection URL with sslmode=require and sslaccept=strict. Verify the provider endpoint and CA trust before changing settings; no URL or environment value is changed by this check."
+  }));
   const multiSellerSettlementFlags = inspectMultiSellerSettlementFlags(env);
   const multiSellerStorefrontCheckout = inspectMultiSellerStorefrontCheckoutFlag(env);
   const withdrawalEmailEnv = inspectWithdrawalEmailEnvironment(env);

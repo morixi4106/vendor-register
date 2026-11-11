@@ -1,0 +1,116 @@
+name: Javy native compiler lab
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/javy-native-contracts.yml
+      - security/javy-native-contracts.json
+      - security/javy-source-contracts.json
+      - security/rust-toolchain.json
+      - scripts/security/test-javy-native.mjs
+      - scripts/security/test-javy-source.mjs
+      - scripts/security/rust-toolchain.mjs
+      - scripts/security/rust-source-audit.mjs
+      - scripts/security/rebuild-function-runner.mjs
+      - vendor/native/javy/**
+      - tests/scripts/javy-native.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    outputs:
+      artifact-id: ${{ steps.plugins.outputs.artifact-id }}
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Verify Node and install without lifecycle scripts
+        run: |
+          npm run runtime:version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify source and native binding rejection tests
+        run: node --test tests/scripts/javy-source.test.js tests/scripts/javy-native.test.js
+      - name: Build actual WASI plugin and profiler with fixed SDK
+        run: node scripts/security/test-javy-native.mjs plugin
+      - name: Require tracked files to remain unchanged
+        run: git diff --exit-code
+      - name: Transfer real plugin bytes to native jobs
+        id: plugins
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: javy-plugin-input-${{ github.run_id }}
+          path: .audit/javy-plugin-transfer/
+          if-no-files-found: error
+          retention-days: 45
+      - name: Upload plugin build evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: javy-plugin-evidence-${{ github.run_id }}
+          path: .audit/native-javy/
+          if-no-files-found: warn
+          retention-days: 45
+  native:
+    needs: plugins
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Verify Node and install without lifecycle scripts
+        run: |
+          npm run runtime:version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Download same-run actual plugin artifact by ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: ${{ needs.plugins.outputs.artifact-id }}
+          merge-multiple: true
+          path: .audit/javy-plugin-transfer/
+      - name: Verify native binding rejection tests
+        run: node --test tests/scripts/javy-native.test.js
+      - name: Build real compiler with profiler and probe plugin and provider
+        run: node scripts/security/test-javy-native.mjs native
+      - name: Require tracked files to remain unchanged
+        run: git diff --exit-code
+      - name: Upload lab compiler and evidence without installation or approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: javy-native-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            .audit/native-javy/
+            .audit/javy-native-result/
+          if-no-files-found: warn
+          retention-days: 45

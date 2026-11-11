@@ -1,0 +1,52 @@
+[
+  {
+    "name": "tuple_struct",
+    "declaration": "struct Invalid(i32);",
+    "diagnostic": "TableValueRow can only be derived for structs with named fields"
+  },
+  {
+    "name": "unit_struct",
+    "declaration": "struct Invalid;",
+    "diagnostic": "TableValueRow can only be derived for structs with named fields"
+  },
+  {
+    "name": "enum_type",
+    "declaration": "enum Invalid { One }",
+    "diagnostic": "TableValueRow can only be derived for structs, not enums"
+  },
+  {
+    "name": "union_type",
+    "declaration": "union Invalid { one: i32, two: u32 }",
+    "diagnostic": "TableValueRow can only be derived for structs, not unions"
+  },
+  {
+    "name": "multiple_lifetimes",
+    "declaration": "struct Invalid<'a, 'b> { one: &'a str, two: &'b str }",
+    "diagnostic": "TableValueRow supports at most one lifetime parameter"
+  },
+  {
+    "name": "bare_attribute",
+    "declaration": "struct Invalid { #[colname] one: i32 }",
+    "diagnostic": "invalid `#[colname]` attribute"
+  },
+  {
+    "name": "list_attribute",
+    "declaration": "struct Invalid { #[colname(\"one\")] one: i32 }",
+    "diagnostic": "invalid `#[colname]` attribute"
+  },
+  {
+    "name": "numeric_attribute",
+    "declaration": "struct Invalid { #[colname = 7] one: i32 }",
+    "diagnostic": "invalid `#[colname]` value"
+  },
+  {
+    "name": "expression_attribute",
+    "declaration": "struct Invalid { #[colname = concat!(\"one\", \"two\")] one: i32 }",
+    "diagnostic": "invalid `#[colname]` value"
+  },
+  {
+    "name": "duplicate_attribute",
+    "declaration": "struct Invalid { #[colname = \"one\"] #[colname = \"two\"] one: i32 }",
+    "diagnostic": "duplicate `#[colname]` attribute"
+  }
+]

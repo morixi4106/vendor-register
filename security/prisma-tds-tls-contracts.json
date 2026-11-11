@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "originalTdsPolicySha256": "b14a707e65ab806af6be44f8459b0f899e29ef55846edcbfd46ac8845edd7c21",
+  "targets": {
+    "linux": "x86_64-unknown-linux-gnu",
+    "win32": "x86_64-pc-windows-msvc"
+  },
+  "encryptionMode": "Strict",
+  "serverProtocol": "TLSv1.2",
+  "testCount": 5,
+  "connectCalls": 5,
+  "successfulEncryptedLogins": 1,
+  "certificateRejections": 4,
+  "registryPackages": 134,
+  "fixtureFiles": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "33cdd30632887bcd50176943ff83b1b602ce5ec5ab22a2d07b150a372ac61c82"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "3d058adbc978763f38725e17167f602f3b9603a9abab4025882587cc72aae858"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c5b6bbd5e2630580b111e86b24db3c2641663c5906ba8ec6d0195cfd8e23aabc"
+    },
+    {
+      "path": "generate-certificates.ps1",
+      "sha256": "69d81128f4d7b600e1c99dabdd2a6e6a721c539a7211298aeb59c995f23bd905"
+    },
+    {
+      "path": "certificates/expired.der",
+      "sha256": "cabd1d06a5d8ce14c644e480f71f59c1b5983450d84ce55fbfb3c731a97c7be7"
+    },
+    {
+      "path": "certificates/expired.pfx",
+      "sha256": "a0eb3eb07c9e5426533a60e5e352cd48436b72dbe89dd528a7d921f17aad69b1"
+    },
+    {
+      "path": "certificates/future.der",
+      "sha256": "d27adcfc92c0935da71732dcecc019a1d513d79c84ab9fea3381aa22dffa7599"
+    },
+    {
+      "path": "certificates/future.pfx",
+      "sha256": "62daea12059b844ba631989d9de3cda6ff5a6d0a74c05ed26c42d34797612b46"
+    },
+    {
+      "path": "certificates/root.der",
+      "sha256": "f2eea410d109e47feabd10a387a1431037d6e4b29bc789a7fd70ee5546aacb0b"
+    },
+    {
+      "path": "certificates/valid.der",
+      "sha256": "2a2a5813012d3242de6d9dcacc0768c2514934d97edde3388d8b781fc11ce82e"
+    },
+    {
+      "path": "certificates/valid.pfx",
+      "sha256": "f6fff04afe8684aec3a09c3c43de16fd3252543e23eb5ef0a8c97c987f5044f7"
+    }
+  ],
+  "wholeEngineVerified": false,
+  "sourceReviewComplete": false,
+  "productionApproved": false,
+  "systemTrustStoreModified": false,
+  "artifactStatus": "NOT_VERIFIED"
+}

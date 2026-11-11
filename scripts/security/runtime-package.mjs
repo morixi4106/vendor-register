@@ -10,6 +10,12 @@ import {
 } from "./runtime-toolchain.mjs";
 import { TOOLCHAIN_TARGETS } from "./toolchain-targets.mjs";
 import { runSafeBuildCommand } from "./safe-build.mjs";
+import { stageVendorPatches } from "./vendor-patches.mjs";
+import {
+  collectNativeInventory,
+  evaluateRuntimeGeneratorInventory,
+  evaluateRuntimeNativeInventory,
+} from "./native-inventory.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FORBIDDEN = new Set([
@@ -17,6 +23,10 @@ const FORBIDDEN = new Set([
   "@shopify/cli",
   "@shopify/shopify_function",
   "@shopify/ui-extensions",
+  "vite",
+  "vite-tsconfig-paths",
+  "esbuild",
+  "rollup",
 ]);
 const sha = (value) =>
   crypto.createHash("sha256").update(value).digest("hex").toUpperCase();
@@ -93,6 +103,39 @@ export function readRuntimePlan(root = ROOT) {
   );
 }
 
+function assertNativeInventory(packageRoot, policyRoot, evaluate) {
+  const policyPath = path.join(policyRoot, "security/native-artifacts.json");
+  const stat = fs.lstatSync(policyPath);
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    stat.size > 1024 * 1024 ||
+    fs.realpathSync(policyPath) !== path.resolve(policyPath)
+  )
+    throw new Error("runtime_native_policy_invalid");
+  const policyBytes = fs.readFileSync(policyPath);
+  const inventory = collectNativeInventory(packageRoot);
+  const result = evaluate(inventory, policyRoot, JSON.parse(policyBytes));
+  if (!result.ok) throw new Error("runtime_native_artifacts_unreviewed");
+  return {
+    ...result,
+    policySha256: sha(policyBytes),
+    artifacts: inventory.artifacts,
+  };
+}
+
+export function assertRuntimeNativeArtifacts(
+  packageRoot,
+  policyRoot = packageRoot,
+) {
+  return assertNativeInventory(
+    packageRoot,
+    policyRoot,
+    evaluateRuntimeNativeInventory,
+  );
+}
+
 export function activateRuntimeDependencies(root, stage) {
   const resolvedRoot = fs.realpathSync(root);
   const target = path.join(resolvedRoot, "node_modules");
@@ -112,6 +155,7 @@ export function activateRuntimeDependencies(root, stage) {
   assertRuntimeToolchain(stage);
   if (!fs.existsSync(path.join(prepared, ".prisma/client/index.js")))
     throw new Error("runtime_prisma_client_missing");
+  const native = assertRuntimeNativeArtifacts(stage, resolvedRoot);
   const auditDirectory = path.join(resolvedRoot, ".audit");
   fs.mkdirSync(auditDirectory, { recursive: true });
   if (fs.realpathSync(auditDirectory) !== auditDirectory)
@@ -142,8 +186,11 @@ export function activateRuntimeDependencies(root, stage) {
     fs.renameSync(replacement, target);
     installed = true;
     const inspection = assertRuntimeToolchain(resolvedRoot);
+    const installedNative = assertRuntimeNativeArtifacts(resolvedRoot);
+    if (JSON.stringify(installedNative) !== JSON.stringify(native))
+      throw new Error("runtime_native_inventory_changed");
     completed = true;
-    return inspection;
+    return { ...inspection, native: installedNative };
   } catch (error) {
     if (installed) fs.rmSync(target, { recursive: true, force: true });
     if (backedUp) {
@@ -183,6 +230,7 @@ export function prepareRuntimePackage({
   const tempBase = fs.realpathSync(os.tmpdir());
   const stage = fs.mkdtempSync(path.join(tempBase, "vendor-register-runtime-"));
   try {
+    stageVendorPatches(root, stage);
     fs.writeFileSync(
       path.join(stage, "package.json"),
       JSON.stringify(plan.manifest, null, 2) + "\n",
@@ -206,6 +254,13 @@ export function prepareRuntimePackage({
       cwd: stage,
       timeoutMs: 300_000,
     });
+    // npm's registry audit does not attest embedded or downloaded engine bytes.
+    // Check the fresh tree before executing its generator, then its real output.
+    const generatorNative = assertNativeInventory(
+      stage,
+      root,
+      evaluateRuntimeGeneratorInventory,
+    );
     fs.mkdirSync(path.join(stage, "prisma"));
     fs.copyFileSync(
       path.join(root, "prisma/schema.prisma"),
@@ -219,6 +274,16 @@ export function prepareRuntimePackage({
       ],
       cwd: stage,
     });
+    const native = assertRuntimeNativeArtifacts(stage, root);
+    if (
+      native.policySha256 !== generatorNative.policySha256 ||
+      !generatorNative.artifacts.every((before) =>
+        native.artifacts.some(
+          (after) => JSON.stringify(before) === JSON.stringify(after),
+        ),
+      )
+    )
+      throw new Error("runtime_native_inventory_changed");
     const installedLock = JSON.parse(
       fs.readFileSync(path.join(stage, "package-lock.json"), "utf8"),
     );
@@ -239,6 +304,11 @@ export function prepareRuntimePackage({
     const inspection = inspectRuntimeToolchain(stage);
     if (!inspection.ok || inspection.packageCount < 1)
       throw new Error("runtime_toolchain_not_clean");
+    if (
+      JSON.stringify(assertRuntimeNativeArtifacts(stage, root)) !==
+      JSON.stringify(native)
+    )
+      throw new Error("runtime_native_inventory_changed");
     const evidence = {
       schemaVersion: 1,
       ok: true,
@@ -247,6 +317,7 @@ export function prepareRuntimePackage({
       forbiddenPackages: inspection.forbiddenPackages,
       manifestSha256: plan.manifestSha256,
       lockfileSha256: plan.lockfileSha256,
+      native,
     };
     if (activate) activateRuntimeDependencies(root, stage);
     else {

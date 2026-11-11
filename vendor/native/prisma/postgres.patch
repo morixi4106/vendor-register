@@ -1,0 +1,276 @@
+diff --git a/postgres-protocol/Cargo.toml b/postgres-protocol/Cargo.toml
+index 9351ea1..6e57936 100644
+--- a/postgres-protocol/Cargo.toml
++++ b/postgres-protocol/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "postgres-protocol"
+-version = "0.6.8"
++version = "0.6.8+oja.1"
+ authors = ["Steven Fackler <sfackler@gmail.com>"]
+ edition = "2018"
+ description = "Low level Postgres protocol APIs"
+@@ -10,6 +10,7 @@ readme = "../README.md"
+
+ [features]
+ default = []
++oja-security-contracts = []
+ js = ["getrandom/wasm_js"]
+
+ [dependencies]
+diff --git a/postgres-types/Cargo.toml b/postgres-types/Cargo.toml
+index 8d56f99..d2e1fc1 100644
+--- a/postgres-types/Cargo.toml
++++ b/postgres-types/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "postgres-types"
+-version = "0.2.9"
++version = "0.2.9+oja.1"
+ authors = ["Steven Fackler <sfackler@gmail.com>"]
+ edition = "2018"
+ license = "MIT OR Apache-2.0"
+@@ -33,7 +33,7 @@ with-time-0_3 = ["time-03"]
+ [dependencies]
+ bytes = "1.0"
+ fallible-iterator = "0.2"
+-postgres-protocol = { version = "0.6.8", path = "../postgres-protocol" }
++postgres-protocol = { version = "=0.6.8+oja.1", path = "../postgres-protocol" }
+ postgres-derive = { version = "0.4.6", optional = true, path = "../postgres-derive" }
+
+ array-init = { version = "2", optional = true }
+diff --git a/postgres-native-tls/Cargo.toml b/postgres-native-tls/Cargo.toml
+index 318f3b1..c95f0b3 100644
+--- a/postgres-native-tls/Cargo.toml
++++ b/postgres-native-tls/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "postgres-native-tls"
+-version = "0.5.1"
++version = "0.5.1+oja.1"
+ authors = ["Steven Fackler <sfackler@gmail.com>"]
+ edition = "2018"
+ license = "MIT OR Apache-2.0"
+@@ -20,7 +20,7 @@ vendored-openssl = ["tokio-native-tls/vendored", "native-tls/vendored"]
+ native-tls = { version = "0.2", features = ["alpn"] }
+ tokio = "1.0"
+ tokio-native-tls = "0.3"
+-tokio-postgres = { version = "0.7.11", path = "../tokio-postgres", default-features = false }
++tokio-postgres = { version = "=0.7.13+oja.1", path = "../tokio-postgres", default-features = false }
+
+ [dev-dependencies]
+ futures-util = "0.3"
+diff --git a/tokio-postgres/Cargo.toml b/tokio-postgres/Cargo.toml
+index d619c19..bcd53e6 100644
+--- a/tokio-postgres/Cargo.toml
++++ b/tokio-postgres/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "tokio-postgres"
+-version = "0.7.13"
++version = "0.7.13+oja.1"
+ authors = ["Steven Fackler <sfackler@gmail.com>"]
+ edition = "2018"
+ license = "MIT OR Apache-2.0"
+@@ -25,6 +25,7 @@ circle-ci = { repository = "sfackler/rust-postgres" }
+
+ [features]
+ default = ["runtime"]
++oja-security-contracts = []
+ runtime = ["tokio/net", "tokio/time"]
+
+ array-impls = ["postgres-types/array-impls"]
+@@ -57,8 +58,8 @@ parking_lot = "0.12"
+ percent-encoding = "2.0"
+ pin-project-lite = "0.2"
+ phf = "0.11"
+-postgres-protocol = { version = "0.6.8", path = "../postgres-protocol" }
+-postgres-types = { version = "0.2.9", path = "../postgres-types" }
++postgres-protocol = { version = "=0.6.8+oja.1", path = "../postgres-protocol" }
++postgres-types = { version = "=0.2.9+oja.1", path = "../postgres-types" }
+ socket2 = "0.5.3"
+ tokio = { version = "1.27", features = ["io-util", "rt"] }
+ tokio-util = { version = "0.7", features = ["codec"] }
+diff --git a/postgres-protocol/src/authentication/sasl.rs b/postgres-protocol/src/authentication/sasl.rs
+index ccd40e8..dc5ecb5 100644
+--- a/postgres-protocol/src/authentication/sasl.rs
++++ b/postgres-protocol/src/authentication/sasl.rs
+@@ -14,6 +14,13 @@ use std::mem;
+ use std::str;
+
+ const NONCE_LENGTH: usize = 24;
++const MAX_ITERATION_COUNT: u32 = 100_000;
++
++#[cfg(feature = "oja-security-contracts")]
++#[doc(hidden)]
++pub fn oja_scram_with_nonce(password: &[u8], binding: ChannelBinding, nonce: &str) -> ScramSha256 {
++    ScramSha256::new_inner(password, binding, nonce.to_owned())
++}
+
+ /// The identifier of the SCRAM-SHA-256 SASL authentication mechanism.
+ pub const SCRAM_SHA_256: &str = "SCRAM-SHA-256";
+@@ -192,6 +199,13 @@ impl ScramSha256 {
+             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid nonce"));
+         }
+
++        if parsed.iteration_count > MAX_ITERATION_COUNT {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "SCRAM iteration count exceeds the maximum allowed",
++            ));
++        }
++
+         let salt = match STANDARD.decode(parsed.salt) {
+             Ok(salt) => salt,
+             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput, e)),
+@@ -360,6 +374,12 @@ impl<'a> Parser<'a> {
+
+     fn posit_number(&mut self) -> io::Result<u32> {
+         let n = self.take_while(|c| c.is_ascii_digit())?;
++        if n.is_empty() || n.starts_with('0') {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "invalid SCRAM iteration count",
++            ));
++        }
+         n.parse()
+             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+     }
+@@ -396,7 +416,11 @@ impl<'a> Parser<'a> {
+     }
+
+     fn value(&mut self) -> io::Result<&'a str> {
+-        self.take_while(|c| matches!(c, '\0' | '=' | ','))
++        let value = self.take_while(|c| c != '\0' && c != ',')?;
++        if value.is_empty() {
++            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty SCRAM value"));
++        }
++        Ok(value)
+     }
+
+     fn server_error(&mut self) -> io::Result<Option<&'a str>> {
+diff --git a/postgres-protocol/src/types/mod.rs b/postgres-protocol/src/types/mod.rs
+index 37dc793..0548beb 100644
+--- a/postgres-protocol/src/types/mod.rs
++++ b/postgres-protocol/src/types/mod.rs
+@@ -238,6 +238,11 @@ pub fn hstore_from_sql(
+     if count < 0 {
+         return Err("invalid entry count".into());
+     }
++    // Each pair needs two i32 length headers, even for an empty key and NULL value.
++    // Bound the iterator's size hint before a caller uses it to reserve storage.
++    if count as usize > buf.len() / 8 {
++        return Err("invalid entry count for buffer size".into());
++    }
+
+     Ok(HstoreEntries {
+         remaining: count,
+@@ -273,7 +278,7 @@ impl<'a> FallibleIterator for HstoreEntries<'a> {
+         if key_len < 0 {
+             return Err("invalid key length".into());
+         }
+-        let (key, buf) = self.buf.split_at(key_len as usize);
++        let (key, buf) = self.buf.split_at_checked(key_len as usize).ok_or("invalid key length")?;
+         let key = str::from_utf8(key)?;
+         self.buf = buf;
+
+@@ -281,7 +286,7 @@ impl<'a> FallibleIterator for HstoreEntries<'a> {
+         let value = if value_len < 0 {
+             None
+         } else {
+-            let (value, buf) = self.buf.split_at(value_len as usize);
++            let (value, buf) = self.buf.split_at_checked(value_len as usize).ok_or("invalid value length")?;
+             let value = str::from_utf8(value)?;
+             self.buf = buf;
+             Some(value)
+diff --git a/tokio-postgres/src/row.rs b/tokio-postgres/src/row.rs
+index ccb8817..b669417 100644
+--- a/tokio-postgres/src/row.rs
++++ b/tokio-postgres/src/row.rs
+@@ -8,10 +8,15 @@ use crate::{Error, Statement};
+ use fallible_iterator::FallibleIterator;
+ use postgres_protocol::message::backend::DataRowBody;
+ use std::fmt;
++use std::io;
+ use std::ops::Range;
+ use std::str;
+ use std::sync::Arc;
+
++#[cfg(feature = "oja-security-contracts")]
++#[doc(hidden)]
++pub mod oja_security_contracts;
++
+ mod sealed {
+     pub trait Sealed {}
+
+@@ -113,11 +118,18 @@ impl fmt::Debug for Row {
+ impl Row {
+     pub(crate) fn new(statement: Statement, body: DataRowBody) -> Result<Row, Error> {
+         let ranges = body.ranges().collect().map_err(Error::parse)?;
+-        Ok(Row {
++        let row = Row {
+             statement,
+             body,
+             ranges,
+-        })
++        };
++        if row.ranges.len() != row.statement.columns().len() {
++            return Err(Error::parse(io::Error::new(
++                io::ErrorKind::InvalidData,
++                "DataRow field count does not match the number of columns",
++            )));
++        }
++        Ok(row)
+     }
+
+     /// Returns information about the columns of data in the row.
+@@ -212,11 +224,18 @@ impl SimpleQueryRow {
+         body: DataRowBody,
+     ) -> Result<SimpleQueryRow, Error> {
+         let ranges = body.ranges().collect().map_err(Error::parse)?;
+-        Ok(SimpleQueryRow {
++        let row = SimpleQueryRow {
+             columns,
+             body,
+             ranges,
+-        })
++        };
++        if row.ranges.len() != row.columns.len() {
++            return Err(Error::parse(io::Error::new(
++                io::ErrorKind::InvalidData,
++                "DataRow field count does not match the number of columns",
++            )));
++        }
++        Ok(row)
+     }
+
+     /// Returns information about the columns of data in the row.
+diff --git a/tokio-postgres/src/row/oja_security_contracts.rs b/tokio-postgres/src/row/oja_security_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/tokio-postgres/src/row/oja_security_contracts.rs
+@@ -0,0 +1,24 @@
++use super::*;
++use bytes::BytesMut;
++use postgres_protocol::message::backend::Message;
++
++fn body(packet: &[u8]) -> Result<DataRowBody, Error> {
++    let mut buffer = BytesMut::from(packet);
++    match Message::parse(&mut buffer).map_err(Error::parse)? {
++        Some(Message::DataRow(body)) if buffer.is_empty() => Ok(body),
++        _ => Err(Error::parse(io::Error::new(io::ErrorKind::InvalidData, "expected one complete DataRow"))),
++    }
++}
++
++pub fn row(names: &[&str], packet: &[u8]) -> Result<Row, Error> {
++    let columns = names.iter().map(|name| Column {
++        name: (*name).to_owned(), table_oid: None, column_id: None,
++        r#type: Type::TEXT,
++    }).collect();
++    Row::new(Statement::unnamed(vec![], columns), body(packet)?)
++}
++
++pub fn simple_row(names: &[&str], packet: &[u8]) -> Result<SimpleQueryRow, Error> {
++    let columns = names.iter().map(|name| SimpleColumn::new((*name).to_owned())).collect::<Vec<_>>().into();
++    SimpleQueryRow::new(columns, body(packet)?)
++}

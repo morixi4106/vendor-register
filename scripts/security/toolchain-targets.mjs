@@ -1,5 +1,6 @@
 export const TOOLCHAIN_TARGETS = Object.freeze([
   "minimatch",
+  "@oja/minimatch",
   "brace-expansion",
   "braces",
   "micromatch",

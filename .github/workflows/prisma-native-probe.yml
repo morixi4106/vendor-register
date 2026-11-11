@@ -1,0 +1,118 @@
+name: Prisma native isolated probes
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-native-probe.yml
+      - security/prisma-source-contracts.json
+      - security/rust-toolchain.json
+      - scripts/security/*prisma*.mjs
+      - scripts/security/rust-toolchain.mjs
+      - scripts/security/rust-source-audit.mjs
+      - vendor/native/prisma/**
+      - tests/scripts/prisma-native-probe.test.js
+      - tests/scripts/prisma-git-assessment.test.js
+      - tests/scripts/prisma-graphql-source.test.js
+      - tests/scripts/prisma-sqlite-source.test.js
+      - tests/fixtures/prisma/**
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1
+        env:
+          POSTGRES_USER: oja_probe
+          POSTGRES_DB: oja_probe
+          POSTGRES_PASSWORD: oja-ephemeral-test-only
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U oja_probe -d oja_probe"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node executable
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify native isolation and evidence rejection cases
+        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js tests/scripts/prisma-graphql-source.test.js tests/scripts/prisma-sqlite-source.test.js
+      - name: Configure TLS only on this job's disposable PostgreSQL service
+        run: node scripts/security/prisma-tls-lab.mjs --container ${{ job.services.postgres.id }}
+      - name: Build original release profile and probe ephemeral SQLite and strict TLS PostgreSQL
+        run: node scripts/security/test-prisma-source.mjs --native-probe --release --postgres-port ${{ job.services.postgres.ports[5432] }} --postgres-tls
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload probe evidence without approving native production artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: prisma-native-linux-${{ github.run_id }}
+          path: |
+            .audit/native-prisma/
+            !.audit/native-prisma/**/native-probe/*/client/**
+            !.audit/native-prisma/**/native-probe/*/probe.sqlite*
+          if-no-files-found: error
+          retention-days: 45
+
+  windows-sqlite:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node executable
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify native isolation and evidence rejection cases
+        run: node --test tests/scripts/prisma-native-probe.test.js tests/scripts/prisma-source.test.js tests/scripts/prisma-git-assessment.test.js tests/scripts/prisma-graphql-source.test.js tests/scripts/prisma-sqlite-source.test.js
+      - name: Build original release profile and probe only ephemeral SQLite
+        run: node scripts/security/test-prisma-source.mjs --native-probe --release
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload probe evidence without approving native production artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: prisma-native-windows-${{ github.run_id }}
+          path: |
+            .audit/native-prisma/
+            !.audit/native-prisma/**/native-probe/*/client/**
+            !.audit/native-prisma/**/native-probe/*/probe.sqlite*
+          if-no-files-found: error
+          retention-days: 45

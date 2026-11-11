@@ -1,0 +1,69 @@
+name: Isolated Debian runtime compatibility
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-runtime-compatibility.yml
+      - scripts/security/*prisma*.mjs
+      - scripts/security/database-compatibility.mjs
+      - scripts/security/node-runtime.mjs
+      - scripts/security/rust-toolchain.mjs
+      - security/node-runtime.json
+      - security/prisma-source-contracts.json
+      - security/rust-toolchain.json
+      - tests/fixtures/prisma/**
+      - tests/scripts/prisma-runtime-compatibility.test.js
+      - Dockerfile
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  debian-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          persist-credentials: false
+      - name: Reject unreviewed fork build sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node executable
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify Node executable
+        run: npm run runtime:version
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify isolation and evidence rejection contracts
+        run: node --test tests/scripts/prisma-runtime-compatibility.test.js
+      - name: Download immutable independently verified native input
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13857085599
+          run-id: 43023329899
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/database-native-input
+      - name: Run network-disabled non-root Debian12 native client and migration probes
+        run: node scripts/security/prisma-runtime-compatibility.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload evidence without native or production approval
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: prisma-runtime-${{ github.run_id }}
+          path: .audit/prisma-runtime/
+          if-no-files-found: error
+          retention-days: 45
