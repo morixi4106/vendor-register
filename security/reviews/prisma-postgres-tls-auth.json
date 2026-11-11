@@ -73,18 +73,18 @@
     {
       "id": "SCRAM_GRAMMAR_CORRECTED_PENDING_NATIVE_ADOPTION",
       "evidence": "COMPILED_RUST_LIBRARY_BOTH_PLATFORMS",
-      "disposition": "Candidate rejects zero/leading-zero iteration syntax and fixes nonempty server-error values. Eight new named real-library regressions pass on both OSes. Nonce prefix checking is retained as specified for clients. Actual release-native adoption remains blocked by the separately recorded SQLite advisory; not an authentication-bypass reproduction or complete SCRAM conformance claim."
+      "disposition": "Candidate rejects zero/leading-zero iteration syntax and fixes nonempty server-error values. Eight new named real-library regressions pass on both OSes. Nonce prefix checking is retained as specified for clients. New release-native artifacts on both OSes adopt this source and the independently verified SQLite backport; immutable CI inputs now bind their actual bytes. This is not an authentication-bypass reproduction, complete SCRAM conformance or production approval."
     }
   ],
   "grammarCorrection": {
-    "sourceHead": "a021df77432828f26d8e661c0d1dbe13aef32def",
-    "sourceRun": "43016958532",
+    "sourceHead": "f1b35a87f21504e61569093a9ad654fd222c0290",
+    "sourceRun": "43023329951",
     "patchSha256": "fb9e1914e0618de2fa1d237ee6140e3ec5c891ce3ffa3b8c5ca0700bcb62e310",
     "fixtureSha256": "947c5063c9e97f59b11c7bc3ae8ee4b4df62f5a5cd1d346ab4d8b6457784a1d3",
     "newRegressions": 8,
     "postgresRegressions": 32,
     "bothPlatformSourceTestsVerified": true,
-    "releaseNativeAdoptionVerified": false,
+    "releaseNativeAdoptionVerified": true,
     "nonceChecksUnchanged": true,
     "cryptographyAndStateMachineUnchanged": true
   },

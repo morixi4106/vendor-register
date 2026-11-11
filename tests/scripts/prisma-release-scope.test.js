@@ -3,6 +3,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import test from "node:test";
 import { bindPrismaReleaseScope } from "../../scripts/security/prisma-release-scope.mjs";
+import { DATABASE_NATIVE_INPUT } from "../../scripts/security/database-compatibility.mjs";
 const ledger = JSON.parse(
   fs.readFileSync(
     new URL("../../security/prisma-release-scope.json", import.meta.url),
@@ -172,7 +173,8 @@ test("selected PostgreSQL TLS/auth review binds its exact scope without approvin
   assert.equal(review.grammarCorrection.newRegressions, 8);
   assert.equal(review.grammarCorrection.postgresRegressions, 32);
   assert.equal(review.grammarCorrection.bothPlatformSourceTestsVerified, true);
-  assert.equal(review.grammarCorrection.releaseNativeAdoptionVerified, false);
+  assert.equal(review.grammarCorrection.releaseNativeAdoptionVerified, true);
+  assert.equal(review.grammarCorrection.sourceHead, DATABASE_NATIVE_INPUT.head);
   assert.equal(
     review.grammarCorrection.fixtureSha256,
     crypto
@@ -191,7 +193,7 @@ test("selected PostgreSQL TLS/auth review binds its exact scope without approvin
   assert.equal(policy.postgresSource.reviewStatus, "UNREVIEWED");
 });
 
-test("SQLite backport source adoption cannot be mistaken for compiled native or production adoption", () => {
+test("SQLite candidate repair binds verified native inputs without approving production adoption", () => {
   const read = (file) =>
     fs.readFileSync(new URL(`../../${file}`, import.meta.url));
   const review = JSON.parse(read("security/reviews/prisma-sqlite-wal.json"));
@@ -200,7 +202,7 @@ test("SQLite backport source adoption cannot be mistaken for compiled native or 
     review.enginePolicySha256,
     crypto.createHash("sha256").update(policy).digest("hex"),
   );
-  assert.equal(review.status, "SOURCE_ADOPTED_PENDING_NATIVE");
+  assert.equal(review.status, "FIXED_CANDIDATE_ARTIFACTS_VERIFIED");
   assert.equal(review.advisory, "RUSTSEC-2026-0459");
   assert.equal(review.version, "0.30.1");
   assert.equal(review.sqliteVersion, "3.46.0");
@@ -215,9 +217,20 @@ test("SQLite backport source adoption cannot be mistaken for compiled native or 
   );
   assert.equal(policy.toString().includes(review.candidatePatch), true);
   assert.equal(review.sourcePatchAdopted, true);
+  assert.equal(review.compiledRegressionPassed, true);
+  assert.equal(review.newNativeBuildCompleted, true);
+  assert.equal(review.verifiedEvidence.nativeRun, DATABASE_NATIVE_INPUT.run);
+  assert.equal(review.verifiedEvidence.sourceHead, DATABASE_NATIVE_INPUT.head);
+  assert.equal(review.verifiedEvidence.cCasePairsPerOs, 72);
+  assert.equal(review.verifiedEvidence.fixedZeroTailsPerOs, 24);
+  const linux = review.verifiedEvidence.artifacts.find(
+    (a) => a.platform === "linux",
+  );
+  assert.equal(String(linux.id), DATABASE_NATIVE_INPUT.artifactId);
+  assert.equal(linux.librarySha256, DATABASE_NATIVE_INPUT.librarySha256);
+  assert.equal(linux.schemaSha256, DATABASE_NATIVE_INPUT.schemaSha256);
+  assert.equal(review.verifiedEvidence.artifacts.length, 2);
   for (const key of [
-    "compiledRegressionPassed",
-    "newNativeBuildCompleted",
     "productionExposureConfirmed",
     "productionPatched",
     "productionApproved",

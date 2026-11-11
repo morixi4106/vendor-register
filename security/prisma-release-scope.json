@@ -70,9 +70,9 @@
       "repository": "prisma/rust-postgres",
       "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
       "releaseRoots": ["query-engine-node-api", "schema-engine-cli"],
-      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/43016958532",
+      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/43023329899",
       "completed": "Historical actual N-API/schema engine, strict TLS PG17.11/18.6 and both poolers remain separately recorded. Selected owned TLS/startup/auth/SCRAM and Quaint consumers read and bound. Candidate grammar repairs and eight new real-library regressions pass on both OSes with all32 exact PostgreSQL tests in128 source contracts. Nonce checking is retained per the client requirement. See security/reviews/prisma-postgres-tls-auth.{md,json}; static TLS configuration blocker was already added.",
-      "remaining": "New release-native adoption is blocked by unfixed SQLite RUSTSEC-2026-0459; no new binary exists and old input/source mismatch remains a failure. Complete four-driver/transitive review, live TLS/Node/DB history/backup/restore/rollback/provider/production evidence remain open. Source tests are not whole-driver or production approval."
+      "remaining": "Both OS release-native artifacts now adopt the verified SCRAM/SQLite repairs and downstream immutable inputs bind their actual bytes; fresh application DB/runtime verification remains separate. Complete four-driver/transitive review, live TLS/Node/DB history/backup/restore/rollback/provider/production evidence remain open. Source and isolated native tests are not whole-driver or production approval."
     }
   ],
   "sourceReviewComplete": false,

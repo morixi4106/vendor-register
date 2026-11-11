@@ -1,7 +1,7 @@
 # SQLite WAL Advisory And Native Adoption Blocker
 
-Date: 2026-11-11. Status: SOURCE_ADOPTED_PENDING_NATIVE. This is not a waiver
-or a claim of compiled/native/production repair.
+Date: 2026-11-11. Status: FIXED_CANDIDATE_ARTIFACTS_VERIFIED. This is not a
+waiver, a false upstream-version upgrade, or production approval.
 
 ## Evidence
 
@@ -55,8 +55,14 @@ Eight page sizes, smaller/equal/larger buffers and success/read/short-read error
 must retain return codes, read length/offset and buffer guards. The original
 must retain24 stale tails and the fixed function must initialize all24. The
 build stores executable, generated input, compiler command/output and raw logs.
-Compilation and fresh native/DB/runtime verification are still pending; a
-matching source patch or harness declaration alone cannot complete them.
+Source43023329951 and native43023329899 now succeed on both actual OSes at
+source headf1b35a87f21504e61569093a9ad654fd222c0290. All four artifacts/raw C/
+binary/compiler/log/receipt inputs are independently verified; the Windows
+N-API/schema pair also runs the actual client/SQLite probes on this PC. The
+adjacent JSON binds both native ZIPs and actual binary hashes, and downstream
+immutable input pins adopt those verified bytes. The original failed artifacts
+remain historical evidence above. Fresh application DB/runtime verification
+is separate; matching source or declaring a harness was not treated as proof.
 
 ## Required Verification
 
@@ -69,11 +75,12 @@ matching source patch or harness declaration alone cannot complete them.
    existing JSON/GraphQL/client/SQLite/migrations/transactions, Linux strict TLS
    and certificate/hostname/plaintext rejection. Independently check bytes,
    metadata/source identity, raw logs and receipts before native pin adoption.
-3. With those verified bytes, rerun both PG majors/both poolers/55 app migrations/
+3. After independent native verification, pin those actual bytes as immutable
+   isolated-test inputs and rerun both PG majors/both poolers/55 app migrations/
    92 models/populated upgrade/actual app suites and isolated Debian runtime.
-   Only then update the immutable input binding and resolve its intentional
-   source mismatch. Keep all original13 Git identities/whole-engine/production
-   approvals false until separately reviewed.
+   Resolving the old source mismatch enables these tests, not production use.
+   Keep all original13 Git identities/whole-engine/production approvals false
+   until separately reviewed.
 
 Live TLS/configuration, actual process/Node/DB/backup/restore/rollback, provider,
 checkout/financial/SALE/legal evidence remain separate. No deployment, access,

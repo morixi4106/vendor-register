@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewDate": "2026-11-11",
-  "status": "SOURCE_ADOPTED_PENDING_NATIVE",
+  "status": "FIXED_CANDIDATE_ARTIFACTS_VERIFIED",
   "advisory": "RUSTSEC-2026-0459",
   "aliases": [
     "CVE-2026-119375",
@@ -47,12 +47,38 @@
     "excludedRoot": "prisma-fmt",
     "scope": "Previously verified normal/build metadata on both OSes; not current production or customer-input reachability"
   },
-  "repairPlan": "Exact official C patch adopted into bounded current-version path override, with original registry/advisory and all27 original/adopted file hashes retained. Real C baseline/fixed regressions and replacement native/DB/runtime evidence remain pending; no production approval.",
+  "repairPlan": "Exact official C patch adopted into bounded current-version path override, retaining original registry/advisory and all27 original/adopted file hashes. Both actual OS source/native artifacts and real C baseline/fixed regressions independently verified; immutable downstream native inputs now bind these new bytes. Fresh application DB/runtime verification remains separate; no production approval.",
   "sourcePatchAdopted": true,
-  "compiledRegressionPassed": false,
-  "newNativeBuildCompleted": false,
+  "compiledRegressionPassed": true,
+  "newNativeBuildCompleted": true,
   "productionExposureConfirmed": false,
   "productionPatched": false,
   "productionApproved": false,
-  "adoptedAmalgamationSha256": "11139aa084fc8e6aa4fb7d3527d7dc44a5f58afbd070815edc382a4f1a839897"
+  "adoptedAmalgamationSha256": "11139aa084fc8e6aa4fb7d3527d7dc44a5f58afbd070815edc382a4f1a839897",
+  "verifiedEvidence": {
+    "sourceHead": "f1b35a87f21504e61569093a9ad654fd222c0290",
+    "sourceRun": "43023329951",
+    "nativeRun": "43023329899",
+    "cCasePairsPerOs": 72,
+    "baselineStaleTailsPerOs": 24,
+    "fixedZeroTailsPerOs": 24,
+    "originalFunctionSha256": "64db8bd716d398f250bf4319c9a73f6f3f8c1be646c3f7dabb01749727d6569f",
+    "fixedFunctionSha256": "81c4334bb274460f2117b5cdfa5c409b87c400001dd8410ac8b1bfb5909ef86d",
+    "artifacts": [
+      {
+        "platform": "linux",
+        "id": 13857085599,
+        "zipSha256": "40edd8153f69f5e1a57dbea8fdc0c42c0436087fe87dc5b2e212a487063ae934",
+        "librarySha256": "1b61b7a72983448d2bdca05c96649a4d68f02b7fc9594fdb37bf5c1a9690bfc6",
+        "schemaSha256": "f91fffa3b176e49fa0a47499602bd79487385956e9ffe0980e63def85fd6e0bc"
+      },
+      {
+        "platform": "windows",
+        "id": 13856193729,
+        "zipSha256": "80cf05523b39ca90621f6c0e393dd2bcdb67824fda02261ab77edc0e54958f77",
+        "librarySha256": "45740d03dc6b79a9c3ce158e6d08610d7539b1300393dde707580d0e806eb166",
+        "schemaSha256": "c367e87ce2b7901661a3fc8c606c6546069725977f7ff909cd727ad34f489aca"
+      }
+    ]
+  }
 }

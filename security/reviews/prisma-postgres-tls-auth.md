@@ -62,7 +62,7 @@ do not disable verification to recover a failed connection.
 
 ## Subsequent Grammar Correction
 
-Candidate source policy e6510147 rejects zero/leading-zero iteration syntax
+Candidate source policy77fafe98 retains the correction from e6510147: it rejects zero/leading-zero iteration syntax
 before salt decoding or password hashing, and corrects nonempty server-error
 values while rejecting NUL/comma/empty/malformed UTF-8 input. The unchanged
 cryptography, HMAC verification, state machine and iteration ceiling remain
@@ -72,18 +72,19 @@ minimum server-nonce length. The earlier source observation was not proof
 of a nonce vulnerability.
 
 Eight new Rust regressions plus the existing24 now require all32 exact test
-names/successes, not just an arbitrary passing count. Actual source CI43016958532
+names/successes, not just an arbitrary passing count. Current source CI43023329951
 passes both OSes, including128 library contracts, prior GraphQL/CLI/HTTP/NTLM/
 benchmark correctness/consumer compilation. Both source artifacts/raw test names/
 compiler/locks/metadata/source inputs were independently checked. This is not
 a reproduced native authentication bypass or full SCRAM conformance claim.
 
-Actual release-native adoption is not complete. Both native jobs43016958931
-stop before compilation on the new libsqlite3-sys advisoryRUSTSEC-2026-0459;
-see prisma-sqlite-wal.md. No replacement native binary was produced or adopted.
-The old immutable input is retained, and its mismatch with the new candidate
-source is intentionally still rejected. Do not suppress that check or relabel
-historical native/DB/runtime evidence as proof of this grammar repair.
+The earlier native43016958931 failure on SQLiteRUSTSEC-2026-0459 is preserved
+as historical evidence. The exact official C backport is now verified on both
+OSes in source43023329951/native43023329899; see prisma-sqlite-wal.md. Both actual
+N-API/schema pairs adopt this corrected SCRAM source and downstream immutable
+CI inputs now bind their independently verified hashes. The prior mismatch
+was resolved by real new artifacts, not by relaxing assertions or relabeling
+historical bytes. Fresh application DB/runtime and production remain separate.
 
 ## Remaining Boundaries
 
