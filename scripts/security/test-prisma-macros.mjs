@@ -67,7 +67,7 @@ export function validateMacroPolicy(p) {
   assert.equal(p.schemaVersion, 1);
   assert.equal(
     p.originalTdsPolicySha256,
-    "44c787da3cd940fd2e2b6b7894515b8c3db3bf8283ca4e5e7c0b8c980ab7725a",
+    "b14a707e65ab806af6be44f8459b0f899e29ef55846edcbfd46ac8845edd7c21",
   );
   for (const field of ["fixtureSha256", "invalidCasesSha256"])
     assert.match(p[field], /^[a-f0-9]{64}$/);

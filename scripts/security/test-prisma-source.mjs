@@ -52,6 +52,14 @@ import {
   prismaNativeOptions,
   assertPrismaNativeRegistryAssessment,
 } from "./prisma-native-probe.mjs";
+import {
+  validatePrismaSqliteSource,
+  preparePrismaSqliteSource,
+  checkPrismaSqliteWiring,
+  checkPrismaSqliteMetadata,
+  assessPrismaSqliteIdentity,
+  runPrismaSqliteContracts,
+} from "./prisma-sqlite-source.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) =>
@@ -160,6 +168,7 @@ export function validatePrismaSourcePolicy(policy) {
       "winauthSource",
       "postgresSource",
       "graphqlSource",
+      "sqliteSource",
       "cliVersion",
       "httpClientVersion",
       "httpServerDependencies",
@@ -260,6 +269,7 @@ export function validatePrismaSourcePolicy(policy) {
   validatePrismaWinauthSource(policy.winauthSource);
   validatePrismaPostgresSource(policy.postgresSource);
   validatePrismaGraphqlSource(policy.graphqlSource);
+  validatePrismaSqliteSource(policy.sqliteSource);
   return policy;
 }
 
@@ -303,6 +313,7 @@ export function checkPrismaSourceWiring(source, policy) {
   checkPrismaCuidWiring(source, policy.cuidSource, prismaSourceInput);
   checkPrismaWinauthWiring(source, policy.winauthSource, prismaSourceInput);
   checkPrismaPostgresWiring(source, policy.postgresSource, prismaSourceInput);
+  checkPrismaSqliteWiring(source, policy.sqliteSource);
   const manifest = toml.parse(
     fs.readFileSync(path.join(source, "Cargo.toml"), "utf8"),
   );
@@ -666,6 +677,7 @@ export function checkPrismaMetadata(
     target,
   });
   checkPrismaMaintenanceMetadata(metadata, policy, { contracts });
+  checkPrismaSqliteMetadata(metadata, base, policy.sqliteSource, { contracts });
   const override = policy.overrides[0];
   const mongo = metadata.packages.filter((pkg) => pkg.name === override.name);
   const node = nodes.get(mongo[0]?.id);
@@ -1080,6 +1092,7 @@ export function prismaSourceReceipt(policy, engine, contracts, tests = null) {
     winauthSource: policy.winauthSource,
     postgresSource: policy.postgresSource,
     graphqlSource: policy.graphqlSource,
+    sqliteSource: policy.sqliteSource,
     cliVersion: policy.cliVersion,
     httpClientVersion: policy.httpClientVersion,
     httpServerDependencies: policy.httpServerDependencies,
@@ -1145,6 +1158,7 @@ export async function testPrismaSource(
   prismaSourceInput(root, policy.winauthSource.patch);
   prismaSourceInput(root, policy.postgresSource.patch);
   prismaSourceInput(root, policy.graphqlSource.patch);
+  prismaSourceInput(root, policy.sqliteSource.patch);
   const tools = await prepareRustToolchain(root);
   const { env, home, cargo } = tools;
   const out = checkedNativeDirectory(root, ".audit/native-prisma");
@@ -1261,6 +1275,13 @@ export async function testPrismaSource(
     execute,
     prismaSourceInput,
   );
+  const sqliteFunctions = await preparePrismaSqliteSource(
+    root,
+    source,
+    cache,
+    policy.sqliteSource,
+    execute,
+  );
   execute(
     "git",
     [
@@ -1304,16 +1325,35 @@ export async function testPrismaSource(
     )
     .join("\n");
   const overrides = await scanRustLockfile(overrideLock);
+  const sqliteIdentity = await assessPrismaSqliteIdentity(policy.sqliteSource);
+  const sqliteContractAssessment = await scanRustLockfile(
+    prismaSourceInput(root, policy.sqliteSource.contractLock).toString("utf8"),
+  );
   json("engine-source-assessment.json", engine);
   json("contract-source-assessment.json", contracts);
   json("override-source-assessment.json", overrides);
+  json("sqlite-original-identity-assessment.json", sqliteIdentity);
+  json("sqlite-contract-source-assessment.json", sqliteContractAssessment);
   json(
     "postgres-original-identity-assessment.json",
     await assessPrismaPostgresIdentities(policy.postgresSource),
   );
   // A clean small test graph is not an approval of the complete engine graph.
-  if (!contracts.registryAuditOk || !overrides.sourceAuditOk)
+  if (
+    !contracts.registryAuditOk ||
+    !overrides.sourceAuditOk ||
+    !sqliteContractAssessment.sourceAuditOk
+  )
     throw new Error("prisma_contract_advisories_unresolved");
+  const sqliteContracts = runPrismaSqliteContracts(
+    root,
+    run,
+    policy.sqliteSource,
+    sqliteFunctions,
+    cargo,
+    execute,
+  );
+  json("sqlite-wal-contracts.json", sqliteContracts);
   if (nativeProbe) assertPrismaNativeRegistryAssessment(engine);
   const common = [
     "metadata",
@@ -1503,6 +1543,11 @@ export async function testPrismaSource(
     contractLockfileSha256: digest(contractLock),
     sourceFiles: policy.sourceFiles,
     overrideSourceAuditOk: overrides.sourceAuditOk,
+    sqliteOriginalIdentityAssessmentSha256: digest(
+      JSON.stringify(sqliteIdentity),
+    ),
+    sqliteOriginalAdvisoryMatches: sqliteIdentity.findings.length,
+    sqliteContracts,
     gitIdentityAssessmentSha256: digest(JSON.stringify(gitAssessment)),
     testScope: graphqlOnly
       ? "actual adopted GraphQL depth/string contracts and complete library units; not complete engine, NAPI, database or production approval"

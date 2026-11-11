@@ -191,7 +191,7 @@ test("selected PostgreSQL TLS/auth review binds its exact scope without approvin
   assert.equal(policy.postgresSource.reviewStatus, "UNREVIEWED");
 });
 
-test("new SQLite advisory remains an explicit unfixed blocker and cannot be mistaken for a native repair", () => {
+test("SQLite backport source adoption cannot be mistaken for compiled native or production adoption", () => {
   const read = (file) =>
     fs.readFileSync(new URL(`../../${file}`, import.meta.url));
   const review = JSON.parse(read("security/reviews/prisma-sqlite-wal.json"));
@@ -200,7 +200,7 @@ test("new SQLite advisory remains an explicit unfixed blocker and cannot be mist
     review.enginePolicySha256,
     crypto.createHash("sha256").update(policy).digest("hex"),
   );
-  assert.equal(review.status, "BLOCKING_UNFIXED");
+  assert.equal(review.status, "SOURCE_ADOPTED_PENDING_NATIVE");
   assert.equal(review.advisory, "RUSTSEC-2026-0459");
   assert.equal(review.version, "0.30.1");
   assert.equal(review.sqliteVersion, "3.46.0");
@@ -213,9 +213,9 @@ test("new SQLite advisory remains an explicit unfixed blocker and cannot be mist
       .update(read(review.candidatePatch))
       .digest("hex"),
   );
-  assert.equal(policy.toString().includes(review.candidatePatch), false);
+  assert.equal(policy.toString().includes(review.candidatePatch), true);
+  assert.equal(review.sourcePatchAdopted, true);
   for (const key of [
-    "sourcePatchAdopted",
     "compiledRegressionPassed",
     "newNativeBuildCompleted",
     "productionExposureConfirmed",
@@ -223,8 +223,9 @@ test("new SQLite advisory remains an explicit unfixed blocker and cannot be mist
     "productionApproved",
   ])
     assert.equal(review[key], false);
-  assert.match(
-    read("vendor/native/prisma/Cargo.lock").toString(),
-    /name = "libsqlite3-sys"\r?\nversion = "0\.30\.1"\r?\nsource = "registry\+/,
-  );
+  const sqlite = JSON.parse(policy).sqliteSource;
+  assert.equal(sqlite.version, "0.30.1");
+  assert.equal(sqlite.sha256, review.archiveSha256);
+  assert.equal(sqlite.advisory.id, review.advisory);
+  assert.equal(sqlite.advisory.sha256, review.parsedAdvisoryJsonSha256);
 });

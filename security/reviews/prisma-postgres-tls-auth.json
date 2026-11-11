@@ -4,7 +4,7 @@
   "repository": "prisma/rust-postgres",
   "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
   "archiveSha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
-  "enginePolicySha256": "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
   "reviewScope": "Selected native TLS bridge, connection startup/authentication and SCRAM runtime; not complete review of four driver identities",
   "selectedPathStatus": "READ_WITH_FINDINGS",
   "files": [

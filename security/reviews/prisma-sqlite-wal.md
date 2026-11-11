@@ -1,6 +1,7 @@
 # SQLite WAL Advisory And Native Adoption Blocker
 
-Date: 2026-11-11. Status: BLOCKING_UNFIXED. This is not a waiver or a patch.
+Date: 2026-11-11. Status: SOURCE_ADOPTED_PENDING_NATIVE. This is not a waiver
+or a claim of compiled/native/production repair.
 
 ## Evidence
 
@@ -31,12 +32,14 @@ or establish every runtime/input path as safe.
 
 [SQLite's official change](https://github.com/sqlite/sqlite/commit/e5bf119821f25be1d7f10ef0a2edbe175289166e)
 initializes the output-buffer tail when its size exceeds a WAL frame, and then
-reads only the frame size. A check-only application of those exact C changes to
-the pinned original amalgamation succeeds. The source remains unchanged and
-no fixed C/native code has been compiled. Applicability is not completion.
-The exact proposed C delta is saved as sqlite-wal.candidate.patch under the
-existing vendor/native/prisma directory and hash-bound in the adjacent JSON.
-It is intentionally not referenced by the active source build policy yet.
+reads only the frame size. Those exact C changes are now bound into the source
+recipe as sqlite-wal.candidate.patch. All27 original and adopted file hashes are
+retained; sqlite3/sqlite3.c is the only changed crate file. Cargo keeps0.30.1,
+using a bounded local override rather than a false upgrade. The original archive
+checksum and full advisory remain visible and independently queried. Changed,
+removed or additional findings fail closed; matching the known advisory is not
+a clean audit or production approval. The full payload binding ignores JSON
+object-key order, but retains all values and nanosecond timestamp precision.
 
 The advisory identifies fixed libsqlite3-sys0.39 or newer. At this observation,
 rusqlite0.41.1 uses0.39, while released SQLx0.9.0 requires less than0.38 and the
@@ -45,12 +48,15 @@ lock-only update. Do not silently change SQLx's allowed range, disable WAL,
 switch to an unverified system SQLite, change release features or suppress the
 finding to unblock compilation.
 
-The preferred bounded next implementation is a reviewed path override for the
-current crate with the exact upstream C repair. Keep its original registry
-identity, checksum and full advisory record visible; a path conversion or
-renamed version is not evidence of a fix. The build must verify exact original
-archive and all adopted source hashes and reject any unrelated/new advisory.
-This is a proposed implementation, not an existing exception/admission rule.
+The bounded override and verification are implemented. Real C contracts insert
+the byte-bound original/fixed functions into a harness with mocked IO, compile
+with the detected system C compiler and run72 case pairs/144 calls per execution.
+Eight page sizes, smaller/equal/larger buffers and success/read/short-read errors
+must retain return codes, read length/offset and buffer guards. The original
+must retain24 stale tails and the fixed function must initialize all24. The
+build stores executable, generated input, compiler command/output and raw logs.
+Compilation and fresh native/DB/runtime verification are still pending; a
+matching source patch or harness declaration alone cannot complete them.
 
 ## Required Verification
 

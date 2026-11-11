@@ -1,9 +1,12 @@
 {
   "schemaVersion": 1,
   "reviewDate": "2026-11-11",
-  "status": "BLOCKING_UNFIXED",
+  "status": "SOURCE_ADOPTED_PENDING_NATIVE",
   "advisory": "RUSTSEC-2026-0459",
-  "aliases": ["CVE-2026-119375", "GHSA-72w2-rjgg-q729"],
+  "aliases": [
+    "CVE-2026-119375",
+    "GHSA-72w2-rjgg-q729"
+  ],
   "advisoryUrl": "https://rustsec.org/advisories/RUSTSEC-2026-0459.html",
   "advisoryModified": "2026-11-09T10:00:02.337112Z",
   "parsedAdvisoryJsonSha256": "6047853b50b8b7aecca35c309372acb2f44a462f59c5818e046e9088a3e1ab6e",
@@ -17,7 +20,7 @@
   "candidatePatch": "vendor/native/prisma/sqlite-wal.candidate.patch",
   "candidatePatchSha256": "71581435ba60a8dd426fb7339d396cf843c03715874fb0037152b0d526901907",
   "sourceApplicabilityChecked": true,
-  "enginePolicySha256": "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
   "failedNativeRun": "43016958931",
   "failedNativeSourceHead": "a021df77432828f26d8e661c0d1dbe13aef32def",
   "artifacts": [
@@ -44,11 +47,12 @@
     "excludedRoot": "prisma-fmt",
     "scope": "Previously verified normal/build metadata on both OSes; not current production or customer-input reachability"
   },
-  "repairPlan": "Bind a path override and the original registry identity/advisory, apply the exact upstream WAL initialization fix with deterministic old/fixed C regressions, then rebuild and independently verify actual native/DB/runtime evidence before updating native pins. No advisory suppression or source-conversion waiver.",
-  "sourcePatchAdopted": false,
+  "repairPlan": "Exact official C patch adopted into bounded current-version path override, with original registry/advisory and all27 original/adopted file hashes retained. Real C baseline/fixed regressions and replacement native/DB/runtime evidence remain pending; no production approval.",
+  "sourcePatchAdopted": true,
   "compiledRegressionPassed": false,
   "newNativeBuildCompleted": false,
   "productionExposureConfirmed": false,
   "productionPatched": false,
-  "productionApproved": false
+  "productionApproved": false,
+  "adoptedAmalgamationSha256": "11139aa084fc8e6aa4fb7d3527d7dc44a5f58afbd070815edc382a4f1a839897"
 }

@@ -734,6 +734,20 @@ const metadataFixture = (t, contracts) => {
     (pkg) => contracts || pkg.name !== "postgres-protocol",
   ))
     pgOwner.deps.push({ name: item.name.replaceAll("-", "_"), pkg: item.name });
+  if (!contracts) {
+    const directory = path.join(source, "vendor/libsqlite3-sys");
+    fs.mkdirSync(directory);
+    const manifest = path.join(directory, "Cargo.toml");
+    fs.writeFileSync(manifest, "[package]\n");
+    packages.push({
+      id: "libsqlite3-sys",
+      name: "libsqlite3-sys",
+      version: "0.30.1",
+      source: null,
+      manifest_path: manifest,
+    });
+    nodes.push({ id: "libsqlite3-sys", features: ["bundled"], deps: [] });
+  }
   return { source, metadata: { packages, resolve: { nodes } } };
 };
 

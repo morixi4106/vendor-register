@@ -1,11 +1,11 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 307dd8c..118f01e 100644
+index 307dd8c..f5e87e8 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,6 +1,8 @@
  [workspace]
  resolver = "2"
-+exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres"]
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres", "vendor/libsqlite3-sys"]
  members = [
 +    "vendor/graphql",
      "schema-engine/cli",
@@ -110,12 +110,13 @@ index 307dd8c..118f01e 100644
  dissimilar = "1"
  expect-test = "1"
  flate2 = "1"
-@@ -256,3 +260,8 @@ opt-level = 's'   # Optimize for size.
+@@ -256,3 +260,9 @@ opt-level = 's'   # Optimize for size.
  [profile.profiling]
  inherits = "release"
  debug = true
 +
 +[patch.crates-io]
++libsqlite3-sys = { path = "vendor/libsqlite3-sys" }
 +mongodb = { path = "vendor/mongodb" }
 +mysql_common = { path = "vendor/mysql_common" }
 +winauth = { path = "vendor/winauth" }

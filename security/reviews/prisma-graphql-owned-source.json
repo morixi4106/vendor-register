@@ -4,7 +4,7 @@
   "repository": "prisma/graphql-parser",
   "commit": "6a3f58bd879065588e710cb02b5bd30c1ce182c3",
   "archiveSha256": "178523e71418f058b4b0eeb829b2c8b36064378d77eb83707130fb2e9916653e",
-  "enginePolicySha256": "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
   "reviewScope": "Runtime portions of all sixteen owned Rust source files and the package manifest, not all tests/benches/dependencies",
   "ownedRuntimeStatus": "READ_WITH_FINDINGS",
   "files": [
