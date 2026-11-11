@@ -92,7 +92,7 @@ index d619c19..bcd53e6 100644
  tokio = { version = "1.27", features = ["io-util", "rt"] }
  tokio-util = { version = "0.7", features = ["codec"] }
 diff --git a/postgres-protocol/src/authentication/sasl.rs b/postgres-protocol/src/authentication/sasl.rs
-index ccd40e8..a2fdaaa 100644
+index ccd40e8..dc5ecb5 100644
 --- a/postgres-protocol/src/authentication/sasl.rs
 +++ b/postgres-protocol/src/authentication/sasl.rs
 @@ -14,6 +14,13 @@ use std::mem;
@@ -123,6 +123,32 @@ index ccd40e8..a2fdaaa 100644
          let salt = match STANDARD.decode(parsed.salt) {
              Ok(salt) => salt,
              Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput, e)),
+@@ -360,6 +374,12 @@ impl<'a> Parser<'a> {
+
+     fn posit_number(&mut self) -> io::Result<u32> {
+         let n = self.take_while(|c| c.is_ascii_digit())?;
++        if n.is_empty() || n.starts_with('0') {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "invalid SCRAM iteration count",
++            ));
++        }
+         n.parse()
+             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+     }
+@@ -396,7 +416,11 @@ impl<'a> Parser<'a> {
+     }
+
+     fn value(&mut self) -> io::Result<&'a str> {
+-        self.take_while(|c| matches!(c, '\0' | '=' | ','))
++        let value = self.take_while(|c| c != '\0' && c != ',')?;
++        if value.is_empty() {
++            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty SCRAM value"));
++        }
++        Ok(value)
+     }
+
+     fn server_error(&mut self) -> io::Result<Option<&'a str>> {
 diff --git a/postgres-protocol/src/types/mod.rs b/postgres-protocol/src/types/mod.rs
 index 37dc793..0548beb 100644
 --- a/postgres-protocol/src/types/mod.rs

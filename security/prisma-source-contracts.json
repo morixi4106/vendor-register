@@ -9,7 +9,7 @@
   },
   "patch": {
     "path": "vendor/native/prisma/engine.patch",
-    "sha256": "399b1d3c99f7bb3717430268a1107e2b0b8493fc0483d939a5634a96bd0c0495"
+    "sha256": "295c8bcef4014daef71607fa3a4370872ae8bd8801ce95bcbbe5e3db0677bea3"
   },
   "lockfile": {
     "path": "vendor/native/prisma/Cargo.lock",
@@ -190,7 +190,11 @@
     },
     {
       "path": "security-contracts/src/postgres_contracts.rs",
-      "sha256": "ba6490f8d5cc0a3467032966bf5deed29a924f9520dbb56b352fd852f62c97ff"
+      "sha256": "c3aece6440e0fb1266ce412da189d7797a78e417c48229e12bb0af7de5e3c792"
+    },
+    {
+      "path": "security-contracts/src/scram_grammar.rs",
+      "sha256": "947c5063c9e97f59b11c7bc3ae8ee4b4df62f5a5cd1d346ab4d8b6457784a1d3"
     }
   ],
   "dependencies": {
@@ -569,7 +573,7 @@
     "reviewStatus": "UNREVIEWED",
     "patch": {
       "path": "vendor/native/prisma/postgres.patch",
-      "sha256": "19b9167b1422d2ebb53c12a2331c9238e2812d356f8b1b30041e7c5fd678f756"
+      "sha256": "fb9e1914e0618de2fa1d237ee6140e3ec5c891ce3ffa3b8c5ca0700bcb62e310"
     },
     "packages": [
       {
@@ -629,7 +633,7 @@
       },
       {
         "path": "postgres-protocol/src/authentication/sasl.rs",
-        "sha256": "c703eb519c676896748e20638bad7c7a0fc1380c8d2824fe1aad02427c8dca72"
+        "sha256": "50a4bda4feeacf611df687123505b11faaf7222e001a3d9f874a8735aaeb8448"
       },
       {
         "path": "postgres-protocol/src/types/mod.rs",

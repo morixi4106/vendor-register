@@ -16,6 +16,7 @@ import {
   checkPrismaMaintenanceMetadata,
   prismaPasteTestTotals,
   prismaPostgresTestTotals,
+  PRISMA_POSTGRES_TEST_CASES,
   prismaBenchmarkArguments,
   prismaBenchmarkTotals,
   prismaPasteConsumerArguments,
@@ -1849,6 +1850,34 @@ test("PostgreSQL recipe pins the original fork, official fixes and every relevan
     ].length,
     24,
   );
+  const fixture = fs.readFileSync(
+    path.join(ROOT, "tests/fixtures/prisma/postgres-scram-grammar.rs"),
+    "utf8",
+  );
+  const selected = policy.sourceFiles.find(
+    (file) => file.path === "security-contracts/src/scram_grammar.rs",
+  );
+  assert.equal(
+    selected.sha256,
+    crypto.createHash("sha256").update(fixture).digest("hex"),
+  );
+  const section = enginePatch.split(
+    "diff --git a/security-contracts/src/scram_grammar.rs b/security-contracts/src/scram_grammar.rs\n",
+  )[1];
+  assert.ok(section);
+  const embedded =
+    section
+      .split("\n")
+      .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+      .map((line) => line.slice(1))
+      .join("\n") + "\n";
+  assert.equal(embedded, fixture);
+  for (const marker of [
+    "invalid SCRAM iteration count",
+    "empty SCRAM value",
+    "c != '\\0' && c != ','",
+  ])
+    assert.ok(patch.includes(marker), marker);
 });
 
 test("PostgreSQL metadata rejects detached forks, lost ownership, missing runtime and production diagnostics", (t) => {
@@ -2003,13 +2032,13 @@ test("PostgreSQL wiring validates internal edges, diagnostic isolation and mater
   assert.throws(verify, /prisma_postgres_license_invalid/);
 });
 
-test("PostgreSQL receipts require all 24 distinct successful real-library regressions", () => {
-  const lines = Array.from(
-    { length: 24 },
-    (_, i) => `test postgres_contracts::case_${i} ... ok`,
+test("PostgreSQL receipts require all 32 named successful real-library regressions", () => {
+  assert.equal(PRISMA_POSTGRES_TEST_CASES.length, 32);
+  const lines = PRISMA_POSTGRES_TEST_CASES.map(
+    (name) => `test postgres_contracts::${name} ... ok`,
   );
   assert.deepEqual(prismaPostgresTestTotals(lines.join("\n")), {
-    passed: 24,
+    passed: 32,
     failed: 0,
     ignored: 0,
   });
@@ -2017,7 +2046,8 @@ test("PostgreSQL receipts require all 24 distinct successful real-library regres
     "",
     lines.slice(1).join("\n"),
     lines.concat(lines[0]).join("\n"),
-    Array(24).fill(lines[0]).join("\n"),
+    Array(32).fill(lines[0]).join("\n"),
+    lines.join("\n").replace(PRISMA_POSTGRES_TEST_CASES[0], "substituted_test"),
     lines.join("\n").replace("ok", "ignored"),
     lines.join("\n").replace("ok", "FAILED"),
     lines.join("\n").replaceAll("postgres_contracts", "other"),

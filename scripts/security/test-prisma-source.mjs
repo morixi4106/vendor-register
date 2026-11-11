@@ -109,6 +109,7 @@ const SOURCE_FILES = [
   "schema-engine/sql-migration-tests/Cargo.toml",
   "quaint/src/macros.rs",
   "security-contracts/src/postgres_contracts.rs",
+  "security-contracts/src/scram_grammar.rs",
 ];
 const PASTE_CONSUMERS = [
   ["quaint", "quaint/Cargo.toml", "dev-dependencies"],
@@ -830,17 +831,58 @@ export function checkPrismaMaintenanceMetadata(
   return true;
 }
 
+export const PRISMA_POSTGRES_TEST_CASES = [
+  "scram_original_proof_and_server_signature",
+  "scram_accepts_exact_iteration_limit",
+  "scram_rejects_above_limit_before_decoding_salt",
+  "scram_rejects_maximum_u32_without_hashing",
+  "scram_malformed_iterations_and_nonce_fail",
+  "scram_bad_salt_or_signature_fails",
+  "scram_failed_update_cannot_reuse_state",
+  "scram_real_nonce_and_channel_binding_paths_remain",
+  "hstore_empty_and_null_pairs_roundtrip",
+  "hstore_unicode_and_multiple_pairs_roundtrip",
+  "hstore_oversized_key_is_error",
+  "hstore_oversized_value_is_error",
+  "hstore_negative_key_and_invalid_utf8_are_errors",
+  "hstore_impossible_count_rejected_before_reserving",
+  "hstore_truncated_and_trailing_data_are_errors",
+  "hstore_bounded_length_mutation_corpus_never_panics",
+  "row_fewer_fields_rejected_at_construction",
+  "simple_row_fewer_fields_rejected_at_construction",
+  "row_extra_fields_rejected_at_construction",
+  "row_zero_columns_and_fields_work",
+  "row_matching_fields_and_accessors_work",
+  "row_null_fields_preserve_option_semantics",
+  "row_truncated_and_bad_field_lengths_are_errors",
+  "pgbouncer_config_and_native_tls_types_are_retained",
+  ...[
+    "zero_iterations_fail_before_salt_decode",
+    "leading_zero_iterations_are_not_positive_number_syntax",
+    "positive_minimum_still_requires_a_correct_server_signature",
+    "standard_server_errors_remain_authentication_failures",
+    "nonempty_server_error_values_support_equals_and_utf8",
+    "empty_nul_comma_and_invalid_utf8_errors_are_not_valid_values",
+    "signature_success_and_failure_are_terminal_states",
+    "client_nonce_prefix_contract_is_preserved_without_claiming_authentication",
+  ].map((name) => `scram_grammar::${name}`),
+];
+
 export function prismaPostgresTestTotals(output) {
   const entries = [
     ...output.matchAll(/^test postgres_contracts::(\S+) \.\.\. (.+)$/gm),
   ];
   if (
-    entries.length !== 24 ||
-    new Set(entries.map((match) => match[1])).size !== 24 ||
+    entries.length !== PRISMA_POSTGRES_TEST_CASES.length ||
+    new Set(entries.map((match) => match[1])).size !==
+      PRISMA_POSTGRES_TEST_CASES.length ||
+    PRISMA_POSTGRES_TEST_CASES.some(
+      (name) => !entries.some((match) => match[1] === name),
+    ) ||
     entries.some((match) => match[2].trim() !== "ok")
   )
     throw new Error("prisma_postgres_tests_incomplete");
-  return { passed: 24, failed: 0, ignored: 0 };
+  return { passed: PRISMA_POSTGRES_TEST_CASES.length, failed: 0, ignored: 0 };
 }
 
 export function prismaPasteTestTotals(output) {

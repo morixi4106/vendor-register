@@ -4,7 +4,7 @@
   "repository": "prisma/rust-postgres",
   "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
   "archiveSha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
-  "enginePolicySha256": "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
+  "enginePolicySha256": "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
   "reviewScope": "Selected native TLS bridge, connection startup/authentication and SCRAM runtime; not complete review of four driver identities",
   "selectedPathStatus": "READ_WITH_FINDINGS",
   "files": [
@@ -40,7 +40,7 @@
       "path": "postgres-protocol/src/authentication/sasl.rs",
       "originalGitBlob": "ccd40e8d0464b020fa8aa32e14d5d16488d9fdd6",
       "originalSha256": "e81954f816cf18310e908a40c3b855b535a4e924a7958f53ee78002b25866893",
-      "adoptedSha256": "c703eb519c676896748e20638bad7c7a0fc1380c8d2824fe1aad02427c8dca72",
+      "adoptedSha256": "50a4bda4feeacf611df687123505b11faaf7222e001a3d9f874a8735aaeb8448",
       "readScope": "RUNTIME_BEFORE_TEST_MODULE"
     }
   ],

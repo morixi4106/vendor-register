@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "strictTlsPolicySha256": "8f548616f48db7c04e9171f967521a772e314b5893aa82b39f80ee50e761ac4d",
+  "strictTlsPolicySha256": "3e846f519e789014383a8455f6e1032ad317dada665236f9f5db044e5e59f419",
   "fixturePath": "tests/fixtures/prisma-tds-classic/lib.rs",
   "fixtureSha256": "c3d61ffa9b0c1c7e9d8a62b65ce007585aa7f9cafcaa9ab2f7d1c790d9044061",
   "clientModes": ["On", "Required"],

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "originalTdsPolicySha256": "ebd344db5c49c3ae1366ec2078557850ff0e1ed6800829a0d6af94b7424d5ca6",
+  "originalTdsPolicySha256": "44c787da3cd940fd2e2b6b7894515b8c3db3bf8283ca4e5e7c0b8c980ab7725a",
   "targets": {
     "linux": "x86_64-unknown-linux-gnu",
     "win32": "x86_64-pc-windows-msvc"

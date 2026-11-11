@@ -32,7 +32,7 @@ export function validateTdsPolicy(p) {
   assert.equal(p.sourceFiles, 158);
   assert.equal(
     p.sourcePolicySha256,
-    "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
+    "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
   );
   for (const k of [
     "archiveSha256",
