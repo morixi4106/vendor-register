@@ -34,7 +34,7 @@ export function validateRebuildPolicy(policy) {
     policy.version !== "0.25.12" ||
     !/^[a-f0-9]{40}$/.test(policy.sourceCommit) ||
     !HASH.test(policy.sourceSha256) ||
-    policy.goVersion !== "1.27.3" ||
+    policy.goVersion !== "1.27.4" ||
     policy.govulncheckVersion !== "v1.9.0" ||
     !exactKeys(policy.archives, ["linux", "win32"]) ||
     !exactKeys(policy.binarySha256, ["linux", "win32"]) ||

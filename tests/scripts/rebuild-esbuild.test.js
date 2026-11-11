@@ -22,6 +22,7 @@ test("native rebuild policy rejects unknown fields, old compilers and unbound bi
   for (const patch of [
     { ignore: true },
     { goVersion: "1.23.12" },
+    { goVersion: "1.27.3" },
     { sourceCommit: "invalid" },
     { binarySha256: {} },
     { archives: { ...policy.archives, darwin: {} } },
@@ -54,7 +55,7 @@ test("native compiler processes receive no production credentials or override fl
 
 test("Go build metadata must bind version, architecture and trimmed static build", () => {
   const info = {
-    GoVersion: "go1.27.3",
+    GoVersion: "go1.27.4",
     Path: "github.com/evanw/esbuild/cmd/esbuild",
     Main: { Path: "github.com/evanw/esbuild", Version: "(devel)" },
     Settings: [
@@ -68,6 +69,11 @@ test("Go build metadata must bind version, architecture and trimmed static build
   assert.throws(
     () =>
       validateGoBuildInfo({ ...info, GoVersion: "go1.23.12" }, "linux", policy),
+    /native_go_build_info_invalid/,
+  );
+  assert.throws(
+    () =>
+      validateGoBuildInfo({ ...info, GoVersion: "go1.27.3" }, "linux", policy),
     /native_go_build_info_invalid/,
   );
   assert.throws(
@@ -135,7 +141,7 @@ test("native outputs cannot traverse or follow an external directory junction", 
 
 test("installed esbuild requires fresh exact binary and scan receipts", (t) => {
   const actual = verifyRebuiltEsbuild(ROOT);
-  assert.equal(actual.goVersion, "1.27.3");
+  assert.equal(actual.goVersion, "1.27.4");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-receipt-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(

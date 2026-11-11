@@ -3,20 +3,20 @@
   "incident": "2026-10-runtime",
   "approvedArtifacts": [
     {
-      "sha256": "8967ee62f6ca53b123ae81dcdcfbe81b023e67f8089cc640a36eececcbd20689",
+      "sha256": "9ab5d52253e50299b7220c9a3790b7825ddf14381415f56eb32eae127e6cb977",
       "platform": "win32",
       "arch": "x64",
       "sourceCommit": "208f539945b145e7c9d6d844290f81c3fe5af320",
       "sbom": "security/native-sbom/esbuild-win32-x64.json",
-      "sbomSha256": "72577a5595af13cad15cdf4b0841a81f0d3f2de616f966a24abdd6bec0e34a1d"
+      "sbomSha256": "551101cbf1c18c62310894b7902a8c04e912896bcfcadc207e030a1142192283"
     },
     {
-      "sha256": "f3b73341b62f006d2c88861b45220197220d7b939629daf929355d795ba08222",
+      "sha256": "0c16e5fa290590038cdbcb6090a22199bd117dabbe8516e200f77f1736a91092",
       "platform": "linux",
       "arch": "x64",
       "sourceCommit": "208f539945b145e7c9d6d844290f81c3fe5af320",
       "sbom": "security/native-sbom/esbuild-linux-x64.json",
-      "sbomSha256": "8cf38f4ba50be64df0a5f4b70dd201422f449fb4719828bfd6198b8b2cbe50ee"
+      "sbomSha256": "b52e3adc337240801af8866be2422572f23746a3650c1f168306695a62b2ee68"
     }
   ]
 }

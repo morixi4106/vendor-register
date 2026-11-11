@@ -6,11 +6,11 @@
     "component": {
       "type": "application",
       "name": "esbuild",
-      "version": "0.25.12-oja.go1.27.3",
+      "version": "0.25.12-oja.go1.27.4",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "f3b73341b62f006d2c88861b45220197220d7b939629daf929355d795ba08222"
+          "content": "0c16e5fa290590038cdbcb6090a22199bd117dabbe8516e200f77f1736a91092"
         }
       ],
       "externalReferences": [
@@ -25,8 +25,8 @@
     {
       "type": "library",
       "name": "stdlib",
-      "version": "go1.27.3",
-      "purl": "pkg:golang/stdlib@1.27.3"
+      "version": "go1.27.4",
+      "purl": "pkg:golang/stdlib@1.27.4"
     },
     {
       "type": "library",
