@@ -491,6 +491,7 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     checks: [
       "native-identity",
       "generated-client-native-loader",
+      "json-protocol-isolation",
       "graphql-depth-limit",
       "migration-history",
       "crud-and-cuid",
@@ -507,6 +508,12 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
     schemaEngineInvocations: 2,
     productionApproved: false,
     clientVersion: "6.19.3",
+    jsonProtocol: {
+      constructorProtocol: "json",
+      roundTrips: 9,
+      graphqlEnvelopeRejected: true,
+      healthyControls: 2,
+    },
     graphql: {
       maximumNesting: 50,
       rejected: 6,
@@ -525,6 +532,17 @@ test("successful native receipts cannot omit tests, substitute bytes or grant pr
   assert.equal(verify(report), report);
   for (const mutate of [
     (r) => r.checks.pop(),
+    (r) => {
+      delete r.jsonProtocol;
+    },
+    (r) => {
+      delete r.jsonProtocol.graphqlEnvelopeRejected;
+    },
+    (r) => (r.jsonProtocol.constructorProtocol = "graphql"),
+    (r) => (r.jsonProtocol.roundTrips = 8),
+    (r) => (r.jsonProtocol.graphqlEnvelopeRejected = false),
+    (r) => (r.jsonProtocol.healthyControls = 0),
+    (r) => (r.jsonProtocol.productionApproved = true),
     (r) => {
       delete r.graphql.unicodeCases;
     },

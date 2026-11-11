@@ -8,6 +8,7 @@ const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const CHECKS = [
   "native-identity",
   "generated-client-native-loader",
+  "json-protocol-isolation",
   "graphql-depth-limit",
   "migration-history",
   "crud-and-cuid",
@@ -254,6 +255,7 @@ export function verifyPrismaNativeProbeReport(
     "productionApproved",
     "clientVersion",
     "graphql",
+    "jsonProtocol",
     ...(provider === "postgresql" ? ["scram"] : []),
     ...(tls ? ["tls"] : []),
   ];
@@ -266,6 +268,14 @@ export function verifyPrismaNativeProbeReport(
     report.librarySha256 !== artifacts.library.sha256 ||
     report.schemaSha256 !== artifacts.schema.sha256 ||
     JSON.stringify(report.checks) !== JSON.stringify(expected) ||
+    Object.keys(report.jsonProtocol || {})
+      .sort()
+      .join() !==
+      "constructorProtocol,graphqlEnvelopeRejected,healthyControls,roundTrips" ||
+    report.jsonProtocol.constructorProtocol !== "json" ||
+    report.jsonProtocol.roundTrips !== 9 ||
+    report.jsonProtocol.graphqlEnvelopeRejected !== true ||
+    report.jsonProtocol.healthyControls !== 2 ||
     Object.keys(report.graphql || {})
       .sort()
       .join() !==

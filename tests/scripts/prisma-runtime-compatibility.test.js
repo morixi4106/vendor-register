@@ -240,6 +240,7 @@ function report() {
       checks: [
         "native-identity",
         "generated-client-native-loader",
+        "json-protocol-isolation",
         "graphql-depth-limit",
         "migration-history",
         "crud-and-cuid",
@@ -255,6 +256,12 @@ function report() {
       rowsRemaining: 0,
       schemaEngineInvocations: 6,
       clientVersion: "6.19.3",
+      jsonProtocol: {
+        constructorProtocol: "json",
+        roundTrips: 9,
+        graphqlEnvelopeRejected: true,
+        healthyControls: 2,
+      },
       graphql: {
         maximumNesting: 50,
         rejected: 6,
@@ -288,6 +295,12 @@ test("runtime evidence requires exact Node bytes, Debian/glibc, loaded libraries
     (r) => (r.ca.bytes = 0),
     (r) => (r.schemaCliVersion = "substituted"),
     (r) => r.native.checks.pop(),
+    (r) => {
+      delete r.native.jsonProtocol;
+    },
+    (r) => (r.native.jsonProtocol.constructorProtocol = "graphql"),
+    (r) => (r.native.jsonProtocol.graphqlEnvelopeRejected = false),
+    (r) => (r.native.jsonProtocol.roundTrips = 0),
     (r) => (r.native.graphql.controlQueries = 0),
     (r) => (r.native.loadedLibrarySha256 = "0".repeat(64)),
     (r) => (r.native.rowsRemaining = 1),

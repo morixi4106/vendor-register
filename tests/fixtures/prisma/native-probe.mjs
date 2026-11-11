@@ -84,14 +84,47 @@ command(["migrate", "deploy"]);
 const { PrismaClient, Prisma } = require(path.join(input.project, "client/index.js"));
 assert.equal(Prisma.prismaVersion.client, "6.19.3");
 const client = new PrismaClient({ datasourceUrl: url, log: [] });
+const constructorProtocols = [];
+const libraryLoader = client._engine.libraryLoader;
+// Observe the real client options without altering them or replacing the native engine.
+client._engine.libraryLoader = { async loadLibrary(config) {
+  const actual = await libraryLoader.loadLibrary(config);
+  return { ...actual, QueryEngine: class {
+    constructor(options, ...args) {
+      constructorProtocols.push(options.engineProtocol);
+      return new actual.QueryEngine(options, ...args);
+    }
+  } };
+} };
 let scram;
 let tls;
 let graphql;
+let jsonProtocol;
 try {
   await record("generated-client-native-loader", async () => {
     await client.$connect();
     assert.deepEqual([...loaded], [input.librarySha256]);
     assert.equal(client._engine.versionInfo.commit, input.sourceCommit);
+  });
+  await record("json-protocol-isolation", async () => {
+    assert.deepEqual(constructorProtocols, ["json"]);
+    const values = ["\b", "\f", "\n", "\r", "\t", "\u0001", "\ud83d\ude00", '"\\{}[]()', "A\ud83d\ude00B\b"];
+    const sql = input.provider === "postgresql" ? "SELECT $1::text AS probe" : "SELECT ? AS probe";
+    for (const value of values) {
+      const rows = await client.$queryRawUnsafe(sql, value);
+      assert.equal(rows.length, 1); assert.equal(rows[0].probe, value);
+    }
+    const healthy = async () => {
+      const rows = await client.$queryRawUnsafe("SELECT 1 AS probe");
+      assert.equal(rows.length, 1); assert.equal(Number(rows[0].probe), 1);
+    };
+    await healthy();
+    await assert.rejects(client._engine.engine.query(JSON.stringify({
+      query: "mutation {queryRaw(query:\"SELECT 1 AS probe\",parameters:\"[]\")}",
+      variables: {}, engineProtocol: "graphql",
+    }), "{}", undefined), error => error?.code === "InvalidArg" && error.message === "data did not match any variant of untagged enum JsonBody");
+    await healthy();
+    jsonProtocol = { constructorProtocol: constructorProtocols[0], roundTrips: values.length, graphqlEnvelopeRejected: true, healthyControls: 2 };
   });
   await record("graphql-depth-limit", async () => {
     const engine = new (require(input.library).QueryEngine)({
@@ -300,6 +333,7 @@ console.log(JSON.stringify({ provider: input.provider, sourceCommit: input.sourc
   loadedLibrarySha256: [...loaded][0], checks, migrationsApplied: 2, rowsRemaining: 0,
   schemaEngineInvocations: fs.readFileSync(path.join(input.project, "schema-engine-invocations.jsonl"), "utf8").trim().split("\n").length,
   clientVersion: Prisma.prismaVersion.client,
+  jsonProtocol,
   graphql,
   ...(tls ? { tls } : {}),
   ...(scram ? { scram } : {}), productionApproved: false }));
