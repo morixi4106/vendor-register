@@ -1,5 +1,32 @@
 # Production dependency advisories
 
+## Runtime Package Native Admission: 2026-11-11
+
+The incident check inspects the build tree, while runtime packaging installs a
+different dependency tree. Registry audit success alone previously allowed that
+new tree to produce runtime success evidence without checking its native bytes.
+This is a candidate packaging gap, not proof of production exploitation.
+
+Reuse the existing exact native hash/platform/source/SBOM checks before executing
+the staged generator, after generation/audit, and before/after activation. Require
+the packaged schema engine and real generated client engine; reject all other
+unapproved native artifacts, not just Prisma. Bind the policy and full inventory
+to evidence and compare copies. On failure restore original modules and leave
+no stale success receipt. Build-inventory requirements and all approval gates
+are unchanged; no real candidate artifact is newly approved.
+
+Tests use synthetic non-executable native-header fixtures, not release binaries.
+Actual native source/client/database verification remains separately recorded.
+Local1713 tests:1704 pass/0 fail/9 platform skips; audit187 pass/3 platform skips,
+coverage98.71/92.60/98.61; focused38 pass/1 platform skip; build/lint/text and
+architecture checks pass. A separate actual script-disabled install of172
+production packages rejects12 unapproved Prisma WASMs and the missing packaged
+schema executable before generation. Original native inventory is unchanged,
+temporary staging removed, no activation or runtime-success receipt written.
+This negative rehearsal does not approve a full production package.
+See [adoption prerequisites and production boundary](operations/runtime-native-adoption.md).
+Whole-source/native/provider/production approval remains false.
+
 ## GraphQL Parser Depth Candidate: 2026-11-05
 
 The exact previously verified Windows release library aborts an isolated child

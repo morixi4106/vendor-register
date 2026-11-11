@@ -7,6 +7,8 @@ import test from "node:test";
 import {
   collectNativeInventory,
   evaluateNativeInventory,
+  evaluateRuntimeGeneratorInventory,
+  evaluateRuntimeNativeInventory,
 } from "../../scripts/security/native-inventory.mjs";
 import {
   validateRegistryAudit,
@@ -217,6 +219,13 @@ test("approval is bound to exact bytes and cannot hide a changed tool", (t) => {
   write(root, approval.sbom, sbom);
   const policy = { ...emptyPolicy, approvedArtifacts: [approval] };
   assert.equal(evaluateNativeInventory(inventory, root, policy).ok, true);
+  const generator = evaluateRuntimeGeneratorInventory(inventory, root, policy);
+  const runtime = evaluateRuntimeNativeInventory(inventory, root, policy);
+  // A generic schema engine elsewhere in the build tree is not a runtime engine.
+  assert.equal(generator.ok, false);
+  assert.equal(runtime.ok, false);
+  assert.ok(generator.blocking.some((b) => b.role === "prisma-schema-engine"));
+  assert.ok(runtime.blocking.some((b) => b.role === "prisma-client-engine"));
   assert.throws(
     () =>
       evaluateNativeInventory(inventory, root, {
@@ -224,6 +233,49 @@ test("approval is bound to exact bytes and cannot hide a changed tool", (t) => {
         approvedArtifacts: [approval, approval],
       }),
     /native_approval_duplicate/,
+  );
+  write(root, "node_modules/@prisma/engines/schema-engine-windows.exe", bytes);
+  write(
+    root,
+    "node_modules/.prisma/client/query_engine-windows.dll.node",
+    bytes,
+  );
+  const runtimeOnly = collectNativeInventory(root);
+  runtimeOnly.artifacts = runtimeOnly.artifacts.filter(
+    (a) =>
+      a.path.startsWith("node_modules/@prisma/") ||
+      a.path.startsWith("node_modules/.prisma/"),
+  );
+  assert.equal(
+    evaluateRuntimeGeneratorInventory(runtimeOnly, root, policy).ok,
+    true,
+  );
+  assert.equal(
+    evaluateRuntimeNativeInventory(runtimeOnly, root, policy).ok,
+    true,
+  );
+  const buildMissing = evaluateNativeInventory(runtimeOnly, root, policy);
+  assert.equal(buildMissing.ok, false);
+  assert.deepEqual(
+    buildMissing.blocking.map((b) => b.role),
+    ["esbuild", "function-runner", "javy"],
+  );
+  write(
+    root,
+    "node_modules/other/unreviewed.wasm",
+    Buffer.from("0061736d01000000", "hex"),
+  );
+  const unexpected = evaluateRuntimeNativeInventory(
+    collectNativeInventory(root),
+    root,
+    policy,
+  );
+  assert.ok(
+    unexpected.blocking.some(
+      (b) =>
+        b.code === "native_artifact_unreviewed" &&
+        b.path.endsWith("unreviewed.wasm"),
+    ),
   );
   write(
     root,

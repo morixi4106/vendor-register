@@ -124,6 +124,34 @@ export function collectNativeInventory(
 }
 
 export function evaluateNativeInventory(inventory, root, policy) {
+  return evaluateInventory(inventory, root, policy, [
+    ["prisma-engine", /(?:query_engine|schema-engine)/],
+    ["esbuild", /\/@esbuild\//],
+    ["function-runner", /\/function-runner[^/]*$/],
+    ["javy", /\/javy-[^/]*$/],
+  ]);
+}
+
+const RUNTIME_SCHEMA = [
+  "prisma-schema-engine",
+  /^node_modules\/@prisma\/engines\/schema-engine-[a-z0-9.-]+$/,
+];
+
+export function evaluateRuntimeGeneratorInventory(inventory, root, policy) {
+  return evaluateInventory(inventory, root, policy, [RUNTIME_SCHEMA]);
+}
+
+export function evaluateRuntimeNativeInventory(inventory, root, policy) {
+  return evaluateInventory(inventory, root, policy, [
+    RUNTIME_SCHEMA,
+    [
+      "prisma-client-engine",
+      /^node_modules\/\.prisma\/client\/(?:libquery_engine-[a-z0-9.-]+\.so\.node|query_engine-windows\.dll\.node)$/,
+    ],
+  ]);
+}
+
+function evaluateInventory(inventory, root, policy, requiredTools) {
   if (
     !keysAre(inventory, [
       "schemaVersion",
@@ -244,12 +272,7 @@ export function evaluateNativeInventory(inventory, root, policy) {
         versionHints: artifact.versionHints,
       });
   }
-  for (const [role, pattern] of [
-    ["prisma-engine", /(?:query_engine|schema-engine)/],
-    ["esbuild", /\/@esbuild\//],
-    ["function-runner", /\/function-runner[^/]*$/],
-    ["javy", /\/javy-[^/]*$/],
-  ]) {
+  for (const [role, pattern] of requiredTools) {
     if (!inventory.artifacts.some((a) => pattern.test(a.path)))
       blocking.push({ code: "native_tool_inventory_missing", role });
   }
