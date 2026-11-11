@@ -125,3 +125,54 @@ test("owned GraphQL review binds all runtime inputs and selected JSON client wit
     assert.equal(review[key], false);
   assert.equal(policy.graphqlSource.reviewStatus, "UNREVIEWED");
 });
+
+test("selected PostgreSQL TLS/auth review binds its exact scope without approving the four identities", () => {
+  const read = (file) =>
+    fs.readFileSync(new URL(`../../${file}`, import.meta.url));
+  const policyBytes = read("security/prisma-source-contracts.json");
+  const policy = JSON.parse(policyBytes);
+  const review = JSON.parse(
+    read("security/reviews/prisma-postgres-tls-auth.json"),
+  );
+  assert.equal(
+    review.enginePolicySha256,
+    crypto.createHash("sha256").update(policyBytes).digest("hex"),
+  );
+  assert.equal(review.repository, policy.postgresSource.repository);
+  assert.equal(review.commit, policy.postgresSource.commit);
+  assert.equal(review.archiveSha256, policy.postgresSource.sha256);
+  assert.equal(review.engineCommit, policy.source.commit);
+  assert.equal(review.selectedPathStatus, "READ_WITH_FINDINGS");
+  assert.deepEqual(
+    review.files.map((entry) => entry.path).sort(),
+    [
+      "postgres-native-tls/Cargo.toml",
+      "postgres-native-tls/src/lib.rs",
+      "tokio-postgres/src/connect_tls.rs",
+      "tokio-postgres/src/connect_raw.rs",
+      "postgres-protocol/src/authentication/sasl.rs",
+    ].sort(),
+  );
+  for (const entry of review.files) {
+    assert.match(entry.originalGitBlob, /^[a-f0-9]{40}$/);
+    assert.match(entry.originalSha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      entry.adoptedSha256,
+      policy.postgresSource.sourceFiles.find(
+        (input) => input.path === entry.path,
+      )?.sha256,
+    );
+    assert.ok(entry.readScope);
+  }
+  assert.equal(review.consumers.length, 2);
+  assert.ok(review.findings.every((entry) => entry.evidence === "SOURCE_ONLY"));
+  for (const key of [
+    "productionConfigurationObserved",
+    "productionConnectionVerified",
+    "sourceReviewComplete",
+    "wholeEngineVerified",
+    "productionApproved",
+  ])
+    assert.equal(review[key], false);
+  assert.equal(policy.postgresSource.reviewStatus, "UNREVIEWED");
+});

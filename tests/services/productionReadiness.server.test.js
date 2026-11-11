@@ -50,6 +50,7 @@ const REQUIRED_SCOPE_STRING = [
 ].join(",");
 
 const TEST_RELEASE_ENV = {
+  DATABASE_URL: "postgresql://test:test@db.example.invalid/app?sslmode=require&sslaccept=strict",
   RENDER_GIT_COMMIT: "a".repeat(40),
   SHOPIFY_APP_VERSION: "app-v1",
   PAYMENT_PROVIDER: "shopify_payments",
@@ -1010,6 +1011,20 @@ test("getProductionReadiness does not block missing Stripe live keys for Shopify
     "manual",
   );
   assert.equal(checksById.get("connected_accounts_ready").status, "manual");
+});
+
+test("getProductionReadiness includes the database TLS configuration blocker without leaking the URL", async () => {
+  for (const DATABASE_URL of [undefined, "postgresql://private-user:private-password@private-host.invalid/app?sslmode=require"]) {
+    const result = await getProductionReadiness({
+      prismaClient: createFakePrisma({ sellerRows: [createActiveSeller()] }),
+      env: { NODE_ENV: "production", SCOPES: REQUIRED_SCOPE_STRING, DATABASE_URL },
+    });
+    const check = result.checks.find((item) => item.id === "database_tls_configuration");
+    assert.equal(check.status, "fail");
+    assert.equal(result.codeCanGoLive, false);
+    for (const secret of ["private-user", "private-password", "private-host.invalid"])
+      assert.equal(JSON.stringify(check).includes(secret), false);
+  }
 });
 
 test("getProductionReadiness still rejects payout evidence older than 90 days", async () => {

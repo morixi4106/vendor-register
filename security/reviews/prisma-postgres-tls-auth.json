@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-11-11",
+  "repository": "prisma/rust-postgres",
+  "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
+  "archiveSha256": "a05cb06e8c5af5777ab4fb1dd6f21c482a995e484d79d8757ac4cc79f9d837d4",
+  "enginePolicySha256": "7a4ed503a7641076954c1620c2a35e51106ef2b817b58ea2740ca3f35ce6d5d0",
+  "reviewScope": "Selected native TLS bridge, connection startup/authentication and SCRAM runtime; not complete review of four driver identities",
+  "selectedPathStatus": "READ_WITH_FINDINGS",
+  "files": [
+    {
+      "path": "postgres-native-tls/Cargo.toml",
+      "originalGitBlob": "318f3b1bf147f796b6a3dbd595d19ec19587a91b",
+      "originalSha256": "177ed6f3186e374415be22314047886a176a7c49dc940e2581c5fba474fe294a",
+      "adoptedSha256": "988dacfcd58959df01ccbc0b0fc893471827de1c602cdcd59dccf8a19b6e4051",
+      "readScope": "MANIFEST"
+    },
+    {
+      "path": "postgres-native-tls/src/lib.rs",
+      "originalGitBlob": "9ee7da653ac3876e35aa7071a36763f4899592b5",
+      "originalSha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273",
+      "adoptedSha256": "9b4eefb72d387bd279e075f133911b475bc2931959bff5d03be0a72ea94ec273",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "tokio-postgres/src/connect_tls.rs",
+      "originalGitBlob": "d220cd3b5e99b09eca39724783d99eb28d3cc88d",
+      "originalSha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6",
+      "adoptedSha256": "2fc15f1fe30f0485aaa05e194197b4841a0d28dae055368bb6804bbb789884e6",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "tokio-postgres/src/connect_raw.rs",
+      "originalGitBlob": "1931691e3651dc397f425d451b0c8834de1d1a79",
+      "originalSha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e",
+      "adoptedSha256": "9463aed95f024b6e2581aeb0dcc075938e3f79b8d29d20b85dc688c1f274f25e",
+      "readScope": "FULL_RUNTIME"
+    },
+    {
+      "path": "postgres-protocol/src/authentication/sasl.rs",
+      "originalGitBlob": "ccd40e8d0464b020fa8aa32e14d5d16488d9fdd6",
+      "originalSha256": "e81954f816cf18310e908a40c3b855b535a4e924a7958f53ee78002b25866893",
+      "adoptedSha256": "c703eb519c676896748e20638bad7c7a0fc1380c8d2824fe1aad02427c8dca72",
+      "readScope": "RUNTIME_BEFORE_TEST_MODULE"
+    }
+  ],
+  "engineCommit": "c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+  "consumers": [
+    {
+      "path": "quaint/src/connector/postgres/url.rs",
+      "gitBlob": "dfdb40d88a9780fe9d9146404bc012f8933e1860",
+      "sha256": "3a40cb006e0e61f146fd8add6b9edf253e0a8ef67cadddaa8fa1298c543788e0",
+      "readScope": "TLS_DEFAULTS_QUERY_PARAMETERS_AND_HOST_SELECTION"
+    },
+    {
+      "path": "quaint/src/connector/postgres/native/mod.rs",
+      "gitBlob": "60a77310b49c363316b734007a7d8adfed4cccc9",
+      "sha256": "067532f5e564dfa42719c97492730f3ffb24d1e81debc6963e955fcc27390b1a",
+      "readScope": "SSL_AUTH_TO_CONFIG_CONNECTION_AND_CONNECTOR_MANAGER"
+    }
+  ],
+  "findings": [
+    {
+      "id": "NATIVE_URL_DEFAULTS_DO_NOT_REQUIRE_VERIFIED_TLS",
+      "evidence": "SOURCE_ONLY",
+      "disposition": "Candidate readiness now requires explicit sslmode=require and sslaccept=strict, without modifying the connection or claiming a verified live handshake"
+    },
+    {
+      "id": "DUPLICATE_AND_DIALECT_AMBIGUITY",
+      "evidence": "SOURCE_ONLY",
+      "disposition": "Candidate static policy rejects duplicate/case-ambiguous TLS parameters, host overrides and libpq-only verification mode names"
+    },
+    {
+      "id": "SCRAM_GRAMMAR_REQUIRES_FURTHER_CONTRACT_REVIEW",
+      "evidence": "SOURCE_ONLY",
+      "disposition": "Positive iteration parsing accepts zero/leading zero; nonce verification checks a prefix only; server-error value predicate accepts unexpected characters. Not an actual native exploit reproduction. Review malformed-server contracts before declaring complete SCRAM conformance."
+    }
+  ],
+  "productionConfigurationObserved": false,
+  "productionConnectionVerified": false,
+  "sourceReviewComplete": false,
+  "wholeEngineVerified": false,
+  "productionApproved": false
+}
