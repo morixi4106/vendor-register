@@ -7,7 +7,7 @@ Date: 2026-11-11. Status: READ_WITH_FINDINGS, not driver/source approval.
 The adjacent JSON fixes original Git blobs, original SHA-256, adopted SHA-256
 and explicit read scope. The original PostgreSQL archive digest was checked;
 each reviewed original file matches its original recursive Git tree blob.
-Adopted files match current source policy7a4ed503. The two original engine
+Adopted files match the source policy hash in the adjacent JSON. The two original engine
 consumer files match engine commit c2990dca; only the named methods/sections
 were reviewed, not every query/cache/error path in those files.
 
@@ -38,7 +38,8 @@ postgres-types or tokio-postgres, nor their transitive crypto/OS/compiler code.
   available with binding and verifies the final server HMAC. This is not a claim
   that the deployment uses SCRAM/PLUS or has correct TLS settings.
 - The previous SCRAM iteration ceiling and TLS-buffer fix remain unchanged.
-  No native patch, lock, feature or release-byte changes are made here.
+  The initial TLS review made no source changes. The subsequent grammar repair
+  below changes only the two parser functions and adds test-only contracts.
 
 ## Findings And Candidate Guard
 
@@ -59,15 +60,30 @@ Prisma runtime queries continue unchanged. Check provider/internal-endpoint
 support and conduct an authorized strict handshake before changing any live URL;
 do not disable verification to recover a failed connection.
 
-SCRAM source-only follow-ups: its positive-number parser accepts zero/leading
-zero, nonce verification checks the client prefix without requiring extension,
-and the server-error value predicate does not match the expected value grammar.
-The final HMAC verification remains present. These observations are not a
-reproduced native authentication bypass or a claim of production compromise.
-Build malformed-server contracts before deciding a bounded upstream correction.
-[RFC5802](https://www.rfc-editor.org/rfc/rfc5802.html) defines positive iteration
-syntax, nonce augmentation and server-error values. Do not infer that every
-source observation has equal security impact.
+## Subsequent Grammar Correction
+
+Candidate source policy e6510147 rejects zero/leading-zero iteration syntax
+before salt decoding or password hashing, and corrects nonempty server-error
+values while rejecting NUL/comma/empty/malformed UTF-8 input. The unchanged
+cryptography, HMAC verification, state machine and iteration ceiling remain
+bound. Nonce prefix checking is retained: [RFC5802](https://www.rfc-editor.org/rfc/rfc5802.html)
+requires the client to check its original prefix, not an added client-side
+minimum server-nonce length. The earlier source observation was not proof
+of a nonce vulnerability.
+
+Eight new Rust regressions plus the existing24 now require all32 exact test
+names/successes, not just an arbitrary passing count. Actual source CI43016958532
+passes both OSes, including128 library contracts, prior GraphQL/CLI/HTTP/NTLM/
+benchmark correctness/consumer compilation. Both source artifacts/raw test names/
+compiler/locks/metadata/source inputs were independently checked. This is not
+a reproduced native authentication bypass or full SCRAM conformance claim.
+
+Actual release-native adoption is not complete. Both native jobs43016958931
+stop before compilation on the new libsqlite3-sys advisoryRUSTSEC-2026-0459;
+see prisma-sqlite-wal.md. No replacement native binary was produced or adopted.
+The old immutable input is retained, and its mismatch with the new candidate
+source is intentionally still rejected. Do not suppress that check or relabel
+historical native/DB/runtime evidence as proof of this grammar repair.
 
 ## Remaining Boundaries
 

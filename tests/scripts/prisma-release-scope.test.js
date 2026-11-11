@@ -165,7 +165,21 @@ test("selected PostgreSQL TLS/auth review binds its exact scope without approvin
     assert.ok(entry.readScope);
   }
   assert.equal(review.consumers.length, 2);
-  assert.ok(review.findings.every((entry) => entry.evidence === "SOURCE_ONLY"));
+  assert.deepEqual(
+    review.findings.map((entry) => entry.evidence),
+    ["SOURCE_ONLY", "SOURCE_ONLY", "COMPILED_RUST_LIBRARY_BOTH_PLATFORMS"],
+  );
+  assert.equal(review.grammarCorrection.newRegressions, 8);
+  assert.equal(review.grammarCorrection.postgresRegressions, 32);
+  assert.equal(review.grammarCorrection.bothPlatformSourceTestsVerified, true);
+  assert.equal(review.grammarCorrection.releaseNativeAdoptionVerified, false);
+  assert.equal(
+    review.grammarCorrection.fixtureSha256,
+    crypto
+      .createHash("sha256")
+      .update(read("tests/fixtures/prisma/postgres-scram-grammar.rs"))
+      .digest("hex"),
+  );
   for (const key of [
     "productionConfigurationObserved",
     "productionConnectionVerified",
@@ -175,4 +189,42 @@ test("selected PostgreSQL TLS/auth review binds its exact scope without approvin
   ])
     assert.equal(review[key], false);
   assert.equal(policy.postgresSource.reviewStatus, "UNREVIEWED");
+});
+
+test("new SQLite advisory remains an explicit unfixed blocker and cannot be mistaken for a native repair", () => {
+  const read = (file) =>
+    fs.readFileSync(new URL(`../../${file}`, import.meta.url));
+  const review = JSON.parse(read("security/reviews/prisma-sqlite-wal.json"));
+  const policy = read("security/prisma-source-contracts.json");
+  assert.equal(
+    review.enginePolicySha256,
+    crypto.createHash("sha256").update(policy).digest("hex"),
+  );
+  assert.equal(review.status, "BLOCKING_UNFIXED");
+  assert.equal(review.advisory, "RUSTSEC-2026-0459");
+  assert.equal(review.version, "0.30.1");
+  assert.equal(review.sqliteVersion, "3.46.0");
+  assert.equal(review.artifacts.length, 2);
+  assert.equal(review.sourceApplicabilityChecked, true);
+  assert.equal(
+    review.candidatePatchSha256,
+    crypto
+      .createHash("sha256")
+      .update(read(review.candidatePatch))
+      .digest("hex"),
+  );
+  assert.equal(policy.toString().includes(review.candidatePatch), false);
+  for (const key of [
+    "sourcePatchAdopted",
+    "compiledRegressionPassed",
+    "newNativeBuildCompleted",
+    "productionExposureConfirmed",
+    "productionPatched",
+    "productionApproved",
+  ])
+    assert.equal(review[key], false);
+  assert.match(
+    read("vendor/native/prisma/Cargo.lock").toString(),
+    /name = "libsqlite3-sys"\r?\nversion = "0\.30\.1"\r?\nsource = "registry\+/,
+  );
 });

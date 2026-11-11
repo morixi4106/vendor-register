@@ -70,9 +70,9 @@
       "repository": "prisma/rust-postgres",
       "commit": "d18e6fc2e549887161161025494f1db3b1b26cac",
       "releaseRoots": ["query-engine-node-api", "schema-engine-cli"],
-      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/42044878703",
-      "completed": "Patched original driver contracts, actual N-API/schema engine, TLS PostgreSQL 17.11/18.6 and both PgBouncer modes. Selected owned TLS bridge/startup/authentication/SCRAM runtime and named Quaint URL/connector sections read and Git/policy-bound; source findings and candidate static configuration blocker in security/reviews/prisma-postgres-tls-auth.{md,json}. International schema upgrade evidence is tracked separately.",
-      "remaining": "Complete review of all four original identities/transitives and malformed-server SCRAM contracts remains open; selected TLS/auth review is not blanket approval. Actual production TLS configuration/strict handshake, minor version/schema history, backup and restore/rollback remain independently unverified."
+      "evidence": "https://github.com/morixi4106/vendor-register/actions/runs/43016958532",
+      "completed": "Historical actual N-API/schema engine, strict TLS PG17.11/18.6 and both poolers remain separately recorded. Selected owned TLS/startup/auth/SCRAM and Quaint consumers read and bound. Candidate grammar repairs and eight new real-library regressions pass on both OSes with all32 exact PostgreSQL tests in128 source contracts. Nonce checking is retained per the client requirement. See security/reviews/prisma-postgres-tls-auth.{md,json}; static TLS configuration blocker was already added.",
+      "remaining": "New release-native adoption is blocked by unfixed SQLite RUSTSEC-2026-0459; no new binary exists and old input/source mismatch remains a failure. Complete four-driver/transitive review, live TLS/Node/DB history/backup/restore/rollback/provider/production evidence remain open. Source tests are not whole-driver or production approval."
     }
   ],
   "sourceReviewComplete": false,

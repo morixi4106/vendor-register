@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-11-11",
+  "status": "BLOCKING_UNFIXED",
+  "advisory": "RUSTSEC-2026-0459",
+  "aliases": ["CVE-2026-119375", "GHSA-72w2-rjgg-q729"],
+  "advisoryUrl": "https://rustsec.org/advisories/RUSTSEC-2026-0459.html",
+  "advisoryModified": "2026-11-09T10:00:02.337112Z",
+  "parsedAdvisoryJsonSha256": "6047853b50b8b7aecca35c309372acb2f44a462f59c5818e046e9088a3e1ab6e",
+  "package": "libsqlite3-sys",
+  "version": "0.30.1",
+  "archiveSha256": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149",
+  "sqliteVersion": "3.46.0",
+  "amalgamationSha256": "c01235302fe80da901fb70c7622c39147e29d9f29b7f6eb746b23517f320c90d",
+  "walFunctionSha256": "64db8bd716d398f250bf4319c9a73f6f3f8c1be646c3f7dabb01749727d6569f",
+  "upstreamFix": "e5bf119821f25be1d7f10ef0a2edbe175289166e",
+  "candidatePatch": "vendor/native/prisma/sqlite-wal.candidate.patch",
+  "candidatePatchSha256": "71581435ba60a8dd426fb7339d396cf843c03715874fb0037152b0d526901907",
+  "sourceApplicabilityChecked": true,
+  "enginePolicySha256": "e6510147f54b0f9458efba1b36015e6d56965fbd131d25edf8a08df600d269df",
+  "failedNativeRun": "43016958931",
+  "failedNativeSourceHead": "a021df77432828f26d8e661c0d1dbe13aef32def",
+  "artifacts": [
+    {
+      "platform": "linux",
+      "id": 13852284713,
+      "zipSha256": "dcc145bb4519cb1f83e6f33c25353ebf7b2f45397a3f283cd0e044e35f4f349f"
+    },
+    {
+      "platform": "windows",
+      "id": 13852469233,
+      "zipSha256": "16cb6bb631cd53c1855592cab06821efcb5102d6d85b59c4e72b970ac484a2ab"
+    }
+  ],
+  "historicalReachability": {
+    "run": "42300766846",
+    "sourceHead": "373617a9dbddbf08b6a6d26313888d6e04e586cc",
+    "bundledFeature": true,
+    "affectedRoots": [
+      "query-engine-node-api",
+      "schema-engine-cli",
+      "query-engine"
+    ],
+    "excludedRoot": "prisma-fmt",
+    "scope": "Previously verified normal/build metadata on both OSes; not current production or customer-input reachability"
+  },
+  "repairPlan": "Bind a path override and the original registry identity/advisory, apply the exact upstream WAL initialization fix with deterministic old/fixed C regressions, then rebuild and independently verify actual native/DB/runtime evidence before updating native pins. No advisory suppression or source-conversion waiver.",
+  "sourcePatchAdopted": false,
+  "compiledRegressionPassed": false,
+  "newNativeBuildCompleted": false,
+  "productionExposureConfirmed": false,
+  "productionPatched": false,
+  "productionApproved": false
+}
