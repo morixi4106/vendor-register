@@ -44,14 +44,14 @@ export function validateFinalTestsPolicy(p) {
     p.schemaVersion !== 1 ||
     JSON.stringify(p.runner) !==
       JSON.stringify({
-        run: 41814202050,
-        artifact: 13313318892,
-        head: "be952e3283df80097598ee6954cb0e75e6d4a848",
+        run: 45795770923,
+        artifact: 15105780598,
+        head: "e8c05684439ae8117449917371161c230947557d",
         version: "9.2.2+oja.2",
         binarySha256:
-          "57c6c1491e7644a312517060636063d06f41f39d9cb20ea8916171194c652b32",
+          "5f0f0f142c80043801ef409a491b20927b1de6f59989a3f4a553c19c76151622",
         receiptSha256:
-          "62f1d43a45590b3331c8ff907c8b022df090f8eff48b974f8f2752686a23967f",
+          "a486c6bbe444d251fe59734218ddd1efaa94c0bd95ed2f22603b7c4f53f4f5c0",
       }) ||
     JSON.stringify(
       p.candidates?.map((c) => [

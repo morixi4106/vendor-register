@@ -30,6 +30,18 @@ test("final tests retain both fixed source/test/final-WASM identities and the in
     (p) => (p.runner.version = "9.2.2"),
     (p) => (p.runner.binarySha256 = "0".repeat(64)),
     (p) => (p.runner.receiptSha256 = "0".repeat(64)),
+    (p) => {
+      p.runner = {
+        run: 41814202050,
+        artifact: 13313318892,
+        head: "be952e3283df80097598ee6954cb0e75e6d4a848",
+        version: "9.2.2+oja.2",
+        binarySha256:
+          "57c6c1491e7644a312517060636063d06f41f39d9cb20ea8916171194c652b32",
+        receiptSha256:
+          "62f1d43a45590b3331c8ff907c8b022df090f8eff48b974f8f2752686a23967f",
+      };
+    },
     (p) => p.candidates.reverse(),
     (p) => p.candidates[0].testCount--,
     (p) => p.candidates[1].runnerCalls--,

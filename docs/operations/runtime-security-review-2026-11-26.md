@@ -16,6 +16,7 @@ database upgrades, financial transactions or monitoring-mail resumption.
 | .NET on PC | Core/Desktop8.0.33 and9.0.22 updated to8.0.34/9.0.23; x86 ASP.NET/Core/Desktop8 also updated. Official hashes/Authenticode verified. Seven framework configurations resolve through actual signed hostfxr. This does not execute third-party apps or patch self-contained app runtimes. CBOR/template advisories require package/generated-code remedies, not runtime installation alone; no .NET application project is tracked here. |
 | Python on PC | Managed3.14.3 updated to3.14.10 through Python's signed official index. Existing site-packages preserved; version/SSL/JSON/hash smoke checks run against the installed interpreter. The install manager also performed its own vendor-managed update. No Python application manifest is tracked here. |
 | Java/Ruby | No corresponding project manifest, command or standard installation was found in this scoped application/PC inventory. Do not install unrelated runtimes. Embedded/unknown app copies are not independently cleared. |
+| PowerShell | The selected PC shell is Windows PowerShell5.1.26100.9711/Desktop. No pwsh command, standard PowerShell7 installation or uninstall registration was found. Microsoft's November CVE-2026-122985 applies to PowerShell7 and is fixed in7.6.10/7.7.0. Do not install unused7; Windows PowerShell5.1 is serviced through Windows, not the shared .NET installers. Full OS servicing is not independently cleared here. |
 | PostgreSQL | Official security fixes are17.12/18.7. Upgrade only isolated CI image pins and expected real server versions here, not any real DB. This PC's PostgreSQL17 executable reports17.9. Render metadata reports major18 only; minor/server patch status remains unverified. Real upgrade/backup/reindex steps require a separate approved operation. |
 | OpenSSL/C/C++ | Node/Python expose OpenSSL3.5.9; the Prisma source lock selects vendored3.6.3, now an unsupported line. November10/17/24 Low advisories have public source fixes but packaged3.5.10/4.0.4/4.1.1 are scheduled for December1. Do not claim those unavailable releases installed. QUIC, Suite B, DANE, CMS/CRL and AES-GCM-SIV conditions must be assessed separately; absence from owned JavaScript is not whole-native/provider clearance. |
 
@@ -27,6 +28,7 @@ Primary sources: [PHP releases](https://www.php.net/archive/2026.php),
 [Rust releases](https://blog.rust-lang.org/),
 [Microsoft November servicing](https://devblogs.microsoft.com/dotnet/dotnet-and-dotnet-framework-november-2026-servicing-updates/),
 [Python release](https://www.python.org/downloads/release/python-31410/),
+[PowerShell advisory](https://github.com/PowerShell/Announcements/blob/main/pwsh/2026/11/CVE-2026-122985.md),
 [PostgreSQL security](https://www.postgresql.org/support/security/),
 [OpenSSL advisory timeline](https://openssl-library.org/news/timeline/).
 
@@ -54,9 +56,21 @@ the lock from the verified canonical source; the complete426-registry-package
 scan has zero findings/unresolved packages. The upstream default-feature choice,
 explicit feature list, compiler, source commit and isolated cache behavior stay
 unchanged. Negative tests reject36.0.20 and36.0.21. Both-OS native compilation
-and artifact verification are separate follow-up evidence, not implied by this
-lock scan. Prisma/Javy findings above remain unresolved; a changed SQLite
-advisory payload is also rejected by the existing reviewed-payload guard.
+and artifact verification are separate evidence, not implied by this lock scan.
+Both OS builds passed in45795770923; downloaded ZIPs, binaries, receipts, SBOM,
+metadata and all24 component tests are independently verified. The new Windows
+binary also passed isolated cached/uncached/environment/trap/profile fixtures.
+Only after that verification are Function-final-test policy/workflow references
+rebound to the new immutable Linux artifact and exact receipt. No native package
+approval or Shopify release follows from that isolated tool adoption.
+
+Prisma/Javy findings above remain unresolved. Comparing the complete November9
+and November17 SQLite advisory payloads finds only aliases and modified-time
+changes: details, affected packages/ranges and references are identical. Added
+RUSTSEC-2026-0502 concerns SQLCipher and the same CVE; existing source wiring
+rejects SQLCipher features. The old full-payload guard correctly rejects the
+new metadata. Its policy/fingerprint has not been silently replaced; the
+comparison is not a newly compiled Prisma fix or live exposure clearance.
 
 At checkpoint8ec195e, isolated Debian Node24.22.3 native/client/SQLite checks
 and both PostgreSQL17.12/18.7 compatibility jobs passed. Fresh esbuild builds
