@@ -1,5 +1,15 @@
 # Production dependency advisories
 
+## Autonomous Closure In Progress: 2026-11-26
+
+[Current closure record](operations/autonomous-launch-closure-2026-11-26.md).
+Javy's known Wasmtime/url vulnerabilities and chrono/humantime maintenance
+dependencies are repaired in generated inputs:476 registry packages, zero
+findings/unresolved sources, actual metadata and canonical patch replay checked.
+Native builds and downstream adoption are separate pending evidence. Prisma's
+two vulnerable registry crates are patched in private staged source; its chrono
+maintenance migration remains open. No advisory/gate/approval waiver or release.
+
 ## November Runtime Recheck: 2026-11-26
 
 PHP's November19 security releases are genuine, but no PHP usage was identified

@@ -16,11 +16,11 @@
   },
   "patch": {
     "path": "vendor/native/javy/javy.patch",
-    "sha256": "dfd12675f59a82ee216f8f1a5dd44759b88d31a26e6f81037bbbc33896569f3e"
+    "sha256": "a3df5f46f0a8a7c6deb622f0db904daa02ad4be534d1afcf24bb081d1b123c3d"
   },
   "lockfile": {
     "path": "vendor/native/javy/Cargo.lock",
-    "sha256": "19d4cc9241ccb614d7d75b9aa5a910ee4348dac4e7bdc5cff64b52556bef3521"
+    "sha256": "b5b85b2b66e63b4c1b6c9b7f8829ee3f162fcb5f23ac65eaa63efaea0f72900e"
   },
   "wirm": {
     "upstreamVersion": "5.1.0",
@@ -28,7 +28,7 @@
     "sha256": "cbf24563802785ba2885e5357ab24d56a3b13b9884d9102347fe663d712df462",
     "patch": {
       "path": "vendor/native/javy/wirm.patch",
-      "sha256": "8d983601eec62a963db509cca64660d292b5d9471a5a6ae8dd20a8232fd5e3fa"
+      "sha256": "19fbec5c0c99f37e9ab79916379317051c8c6d5b17097395b9682952cd59a034"
     },
     "testSource": {
       "repository": "composablesys/wirm",
@@ -49,7 +49,7 @@
   "sourceFiles": [
     {
       "path": "Cargo.toml",
-      "sha256": "6f97ee682dc04d58a3f91517358d0db8e545c6b90f0d44653b2c447ff660b938"
+      "sha256": "50b4b143e6bd43e0565ed38d8487a7a7061721590ff04f20d5a3ff6d2c7a3256"
     },
     {
       "path": ".cargo/config.toml",
@@ -101,7 +101,7 @@
     },
     {
       "path": "vendor/wirm/Cargo.toml",
-      "sha256": "d544c10ebc86504cba1400ab1da46ec0444de898b4a57f3ed66386950046398d"
+      "sha256": "ffabc2969e6013488bb1415f5245df1e9a6f85a3b7c4b7ac943875538aec4ee0"
     },
     {
       "path": "vendor/wirm/src/ir/instr_tests.rs",
@@ -117,11 +117,27 @@
     },
     {
       "path": "vendor/jit-debug-bridge/Cargo.toml",
-      "sha256": "db0fb5475e925a10607311da32a9411fd8a9ca7b47d21c9b45006e0805df04f1"
+      "sha256": "06c69b66b9c19077d10b214411715acb59848c01618bd218b07ce28f7cbe7fd7"
     },
     {
       "path": "vendor/jit-debug-bridge/src/lib.rs",
       "sha256": "a5edd1296b5d525cad85e7966d7f264ceb4330ddae8f4a109d802f9523a949e5"
+    },
+    {
+      "path": "release/Cargo.toml",
+      "sha256": "0c5934ebbd835a2906b8e0a7a70aa227440d9b84f70d18ba29f8a6905331c781"
+    },
+    {
+      "path": "release/src/lib.rs",
+      "sha256": "1e70eaf01337d9f52c0fbdf0fbdc3625326d0ad8ec2cce0f111b83f4182477cf"
+    },
+    {
+      "path": "vendor/env-logger-bridge/Cargo.toml",
+      "sha256": "6af62a6e2dda3016b47efbbf6f079333357372161d7bddaa5b8dbf57e1123fc6"
+    },
+    {
+      "path": "vendor/env-logger-bridge/src/lib.rs",
+      "sha256": "ac822958e91fe0e921229f6974fafdd490086cbc13b2c7466ebc0a974f2c41db"
     }
   ]
 }

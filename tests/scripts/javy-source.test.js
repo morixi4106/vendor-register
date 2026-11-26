@@ -90,12 +90,12 @@ test("Javy recipe distinguishes the CLI release from the development candidate a
 test("the actual locked graph contains patched profiler and main engines without Git or paste", () => {
   const lock = runnerInput(root, policy.lockfile).toString("utf8");
   const parsed = rustRegistryPackages(lock);
-  assert.equal(parsed.packages.length, 482);
+  assert.equal(parsed.packages.length, 476);
   assert.deepEqual(parsed.unresolved, []);
   for (const name of ["wasmtime", "wasmtime-wasi"])
     assert.deepEqual(
       parsed.packages.filter((p) => p.name === name).map((p) => p.version),
-      ["48.0.8", "50.0.1"],
+      ["48.0.10", "50.0.3"],
     );
   assert.equal(
     parsed.packages.some((p) => p.name === "paste"),
@@ -113,7 +113,11 @@ test("the actual locked graph contains patched profiler and main engines without
   assert.doesNotMatch(patch, /^[-+]\s*default-features\s*=/m);
   const wirm = runnerInput(root, policy.wirm.patch).toString("utf8");
   assert.match(wirm, /\+package = "pastey"/);
-  assert.match(wirm, /\+version = "=50\.0\.1"/);
+  assert.match(wirm, /\+version = "=50\.0\.3"/);
+  for (const name of ["chrono", "humantime"])
+    assert.equal(parsed.packages.some((p) => p.name === name), false);
+  assert.ok(parsed.packages.some((p) => p.name === "jiff" && p.version === "1.0.3"));
+  assert.ok(parsed.packages.some((p) => p.name === "env_logger" && p.version === "0.11.12"));
 });
 
 test("the profiler keeps instrumented module bytes and success/error diagnostics with whamm2", () => {
@@ -155,7 +159,8 @@ function fixture(t) {
     ["javy-test-plugin-wasip1", "0.0.0", "crates/test-plugin-wasip1"],
     ["javy-test-plugin-wasip2", "0.0.0", "crates/test-plugin-wasip2"],
     ["wirm", policy.wirm.version, "vendor/wirm"],
-    ["wasmtime-internal-jit-debug", "48.0.8+oja.1", "vendor/jit-debug-bridge"],
+    ["wasmtime-internal-jit-debug", "48.0.10+oja.1", "vendor/jit-debug-bridge"],
+    ["env_logger", "0.10.2+oja.1", "vendor/env-logger-bridge"],
   ];
   const packages = locals.map(([name, version, dir]) => {
     const manifest_path = path.join(source, dir, "Cargo.toml");
@@ -170,15 +175,17 @@ function fixture(t) {
     };
   });
   for (const [name, version] of [
-    ["wasmtime", "48.0.8"],
-    ["wasmtime", "50.0.1"],
-    ["wasmtime-wasi", "48.0.8"],
-    ["wasmtime-wasi", "50.0.1"],
-    ["wasmtime-wizer", "50.0.1"],
+    ["wasmtime", "48.0.10"],
+    ["wasmtime", "50.0.3"],
+    ["wasmtime-wasi", "48.0.10"],
+    ["wasmtime-wasi", "50.0.3"],
+    ["wasmtime-wizer", "50.0.3"],
     ["whamm", "2.0.1"],
     ["pastey", "0.2.3"],
     ["deterministic-wasi-ctx", "4.0.9"],
-    ["wasmtime-internal-jit-debug", "50.0.1"],
+    ["wasmtime-internal-jit-debug", "50.0.3"],
+    ["env_logger", "0.11.12"],
+    ["jiff", "1.0.3"],
   ])
     packages.push({
       id: `${name}@${version}`,
@@ -192,12 +199,14 @@ function fixture(t) {
       p.name === "wasmtime"
         ? ["default", "cranelift", "runtime", "cache", "component-model"]
         : p.name === "wasmtime-wasi"
-          ? p.version === "50.0.1"
+          ? p.version === "50.0.3"
             ? ["default", "p1", "p2", "p3"]
             : ["default", "p1", "p2"]
           : p.name === "wasmtime-internal-jit-debug"
             ? ["std", "gdb_jit_int", "perf_jitdump"]
-            : [],
+            : p.name === "env_logger"
+              ? ["auto-color", "color", "humantime", "regex"]
+              : [],
     deps: [],
   }));
   const node = (name) => nodes.find((n) => n.id === name);
@@ -219,7 +228,7 @@ function fixture(t) {
     "javy-profiler@0.0.0",
     "deterministic-wasi-ctx@4.0.9",
   ])
-    edge(from, "wasmtime@50.0.1");
+    edge(from, "wasmtime@50.0.3");
   edge(`javy-cli@${policy.version}`, "javy-codegen@4.0.1-alpha.1");
   edge(`javy-cli@${policy.version}`, "javy-plugin-processing@0.0.0");
   edge(
@@ -228,26 +237,30 @@ function fixture(t) {
     "javy_plugin_processing",
     "build",
   );
-  edge("javy-codegen@4.0.1-alpha.1", "wasmtime-wizer@50.0.1");
+  edge("javy-codegen@4.0.1-alpha.1", "wasmtime-wizer@50.0.3");
   edge("javy-codegen@4.0.1-alpha.1", "deterministic-wasi-ctx@4.0.9");
   edge("javy-profiler@0.0.0", "whamm@2.0.1");
-  edge("whamm@2.0.1", "wasmtime@48.0.8");
-  edge("whamm@2.0.1", "wasmtime-wasi@48.0.8");
+  edge("whamm@2.0.1", "wasmtime@48.0.10");
+  edge("whamm@2.0.1", "wasmtime-wasi@48.0.10");
   edge("whamm@2.0.1", `wirm@${policy.wirm.version}`);
+  edge("whamm@2.0.1", "env_logger@0.10.2+oja.1");
+  edge("env_logger@0.10.2+oja.1", "env_logger@0.11.12", "shared");
+  edge("env_logger@0.11.12", "jiff@1.0.3");
+  edge("javy-release@0.1.0", "jiff@1.0.3");
   edge(`wirm@${policy.wirm.version}`, "pastey@0.2.3", "paste");
   edge(
-    "wasmtime@48.0.8",
-    "wasmtime-internal-jit-debug@48.0.8+oja.1",
+    "wasmtime@48.0.10",
+    "wasmtime-internal-jit-debug@48.0.10+oja.1",
     "wasmtime_jit_debug",
   );
   edge(
-    "wasmtime-internal-jit-debug@48.0.8+oja.1",
-    "wasmtime-internal-jit-debug@50.0.1",
+    "wasmtime-internal-jit-debug@48.0.10+oja.1",
+    "wasmtime-internal-jit-debug@50.0.3",
     "shared",
   );
   fs.writeFileSync(
     path.join(source, "Cargo.toml"),
-    `[workspace]\nmembers=${JSON.stringify(locals.map((l) => l[2]))}\n[workspace.package]\nversion="${policy.version}"\n[workspace.dependencies]\nwasmtime="=50.0.1"\nwasmtime-wasi="=50.0.1"\nwasmtime-wizer="=50.0.1"\ndeterministic-wasi-ctx="=4.0.9"\n[patch.crates-io]\nwirm={path="vendor/wirm"}\nwasmtime-internal-jit-debug={path="vendor/jit-debug-bridge"}\n`,
+    `[workspace]\nmembers=${JSON.stringify(locals.map((l) => l[2]))}\n[workspace.package]\nversion="${policy.version}"\n[workspace.dependencies]\nwasmtime="=50.0.3"\nwasmtime-wasi="=50.0.3"\nwasmtime-wizer="=50.0.3"\ndeterministic-wasi-ctx="=4.0.9"\n[patch.crates-io]\nwirm={path="vendor/wirm"}\nwasmtime-internal-jit-debug={path="vendor/jit-debug-bridge"}\nenv_logger={path="vendor/env-logger-bridge"}\n`,
   );
   fs.writeFileSync(
     path.join(source, "crates/profiler/Cargo.toml"),
@@ -259,12 +272,17 @@ function fixture(t) {
   );
   fs.writeFileSync(
     path.join(source, "vendor/wirm/Cargo.toml"),
-    `[package]\nversion="${policy.wirm.version}"\n[dependencies.paste]\npackage="pastey"\nversion="=0.2.3"\n[dev-dependencies.wasmtime]\nversion="=50.0.1"\n`,
+    `[package]\nversion="${policy.wirm.version}"\n[dependencies.paste]\npackage="pastey"\nversion="=0.2.3"\n[dev-dependencies.wasmtime]\nversion="=50.0.3"\n`,
   );
   fs.writeFileSync(
     path.join(source, "vendor/jit-debug-bridge/Cargo.toml"),
-    '[package]\nversion="48.0.8+oja.1"\n[dependencies]\nshared={package="wasmtime-internal-jit-debug",version="=50.0.1",default-features=false}\n[features]\nstd=["shared/std"]\ngdb_jit_int=["shared/gdb_jit_int"]\nperf_jitdump=["shared/perf_jitdump","std"]\n',
+    '[package]\nversion="48.0.10+oja.1"\n[dependencies]\nshared={package="wasmtime-internal-jit-debug",version="=50.0.3",default-features=false}\n[features]\nstd=["shared/std"]\ngdb_jit_int=["shared/gdb_jit_int"]\nperf_jitdump=["shared/perf_jitdump","std"]\n',
   );
+  fs.writeFileSync(
+    path.join(source, "vendor/env-logger-bridge/Cargo.toml"),
+    '[package]\nversion="0.10.2+oja.1"\n[dependencies]\nshared={package="env_logger",version="=0.11.12",default-features=false}\n[features]\ndefault=["auto-color","humantime","regex"]\nauto-color=["shared/auto-color"]\ncolor=["shared/color"]\nhumantime=["shared/humantime"]\nregex=["shared/regex"]\n',
+  );
+  fs.writeFileSync(path.join(source, "release/Cargo.toml"), '[dependencies]\njiff="=1.0.3"\n');
   return { source, metadata: { packages, resolve: { nodes } } };
 }
 
@@ -297,13 +315,30 @@ test("source wiring requires all hashes and preserves the optional profiler", (t
   );
 });
 
+test("maintenance replacements cannot fall back to old logger, chrono or disabled logging features", (t) => {
+  const { source } = fixture(t);
+  const names = ["Cargo.toml", "release/Cargo.toml", "vendor/env-logger-bridge/Cargo.toml"];
+  const originals = new Map(names.map((name) => [name, fs.readFileSync(path.join(source, name), "utf8")]));
+  for (const [name, before, after] of [
+    ["Cargo.toml", 'env_logger={path="vendor/env-logger-bridge"}', 'env_logger={path="vendor/other"}'],
+    ["release/Cargo.toml", 'jiff="=1.0.3"', 'chrono="0.4"'],
+    ["vendor/env-logger-bridge/Cargo.toml", '=0.11.12', '=0.10.2'],
+    ["vendor/env-logger-bridge/Cargo.toml", 'default=["auto-color","humantime","regex"]', 'default=[]'],
+  ]) {
+    for (const [file, text] of originals) fs.writeFileSync(path.join(source, file), text);
+    assert.ok(originals.get(name).includes(before));
+    fs.writeFileSync(path.join(source, name), originals.get(name).replace(before, after));
+    assert.throws(() => checkJavyWiring(source, policy, () => {}), /wiring_invalid/);
+  }
+});
+
 test("shared JIT debug APIs require both exact upstream versions and all byte-identical files", (t) => {
   const { source } = fixture(t);
   const original = path.join(source, "debug-original"),
     shared = path.join(source, "debug-shared");
   for (const [root, version] of [
-    [original, "48.0.8"],
-    [shared, "50.0.1"],
+    [original, "48.0.10"],
+    [shared, "50.0.3"],
   ]) {
     fs.mkdirSync(root);
     fs.writeFileSync(
@@ -439,16 +474,34 @@ test("actual metadata must retain both patched engines, their consumers and buil
       });
     },
     (m) => {
-      m.resolve.nodes.find((n) => n.id === "wasmtime@48.0.8").features = [];
+      m.resolve.nodes.find((n) => n.id === "wasmtime@48.0.10").features = [];
     },
     (m) => {
-      m.resolve.nodes.find((n) => n.id === "wasmtime-wasi@50.0.1").features = [
+      m.resolve.nodes.find((n) => n.id === "wasmtime-wasi@50.0.3").features = [
         "p1",
         "p2",
       ];
     },
     (m) => {
-      m.packages.find((p) => p.id === "wasmtime@48.0.8").version = "47.0.4";
+      m.packages.find((p) => p.id === "wasmtime@48.0.10").version = "47.0.4";
+    },
+    (m) => {
+      m.packages.find((p) => p.id === "wasmtime@48.0.10").version = "48.0.8";
+    },
+    (m) => {
+      m.packages.find((p) => p.id === "wasmtime@50.0.3").version = "50.0.1";
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "env_logger@0.10.2+oja.1").deps = [];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "env_logger@0.11.12").features = [];
+    },
+    (m) => {
+      m.resolve.nodes.find((n) => n.id === "javy-release@0.1.0").deps = [];
+    },
+    (m) => {
+      m.packages.find((p) => p.id === "jiff@1.0.3").name = "chrono";
     },
     (m) => {
       m.resolve.nodes.find((n) => n.id === `javy-cli@${policy.version}`).deps =
@@ -467,17 +520,17 @@ test("actual metadata must retain both patched engines, their consumers and buil
     },
     (m) => {
       m.resolve.nodes.find(
-        (n) => n.id === "wasmtime-internal-jit-debug@48.0.8+oja.1",
+        (n) => n.id === "wasmtime-internal-jit-debug@48.0.10+oja.1",
       ).deps = [];
     },
     (m) => {
       m.resolve.nodes.find(
-        (n) => n.id === "wasmtime-internal-jit-debug@50.0.1",
+        (n) => n.id === "wasmtime-internal-jit-debug@50.0.3",
       ).features = ["std"];
     },
     (m) => {
       m.packages.find(
-        (p) => p.id === "wasmtime-internal-jit-debug@48.0.8+oja.1",
+        (p) => p.id === "wasmtime-internal-jit-debug@48.0.10+oja.1",
       ).source = registry;
     },
     (m) => {
@@ -496,6 +549,8 @@ test("source tests require exact successful nonignored totals and keep the compi
   assert.deepEqual(
     javySourceTestPlans().map((p) => [p.name, p.count]),
     [
+      ["logging-bridge", 2],
+      ["release-dates", 1],
       ["jit-debug-bridge", 2],
       ["codegen", 25],
       ["plugin-processing", 1],
