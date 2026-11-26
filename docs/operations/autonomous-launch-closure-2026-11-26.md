@@ -53,13 +53,39 @@ logs are retained privately, not erased or relabeled.
   scan retains only chrono's maintenance notice. This staged source is not a
   new release binary or a replacement for the active immutable Prisma input.
 
-## Required Verification
+## Verified Linux Native Input
 
-Run the Javy source contracts on both OSes, real WASI plugin/profiler builds,
-both native CLI builds and isolated probes. Independently verify actual bytes,
-compiler/lock/source/metadata/SBOM/receipts and named tests before changing
-downstream compiler pins. Preserve strict zero-registry-advisory checks and
-false whole-compiler/provider/production approval flags.
+Linux native job45816052650 passed. Independently verified artifact15116649614
+(ZIP23dd246965974ce4356a6954e70cb6db147781daa42459f6b5cd772ea9766bcc),
+the actual66023640-byte CLI (SHAaf9df82a6526a9ba8cd1f19e001797f4fb9dbf9e4c789c90a0de70993050bcd7),
+receipt9d6a8d0ee036d84b0e7c561ba438cbeeab3fe07b59460f4520f282dbd2cd2d44,
+compiler/source/23 bindings/locked metadata/476-package zero scan and embedded
+plugin/profiler bytes. Actual static/dynamic/Shopify-provider compile probes and
+profiler output pass. Linux source contracts separately pass all39 named tests.
+
+The isolated final Function workflow now consumes only that exact verified Linux
+artifact/receipt, with explicit rejection of the complete previous input and
+every mixed old/new field. The final Function consumer still needs a new real CI
+run; this pin change alone does not prove its final outputs pass. Both-OS source
+CI45816052616 is independently verified:39 actual contracts and476 registry
+packages per OS, both exact ZIPs/compiler/source/metadata/receipts. Windows native
+verification is separate and not inherited from Linux success.
+Wider compiler/provider/production approval flags remain false. No installed or
+deployed binary, financial operation or storefront/Markets configuration changes.
+
+Local consumer-change verification:16 related tests and full1713 passes/0
+failures/9 existing Windows skips; lint, encoding, architecture, app build,
+audit187/0/3 and security-document scan pass. This verifies the connection and
+rejection logic, not final-WASM execution.
+
+## Remaining Verification
+
+Finish the real Windows native CLI build/probes and independently verify its
+bytes/compiler/lock/source/metadata/receipts. Run the final Function consumer
+with the verified Linux native input and existing verified Runner; independently
+check its actual final WASMs and every existing assertion/call. Preserve strict
+zero-registry-advisory checks and false wider-approval flags. Linux CI-only
+compiler consumption is not Windows or production admission.
 
 Then finish Prisma maintenance-dependency replacement, reviewed SQLite advisory
 rebinding, fresh runtime-package native/WASM admission and separate live/DB/

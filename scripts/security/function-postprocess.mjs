@@ -61,13 +61,13 @@ export function validatePostprocessPolicy(p) {
       "0328adf330dc852245f8c7af1e05a410554b379ea848abd4f4c993e4b409587c" ||
     JSON.stringify(p.optimizer.includedFixes) !==
       '["4f52bff8c4075b5630422f902dd92a0af2c9f398","1251efbc1ea471c1311d2726b2bbe061ff2a291c"]' ||
-    p.native?.run !== 42203451075 ||
-    p.native.artifact !== 13497266437 ||
-    p.native.head !== "e7781b4aeab5a934cebbdc020b8e18195ed35121" ||
+    p.native?.run !== 45816052650 ||
+    p.native.artifact !== 15116649614 ||
+    p.native.head !== "9a84d132c583af177a2241927d3f3d11f527c6c4" ||
     p.native.binarySha256 !==
-      "f75a0ad1ad323a2e41215bf9f409abf50850303e8b0642a697567f0799e59911" ||
+      "af9df82a6526a9ba8cd1f19e001797f4fb9dbf9e4c789c90a0de70993050bcd7" ||
     p.native.receiptSha256 !==
-      "869f276cffdfdc6c3426a0a4041163d822d975f97b75566302d4b7804da0fa90" ||
+      "9d6a8d0ee036d84b0e7c561ba438cbeeab3fe07b59460f4520f282dbd2cd2d44" ||
     p.sdkSha256 !==
       "6f9e114f199ed6075101f31b3ab47531d749910238b4f06b7386efca94168dab" ||
     JSON.stringify(

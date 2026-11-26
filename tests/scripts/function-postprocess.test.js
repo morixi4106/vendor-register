@@ -106,6 +106,32 @@ test("optimizer policy binds the fixed upstream release, included fixes, real CL
   }
 });
 
+test("final Function builds pin the independently verified patched Linux compiler and reject old or mixed inputs", () => {
+  assert.deepEqual(policy.native, {
+    run: 45816052650,
+    artifact: 15116649614,
+    head: "9a84d132c583af177a2241927d3f3d11f527c6c4",
+    binarySha256: "af9df82a6526a9ba8cd1f19e001797f4fb9dbf9e4c789c90a0de70993050bcd7",
+    receiptSha256: "9d6a8d0ee036d84b0e7c561ba438cbeeab3fe07b59460f4520f282dbd2cd2d44",
+  });
+  const previous = {
+    run: 42203451075,
+    artifact: 13497266437,
+    head: "e7781b4aeab5a934cebbdc020b8e18195ed35121",
+    binarySha256: "f75a0ad1ad323a2e41215bf9f409abf50850303e8b0642a697567f0799e59911",
+    receiptSha256: "869f276cffdfdc6c3426a0a4041163d822d975f97b75566302d4b7804da0fa90",
+  };
+  for (const native of [
+    previous,
+    ...Object.keys(previous).map((key) => ({ ...policy.native, [key]: previous[key] })),
+  ]) {
+    assert.throws(
+      () => validatePostprocessPolicy({ ...policy, native }),
+      /policy_invalid/,
+    );
+  }
+});
+
 test("container creation has bounded resources, no network/root/capabilities/secrets or writable tools", () => {
   const args = optimizerCreateArguments(settings);
   const value = (f) => args[args.indexOf(f) + 1];
