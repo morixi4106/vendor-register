@@ -11,6 +11,8 @@ import {
   checkPrismaSqliteWiring,
   checkPrismaSqliteMetadata,
   assessPrismaSqliteIdentity,
+  PRISMA_SQLITE_ADVISORY_REVIEW,
+  reviewPrismaSqliteAdvisoryMetadata,
 } from "../../scripts/security/prisma-sqlite-source.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -27,6 +29,16 @@ const advisory = JSON.parse(
   ),
 );
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
+const currentAdvisory = {
+  ...advisory,
+  aliases: [
+    "BIT-sqlite-2026-119375",
+    "CVE-2026-119375",
+    "GHSA-72w2-rjgg-q729",
+    "RUSTSEC-2026-0502",
+  ],
+  modified: PRISMA_SQLITE_ADVISORY_REVIEW.fullModified,
+};
 const fixture = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oja-sqlite-contract-"));
   assert.equal(path.dirname(dir), fs.realpathSync(os.tmpdir()));
@@ -191,14 +203,14 @@ test("SQLite metadata requires one bundled original-version local crate, never a
 });
 
 const responder =
-  ({ matches, body = advisory } = {}) =>
+  ({ matches, body = currentAdvisory } = {}) =>
   async (url) =>
     url.endsWith("querybatch")
       ? Response.json({
           results: [
             {
               vulns: matches ?? [
-                { id: policy.advisory.id, modified: policy.advisory.modified },
+                { id: policy.advisory.id, modified: PRISMA_SQLITE_ADVISORY_REVIEW.modified },
               ],
             },
           ],
@@ -212,7 +224,47 @@ test("SQLite original-identity audit retains the full raw match, never claims re
   assert.equal(report.sourceAuditOk, false);
   assert.equal(report.productionApproved, false);
   assert.equal(report.packages[0].checksum, policy.sha256);
-  assert.deepEqual(report.advisory, advisory);
+  assert.deepEqual(report.advisory, currentAdvisory);
+  assert.deepEqual(report.sourceIdentityAdvisory, policy.advisory);
+  assert.deepEqual(report.metadataReview.changedFields, ["aliases", "modified"]);
+  assert.equal(report.metadataReview.originalCanonicalSha256, PRISMA_SQLITE_ADVISORY_REVIEW.originalCanonicalSha256);
+  assert.equal(report.metadataReview.canonicalSha256, PRISMA_SQLITE_ADVISORY_REVIEW.canonicalSha256);
+});
+
+test("reviewed SQLite metadata changes neither the original policy nor source-fix applicability", () => {
+  const before = structuredClone(policy);
+  const review = reviewPrismaSqliteAdvisoryMetadata(advisory, currentAdvisory);
+  assert.equal(review.disposition, "REVIEWED_METADATA_ONLY_SOURCE_BINDINGS_UNCHANGED");
+  assert.deepEqual(review.changedFields, ["aliases", "modified"]);
+  assert.deepEqual(policy, before);
+  assert.equal(policy.advisory.modified, "2026-11-09T10:00:02.337112Z");
+  for (const key of Object.keys(advisory).filter((key) => !["aliases", "modified"].includes(key)))
+    assert.deepEqual(currentAdvisory[key], advisory[key], key);
+});
+
+test("SQLite metadata review rejects stale, fabricated and partially adopted updates", async () => {
+  for (const invalid of [undefined, null, [], "advisory", 1]) {
+    assert.throws(() => reviewPrismaSqliteAdvisoryMetadata(invalid, currentAdvisory), /prisma_sqlite_advisory_changed/);
+    assert.throws(() => reviewPrismaSqliteAdvisoryMetadata(advisory, invalid), /prisma_sqlite_advisory_changed/);
+  }
+  for (const mutate of [
+    (a) => { a.details += " changed"; },
+    (a) => { a.affected = []; },
+    (a) => { a.references.pop(); },
+    (a) => { a.aliases.pop(); },
+    (a) => { a.aliases.push("CVE-2099-0001"); },
+    (a) => { a.modified = advisory.modified; },
+    (a) => { a.summary += " changed"; },
+    (a) => { a.extra = true; },
+  ]) {
+    const changed = structuredClone(currentAdvisory);
+    mutate(changed);
+    assert.throws(() => reviewPrismaSqliteAdvisoryMetadata(advisory, changed), /prisma_sqlite_advisory_changed/);
+    await assert.rejects(assessPrismaSqliteIdentity(policy, { fetchImpl: responder({ body: changed }) }), /prisma_sqlite_advisory_changed/);
+  }
+  assert.throws(() => reviewPrismaSqliteAdvisoryMetadata({ ...advisory, details: "changed" }, currentAdvisory), /prisma_sqlite_advisory_changed/);
+  await assert.rejects(assessPrismaSqliteIdentity(policy, { fetchImpl: responder({ body: advisory }) }), /prisma_sqlite_advisory_changed/);
+  await assert.rejects(assessPrismaSqliteIdentity(policy, { fetchImpl: responder({ matches: [{ id: policy.advisory.id, modified: policy.advisory.modified }] }) }), /prisma_sqlite_advisory_changed/);
 });
 test("SQLite audit rejects changed/extra/removed matches and any modified full advisory payload", async () => {
   for (const options of [
@@ -238,12 +290,12 @@ test("SQLite audit rejects changed/extra/removed matches and any modified full a
 });
 
 test("SQLite full-advisory binding ignores object key order but never payload changes", async () => {
-  const reordered = Object.fromEntries(Object.entries(advisory).reverse());
+  const reordered = Object.fromEntries(Object.entries(currentAdvisory).reverse());
   const report = await assessPrismaSqliteIdentity(policy, {
     fetchImpl: responder({ body: reordered }),
   });
   assert.equal(
     report.canonicalAdvisorySha256,
-    "775268f2214d68fbda497ec20183114be74804b2a0f58475705743ec0c47fc58",
+    PRISMA_SQLITE_ADVISORY_REVIEW.canonicalSha256,
   );
 });

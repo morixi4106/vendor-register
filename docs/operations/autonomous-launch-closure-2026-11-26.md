@@ -5,6 +5,31 @@ launch readiness, without asking for another "next" after every small step.
 This does not authorize publication, financial actions, access changes,
 notification resumption or weaker admission gates.
 
+## November27 Continuation
+
+The previously pending Windows native Javy job45816052650 passed. Independently
+verified artifact15119347447/ZIPcb160a79d008e7fc984149a51d79ef54c1fb7600bef87f984e78e27d0b75cb63,
+actual51017728-byte executable39d9211224637f3860d9d5c989d0ec3c18268997061d6c9a5547a9fe439b1c76,
+receipt95c2d71aea09ed8e5227f1f97a6c9806b4a9f4c3da3d65b9cf1402e60d3c82c5,
+source/lock/compiler/476 scan/embedded/profile and all native probes. Both-OS
+source39-contract evidence and Linux final Function143 assertions/36 calls were
+already verified and are not rerun just to obtain another completion count.
+
+A separate local Windows smoke keeps the same executable/embedded plugin and
+dynamic/Shopify WASM hashes, but static snapshot bytes differ from CI and the
+local profile exceeded a60-second check deadline. Retain both failed attempts;
+do not claim local byte reproducibility or a passed local profile. Existing CI
+Windows profiler success is independent; no installed executable was replaced.
+
+[SQLite metadata review](sqlite-advisory-metadata-review-2026-11-27.md) now
+strictly accepts only the reviewed full alias/date update, preserving the
+original source policy and native receipt identities. Actual vulnerability
+findings and false approval flags remain. Active contract findings still block;
+a private368-package fixed contract candidate scans clean and passes actual
+metadata wiring, but is neither compiled nor adopted. Prisma's private engine
+candidate still retains chrono's INFO maintenance notice and unreviewed Git
+sources; neither is a new native release.
+
 ## Latest Owner Scope
 
 The owner answered the country question: keep international sales switchable,

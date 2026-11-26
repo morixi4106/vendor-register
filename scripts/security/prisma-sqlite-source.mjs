@@ -10,6 +10,15 @@ const REGISTRY = "registry+https://github.com/rust-lang/crates.io-index";
 const ARCHIVE =
   "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149";
 const ADVISORY = "RUSTSEC-2026-0459";
+export const PRISMA_SQLITE_ADVISORY_REVIEW = Object.freeze({
+  id: ADVISORY,
+  originalCanonicalSha256:
+    "775268f2214d68fbda497ec20183114be74804b2a0f58475705743ec0c47fc58",
+  canonicalSha256:
+    "41bfcad9cd214fb86fe181d38491b6905e0524c440b497230b19e1c7c7676958",
+  modified: "2026-11-17T13:41:05.770775Z",
+  fullModified: "2026-11-17T13:41:05.770775012Z",
+});
 const HASH = /^[a-f0-9]{64}$/;
 const canonicalJson = (value) =>
   Array.isArray(value)
@@ -183,6 +192,36 @@ export function checkPrismaSqliteMetadata(
   return true;
 }
 
+export function reviewPrismaSqliteAdvisoryMetadata(original, current) {
+  const review = PRISMA_SQLITE_ADVISORY_REVIEW;
+  if (
+    !original ||
+    typeof original !== "object" ||
+    Array.isArray(original) ||
+    !current ||
+    typeof current !== "object" ||
+    Array.isArray(current) ||
+    sha(canonicalJson(original)) !== review.originalCanonicalSha256 ||
+    current?.id !== ADVISORY ||
+    current?.modified !== review.fullModified ||
+    sha(canonicalJson(current)) !== review.canonicalSha256
+  )
+    throw new Error("prisma_sqlite_advisory_changed");
+  const changedFields = [
+    ...new Set([...Object.keys(original), ...Object.keys(current)]),
+  ]
+    .filter((key) => canonicalJson(original[key]) !== canonicalJson(current[key]))
+    .sort();
+  if (changedFields.join() !== "aliases,modified")
+    throw new Error("prisma_sqlite_advisory_changed");
+  return {
+    originalCanonicalSha256: review.originalCanonicalSha256,
+    canonicalSha256: review.canonicalSha256,
+    changedFields,
+    disposition: "REVIEWED_METADATA_ONLY_SOURCE_BINDINGS_UNCHANGED",
+  };
+}
+
 export async function assessPrismaSqliteIdentity(
   entry,
   { fetchImpl = fetch } = {},
@@ -193,7 +232,7 @@ export async function assessPrismaSqliteIdentity(
   if (
     report.findings.length !== 1 ||
     report.findings[0].advisory !== ADVISORY ||
-    report.findings[0].modified !== entry.advisory.modified
+    report.findings[0].modified !== PRISMA_SQLITE_ADVISORY_REVIEW.modified
   )
     throw new Error("prisma_sqlite_advisory_changed");
   const response = await fetchImpl(`https://api.osv.dev/v1/vulns/${ADVISORY}`, {
@@ -209,18 +248,23 @@ export async function assessPrismaSqliteIdentity(
     bytes.push(chunk);
   }
   const advisory = JSON.parse(Buffer.concat(bytes).toString("utf8"));
-  if (
-    advisory.id !== ADVISORY ||
-    advisory.modified !== "2026-11-09T10:00:02.337112425Z" ||
-    sha(canonicalJson(advisory)) !==
-      "775268f2214d68fbda497ec20183114be74804b2a0f58475705743ec0c47fc58"
-  )
+  // Preserve the original source-fix evidence while reviewing only known metadata.
+  const original = JSON.parse(
+    fs.readFileSync(
+      new URL("../../security/advisories/RUSTSEC-2026-0459.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  if (sha(JSON.stringify(original)) !== entry.advisory.sha256)
     throw new Error("prisma_sqlite_advisory_changed");
+  const metadataReview = reviewPrismaSqliteAdvisoryMetadata(original, advisory);
   return {
     ...report,
     advisory,
     parsedAdvisorySha256: sha(JSON.stringify(advisory)),
     canonicalAdvisorySha256: sha(canonicalJson(advisory)),
+    sourceIdentityAdvisory: { ...entry.advisory },
+    metadataReview,
     disposition: "EXACT_C_BACKPORT_REQUIRES_COMPILED_REGRESSION",
     sourceAuditOk: false,
     productionApproved: false,
