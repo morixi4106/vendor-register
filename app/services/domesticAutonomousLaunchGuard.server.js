@@ -14,6 +14,7 @@ import {
 } from "./productionTransactionProbe.server.js";
 import { applyPlatformCheckoutEmergencyHold } from "./operationalReadiness.server.js";
 import { inspectDomesticAutonomousLaunchAuthorization } from "./domesticAutonomousLaunchAuthorization.js";
+import { inspectCheckoutCommerceContext } from "./checkoutCommerceContext.server.js";
 import { inspectKomojuLimitedLaunchScope } from "./komojuLimitedLaunchScope.server.js";
 
 const GUARD_ACTOR = "domestic-autonomous-launch-guard";
@@ -106,13 +107,14 @@ export async function runDomesticAutonomousLaunchGuard(
     refreshProbeImpl = refreshProductionTransactionProbe,
     applyEmergencyHoldImpl = applyPlatformCheckoutEmergencyHold,
     inspectDomesticScopeImpl = inspectKomojuLimitedLaunchScope,
+    inspectCheckoutCommerceContextImpl = inspectCheckoutCommerceContext,
   } = {},
 ) {
   const shop = normalize(shopDomain).toLowerCase();
   const primaryShop = normalize(env.SHOPIFY_PRIMARY_SHOP_DOMAIN).toLowerCase();
   const authorization = inspectAuthorizationImpl(env, now);
 
-  if (!authorization.active) {
+  if (!authorization.active && authorization.reason !== "checkout_scope_unverified") {
     if (!authorization.enabled) {
       return {
         ok: true,
@@ -181,6 +183,34 @@ export async function runDomesticAutonomousLaunchGuard(
   }
 
   try {
+    const checkoutContext = await inspectCheckoutCommerceContextImpl({
+      shopDomain: shop,
+      prismaClient,
+      env,
+      now,
+    });
+    if (!checkoutContext.mode.standardDirectReady) {
+      return secureLaunch(
+        checkoutContext.mode.reason || "standard_direct_mode_required",
+        {
+          shopDomain: shop,
+          prismaClient,
+          env,
+          now,
+          applyEmergencyHoldImpl,
+        },
+      );
+    }
+    const observedAuthorization = inspectAuthorizationImpl(env, now, checkoutContext.mode);
+    if (!observedAuthorization.active) {
+      return secureLaunch(observedAuthorization.reason || "authorization_unverified", {
+        shopDomain: shop, prismaClient, env, now, applyEmergencyHoldImpl,
+      });
+    }
+    const contextOptions = {
+      prismaClient, env, now,
+      inspectCheckoutCommerceContextImpl: async () => checkoutContext,
+    };
     const domesticScope = await inspectDomesticScopeImpl({
       prismaClient,
       env,
@@ -258,7 +288,7 @@ export async function runDomesticAutonomousLaunchGuard(
           targetProvider: PRODUCTION_TRANSACTION_AUTODETECT.provider,
           targetPaymentMethod: PRODUCTION_TRANSACTION_AUTODETECT.paymentMethod,
         },
-        { prismaClient, env },
+        contextOptions,
       );
       if (!preflight?.canStart) {
         return secureLaunch("production_probe_preflight_failed", {
@@ -278,7 +308,7 @@ export async function runDomesticAutonomousLaunchGuard(
           targetPaymentMethod: PRODUCTION_TRANSACTION_AUTODETECT.paymentMethod,
           maximumPlannedChargeAmount: maximumCharge,
         },
-        { prismaClient, env, now },
+        contextOptions,
       );
       if (!created?.ok || !created?.probe) {
         return secureLaunch(
@@ -357,7 +387,7 @@ export async function runDomesticAutonomousLaunchGuard(
         actorKey: GUARD_ACTOR,
         releaseExpectation,
       },
-      { prismaClient, now },
+      contextOptions,
     );
     if (refreshed?.ok && refreshed?.pending === false) {
       return {

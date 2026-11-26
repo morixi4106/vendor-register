@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "version": "0.25.12",
+  "sourceCommit": "208f539945b145e7c9d6d844290f81c3fe5af320",
+  "sourceSha256": "783fa55416dc20211affd339e90608dbf2c56b15939fd416510d24a967ff9efa",
+  "goVersion": "1.27.4",
+  "govulncheckVersion": "v1.9.0",
+  "binarySha256": {
+    "win32": "9ab5d52253e50299b7220c9a3790b7825ddf14381415f56eb32eae127e6cb977",
+    "linux": "0c16e5fa290590038cdbcb6090a22199bd117dabbe8516e200f77f1736a91092"
+  },
+  "archives": {
+    "win32": {
+      "filename": "go1.27.4.windows-amd64.zip",
+      "sha256": "178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e"
+    },
+    "linux": {
+      "filename": "go1.27.4.linux-amd64.tar.gz",
+      "sha256": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
+    }
+  }
+}

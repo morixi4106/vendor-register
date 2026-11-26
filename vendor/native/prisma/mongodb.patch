@@ -1,0 +1,53 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 7e8020b..c89f906 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -13,7 +13,7 @@
+ edition = "2021"
+ rust-version = "1.88"
+ name = "mongodb"
+-version = "3.9.1"
++version = "3.9.1+oja.1"
+ authors = [
+     "Saghm Rossi <saghmrossi@gmail.com>",
+     "Patrick Freed <patrick.freed@mongodb.com>",
+@@ -62,6 +62,7 @@ rustdoc-args = [
+ all-features = true
+ 
+ [features]
++oja-security-contracts = []
+ aws-auth = [
+     "dep:aws-config",
+     "dep:aws-credential-types",
+@@ -422,7 +423,7 @@ version = "1"
+ optional = true
+ 
+ [dependencies.zstd]
+-version = "0.13.3"
++version = "=0.14.3"
+ optional = true
+ 
+ [dev-dependencies.anyhow]
+diff --git a/src/lib.rs b/src/lib.rs
+index dd986f0..e80c3ab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -120,3 +120,18 @@ macro_rules! log_warning {
+ 
+ #[allow(unused)]
+ use log_warning;
++
++// Available only to the isolated source-contract fixture, never a default feature.
++#[cfg(feature = "oja-security-contracts")]
++#[doc(hidden)]
++pub mod oja_security_contracts {
++    use crate::{error::Result, options::Compressor};
++
++    pub fn compress(compressor: &Compressor, flags: &[u8], section: &[u8]) -> Result<Vec<u8>> {
++        compressor.compress(flags, section)
++    }
++
++    pub fn decompress(message: &[u8], compressor_id: u8) -> Result<Vec<u8>> {
++        crate::compression::decompress::decompress_message(message, compressor_id)
++    }
++}

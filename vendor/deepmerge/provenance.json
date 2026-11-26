@@ -1,0 +1,9 @@
+{
+  "upstream": "https://github.com/TehShrike/deepmerge",
+  "commit": "5b87756a5671635679001cbac72aa42f23472c81",
+  "version": "4.3.1",
+  "source": "index.js",
+  "advisory": "GHSA-gcqx-w48m-w2h4",
+  "patch": "Reject prototype-bearing keys in both input loops; use data-property writes; fail closed on throwing property lookup.",
+  "status": "locally-maintained-security-backport"
+}

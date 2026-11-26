@@ -15,8 +15,19 @@ export const DEFAULT_NPM_TREE_LIMITS = Object.freeze({
 
 const TARGETS = Object.freeze({
   "brace-expansion": "2.1.7",
-  minimatch: "9.0.9",
+  minimatch: "9.0.9-oja.1",
 });
+const IDENTITIES = Object.freeze({
+  minimatch: "@oja/minimatch",
+  "brace-expansion": "brace-expansion",
+});
+const targetLocations = (lockfile, name) =>
+  [
+    ...new Set([
+      ...packageLocationsByName(lockfile, name),
+      ...packageLocationsByName(lockfile, IDENTITIES[name]),
+    ]),
+  ].sort();
 
 function mergeLimits(overrides = {}) {
   const limits = { ...DEFAULT_NPM_TREE_LIMITS, ...overrides };
@@ -141,7 +152,7 @@ export function verifyNpmTreeEvidence({
   };
 
   for (const [name, version] of Object.entries(TARGETS)) {
-    const lockLocations = packageLocationsByName(lockfile, name);
+    const lockLocations = targetLocations(lockfile, name);
     if (lockLocations.length !== 1) {
       errors.push(`${name}:lock_physical_count_mismatch`);
       continue;
@@ -151,6 +162,11 @@ export function verifyNpmTreeEvidence({
     ) {
       errors.push(`${name}:lock_version_mismatch`);
     }
+    if (
+      name === "minimatch" &&
+      lockfile.packages[lockLocations[0]]?.name !== IDENTITIES[name]
+    )
+      errors.push(`${name}:lock_identity_mismatch`);
 
     const queryNodes = Array.isArray(queryByName[name])
       ? queryByName[name].map(normalizeQueryNode)
@@ -161,7 +177,7 @@ export function verifyNpmTreeEvidence({
       const node = queryNodes[0];
       if (
         node.location !== lockLocations[0] ||
-        node.name !== name ||
+        node.name !== IDENTITIES[name] ||
         node.version !== version
       ) {
         errors.push(`${name}:npm_query_node_mismatch`);
@@ -206,7 +222,7 @@ export function verifyNpmTreeEvidence({
     scopes: new Set(["root-production"]),
   });
   for (const name of Object.keys(TARGETS)) {
-    const runtimeLocations = packageLocationsByName(lockfile, name).filter(
+    const runtimeLocations = targetLocations(lockfile, name).filter(
       (location) => rootRuntime.reachable.has(location),
     );
     if (runtimeLocations.length > 0) {
@@ -220,7 +236,10 @@ export function verifyNpmTreeEvidence({
       name: sbomComponentName(component),
       version: String(component?.version || ""),
     }))
-    .filter((component) => TARGETS[component.name]);
+    .filter(
+      (component) =>
+        TARGETS[component.name] || component.name === IDENTITIES.minimatch,
+    );
   if (sbomTargets.length > 0) {
     errors.push("toolchain_target_present_in_production_sbom");
   }
@@ -249,11 +268,10 @@ export function verifyNpmTreeEvidence({
         lockfile,
         "brace-expansion",
       ).length,
-      minimatchPhysicalCount: packageLocationsByName(lockfile, "minimatch")
-        .length,
+      minimatchPhysicalCount: targetLocations(lockfile, "minimatch").length,
       productionSbomComponentCount: sbomComponents.length,
       rootRuntimeToolchainCount: Object.keys(TARGETS).filter((name) =>
-        packageLocationsByName(lockfile, name).some((location) =>
+        targetLocations(lockfile, name).some((location) =>
           rootRuntime.reachable.has(location),
         ),
       ).length,
@@ -279,7 +297,7 @@ export function collectNpmTreeEvidence({
       "npm explain brace-expansion",
     ),
     explainMinimatch: execute(
-      ["explain", "minimatch", "--json"],
+      ["explain", "node_modules/minimatch", "--json"],
       "npm explain minimatch",
     ),
     lsTree: execute(
@@ -290,7 +308,10 @@ export function collectNpmTreeEvidence({
       ["query", "#brace-expansion"],
       "npm query brace-expansion",
     ),
-    queryMinimatch: execute(["query", "#minimatch"], "npm query minimatch"),
+    queryMinimatch: execute(
+      ["query", ':is(#minimatch,[name="@oja/minimatch"])'],
+      "npm query minimatch",
+    ),
     sbom: execute(
       ["sbom", "--omit=dev", "--sbom-format", "cyclonedx"],
       "npm production SBOM",

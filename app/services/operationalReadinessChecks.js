@@ -19,8 +19,11 @@ export function buildOperationalReadinessChecks({
   env = process.env,
   now = new Date(),
 } = {}) {
-  const launchAuthorization =
-    inspectDomesticAutonomousLaunchAuthorization(env, now);
+  const launchAuthorization = inspectDomesticAutonomousLaunchAuthorization(
+    env,
+    now,
+    inspection?.checkoutMode,
+  );
   const checks = (inspection?.rows || [])
     .filter((row) => row.definition.supplemental !== true)
     .map((row) => {

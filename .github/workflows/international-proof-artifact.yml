@@ -1,0 +1,51 @@
+name: International proof artifact
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, node24
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run runtime:version
+      - name: Require reviewed native tools and current incident audit
+        run: node scripts/security/incident-audit.mjs
+      - name: Download exact previously tested final Function input
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7, node24
+        with:
+          artifact-ids: 13504146003
+          run-id: 42221077360
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+          path: .audit/function-release-input
+      - name: Require current production build admission without activating a runtime package
+        run: node --input-type=module -e "import {assertProductionBuildAdmission} from './scripts/security/production-build.mjs'; assertProductionBuildAdmission();"
+      - run: node scripts/security/safe-build.mjs generate
+      - run: npm run build:extensions
+      - run: npm run build
+      - run: npm run runtime:check
+      - name: Test exact prebuilt files and export manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/international-proof-artifact.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6, node24
+        with:
+          name: international-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .audit/international-proof-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 45
+          compression-level: 0

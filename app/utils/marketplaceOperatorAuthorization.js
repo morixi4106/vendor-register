@@ -2,7 +2,9 @@ import { hashPrivateIdentifier } from "./privacyHash.server.js";
 import { MARKETPLACE_OPERATOR_ROLES } from "./marketplaceOperatorRoles.js";
 
 function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeUserId(value) {
@@ -31,14 +33,8 @@ function getClientIp(request) {
 }
 
 function getRoleEmailAllowlist(role, env) {
-  const common = parseAllowlist(
-    env.MARKETPLACE_ADMIN_EMAILS,
-    normalizeEmail,
-  );
-  const roleSpecific = parseAllowlist(
-    env[`${role}_EMAILS`],
-    normalizeEmail,
-  );
+  const common = parseAllowlist(env.MARKETPLACE_ADMIN_EMAILS, normalizeEmail);
+  const roleSpecific = parseAllowlist(env[`${role}_EMAILS`], normalizeEmail);
   const adminEmail = normalizeEmail(env.ADMIN_EMAIL);
   if (adminEmail) common.add(adminEmail);
   return new Set([...common, ...roleSpecific]);
@@ -49,10 +45,7 @@ function getRoleUserIdAllowlist(role, env) {
     env.MARKETPLACE_ADMIN_USER_IDS,
     normalizeUserId,
   );
-  const roleSpecific = parseAllowlist(
-    env[`${role}_USER_IDS`],
-    normalizeUserId,
-  );
+  const roleSpecific = parseAllowlist(env[`${role}_USER_IDS`], normalizeUserId);
   return new Set([...common, ...roleSpecific]);
 }
 
@@ -85,11 +78,9 @@ async function resolveAssociatedUser(context, prismaClient) {
 
 function matchesRole(role, identity, env) {
   const emailMatch =
-    identity.email &&
-    getRoleEmailAllowlist(role, env).has(identity.email);
+    identity.email && getRoleEmailAllowlist(role, env).has(identity.email);
   const userIdMatch =
-    identity.userId &&
-    getRoleUserIdAllowlist(role, env).has(identity.userId);
+    identity.userId && getRoleUserIdAllowlist(role, env).has(identity.userId);
   return Boolean(emailMatch || userIdMatch);
 }
 
@@ -146,6 +137,9 @@ export function createMarketplaceOperatorAuthorizer({
       ...context,
       operator: {
         role: matchedRole || requestedRoles[0],
+        authorizedRoles: Object.values(MARKETPLACE_OPERATOR_ROLES).filter(
+          (value) => identity.accountOwner || matchesRole(value, identity, env),
+        ),
         actorKey,
         userId: identity.userId,
         email: identity.email || null,

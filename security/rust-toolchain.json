@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "version": "1.99.1",
+  "date": "2026-10-15",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "cargo": "4adb46c3707dee790682f7769d86983841148111695f561c843c33daa2af0c9b",
+      "rustc": "7da83c2af1f209606b0160f25174d2867c7c7b73667c32c9e5fbcef4f5f45348",
+      "rust-std": "4fe09430ded40b8b3092b49f0a651178eb1f8154ef4d1f1a73f2a3595b2d956f"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "cargo": "53f3521949404d595efb06a55c12c5658d4ed1c75566f33d3d514eaebe70bd8a",
+      "rustc": "2ff05ff9c08a90861e7f6e4065b40a8b87463b4576186fd613871c3e37f2091f",
+      "rust-std": "109b074225bf5b9ea3820890876bfdf4ed161adbfaf94b2b4b5984c85ee5d958"
+    }
+  }
+}

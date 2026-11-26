@@ -1,6 +1,7 @@
 import { resolveDutyCategory } from "../utils/dutyCategory";
 import { redirect } from "react-router";
 import prisma from "../db.server";
+import { writeInternationalProduct, flushInternationalGateStops } from "../services/internationalGateQueue.server.js";
 import { calculateProductPriceResult } from "../utils/buildCalculatedPrice";
 import { buildPriceSnapshot } from "../utils/priceSnapshot";
 import { getAdminPriceSyncLabel, getEffectivePriceSyncStatus } from "../utils/priceSyncStatus";
@@ -273,7 +274,7 @@ export const action = async ({
       if (product.shopifyVariantId) {
         shopDomain = shopDomain || (await resolveShopDomain());
       }
-      await prisma.product.update({
+      await writeInternationalProduct(prisma, "update", {
         where: {
           id: productId
         },
@@ -308,7 +309,7 @@ export const action = async ({
         });
       }
       await prisma.$transaction(async tx => {
-        await tx.product.update({
+        await writeInternationalProduct(tx, "update", {
           where: {
             id: productId
           },
@@ -324,6 +325,7 @@ export const action = async ({
           prismaClient: tx
         });
       });
+      await flushInternationalGateStops(prisma);
       return redirect(`/admin/products/${productId}`);
     }
     if (intent === "save-country-template") {
@@ -396,7 +398,7 @@ export const action = async ({
       }
       const policyInput = parseCountryPolicyFormData(formData);
       await prisma.$transaction(async tx => {
-        await tx.product.update({
+        await writeInternationalProduct(tx, "update", {
           where: {
             id: productId
           },
@@ -412,6 +414,7 @@ export const action = async ({
           prismaClient: tx
         });
       });
+      await flushInternationalGateStops(prisma);
       return redirect(`/admin/products/${productId}`);
     }
     let productWithResolvedShopDomain = product;
@@ -500,7 +503,7 @@ export const action = async ({
             weightGrams: productWithResolvedShopDomain.shippingWeightGrams
           });
         }
-        await prisma.product.update({
+        await writeInternationalProduct(prisma, "update", {
           where: {
             id: productId
           },
@@ -533,7 +536,7 @@ export const action = async ({
           }
         });
         if (latestProduct?.shopifyProductId) {
-          await prisma.product.update({
+          await writeInternationalProduct(prisma, "update", {
             where: {
               id: productId
             },
@@ -555,7 +558,7 @@ export const action = async ({
         await resetShopifyProductCreationClaim(productId, originalApprovalStatus);
         throw error;
       }
-      await prisma.product.update({
+      await writeInternationalProduct(prisma, "update", {
         where: {
           id: productId
         },
@@ -571,7 +574,7 @@ export const action = async ({
       return redirect(`/admin/products/${productId}`);
     }
     if (intent === "reject") {
-      await prisma.product.update({
+      await writeInternationalProduct(prisma, "update", {
         where: {
           id: productId
         },

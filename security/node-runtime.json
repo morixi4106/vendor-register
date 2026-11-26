@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "version": "24.22.3",
+  "signingKey": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+  "releaseUrl": "https://nodejs.org/en/blog/release/v24.22.3",
+  "artifacts": {
+    "win32-x64": {
+      "executableSha256": "86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6",
+      "archive": "node-v24.22.3-win-x64.zip",
+      "archiveSha256": "e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f"
+    },
+    "linux-x64": {
+      "executableSha256": "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
+      "archive": "node-v24.22.3-linux-x64.tar.xz",
+      "archiveSha256": "4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb"
+    }
+  }
+}

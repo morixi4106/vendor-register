@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertNodeRuntime } from "./node-runtime.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const PRELOAD = fileURLToPath(
@@ -25,6 +26,8 @@ export function createBuildEnvironment(home, source = process.env) {
   const env = Object.fromEntries(
     SYSTEM_KEYS.filter((key) => source[key]).map((key) => [key, source[key]]),
   );
+  delete env.Path;
+  env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${source.PATH || source.Path || ""}`;
   return {
     ...env,
     CI: "true",
@@ -82,6 +85,7 @@ export function runSafeBuildCommand({
   sourceEnv = process.env,
   spawn = spawnSync,
 }) {
+  assertNodeRuntime();
   if (
     !Array.isArray(args) ||
     !Number.isInteger(timeoutMs) ||

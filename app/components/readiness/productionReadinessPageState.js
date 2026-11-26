@@ -2,10 +2,11 @@ import {
   decorateCheckForDisplay,
   statusSortOrder,
 } from "./productionReadinessViewModel.js";
+import { buildLaunchPreparation } from "./launchPreparationViewModel.js";
 
 export function buildProductionReadinessPageState(data, navigation) {
   const submittingIntent = navigation.formData?.get("intent");
-  const displayChecks = data.checks.map((check) =>
+  const displayChecks = (data.checks || []).map((check) =>
     decorateCheckForDisplay(check, data),
   );
   const blockingChecks = displayChecks.filter(
@@ -15,6 +16,7 @@ export function buildProductionReadinessPageState(data, navigation) {
   const checkoutValidationActive = data.checkoutValidation?.active === true;
 
   return {
+    launchPreparation: buildLaunchPreparation(data, displayChecks),
     blockingChecks,
     isCarrierSubmitting:
       navigation.state === "submitting" &&
@@ -60,7 +62,8 @@ export function buildProductionReadinessPageState(data, navigation) {
       data.checkoutValidation?.ok === false &&
       data.checkoutValidation?.reason !== "validation_not_created",
     checkoutReplayReady: Boolean(
-      data.operationalReadiness?.rows?.some(
+      Array.isArray(data.operationalReadiness?.rows) &&
+      data.operationalReadiness.rows.some(
         (row) =>
           row.definition?.key === "CHECKOUT_VALIDATION_REPLAY_COMPLETED" &&
           row.ready === true,

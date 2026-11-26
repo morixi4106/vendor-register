@@ -1,0 +1,2586 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 307dd8c..f5e87e8 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,8 @@
+ [workspace]
+ resolver = "2"
++exclude = ["vendor/mongodb", "vendor/mysql_async", "vendor/mysql_common", "vendor/cuid", "vendor/winauth", "vendor/postgres", "vendor/libsqlite3-sys"]
+ members = [
++    "vendor/graphql",
+     "schema-engine/cli",
+     "schema-engine/commands",
+     "schema-engine/core",
+@@ -67,36 +69,38 @@ connection-string = "0.2"
+ convert_case = "0.8"
+ crossbeam-channel = "0.5"
+ cruet = "0.15"
+-cuid = { git = "https://github.com/prisma/cuid-rust", branch = "v1.3.3-wasm32-unknown-unknown" }
++cuid = { path = "vendor/cuid/crates/cuid", version = "=1.3.3+oja.1" }
+ derive_more = "0.99"
+ either = "1"
+ enumflags2 = "0.7"
+ env_logger = "0.11"
+ futures = "0.3"
+ getrandom = "0.2"
+-graphql-parser = { git = "https://github.com/prisma/graphql-parser" }
++graphql-parser = { path = "vendor/graphql", version = "=0.3.0+oja.1" }
+ hashbrown = "0.16"
+ heck = "0.4"
+ hex = "0.4"
+-hyper = "0.14"
++hyper = "=1.12.0"
++hyper-util = "=0.1.21"
++http-body-util = "=0.1.5"
+ indoc = "2"
+ indexmap = "2"
+ itertools = "0.13"
+ jsonrpc-core = "17"
+ log = "0.4"
+-lru = "0.7"
++lru = "=0.18.2"
+ lru-cache = "0.1"
+ lsp-types = "0.95"
+ metrics = "0.23.0"
+ metrics-util = "0.17.0"
+ metrics-exporter-prometheus = { version = "0.15.3", default-features = false }
+ mobc = "0.8"
+-mongodb = { version = "3", features = [
++mongodb = { path = "vendor/mongodb", version = "=3.9.1+oja.1", features = [
+     "zstd-compression",
+     "zlib-compression",
+     "snappy-compression",
+ ] }
+-mysql_async = { git = "https://github.com/prisma/mysql_async", branch = "vendored-openssl" }
++mysql_async = { path = "vendor/mysql_async", version = "=0.31.3+oja.1" }
+ names = { version = "0.11", default-features = false }
+ nanoid = "0.4"
+ napi = { version = "2", default-features = false, features = [
+@@ -110,21 +114,21 @@ nom = "7"
+ num_cpus = "1"
+ parking_lot = "0.12"
+ parse-hyperlinks = "0.23"
+-paste = "1"
++paste = { package = "pastey", version = "=0.2.3" }
+ percent-encoding = "2"
+ pest = "2"
+ pest_derive = "2"
+ petgraph = "0.8"
+ pin-project = "1"
+-postgres-native-tls = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
+-postgres-types = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
++postgres-native-tls = { path = "vendor/postgres/postgres-native-tls", version = "=0.5.1+oja.1" }
++postgres-types = { path = "vendor/postgres/postgres-types", version = "=0.2.9+oja.1" }
+ pretty = "0.12"
+ rustc-hash = "2"
+ rand = "0.8"
+ regex = "1"
+-reqwest = "0.11"
++reqwest = "=0.12.28"
+ rusqlite = "0.32"
+-sha2 = "0.10"
++sha2 = "=0.11.1"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = { version = "1", features = [
+     "float_roundtrip",
+@@ -135,7 +139,7 @@ serde_repr = "0.1"
+ serde-wasm-bindgen = "0.6"
+ smallvec = "1"
+ strip-ansi-escapes = "0.1"
+-structopt = "0.3"
++clap = { version = "=4.6.7", features = ["derive", "env"] }
+ sqlformat = "0.2"
+ sqlparser = "0.32"
+ sqlx-core = "0.8"
+@@ -143,7 +147,7 @@ sqlx-sqlite = "0.8"
+ tempfile = "3"
+ tiberius = { git = "https://github.com/prisma/tiberius", branch = "main", default-features = false }
+ tokio = { version = "1", features = ["sync"] }
+-tokio-postgres = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
++tokio-postgres = { path = "vendor/postgres/tokio-postgres", version = "=0.7.13+oja.1" }
+ tokio-tungstenite = "0.26"
+ tokio-util = "0.7"
+ toml = "0.8"
+@@ -174,7 +178,7 @@ quote = "1"
+ syn = "2"
+
+ # dev dependencies
+-codspeed-criterion-compat = "1"
++codspeed-criterion-compat = "=6.0.0"
+ dissimilar = "1"
+ expect-test = "1"
+ flate2 = "1"
+@@ -256,3 +260,9 @@ opt-level = 's'   # Optimize for size.
+ [profile.profiling]
+ inherits = "release"
+ debug = true
++
++[patch.crates-io]
++libsqlite3-sys = { path = "vendor/libsqlite3-sys" }
++mongodb = { path = "vendor/mongodb" }
++mysql_common = { path = "vendor/mysql_common" }
++winauth = { path = "vendor/winauth" }
+diff --git a/query-engine/core/src/interactive_transactions/mod.rs b/query-engine/core/src/interactive_transactions/mod.rs
+index 36f4bb9..8afb2f8 100644
+--- a/query-engine/core/src/interactive_transactions/mod.rs
++++ b/query-engine/core/src/interactive_transactions/mod.rs
+@@ -1,6 +1,7 @@
+ use derive_more::Display;
+ use serde::{Deserialize, Serialize};
+
++mod cache_capacity;
+ mod error;
+ mod manager;
+ mod transaction;
+diff --git a/query-engine/core/src/interactive_transactions/manager.rs b/query-engine/core/src/interactive_transactions/manager.rs
+index 997871f..0caf1ac 100644
+--- a/query-engine/core/src/interactive_transactions/manager.rs
++++ b/query-engine/core/src/interactive_transactions/manager.rs
+@@ -21,7 +21,7 @@ use crate::metrics::MetricsInstrumentationStub;
+ #[cfg(feature = "metrics")]
+ use prisma_metrics::WithMetricsInstrumentation;
+
+-use super::{TransactionError, TxId};
++use super::{TransactionError, TxId, cache_capacity::closed_transaction_cache};
+
+ pub static CLOSED_TX_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| match std::env::var("CLOSED_TX_CACHE_SIZE") {
+     Ok(size) => size.parse().unwrap_or(100),
+@@ -60,7 +60,7 @@ pub struct ItxManager {
+ impl ItxManager {
+     pub fn new() -> Self {
+         let transactions = Arc::new(RwLock::new(HashMap::<_, Arc<Mutex<InteractiveTransaction>>>::default()));
+-        let closed_txs = Arc::new(RwLock::new(LruCache::new(*CLOSED_TX_CACHE_SIZE)));
++        let closed_txs = Arc::new(RwLock::new(closed_transaction_cache(*CLOSED_TX_CACHE_SIZE)));
+         let (timeout_sender, mut timeout_receiver) = unbounded_channel();
+
+         // This task rollbacks and removes any open transactions with expired timeouts from the
+diff --git a/query-engine/core/src/interactive_transactions/cache_capacity.rs b/query-engine/core/src/interactive_transactions/cache_capacity.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/core/src/interactive_transactions/cache_capacity.rs
+@@ -0,0 +1,60 @@
++use lru::LruCache;
++use std::{hash::Hash, num::NonZeroUsize};
++
++pub(super) fn closed_transaction_cache<K: Hash + Eq, V>(configured: usize) -> LruCache<K, V> {
++    // LRU requires a nonzero capacity; a zero setting uses Prisma's existing default.
++    let capacity = NonZeroUsize::new(configured).unwrap_or(NonZeroUsize::new(100).unwrap());
++    LruCache::new(capacity)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn zero_uses_the_existing_default() {
++        assert_eq!(closed_transaction_cache::<u32, u32>(0).cap().get(), 100);
++    }
++
++    #[test]
++    fn positive_capacities_are_preserved() {
++        for capacity in [1, 2, 100, 1024] {
++            assert_eq!(closed_transaction_cache::<u32, u32>(capacity).cap().get(), capacity);
++        }
++    }
++
++    #[test]
++    fn eviction_keeps_the_most_recently_used_transaction() {
++        let mut cache = closed_transaction_cache(2);
++        cache.put("first", 1);
++        cache.put("second", 2);
++        assert_eq!(cache.get("first"), Some(&1));
++        cache.put("third", 3);
++        assert_eq!(cache.len(), 2);
++        assert_eq!(cache.peek("first"), Some(&1));
++        assert_eq!(cache.peek("second"), None);
++        assert_eq!(cache.peek("third"), Some(&3));
++    }
++
++    #[test]
++    fn looking_up_a_closed_transaction_does_not_refresh_its_lifetime() {
++        let mut cache = closed_transaction_cache(2);
++        cache.put("first", 1);
++        cache.put("second", 2);
++        assert_eq!(cache.peek("first"), Some(&1));
++        cache.put("third", 3);
++        assert_eq!(cache.peek("first"), None);
++        assert_eq!(cache.peek("second"), Some(&2));
++    }
++
++    #[test]
++    fn replacement_and_removal_leave_the_cache_usable() {
++        let mut cache = closed_transaction_cache(1);
++        assert_eq!(cache.put("tx", 1), None);
++        assert_eq!(cache.put("tx", 2), Some(1));
++        assert_eq!(cache.pop("tx"), Some(2));
++        cache.put("new", 3);
++        assert_eq!(cache.peek("new"), Some(&3));
++        assert_eq!(cache.len(), 1);
++    }
++}
+diff --git a/security-contracts/Cargo.toml b/security-contracts/Cargo.toml
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/Cargo.toml
+@@ -0,0 +1,29 @@
++[package]
++name = "oja-prisma-source-contracts"
++version = "0.1.0+oja.1"
++edition = "2021"
++publish = false
++
++[workspace]
++
++[dependencies]
++postgres-protocol = { path = "../vendor/postgres/postgres-protocol", version = "=0.6.8+oja.1", features = ["oja-security-contracts"] }
++postgres-types = { path = "../vendor/postgres/postgres-types", version = "=0.2.9+oja.1" }
++postgres-native-tls = { path = "../vendor/postgres/postgres-native-tls", version = "=0.5.1+oja.1" }
++tokio-postgres = { path = "../vendor/postgres/tokio-postgres", version = "=0.7.13+oja.1", features = ["oja-security-contracts"] }
++fallible-iterator = "0.2"
++paste = { package = "pastey", version = "=0.2.3" }
++winauth = { path = "../vendor/winauth", features = ["oja-security-contracts"] }
++lru = "=0.18.2"
++sha2 = "=0.11.1"
++mongodb = { path = "../vendor/mongodb", features = ["zstd-compression", "zlib-compression", "snappy-compression", "oja-security-contracts"] }
++mysql_async = { path = "../vendor/mysql_async", features = ["oja-security-contracts"] }
++mysql_common = { path = "../vendor/mysql_common" }
++base64 = "0.13"
++byteorder = "1"
++num-bigint = "0.4"
++rand = "0.8"
++regex = "1"
++sha1 = "=0.11.0"
++cuid = { path = "../vendor/cuid/crates/cuid", version = "=1.3.3+oja.1" }
++cuid-util = { path = "../vendor/cuid/crates/cuid-util", version = "=0.1.1+oja.1" }
+diff --git a/security-contracts/src/lib.rs b/security-contracts/src/lib.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/lib.rs
+@@ -0,0 +1,62 @@
++#![deny(unsafe_code)]
++#![allow(dead_code)]
++
++// Compile the actual patched engine modules, not copies of their implementations.
++#[path = "../../query-engine/core/src/interactive_transactions/cache_capacity.rs"]
++mod cache_capacity;
++#[path = "../../schema-engine/connectors/schema-connector/src/checksum.rs"]
++mod checksum;
++
++#[cfg(test)]
++mod mongodb_compression;
++
++#[cfg(test)]
++mod mysql_contracts;
++
++#[cfg(test)]
++mod mysql_crypto;
++
++#[cfg(test)]
++mod cuid_contracts;
++
++#[cfg(test)]
++mod winauth_contracts;
++
++#[cfg(test)]
++mod winauth_parser_contracts;
++
++#[cfg(test)]
++mod paste_contracts;
++
++#[cfg(test)]
++mod postgres_contracts;
++
++#[cfg(test)]
++mod tests {
++    use super::checksum;
++
++    #[test]
++    fn empty_migration_keeps_its_sha256() {
++        assert_eq!(checksum::render_checksum(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
++    }
++
++    #[test]
++    fn an_existing_checksum_is_accepted_but_changed_sql_is_not() {
++        let script = "CREATE TABLE example (id INTEGER);\n";
++        let digest = checksum::render_checksum(script);
++        assert!(checksum::script_matches_checksum(script, &digest));
++        assert!(!checksum::script_matches_checksum("DROP TABLE example;\n", &digest));
++        assert!(checksum::script_matches_checksum(&script.replace('\n', "\r\n"), &digest));
++    }
++
++    #[test]
++    fn legacy_unpadded_checksums_remain_readable() {
++        let script = "hello";
++        let digest = checksum::render_checksum(script);
++        let legacy: String = digest.as_bytes().chunks_exact(2).map(|pair| {
++            let pair = std::str::from_utf8(pair).unwrap();
++            format!("{:x}", u8::from_str_radix(pair, 16).unwrap())
++        }).collect();
++        assert!(checksum::script_matches_checksum(script, &legacy));
++    }
++}
+diff --git a/query-engine/core/Cargo.toml b/query-engine/core/Cargo.toml
+index df34d76..51a3f37 100644
+--- a/query-engine/core/Cargo.toml
++++ b/query-engine/core/Cargo.toml
+@@ -17,7 +17,7 @@ connector = { path = "../connectors/query-connector", package = "query-connector
+ crossbeam-channel.workspace = true
+ psl.workspace = true
+ futures.workspace = true
+-indexmap.workspace = true
++indexmap = { workspace = true, features = ["serde"] }
+ itertools.workspace = true
+ petgraph.workspace = true
+ query-builder.workspace = true
+diff --git a/security-contracts/src/mongodb_compression.rs b/security-contracts/src/mongodb_compression.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mongodb_compression.rs
+@@ -0,0 +1,86 @@
++use mongodb::{oja_security_contracts::{compress, decompress}, options::Compressor};
++
++const FLAGS: &[u8] = &[0, 0, 0, 0];
++const SECTION: &[u8] = b"\0synthetic BSON-like wire payload\0\xff\x80";
++
++fn roundtrip(compressor: Compressor, id: u8, flags: &[u8], section: &[u8]) {
++    let compressed = compress(&compressor, flags, section).unwrap();
++    let expected = [flags, section].concat();
++    assert_eq!(decompress(&compressed, id).unwrap(), expected);
++}
++
++#[test]
++fn zstd_preserves_wire_flags_and_section() {
++    roundtrip(Compressor::Zstd { level: None }, 3, FLAGS, SECTION);
++}
++
++#[test]
++fn zstd_handles_empty_message() {
++    roundtrip(Compressor::Zstd { level: None }, 3, &[], &[]);
++}
++
++#[test]
++fn zstd_handles_multiple_stream_buffer_lengths() {
++    let section: Vec<u8> = (0..300_000).map(|i| (i % 251) as u8).collect();
++    roundtrip(Compressor::Zstd { level: None }, 3, FLAGS, &section);
++}
++
++#[test]
++fn zstd_explicit_levels_remain_supported() {
++    for level in [-3, 1, 9] {
++        roundtrip(Compressor::Zstd { level: Some(level) }, 3, FLAGS, SECTION);
++    }
++}
++
++#[test]
++fn zstd_rejects_invalid_frame() {
++    assert!(decompress(b"not a zstd frame", 3).is_err());
++}
++
++#[test]
++fn zstd_rejects_truncated_frame() {
++    let frame = compress(&Compressor::Zstd { level: None }, FLAGS, SECTION).unwrap();
++    assert!(decompress(&frame[..frame.len() - 1], 3).is_err());
++}
++
++#[test]
++fn zstd_corrupt_legacy_frame_returns_error() {
++    // Corrupt v0.4 legacy magic; exercise the driver's real read-decoder path.
++    assert!(decompress(&[0x24, 0xb5, 0x2f, 0xfd, 0, 0], 3).is_err());
++}
++
++#[test]
++fn noop_preserves_every_byte() {
++    assert_eq!(decompress(SECTION, 0).unwrap(), SECTION);
++}
++
++#[test]
++fn unsupported_compressor_is_rejected() {
++    assert!(decompress(SECTION, 255).is_err());
++}
++
++#[test]
++fn zlib_preserves_wire_format() {
++    roundtrip(Compressor::Zlib { level: None }, 2, FLAGS, SECTION);
++}
++
++#[test]
++fn snappy_preserves_wire_format() {
++    roundtrip(Compressor::Snappy, 1, FLAGS, SECTION);
++}
++
++#[test]
++fn other_compressors_reject_corrupt_input() {
++    for id in [1, 2] {
++        assert!(decompress(b"invalid compressed message", id).is_err());
++    }
++}
++
++#[test]
++fn compressor_names_are_unchanged() {
++    use std::str::FromStr;
++    assert!(matches!(Compressor::from_str("zstd").unwrap(), Compressor::Zstd { level: None }));
++    assert!(matches!(Compressor::from_str("zlib").unwrap(), Compressor::Zlib { level: None }));
++    assert_eq!(Compressor::from_str("snappy").unwrap(), Compressor::Snappy);
++    assert!(Compressor::from_str("unknown").is_err());
++}
+diff --git a/security-contracts/src/mysql_contracts.rs b/security-contracts/src/mysql_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mysql_contracts.rs
+@@ -0,0 +1,121 @@
++use mysql_async::oja_security_contracts::StatementCache;
++use mysql_common::{misc::split_version, scramble::{scramble_native, scramble_sha256}, value::{Value, convert::from_value_opt}};
++
++#[test]
++fn zero_cache_capacity_remains_disabled() {
++    let mut cache = StatementCache::new(0);
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.get(b"first"), None);
++}
++
++#[test]
++fn cache_lookup_refreshes_eviction_order() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.put(3, b"third"), Some(2));
++    assert_eq!(cache.get(b"second"), None);
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.get(b"third"), Some(3));
++}
++
++#[test]
++fn capacity_one_returns_the_evicted_statement() {
++    let mut cache = StatementCache::new(1);
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.put(2, b"second"), Some(1));
++    assert_eq!(cache.get(b"first"), None);
++    assert_eq!(cache.get(b"second"), Some(2));
++}
++
++#[test]
++fn removal_clears_both_indexes() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.remove(1);
++    cache.remove(99);
++    assert_eq!(cache.get(b"first"), None);
++    cache.put(2, b"first");
++    assert_eq!(cache.get(b"first"), Some(2));
++}
++
++#[test]
++fn clear_allows_reuse_without_stale_queries() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    cache.clear();
++    assert_eq!(cache.get(b"first"), None);
++    assert_eq!(cache.get(b"second"), None);
++    assert_eq!(cache.put(3, b"third"), None);
++    assert_eq!(cache.get(b"third"), Some(3));
++}
++
++#[test]
++fn cache_treats_queries_as_bytes() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, &[0, 255, 128]);
++    assert_eq!(cache.get(&[0, 255, 128]), Some(1));
++    assert_eq!(cache.get(&[0, 255]), None);
++}
++
++#[test]
++fn replacing_the_same_statement_does_not_evict_another() {
++    let mut cache = StatementCache::new(2);
++    cache.put(1, b"first");
++    cache.put(2, b"second");
++    assert_eq!(cache.put(1, b"first"), None);
++    assert_eq!(cache.get(b"first"), Some(1));
++    assert_eq!(cache.get(b"second"), Some(2));
++}
++
++#[test]
++fn server_version_and_vendor_suffix_are_preserved() {
++    assert_eq!(split_version("8.0.36"), (8, 0, 36));
++    assert_eq!(split_version("10.11.9-MariaDB"), (10, 11, 9));
++    assert_eq!(split_version("invalid"), (0, 0, 0));
++    assert_eq!(split_version("100.200.300"), (0, 0, 0));
++}
++
++#[test]
++fn signed_numeric_boundaries_are_preserved() {
++    for n in [i64::MIN, -1, 0, i64::MAX] {
++        assert_eq!(from_value_opt::<i64>(Value::Bytes(n.to_string().into_bytes())).unwrap(), n);
++    }
++    assert!(from_value_opt::<i64>(Value::Bytes(b"9223372036854775808".to_vec())).is_err());
++}
++
++#[test]
++fn unsigned_numeric_boundaries_are_preserved() {
++    for n in [0, 1, u64::MAX] {
++        assert_eq!(from_value_opt::<u64>(Value::Bytes(n.to_string().into_bytes())).unwrap(), n);
++    }
++    assert!(from_value_opt::<u64>(Value::Bytes(b"-1".to_vec())).is_err());
++    assert!(from_value_opt::<u64>(Value::Bytes(b"18446744073709551616".to_vec())).is_err());
++}
++
++#[test]
++fn float_and_exponent_conversion_are_preserved() {
++    assert_eq!(from_value_opt::<f64>(Value::Bytes(b"-12.5".to_vec())).unwrap(), -12.5);
++    assert_eq!(from_value_opt::<f64>(Value::Bytes(b"1.25e3".to_vec())).unwrap(), 1250.0);
++    assert!(from_value_opt::<f64>(Value::Bytes(b"12.5oops".to_vec())).is_err());
++}
++
++#[test]
++fn native_password_known_vector_is_unchanged() {
++    let nonce = b"NR3HP:qIYa_9=db?Sd{`";
++    assert_eq!(scramble_native(nonce, b"G!ider27").unwrap(), [0x09,0xcf,0xf8,0x85,0x5e,0x9e,0x70,0x53,0x40,0xff,0x22,0x70,0xd8,0xfb,0x9f,0xad,0xba,0x90,0x6b,0x70]);
++}
++
++#[test]
++fn sha256_password_known_vector_is_unchanged() {
++    let nonce = b"NR3HP:qIYa_9=db?Sd{`";
++    assert_eq!(scramble_sha256(nonce, b"G!ider27").unwrap(), [0x4f,0x97,0xbb,0xfd,0x20,0x24,0x01,0xc4,0x2a,0x69,0xde,0xaa,0xe5,0x3b,0xda,0x07,0x7e,0xd7,0x57,0x85,0x63,0xc1,0xa8,0x0e,0xb8,0x16,0xc8,0x21,0x19,0xb6,0x8d,0x2e]);
++}
++
++#[test]
++fn empty_password_remains_no_auth_data() {
++    assert_eq!(scramble_native(b"public fixture nonce", b""), None);
++    assert_eq!(scramble_sha256(b"public fixture nonce", b""), None);
++}
+diff --git a/security-contracts/src/mysql_crypto.rs b/security-contracts/src/mysql_crypto.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/mysql_crypto.rs
+@@ -0,0 +1,5 @@
++// Run the unchanged upstream DER, MGF1, RSA and OAEP vectors with the new SHA-1 library.
++#[path = "../../vendor/mysql_common/src/crypto/der.rs"]
++mod der;
++#[path = "../../vendor/mysql_common/src/crypto/rsa.rs"]
++mod rsa;
+diff --git a/security-contracts/src/cuid_contracts.rs b/security-contracts/src/cuid_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/cuid_contracts.rs
+@@ -0,0 +1,121 @@
++use std::collections::HashSet;
++
++fn assert_v1(value: &str) {
++    assert!((25..=26).contains(&value.len()));
++    assert!(value.starts_with('c'));
++    assert!(value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
++    assert!(cuid::is_cuid1(value));
++}
++
++fn assert_v2(value: &str, length: usize) {
++    assert_eq!(value.len(), length);
++    assert!(value.as_bytes()[0].is_ascii_lowercase());
++    assert!(value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
++    assert!(cuid::is_cuid2(value));
++}
++
++#[test]
++fn base36_known_boundaries_preserve_the_existing_alphabet() {
++    for (number, expected) in [(0u128,"0"),(9,"9"),(10,"a"),(24,"o"),(25,"p"),(26,"q"),(35,"z"),(36,"10"),(1295,"zz"),(1296,"100")] {
++        assert_eq!(cuid_util::to_base_36(number), expected);
++    }
++}
++
++#[test]
++fn base36_full_width_round_trips_without_truncation() {
++    for number in [0u128,1,u32::MAX as u128,u64::MAX as u128,1u128 << 64,1u128 << 127,u128::MAX] {
++        assert_eq!(u128::from_str_radix(&cuid_util::to_base_36(number),36).unwrap(),number);
++    }
++}
++
++#[test]
++fn base36_trait_and_function_remain_identical() {
++    use cuid_util::ToBase36;
++    for number in 0u128..4096 {
++        assert_eq!(number.to_base_36(),cuid_util::to_base_36(number));
++    }
++}
++
++#[test]
++fn existing_v1_order_identifiers_are_still_accepted() {
++    assert_v1("cabcdefghijklmnopqrstuvwx");
++    assert!(!cuid::is_cuid1(""));
++    assert!(!cuid::is_cuid1("too-short"));
++}
++
++#[test]
++fn v1_generation_keeps_the_engine_format() {
++    for _ in 0..128 { assert_v1(&cuid::cuid1()); }
++}
++
++#[test]
++fn v1_small_batch_has_no_duplicate_ids() {
++    let ids: HashSet<_> = (0..1024).map(|_| cuid::cuid1()).collect();
++    assert_eq!(ids.len(),1024);
++}
++
++#[test]
++fn v1_slug_keeps_its_length() {
++    for _ in 0..128 {
++        let slug = cuid::cuid1_slug();
++        assert_eq!(slug.len(),10);
++        assert!(cuid::is_cuid1_slug(&slug));
++    }
++}
++
++#[test]
++fn v2_generation_keeps_the_engine_format() {
++    for _ in 0..128 { assert_v2(&cuid::cuid2(),24); }
++}
++
++#[test]
++fn v2_small_batch_has_no_duplicate_ids() {
++    let ids: HashSet<_> = (0..256).map(|_| cuid::cuid2()).collect();
++    assert_eq!(ids.len(),256);
++}
++
++#[test]
++fn v2_slug_keeps_its_length() {
++    for _ in 0..32 {
++        let slug = cuid::cuid2_slug();
++        assert_v2(&slug,10);
++        assert!(cuid::is_cuid2_slug(&slug));
++    }
++}
++
++#[test]
++fn v2_custom_lengths_and_callbacks_remain_usable() {
++    for length in [2u16,8,16,32] {
++        let generator = cuid::Cuid2Constructor::new().with_length(length)
++            .with_counter(|| 42).with_fingerprinter(|| "synthetic-fingerprint".to_owned());
++        assert_v2(&generator.create_id(),length as usize);
++    }
++    let mut generator = cuid::Cuid2Constructor::default();
++    generator.set_length(16);
++    generator.set_counter(|| 7);
++    generator.set_fingerprinter(|| "synthetic-fingerprint".to_owned());
++    assert_v2(&generator.create_id(),16);
++}
++
++#[test]
++fn v2_rejects_lengths_below_two() {
++    for length in [0u16,1] {
++        assert!(std::panic::catch_unwind(|| cuid::Cuid2Constructor::new().with_length(length)).is_err());
++    }
++}
++
++#[test]
++fn v1_small_multithreaded_batch_has_no_duplicates() {
++    let handles: Vec<_> = (0..8).map(|_| std::thread::spawn(|| (0..128).map(|_| cuid::cuid1()).collect::<Vec<_>>())).collect();
++    let ids: Vec<_> = handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
++    for id in &ids { assert_v1(id); }
++    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),1024);
++}
++
++#[test]
++fn v2_small_multithreaded_batch_has_no_duplicates() {
++    let handles: Vec<_> = (0..8).map(|_| std::thread::spawn(|| (0..32).map(|_| cuid::cuid2()).collect::<Vec<_>>())).collect();
++    let ids: Vec<_> = handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
++    for id in &ids { assert_v2(id,24); }
++    assert_eq!(ids.into_iter().collect::<HashSet<_>>().len(),256);
++}
+diff --git a/query-engine/query-engine/Cargo.toml b/query-engine/query-engine/Cargo.toml
+index b33af93..e42d86e 100644
+--- a/query-engine/query-engine/Cargo.toml
++++ b/query-engine/query-engine/Cargo.toml
+@@ -8,7 +8,7 @@ sql = ["sql-connector", "sql-connector/all-native"]
+ vendored-openssl = ["sql-connector/vendored-openssl"]
+
+ [dependencies]
+-tokio = { workspace = true, features = ["signal"] }
++tokio = { workspace = true, features = ["signal", "net", "io-util"] }
+ anyhow.workspace = true
+ async-trait.workspace = true
+ base64.workspace = true
+@@ -23,10 +23,13 @@ request-handlers = { workspace = true, features = ["all"] }
+ serde.workspace = true
+ serde_json.workspace = true
+ sql-connector = { path = "../connectors/sql-query-connector", optional = true, package = "sql-query-connector" }
+-structopt.workspace = true
++clap.workspace = true
+ thiserror.workspace = true
+ url.workspace = true
+-hyper = { workspace = true, features = ["server", "http1", "http2", "runtime"] }
++hyper = { workspace = true, features = ["server", "http1", "http2"] }
++hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
++http-body-util.workspace = true
++bytes.workspace = true
+ tracing.workspace = true
+ tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
+ prisma-metrics.workspace = true
+@@ -36,6 +39,7 @@ user-facing-errors.workspace = true
+ telemetry.workspace = true
+
+ [dev-dependencies]
++reqwest.workspace = true
+ serial_test = "*"
+ quaint.workspace = true
+ indoc.workspace = true
+diff --git a/query-engine/query-engine/src/main.rs b/query-engine/query-engine/src/main.rs
+index f8aaed3..2fed8c2 100644
+--- a/query-engine/query-engine/src/main.rs
++++ b/query-engine/query-engine/src/main.rs
+@@ -6,14 +6,13 @@ use query_engine::context;
+ use query_engine::error::PrismaError;
+ use query_engine::opt::PrismaOpt;
+ use query_engine::server;
+-use structopt::StructOpt;
+ use tokio::{select, signal};
+
+ #[tokio::main]
+ async fn main() {
+     let work = async {
+         tokio::spawn(async {
+-            let opts = PrismaOpt::from_args();
++            let opts = PrismaOpt::parse();
+
+             match CliCommand::from_opt(&opts)? {
+                 Some(cmd) => cmd.execute().await?,
+diff --git a/query-engine/query-engine/src/opt.rs b/query-engine/query-engine/src/opt.rs
+index e01ce19..a20a268 100644
+--- a/query-engine/query-engine/src/opt.rs
++++ b/query-engine/query-engine/src/opt.rs
+@@ -4,35 +4,36 @@ use psl::{SourceFile, parser_database::Files};
+ use query_core::protocol::EngineProtocol;
+ use serde::Deserialize;
+ use std::{env, ffi::OsStr, fs::File, io::Read, sync::Arc};
+-use structopt::StructOpt;
++use clap::{Args, Parser, Subcommand as ClapSubcommand, builder::TypedValueParser};
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, ClapSubcommand, Clone)]
+ pub enum Subcommand {
+     /// Doesn't start a server, but allows running specific commands against Prisma.
++    #[command(subcommand)]
+     Cli(CliOpt),
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
++#[derive(Debug, Clone, Args)]
+ pub struct ExecuteRequestInput {
+     /// GraphQL query to execute
+     pub query: String,
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
+-#[structopt(rename_all = "camelCase")]
++#[derive(Debug, Clone, Args)]
++#[command(rename_all = "camelCase")]
+ pub struct GetConfigInput {
+-    #[structopt(long)]
++    #[arg(long)]
+     pub ignore_env_var_errors: bool,
+ }
+
+-#[derive(Debug, Clone, StructOpt)]
+-#[structopt(rename_all = "camelCase")]
++#[derive(Debug, Clone, Args)]
++#[command(rename_all = "camelCase")]
+ pub struct DebugPanicInput {
+-    #[structopt(long)]
++    #[arg(long)]
+     pub message: Option<String>,
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, ClapSubcommand, Clone)]
+ pub enum CliOpt {
+     /// Output the DMMF from the loaded data model.
+     Dmmf,
+@@ -44,77 +45,77 @@ pub enum CliOpt {
+     DebugPanic(DebugPanicInput),
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser, Clone)]
++#[command(version = env!("GIT_HASH"))]
+ pub struct PrismaOpt {
+     /// The hostname or IP the query engine should bind to.
+-    #[structopt(long, short = "H", default_value = "127.0.0.1")]
++    #[arg(long, short = 'H', default_value = "127.0.0.1")]
+     pub host: String,
+
+     /// The port the query engine should bind to.
+     // NOTE: this is mutually exclusive with path
+-    #[structopt(long, short, default_value = "4466")]
++    #[arg(long, short, default_value = "4466")]
+     pub port: u16,
+
+     /// The unix socket path to listen on
+     // NOTE: this is mutually exclusive with port.
+-    #[structopt(long, short, env)]
++    #[arg(long, short, env)]
+     pub unix_path: Option<String>,
+
+     /// Path to the Prisma datamodel file
+-    #[structopt(long, env = "PRISMA_DML_PATH", parse(from_os_str = load_datamodel_file))]
++    #[arg(long, env = "PRISMA_DML_PATH", value_parser = clap::builder::OsStringValueParser::new().map(|value| load_datamodel_file(&value)))]
+     pub datamodel_path: Option<String>,
+
+     /// Base64 encoded Prisma datamodel
+-    #[structopt(long, env = "PRISMA_DML", parse(try_from_str = parse_base64_string))]
++    #[arg(long, env = "PRISMA_DML", value_parser = parse_base64_string)]
+     pub datamodel: Option<String>,
+
+     /// Base64 encoded datasource urls, overwriting the ones in the schema
+-    #[structopt(long, env = "OVERWRITE_DATASOURCES", parse(try_from_str = parse_base64_string))]
++    #[arg(long, env = "OVERWRITE_DATASOURCES", value_parser = parse_base64_string)]
+     pub overwrite_datasources: Option<String>,
+
+     /// Enables raw SQL queries with executeRaw/queryRaw mutation
+-    #[structopt(long, short = "r")]
++    #[arg(long, short = 'r')]
+     pub enable_raw_queries: bool,
+
+     /// Enables the GraphQL playground
+-    #[structopt(long, short = "g")]
++    #[arg(long, short = 'g')]
+     pub enable_playground: bool,
+
+     /// Enables server debug features.
+-    #[structopt(long = "debug", short = "d")]
++    #[arg(long = "debug", short = 'd')]
+     pub enable_debug_mode: bool,
+
+     /// Enables the metrics endpoints
+-    #[structopt(long, short = "m")]
++    #[arg(long, short = 'm')]
+     pub enable_metrics: bool,
+
+     // Enable the metrics without having to enable the feature in the
+     // schema. Used by data proxy to count interactive transactions.
+-    #[structopt(long)]
++    #[arg(long)]
+     pub dataproxy_metric_override: bool,
+
+     /// Enable query logging [env: LOG_QUERIES=y]
+-    #[structopt(long, short = "o")]
++    #[arg(long, short = 'o')]
+     pub log_queries: bool,
+
+     /// Set the log format.
+-    #[structopt(long = "log-format", env = "RUST_LOG_FORMAT")]
++    #[arg(long = "log-format", env = "RUST_LOG_FORMAT")]
+     pub log_format: Option<String>,
+
+     /// Enable OpenTelemetry streaming from requests.
+-    #[structopt(long)]
++    #[arg(long)]
+     pub enable_open_telemetry: bool,
+
+-    #[structopt(long)]
++    #[arg(long)]
+     /// Enable tracer to capture logs and traces and return in the response
+     pub enable_telemetry_in_response: bool,
+
+     /// The protocol the Query Engine will used. Affects mostly the request and response format.
+-    #[structopt(long, env = "PRISMA_ENGINE_PROTOCOL")]
++    #[arg(long, env = "PRISMA_ENGINE_PROTOCOL")]
+     pub engine_protocol: Option<String>,
+
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     pub subcommand: Option<Subcommand>,
+ }
+
+@@ -125,6 +126,14 @@ struct SourceOverride {
+ }
+
+ impl PrismaOpt {
++    pub fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++
+     fn datamodel_str(&self) -> PrismaResult<&str> {
+         let res = self
+             .datamodel
+@@ -249,6 +258,11 @@ fn parse_base64_string(s: &str) -> PrismaResult<String> {
+     }
+ }
+
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn load_datamodel_file(path: &OsStr) -> String {
+     let mut f = File::open(path).unwrap_or_else(|_| panic!("Could not open datamodel file {path:?}"));
+     let mut datamodel = String::new();
+@@ -258,3 +272,122 @@ fn load_datamodel_file(path: &OsStr) -> String {
+
+     datamodel
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn defaults_and_command_definition_are_valid() {
++        PrismaOpt::command().debug_assert();
++        let opts = PrismaOpt::try_parse_from(["query-engine"]).unwrap();
++        assert_eq!(opts.host, "127.0.0.1");
++        assert_eq!(opts.port, 4466);
++        assert!(!opts.enable_raw_queries && !opts.enable_debug_mode && !opts.enable_metrics);
++        assert!(opts.subcommand.is_none());
++    }
++
++    #[test]
++    fn short_flags_and_socket_remain_accepted() {
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "-H", "localhost", "-p", "1234", "-u", "test.sock", "-r", "-g", "-d", "-m", "-o",
++        ]).unwrap();
++        assert_eq!(opts.host, "localhost");
++        assert_eq!(opts.port, 1234);
++        assert_eq!(opts.unix_path.as_deref(), Some("test.sock"));
++        assert!(opts.enable_raw_queries && opts.enable_playground && opts.enable_debug_mode);
++        assert!(opts.enable_metrics && opts.log_queries);
++    }
++
++    #[test]
++    fn protocol_telemetry_and_log_flags_remain_accepted() {
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "--dataproxy-metric-override", "--enable-open-telemetry",
++            "--enable-telemetry-in-response", "--engine-protocol", "json", "--log-format", "devel",
++        ]).unwrap();
++        assert!(opts.dataproxy_metric_override && opts.enable_open_telemetry && opts.enable_telemetry_in_response);
++        assert_eq!(opts.engine_protocol.as_deref(), Some("json"));
++        assert_eq!(opts.log_format.as_deref(), Some("devel"));
++    }
++
++    #[test]
++    fn nested_subcommands_keep_names_and_arguments() {
++        for name in ["dmmf", "get-config", "execute-request", "debug-panic"] {
++            let mut args = vec!["query-engine", "cli", name];
++            if name == "get-config" { args.push("--ignoreEnvVarErrors"); }
++            if name == "execute-request" { args.push("query { test }"); }
++            if name == "debug-panic" { args.extend(["--message", "parser-only"]); }
++            let opts = PrismaOpt::try_parse_from(args).unwrap();
++            assert!(opts.subcommand.is_some());
++        }
++    }
++
++    #[test]
++    fn datamodel_and_overrides_use_the_existing_decoders() {
++        let model = "model T { id Int @id }";
++        let encoded = BASE64_STANDARD.encode(model);
++        let opts = PrismaOpt::try_parse_from([
++            "query-engine", "--datamodel", &encoded, "--overwrite-datasources", "[{\"name\":\"db\"}]",
++        ]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some(model));
++        assert_eq!(opts.overwrite_datasources.as_deref(), Some("[{\"name\":\"db\"}]"));
++        assert!(PrismaOpt::try_parse_from(["query-engine", "--datamodel", "/w=="]).is_err());
++    }
++
++    #[test]
++    fn invalid_arguments_and_help_do_not_execute_commands() {
++        for args in [vec!["--unknown"], vec!["--port", "65536"], vec!["--port", "invalid"], vec!["cli", "unknown"]] {
++            let error = PrismaOpt::try_parse_from(std::iter::once("query-engine").chain(args)).unwrap_err();
++            assert_eq!(legacy_cli_exit_code(&error), 1);
++        }
++        assert_eq!(PrismaOpt::try_parse_from(["query-engine", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        let version = PrismaOpt::try_parse_from(["query-engine", "--version"]).unwrap_err();
++        assert_eq!(version.kind(), ErrorKind::DisplayVersion);
++        assert_eq!(legacy_cli_exit_code(&version), 0);
++        assert!(version.to_string().contains(env!("GIT_HASH")));
++    }
++
++    #[test]
++    fn env_values_and_explicit_precedence_use_an_isolated_child() {
++        let output = std::process::Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", "opt::oja_cli_contracts::env_child", "--nocapture"])
++            .env("OJA_CLI_ENV_CHILD", "1")
++            .env("PRISMA_DML", "bW9kZWw=")
++            .env("OVERWRITE_DATASOURCES", "W10=")
++            .env("UNIX_PATH", "env.sock")
++            .env("RUST_LOG_FORMAT", "devel")
++            .env("PRISMA_ENGINE_PROTOCOL", "graphql")
++            .output().unwrap();
++        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
++        assert!(String::from_utf8_lossy(&output.stdout).contains("OJA_QUERY_ENV_OK"));
++    }
++
++    #[test]
++    fn datamodel_file_paths_keep_the_existing_loader() {
++        use std::io::Write;
++        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
++        let path = std::env::temp_dir().join(format!("oja cli {} {nonce}.prisma", std::process::id()));
++        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
++        file.write_all(b"model Example { id Int @id }").unwrap();
++        drop(file);
++        let opts = PrismaOpt::try_parse_from([OsStr::new("query-engine"), OsStr::new("--datamodel-path"), path.as_os_str()]).unwrap();
++        std::fs::remove_file(path).unwrap();
++        assert_eq!(opts.datamodel_path.as_deref(), Some("model Example { id Int @id }"));
++    }
++
++    #[test]
++    fn env_child() {
++        if std::env::var("OJA_CLI_ENV_CHILD").is_err() { return; }
++        let opts = PrismaOpt::try_parse_from(["query-engine"]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some("model"));
++        assert_eq!(opts.overwrite_datasources.as_deref(), Some("[]"));
++        assert_eq!(opts.unix_path.as_deref(), Some("env.sock"));
++        assert_eq!(opts.log_format.as_deref(), Some("devel"));
++        assert_eq!(opts.engine_protocol.as_deref(), Some("graphql"));
++        let opts = PrismaOpt::try_parse_from(["query-engine", "--datamodel", "b3ZlcnJpZGU=", "--engine-protocol", "json"]).unwrap();
++        assert_eq!(opts.datamodel.as_deref(), Some("override"));
++        assert_eq!(opts.engine_protocol.as_deref(), Some("json"));
++        println!("OJA_QUERY_ENV_OK");
++    }
++}
+diff --git a/schema-engine/cli/Cargo.toml b/schema-engine/cli/Cargo.toml
+index 5a91c31..fded463 100644
+--- a/schema-engine/cli/Cargo.toml
++++ b/schema-engine/cli/Cargo.toml
+@@ -12,7 +12,7 @@ panic-utils.workspace = true
+
+ base64.workspace = true
+ jsonrpc-core.workspace = true
+-structopt.workspace = true
++clap.workspace = true
+ serde_json.workspace = true
+ serde.workspace = true
+ tokio = { workspace = true, features = ["io-std", "signal"] }
+diff --git a/schema-engine/cli/src/main.rs b/schema-engine/cli/src/main.rs
+index fa71442..29821a4 100644
+--- a/schema-engine/cli/src/main.rs
++++ b/schema-engine/cli/src/main.rs
+@@ -13,7 +13,7 @@ use std::{
+ use psl::DatasourceUrls;
+ use schema_connector::{BoxFuture, ConnectorHost, ConnectorResult};
+ use schema_core::{ExtensionTypeConfig, RpcApi};
+-use structopt::StructOpt;
++use clap::{Parser, Subcommand};
+ use tokio::{signal, sync::oneshot};
+ use tokio_util::sync::CancellationToken;
+
+@@ -37,30 +37,108 @@ static BLOCKING_TASKS_SHUTDOWN_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
+
+ /// When no subcommand is specified, the schema engine will default to starting as a JSON-RPC
+ /// server over stdio.
+-#[derive(Debug, StructOpt)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser)]
++#[command(version = env!("GIT_HASH"))]
+ struct SchemaEngineCli {
+     /// List of paths to the Prisma schema files.
+-    #[structopt(short = "d", long, name = "FILE")]
++    #[arg(short = 'd', long, value_name = "FILE", num_args = 1..)]
+     datamodels: Option<Vec<String>>,
+     /// Optional JSON string to override the `datasource` block's URLs in the schema.
+     /// This is derived from a Prisma Config file with `engines: 'classic'`.
+     /// TODO: in Prisma 7, this will be the only way to pass the datasource URLs.
+-    #[structopt(long = "datasource", name = "JSON", parse(try_from_str = serde_json::from_str))]
++    #[arg(long = "datasource", value_name = "JSON", value_parser = parse_datasource_urls)]
+     datasource_urls_override: Option<DatasourceUrls>,
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     cli_subcommand: Option<SubCommand>,
+-    #[structopt(short = "e", long, parse(try_from_str = serde_json::from_str))]
+-    extension_types: Option<ExtensionTypeConfig>,
++    #[arg(short = 'e', long, value_parser = parse_extension_types)]
++    extension_types: Option<Arc<ExtensionTypeConfig>>,
+ }
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Subcommand)]
+ enum SubCommand {
+     /// Doesn't start a server, but allows running specific commands against Prisma.
+-    #[structopt(name = "cli")]
++    #[command(name = "cli")]
+     Cli(commands::Cli),
+ }
+
++fn parse_datasource_urls(value: &str) -> Result<DatasourceUrls, serde_json::Error> {
++    serde_json::from_str(value)
++}
++
++fn parse_extension_types(value: &str) -> Result<Arc<ExtensionTypeConfig>, serde_json::Error> {
++    serde_json::from_str(value).map(Arc::new)
++}
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn no_arguments_preserve_stdio_mode() {
++        SchemaEngineCli::command().debug_assert();
++        let opts = SchemaEngineCli::try_parse_from(["schema-engine"]).unwrap();
++        assert!(opts.cli_subcommand.is_none() && opts.datamodels.is_none());
++    }
++
++    #[test]
++    fn multiple_datamodel_paths_are_preserved() {
++        let opts = SchemaEngineCli::try_parse_from(["schema-engine", "-d", "schema one.prisma", "schema2.prisma"]).unwrap();
++        assert_eq!(opts.datamodels.unwrap(), ["schema one.prisma", "schema2.prisma"]);
++    }
++
++    #[test]
++    fn datasource_json_uses_real_datasource_type() {
++        let opts = SchemaEngineCli::try_parse_from([
++            "schema-engine", "--datasource", r#"{"url":"postgresql://example.test/db","directUrl":"postgresql://example.test/direct"}"#,
++        ]).unwrap();
++        let urls = opts.datasource_urls_override.unwrap();
++        assert_eq!(urls.url, "postgresql://example.test/db");
++        assert_eq!(urls.direct_url.as_deref(), Some("postgresql://example.test/direct"));
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "--datasource", "{}"]).is_err());
++    }
++
++    #[test]
++    fn extension_json_uses_real_extension_type() {
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "-e", r#"{"types":[]}"#]).unwrap().extension_types.is_some());
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "-e", "invalid"]).is_err());
++    }
++
++    #[test]
++    fn required_nested_commands_are_only_parsed() {
++        for name in ["create-database", "can-connect-to-database", "drop-database"] {
++            let opts = SchemaEngineCli::try_parse_from(["schema-engine", "cli", "-d", "postgresql://example.test/db", name]).unwrap();
++            assert!(matches!(opts.cli_subcommand, Some(SubCommand::Cli(_))));
++        }
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "cli", "create-database"]).is_err());
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "cli", "-d", "postgresql://example.test/db"]).is_err());
++    }
++
++    #[test]
++    fn help_version_and_unknown_flags_preserve_safe_exit_modes() {
++        assert_eq!(SchemaEngineCli::try_parse_from(["schema-engine", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        assert_eq!(SchemaEngineCli::try_parse_from(["schema-engine", "--version"]).unwrap_err().kind(), ErrorKind::DisplayVersion);
++        assert!(SchemaEngineCli::try_parse_from(["schema-engine", "--unknown"]).is_err());
++        assert_eq!(legacy_cli_exit_code(&SchemaEngineCli::try_parse_from(["schema-engine", "--unknown"]).unwrap_err()), 1);
++        assert_eq!(legacy_cli_exit_code(&SchemaEngineCli::try_parse_from(["schema-engine", "--help"]).unwrap_err()), 0);
++    }
++}
++
++impl SchemaEngineCli {
++    fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++}
++
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn main() {
+     let rt = tokio::runtime::Builder::new_multi_thread()
+         .enable_all()
+@@ -85,14 +163,14 @@ async fn async_main() {
+     set_panic_hook();
+     logger::init_logger();
+
+-    let input = SchemaEngineCli::from_args();
++    let input = SchemaEngineCli::parse();
+     let shutdown_token = CancellationToken::new();
+     let (done_tx, done_rx) = oneshot::channel();
+
+     let work = tokio::spawn({
+         let shutdown_token = shutdown_token.clone();
+         async {
+-            let extensions = Arc::new(input.extension_types.unwrap_or_default());
++            let extensions = input.extension_types.unwrap_or_default();
+             match input.cli_subcommand {
+                 None => {
+                     start_engine(
+diff --git a/schema-engine/cli/src/commands.rs b/schema-engine/cli/src/commands.rs
+index 110fac2..cbe2682 100644
+--- a/schema-engine/cli/src/commands.rs
++++ b/schema-engine/cli/src/commands.rs
+@@ -7,16 +7,16 @@ use schema_core::{
+     ExtensionTypeConfig,
+     json_rpc::types::{DatasourceParam, UrlContainer},
+ };
+-use structopt::StructOpt;
++use clap::{Args, Subcommand};
+ use tokio_util::sync::CancellationToken;
+ use user_facing_errors::common::SchemaParserError;
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Args)]
+ pub(crate) struct Cli {
+     /// The connection string to the database
+-    #[structopt(long, short = "d", parse(try_from_str = parse_base64_string))]
++    #[arg(long, short = 'd', value_parser = parse_base64_string)]
+     datasource: String,
+-    #[structopt(subcommand)]
++    #[command(subcommand)]
+     command: CliCommand,
+ }
+
+@@ -75,7 +75,7 @@ impl Cli {
+     }
+ }
+
+-#[derive(Debug, StructOpt)]
++#[derive(Debug, Subcommand)]
+ #[allow(clippy::enum_variant_names)] // disagee
+ enum CliCommand {
+     /// Create an empty database defined in the configuration string.
+@@ -97,3 +97,42 @@ fn parse_base64_string(s: &str) -> Result<String, ConnectorError> {
+         Err(_) => Ok(String::from(s)),
+     }
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::Parser;
++
++    #[derive(Debug, Parser)]
++    struct Arguments {
++        #[command(flatten)]
++        cli: Cli,
++    }
++
++    #[test]
++    fn plain_and_base64_datasources_use_the_real_decoder() {
++        let url = "postgresql://example.test/db";
++        for value in [url.to_owned(), BASE64_STANDARD.encode(url)] {
++            let args = Arguments::try_parse_from(["schema-engine", "--datasource", &value, "can-connect-to-database"]).unwrap();
++            assert_eq!(args.cli.datasource, url);
++            assert!(matches!(args.cli.command, CliCommand::CanConnectToDatabase));
++        }
++    }
++
++    #[test]
++    fn invalid_utf8_datasource_is_rejected_without_database_access() {
++        assert!(Arguments::try_parse_from(["schema-engine", "-d", "/w==", "drop-database"]).is_err());
++    }
++
++    #[test]
++    fn database_subcommand_names_keep_their_variants() {
++        for name in ["create-database", "can-connect-to-database", "drop-database"] {
++            let args = Arguments::try_parse_from(["schema-engine", "-d", "postgresql://example.test/db", name]).unwrap();
++            match name {
++                "create-database" => assert!(matches!(args.cli.command, CliCommand::CreateDatabase)),
++                "drop-database" => assert!(matches!(args.cli.command, CliCommand::DropDatabase)),
++                _ => assert!(matches!(args.cli.command, CliCommand::CanConnectToDatabase)),
++            }
++        }
++    }
++}
+diff --git a/prisma-fmt/Cargo.toml b/prisma-fmt/Cargo.toml
+index c53e362..691fa97 100644
+--- a/prisma-fmt/Cargo.toml
++++ b/prisma-fmt/Cargo.toml
+@@ -16,7 +16,7 @@ log.workspace = true
+ enumflags2.workspace = true
+
+ [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+-structopt.workspace = true
++clap.workspace = true
+
+ [dev-dependencies]
+ dissimilar.workspace = true
+diff --git a/prisma-fmt/src/main.rs b/prisma-fmt/src/main.rs
+index 57d27e3..ba3091c 100644
+--- a/prisma-fmt/src/main.rs
++++ b/prisma-fmt/src/main.rs
+@@ -8,25 +8,25 @@ use std::{
+     io::{self, Read},
+     path::PathBuf,
+ };
+-use structopt::StructOpt;
++use clap::{Args, Parser};
+
+-#[derive(Debug, StructOpt, Clone)]
++#[derive(Debug, Args, Clone)]
+ pub struct FormatOpts {
+     /// Specifies the input file to use. If none is given, the input is read
+     /// from STDIN
+-    #[structopt(short = "i", long)]
++    #[arg(short = 'i', long)]
+     input: Option<PathBuf>,
+     /// Specifies the output file to use. If none is given, the output is
+     /// written to STDOUT
+-    #[structopt(short = "o", long)]
++    #[arg(short = 'o', long)]
+     output: Option<PathBuf>,
+     /// Specifies which tab width to use when formatting
+-    #[structopt(short = "s", long, default_value = "2")]
++    #[arg(short = 's', long, default_value = "2")]
+     tabwidth: usize,
+ }
+
+-#[derive(Debug, StructOpt, Clone)]
+-#[structopt(version = env!("GIT_HASH"))]
++#[derive(Debug, Parser, Clone)]
++#[command(version = env!("GIT_HASH"))]
+ /// Prisma Datamodel v2 formatter
+ pub enum FmtOpts {
+     /// Specifies linter mode
+@@ -43,8 +43,23 @@ pub enum FmtOpts {
+     DebugPanic,
+ }
+
++impl FmtOpts {
++    fn parse() -> Self {
++        Self::try_parse().unwrap_or_else(|error| {
++            let code = legacy_cli_exit_code(&error);
++            let _ = error.print();
++            std::process::exit(code);
++        })
++    }
++}
++
++// Keep structopt/clap2's exit1 for argument errors, exit0 for help/version.
++fn legacy_cli_exit_code(error: &clap::Error) -> i32 {
++    i32::from(error.use_stderr())
++}
++
+ fn main() {
+-    match FmtOpts::from_args() {
++    match FmtOpts::parse() {
+         FmtOpts::DebugPanic => panic!("This is the debugPanic artificial panic"),
+         // FmtOpts::Lint => plug(lint::run),
+         FmtOpts::Format(opts) => format::run(opts),
+@@ -63,3 +78,49 @@ fn plug<F: Fn(&str) -> String>(f: F) {
+
+     print!("{}", f(&datamodel_string))
+ }
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use clap::{CommandFactory, error::ErrorKind};
++
++    #[test]
++    fn default_format_options_preserve_stdio_and_width() {
++        FmtOpts::command().debug_assert();
++        let FmtOpts::Format(opts) = FmtOpts::try_parse_from(["prisma-fmt", "format"]).unwrap() else { panic!("wrong subcommand") };
++        assert!(opts.input.is_none() && opts.output.is_none());
++        assert_eq!(opts.tabwidth, 2);
++    }
++
++    #[test]
++    fn paths_and_short_flags_are_preserved_without_opening_files() {
++        let FmtOpts::Format(opts) = FmtOpts::try_parse_from(["prisma-fmt", "format", "-i", "schema one.prisma", "-o", "out.prisma", "-s", "4"]).unwrap() else { panic!("wrong subcommand") };
++        assert_eq!(opts.input, Some(PathBuf::from("schema one.prisma")));
++        assert_eq!(opts.output, Some(PathBuf::from("out.prisma")));
++        assert_eq!(opts.tabwidth, 4);
++    }
++
++    #[test]
++    fn all_subcommand_names_keep_their_variants() {
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "native-types"]).unwrap(), FmtOpts::NativeTypes));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "referential-actions"]).unwrap(), FmtOpts::ReferentialActions));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "preview-features"]).unwrap(), FmtOpts::PreviewFeatures));
++        assert!(matches!(FmtOpts::try_parse_from(["fmt", "debug-panic"]).unwrap(), FmtOpts::DebugPanic));
++    }
++
++    #[test]
++    fn invalid_width_unknown_flags_and_missing_command_are_rejected() {
++        for args in [vec!["fmt"], vec!["fmt", "unknown"], vec!["fmt", "format", "--tabwidth", "NaN"], vec!["fmt", "format", "--unknown"]] {
++            assert_eq!(legacy_cli_exit_code(&FmtOpts::try_parse_from(args).unwrap_err()), 1);
++        }
++    }
++
++    #[test]
++    fn help_and_version_do_not_run_formatter_or_debug_panic() {
++        assert_eq!(FmtOpts::try_parse_from(["fmt", "--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
++        let version = FmtOpts::try_parse_from(["fmt", "--version"]).unwrap_err();
++        assert_eq!(version.kind(), ErrorKind::DisplayVersion);
++        assert_eq!(legacy_cli_exit_code(&version), 0);
++        assert!(version.to_string().contains(env!("GIT_HASH")));
++    }
++}
+diff --git a/quaint/src/connector/mssql/native/conversion.rs b/quaint/src/connector/mssql/native/conversion.rs
+index 4a6f198..bc60b01 100644
+--- a/quaint/src/connector/mssql/native/conversion.rs
++++ b/quaint/src/connector/mssql/native/conversion.rs
+@@ -6,7 +6,7 @@ use crate::{
+ use bigdecimal::BigDecimal;
+ use std::{borrow::Cow, convert::TryFrom};
+
+-use tiberius::{ColumnData, FromSql, IntoSql, ToSql};
++use tiberius::{ColumnData, FromSql, IntoSql};
+
+ impl<'a> IntoSql<'a> for &'a Value<'a> {
+     fn into_sql(self) -> ColumnData<'a> {
+@@ -22,7 +22,7 @@ impl<'a> IntoSql<'a> for &'a Value<'a> {
+             ValueType::Char(val) => val.as_ref().map(|val| format!("{val}")).into_sql(),
+             ValueType::Xml(val) => val.as_deref().into_sql(),
+             ValueType::Array(_) | ValueType::EnumArray(_, _) => panic!("Arrays are not supported on SQL Server."),
+-            ValueType::Numeric(val) => (*val).to_sql(),
++            ValueType::Numeric(val) => val.as_ref().map(to_tds_decimal).into_sql(),
+             ValueType::Json(val) => val.as_ref().map(|val| serde_json::to_string(&val).unwrap()).into_sql(),
+             ValueType::Uuid(val) => val.into_sql(),
+             ValueType::DateTime(val) => val.into_sql(),
+@@ -53,7 +53,9 @@ impl TryFrom<ColumnData<'static>> for Value<'static> {
+             ColumnData::String(s) => ValueType::Text(s),
+             ColumnData::Guid(uuid) => ValueType::Uuid(uuid),
+             ColumnData::Binary(bytes) => ValueType::Bytes(bytes),
+-            numeric @ ColumnData::Numeric(_) => ValueType::Numeric(BigDecimal::from_sql(&numeric)?),
++            numeric @ ColumnData::Numeric(_) => {
++                ValueType::Numeric(tiberius::numeric::BigDecimal::from_sql(&numeric)?.map(from_tds_decimal))
++            }
+             dt @ ColumnData::DateTime(_) => {
+                 use tiberius::time::chrono::{DateTime, NaiveDateTime, Utc};
+
+@@ -93,3 +95,67 @@ impl TryFrom<ColumnData<'static>> for Value<'static> {
+         Ok(Value::from(res))
+     }
+ }
++
++// Bridge only the TDS boundary; retain the engine's BigDecimal0.3 representation.
++fn to_tds_decimal(value: &BigDecimal) -> tiberius::numeric::BigDecimal {
++    let (digits, exponent) = value.as_bigint_and_exponent();
++    tiberius::numeric::BigDecimal::new(digits, exponent)
++}
++
++fn from_tds_decimal(value: tiberius::numeric::BigDecimal) -> BigDecimal {
++    let (digits, exponent) = value.as_bigint_and_exponent();
++    BigDecimal::new(digits, exponent)
++}
++
++#[cfg(test)]
++mod oja_cli_contracts {
++    use super::*;
++    use std::str::FromStr;
++
++    fn roundtrip(value: &BigDecimal) -> BigDecimal {
++        let input = Value::numeric(value.clone());
++        let ColumnData::Numeric(numeric) = (&input).into_sql() else { panic!("not numeric") };
++        let decoded = Value::try_from(ColumnData::Numeric(numeric)).unwrap();
++        let ValueType::Numeric(Some(value)) = decoded.typed else { panic!("not numeric") };
++        value
++    }
++
++    #[test]
++    fn actual_tds_roundtrips_keep_exact_decimal_values() {
++        for text in ["0", "1", "-1", "123.4500", "-987654321.123456789", "99999999999999999999999999999999999999", "0.00000000000000000000000000000000000001"] {
++            let value = BigDecimal::from_str(text).unwrap();
++            assert_eq!(roundtrip(&value), value);
++        }
++    }
++
++    #[test]
++    fn supported_scales_preserve_mantissa_and_exponent() {
++        for exponent in [0, 2, 18, 38] {
++            let value = BigDecimal::new(123.into(), exponent);
++            assert_eq!(roundtrip(&value).as_bigint_and_exponent(), value.as_bigint_and_exponent());
++        }
++    }
++
++    #[test]
++    fn negative_exponent_uses_the_existing_tds_normalization() {
++        let value = BigDecimal::new(9.into(), -3);
++        let decoded = roundtrip(&value);
++        assert_eq!(decoded, value);
++        assert_eq!(decoded.as_bigint_and_exponent(), (9000.into(), 0));
++    }
++
++    #[test]
++    fn null_numeric_remains_null() {
++        let value: Value<'static> = ValueType::Numeric(None).into();
++        let encoded = (&value).into_sql();
++        assert!(matches!(encoded, ColumnData::Numeric(None)));
++        assert!(matches!(Value::try_from(ColumnData::Numeric(None)).unwrap().typed, ValueType::Numeric(None)));
++    }
++
++    #[test]
++    fn unsupported_numeric_ranges_are_not_silently_rounded() {
++        for value in [BigDecimal::new(1.into(), 39), BigDecimal::from_str("9999999999999999999999999999999999999999").unwrap()] {
++            assert!(std::panic::catch_unwind(|| roundtrip(&value)).is_err());
++        }
++    }
++}
+diff --git a/query-engine/query-engine/src/server/mod.rs b/query-engine/query-engine/src/server/mod.rs
+index 7e8a96e..4e5db3c 100644
+--- a/query-engine/query-engine/src/server/mod.rs
++++ b/query-engine/query-engine/src/server/mod.rs
+@@ -2,8 +2,10 @@ use crate::context::PrismaContext;
+ use crate::features::Feature;
+ use crate::logger::TracingConfig;
+ use crate::{PrismaResult, opt::PrismaOpt};
+-use hyper::service::{make_service_fn, service_fn};
+-use hyper::{Body, HeaderMap, Method, Request, Response, Server, StatusCode, header::CONTENT_TYPE};
++use bytes::Bytes;
++use http_body_util::{BodyExt, Full};
++use hyper::body::Incoming;
++use hyper::{HeaderMap, Method, Request, Response, StatusCode, header::CONTENT_TYPE};
+ use query_core::{ExtendedUserFacingError, TransactionOptions, TxId};
+ use request_handlers::{RequestBody, RequestHandler, dmmf, render_graphql_schema};
+ use serde::Serialize;
+@@ -16,35 +18,41 @@ use telemetry::exporter::{CaptureSettings, CaptureTarget, TraceData};
+ use telemetry::{NextId, RequestId, TraceParent};
+ use tracing::{Instrument, Span};
+
++#[cfg(test)]
++mod oja_http_client_contracts;
++#[cfg(test)]
++mod oja_http_server_contracts;
++mod transport;
++
++type ResponseBody = Full<Bytes>;
++
++fn response_body(value: impl Into<Bytes>) -> ResponseBody {
++    Full::new(value.into())
++}
++
+ /// Starts up the graphql query engine server
+ pub async fn listen(cx: Arc<PrismaContext>, opts: &PrismaOpt) -> PrismaResult<()> {
+-    let query_engine = make_service_fn(move |_| {
+-        let cx = cx.clone();
+-        async move { Ok::<_, hyper::Error>(service_fn(move |req| routes(cx.clone(), req))) }
+-    });
+-
+     let ip = opts.host.parse().expect("Host was not a valid IP address.");
+     let addr = SocketAddr::new(ip, opts.port);
++    let listener = tokio::net::TcpListener::bind(addr).await?;
++    let local_addr = listener.local_addr()?;
+
+-    let server = Server::bind(&addr).tcp_nodelay(true).serve(query_engine);
+-
+-    // Note: we call `server.local_addr()` instead of reusing original `addr` because it may contain port 0 to request
+-    // the OS to assign a free port automatically, and we want to print the address which is actually in use.
++    // Port zero requests an OS-assigned port; report the bound address.
+     info!(
+-        ip = %server.local_addr().ip(),
+-        port = %server.local_addr().port(),
++        ip = %local_addr.ip(),
++        port = %local_addr.port(),
+         "Started query engine http server on http://{}",
+-        server.local_addr()
++        local_addr
+     );
+
+-    if let Err(e) = server.await {
++    if let Err(e) = transport::serve(listener, move |req| routes(cx.clone(), req)).await {
+         eprintln!("server error: {e}");
+     }
+
+     Ok(())
+ }
+
+-pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let start = Instant::now();
+
+     if req.method() == Method::POST && req.uri().path().starts_with("/transaction") {
+@@ -69,7 +77,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+             Response::builder()
+                 .status(StatusCode::OK)
+                 .header(CONTENT_TYPE, "application/text")
+-                .body(Body::from(schema))
++                .body(response_body(schema))
+                 .unwrap()
+         }
+
+@@ -96,7 +104,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+
+         _ => Response::builder()
+             .status(StatusCode::NOT_FOUND)
+-            .body(Body::empty())
++            .body(ResponseBody::default())
+             .unwrap(),
+     };
+
+@@ -108,7 +116,7 @@ pub(crate) async fn routes(cx: Arc<PrismaContext>, req: Request<Body>) -> Result
+
+ /// The main query handler. This handles incoming requests and passes it
+ /// to the query engine.
+-async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn request_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     // Check for debug headers if enabled.
+     if cx.enabled_features.contains(Feature::DebugMode) {
+         return Ok(handle_debug_headers(&req));
+@@ -129,7 +137,7 @@ async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+
+     let query_timeout = query_timeout(headers);
+
+-    let buffer = hyper::body::to_bytes(req.into_body()).await?;
++    let buffer = req.into_body().collect().await?.to_bytes();
+     let request_body = RequestBody::try_from_slice(buffer.as_ref(), cx.engine_protocol());
+
+     let work = {
+@@ -202,21 +210,21 @@ async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+ ///
+ /// In production exposing the playground is equivalent to exposing the database
+ /// on a port. This should never be enabled on production servers.
+-fn playground_handler() -> Response<Body> {
++fn playground_handler() -> Response<ResponseBody> {
+     let playground = include_bytes!("../../static_files/playground.html").to_vec();
+
+     Response::builder()
+         .status(StatusCode::OK)
+         .header(CONTENT_TYPE, "text/html")
+-        .body(Body::from(playground))
++        .body(response_body(playground))
+         .unwrap()
+ }
+
+-async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let requested_json = req.uri().query().map(|q| q.contains("format=json")).unwrap_or_default();
+     let body_start = req.into_body();
+     // block and buffer request until the request has completed
+-    let full_body = hyper::body::to_bytes(body_start).await?;
++    let full_body = body_start.collect().await?.to_bytes();
+
+     let global_labels: HashMap<String, String> = serde_json::from_slice(full_body.as_ref()).unwrap_or_default();
+
+@@ -230,7 +238,7 @@ async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+         Response::builder()
+             .status(StatusCode::OK)
+             .header(CONTENT_TYPE, "text/plain; version=0.0.4")
+-            .body(Body::from(metrics))
++            .body(response_body(metrics))
+             .unwrap()
+     };
+
+@@ -241,7 +249,7 @@ async fn metrics_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
+ /// POST /transaction/start -> start a transaction
+ /// POST /transaction/{tx_id}/commit -> commit a transaction
+ /// POST /transaction/{tx_id}/rollback -> rollback a transaction
+-async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let path = req.uri().path().to_owned();
+     let sections: Vec<&str> = path.split('/').collect();
+
+@@ -259,23 +267,23 @@ async fn transaction_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Resu
+
+     let res = Response::builder()
+         .status(StatusCode::BAD_REQUEST)
+-        .body(Body::from(format!("wrong transaction handler path: {}", &path)))
++        .body(response_body(format!("wrong transaction handler path: {}", &path)))
+         .unwrap();
+     Ok(res)
+ }
+
+-async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
++async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Incoming>) -> Result<Response<ResponseBody>, hyper::Error> {
+     let headers = req.headers().to_owned();
+
+     let body_start = req.into_body();
+-    let full_body = hyper::body::to_bytes(body_start).await?;
++    let full_body = body_start.collect().await?.to_bytes();
+
+     let tx_opts = match serde_json::from_slice::<TransactionOptions>(full_body.as_ref()) {
+         Ok(opts) => opts.with_new_transaction_id(),
+         Err(_) => {
+             return Ok(Response::builder()
+                 .status(StatusCode::BAD_REQUEST)
+-                .body(Body::from("Invalid transaction options"))
++                .body(response_body("Invalid transaction options"))
+                 .unwrap());
+         }
+     };
+@@ -328,9 +336,9 @@ async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Body>) -
+
+ async fn transaction_commit_handler(
+     cx: Arc<PrismaContext>,
+-    req: Request<Body>,
++    req: Request<Incoming>,
+     tx_id: TxId,
+-) -> Result<Response<Body>, hyper::Error> {
++) -> Result<Response<ResponseBody>, hyper::Error> {
+     let (span, request_id, _traceparent) = setup_telemetry(
+         &cx,
+         info_span!(
+@@ -358,9 +366,9 @@ async fn transaction_commit_handler(
+
+ async fn transaction_rollback_handler(
+     cx: Arc<PrismaContext>,
+-    req: Request<Body>,
++    req: Request<Incoming>,
+     tx_id: TxId,
+-) -> Result<Response<Body>, hyper::Error> {
++) -> Result<Response<ResponseBody>, hyper::Error> {
+     let (span, request_id, _traceparent) = setup_telemetry(
+         &cx,
+         info_span!(
+@@ -387,7 +395,7 @@ async fn transaction_rollback_handler(
+ }
+
+ /// Handle debug headers inside the main GraphQL endpoint.
+-fn handle_debug_headers(req: &Request<Body>) -> Response<Body> {
++fn handle_debug_headers<B>(req: &Request<B>) -> Response<ResponseBody> {
+     /// Debug header that triggers a panic in the request thread.
+     static DEBUG_NON_FATAL_HEADER: &str = "x-debug-non-fatal";
+
+@@ -404,11 +412,11 @@ fn handle_debug_headers(req: &Request<Body>) -> Response<Body> {
+
+         build_json_response(StatusCode::OK, &err)
+     } else {
+-        Response::builder().status(StatusCode::OK).body(Body::empty()).unwrap()
++        Response::builder().status(StatusCode::OK).body(ResponseBody::default()).unwrap()
+     }
+ }
+
+-fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<Body> {
++fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<ResponseBody> {
+     let result = if let Some(telemetry) = captured_telemetry {
+         json!({ "extensions": { "logs": json!(telemetry.events), "traces": json!(telemetry.spans) } })
+     } else {
+@@ -418,7 +426,7 @@ fn empty_json_to_http_resp(captured_telemetry: Option<TraceData>) -> Response<Bo
+     build_json_response(StatusCode::OK, &result)
+ }
+
+-fn err_to_http_resp(err: query_core::CoreError, captured_telemetry: Option<TraceData>) -> Response<Body> {
++fn err_to_http_resp(err: query_core::CoreError, captured_telemetry: Option<TraceData>) -> Response<ResponseBody> {
+     let status = match err {
+         query_core::CoreError::TransactionError(ref err) => match err {
+             query_core::TransactionError::AcquisitionTimeout => StatusCode::GATEWAY_TIMEOUT,
+@@ -489,7 +497,7 @@ fn query_timeout(headers: &HeaderMap) -> Option<Duration> {
+         .map(Duration::from_millis)
+ }
+
+-fn build_json_response<T>(status_code: StatusCode, value: &T) -> Response<Body>
++fn build_json_response<T>(status_code: StatusCode, value: &T) -> Response<ResponseBody>
+ where
+     T: ?Sized + Serialize,
+ {
+@@ -499,6 +507,6 @@ where
+         .status(status_code)
+         .header(CONTENT_TYPE, "application/json")
+         .header("QE-Content-Length", result_bytes.len()) // this header is read by Accelerate
+-        .body(Body::from(result_bytes))
++        .body(response_body(result_bytes))
+         .unwrap()
+ }
+diff --git a/query-engine/query-engine/src/server/oja_http_client_contracts.rs b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/oja_http_client_contracts.rs
+@@ -0,0 +1,130 @@
++use super::{ResponseBody, response_body, transport};
++use http_body_util::BodyExt;
++use hyper::{Request, Response, body::Incoming};
++use std::time::Duration;
++
++// Exercise the unchanged black-box consumers' Client::new/body/send/text API
++// against loopback only. No Prisma context, database, or provider is involved.
++pub(super) struct Fixture {
++    pub(super) url: String,
++    task: tokio::task::JoinHandle<()>,
++}
++
++impl Drop for Fixture {
++    fn drop(&mut self) {
++        self.task.abort();
++    }
++}
++
++pub(super) async fn fixture() -> Fixture {
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let url = format!("http://{}", listener.local_addr().unwrap());
++    let task = tokio::spawn(async move {
++        transport::serve(listener, |req: Request<Incoming>| async move {
++            let response = match req.uri().path() {
++                "/echo" => {
++                    assert_eq!(req.method(), hyper::Method::POST);
++                    assert_eq!(req.headers()["x-contract"], "request-value");
++                    let bytes = req.into_body().collect().await?.to_bytes();
++                    Response::builder()
++                        .header("content-type", "application/json")
++                        .header("qe-content-length", bytes.len())
++                        .body(response_body(bytes))
++                        .unwrap()
++                }
++                "/metrics" => Response::new(response_body("# TYPE requests counter\nrequests 1\n")),
++                "/redirect" => Response::builder().status(302).header("location", "/metrics")
++                    .body(ResponseBody::default()).unwrap(),
++                "/error" => Response::builder().status(422)
++                    .body(response_body(r#"{"is_panic":false,"message":"invalid protocol"}"#)).unwrap(),
++                "/malformed" => Response::new(response_body("not-json")),
++                "/version" => Response::new(response_body(format!("{:?}", req.version()))),
++                "/slow" => {
++                    tokio::time::sleep(Duration::from_secs(5)).await;
++                    Response::new(ResponseBody::default())
++                }
++                "/utf8" => Response::builder().header("content-type", "text/plain; charset=utf-8")
++                    .body(response_body("\u{65e5}\u{672c}\u{8a9e}".as_bytes())).unwrap(),
++                _ => Response::builder().status(404).body(ResponseBody::default()).unwrap(),
++            };
++            Ok::<_, hyper::Error>(response)
++        }).await.unwrap();
++    });
++    Fixture { url, task }
++}
++
++#[tokio::test]
++async fn post_body_headers_and_response_length_are_preserved() {
++    let f = fixture().await;
++    let payload = r#"{"action":"findMany","modelName":"Person","query":{}}"#;
++    let response = reqwest::Client::new().post(format!("{}/echo", f.url))
++        .header("x-contract", "request-value").body(payload).send().await.unwrap();
++    assert_eq!(response.status(), reqwest::StatusCode::OK);
++    assert_eq!(response.headers()["content-type"], "application/json");
++    assert_eq!(response.headers()["qe-content-length"], payload.len().to_string());
++    assert_eq!(response.text().await.unwrap(), payload);
++}
++
++#[tokio::test]
++async fn metrics_text_is_not_reencoded() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/metrics", f.url)).send().await.unwrap();
++    assert_eq!(response.text().await.unwrap(), "# TYPE requests counter\nrequests 1\n");
++}
++
++#[tokio::test]
++async fn non_success_status_and_error_body_remain_available() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().post(format!("{}/error", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
++    let value: serde_json::Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
++    assert_eq!(value["is_panic"], false);
++    assert_eq!(value["message"], "invalid protocol");
++}
++
++#[tokio::test]
++async fn default_relative_redirects_are_followed() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/redirect", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++    assert_eq!(response.url().path(), "/metrics");
++}
++
++#[tokio::test]
++async fn invalid_json_remains_an_explicit_decode_error() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/malformed", f.url)).send().await.unwrap();
++    assert!(serde_json::from_str::<serde_json::Value>(&response.text().await.unwrap()).is_err());
++}
++
++#[tokio::test]
++async fn explicitly_configured_timeout_remains_an_error() {
++    let f = fixture().await;
++    let error = reqwest::Client::builder().timeout(Duration::from_millis(100)).build().unwrap()
++        .get(format!("{}/slow", f.url)).send().await.unwrap_err();
++    assert!(error.is_timeout());
++}
++
++#[tokio::test]
++async fn http1_remains_supported() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.version(), reqwest::Version::HTTP_11);
++    assert_eq!(response.text().await.unwrap(), "HTTP/1.1");
++}
++
++#[tokio::test]
++async fn http2_prior_knowledge_remains_supported() {
++    let f = fixture().await;
++    let response = reqwest::Client::builder().http2_prior_knowledge().build().unwrap()
++        .get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.version(), reqwest::Version::HTTP_2);
++    assert_eq!(response.text().await.unwrap(), "HTTP/2.0");
++}
++
++#[tokio::test]
++async fn charset_decoding_remains_enabled() {
++    let f = fixture().await;
++    let response = reqwest::Client::new().get(format!("{}/utf8", f.url)).send().await.unwrap();
++    assert_eq!(response.text().await.unwrap(), "\u{65e5}\u{672c}\u{8a9e}");
++}
+diff --git a/query-engine/query-engine/src/server/transport.rs b/query-engine/query-engine/src/server/transport.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/transport.rs
+@@ -0,0 +1,50 @@
++use super::ResponseBody;
++use hyper::{Request, Response, body::Incoming, service::service_fn};
++use hyper_util::{rt::{TokioExecutor, TokioIo}, server::conn::auto::Builder};
++use std::{future::Future, io};
++use tokio::{net::TcpListener, task::JoinSet};
++
++pub(super) async fn serve<F, Fut>(listener: TcpListener, handler: F) -> io::Result<()>
++where
++    F: Fn(Request<Incoming>) -> Fut + Clone + Send + Sync + 'static,
++    Fut: Future<Output = Result<Response<ResponseBody>, hyper::Error>> + Send + 'static,
++{
++    // Own the connection tasks so cancellation also closes existing sockets.
++    let mut connections = JoinSet::new();
++    loop {
++        tokio::select! {
++            accepted = listener.accept() => {
++                let (stream, _) = match accepted {
++                    Ok(connection) => connection,
++                    Err(error) => {
++                        if matches!(error.kind(), io::ErrorKind::ConnectionRefused |
++                            io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset) {
++                            continue;
++                        }
++                        // Retain the old acceptor's backoff on resource exhaustion.
++                        tracing::warn!("http accept error: {error}");
++                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
++                        continue;
++                    }
++                };
++                if let Err(error) = stream.set_nodelay(true) {
++                    tracing::debug!("http socket configuration error: {error}");
++                    continue;
++                }
++                let handler = handler.clone();
++                connections.spawn(async move {
++                    if let Err(error) = Builder::new(TokioExecutor::new())
++                        .serve_connection(TokioIo::new(stream), service_fn(handler)).await
++                    {
++                        tracing::debug!("http connection error: {error}");
++                    }
++                });
++            }
++            Some(result) = connections.join_next(), if !connections.is_empty() => {
++                if let Err(error) = result {
++                    tracing::warn!("http connection task failed: {error}");
++                }
++            }
++        }
++    }
++}
+diff --git a/query-engine/query-engine/src/server/oja_http_server_contracts.rs b/query-engine/query-engine/src/server/oja_http_server_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/query-engine/query-engine/src/server/oja_http_server_contracts.rs
+@@ -0,0 +1,175 @@
++use super::*;
++use super::oja_http_client_contracts::fixture;
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++async fn bytes(response: Response<ResponseBody>) -> Bytes {
++    response.into_body().collect().await.unwrap().to_bytes()
++}
++
++#[tokio::test]
++async fn json_response_preserves_status_headers_and_byte_length() {
++    let value = json!({"value": "\u{65e5}\u{672c}\u{8a9e}"});
++    let expected = serde_json::to_vec(&value).unwrap();
++    let response = build_json_response(StatusCode::CREATED, &value);
++    assert_eq!(response.status(), StatusCode::CREATED);
++    assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
++    assert_eq!(response.headers()["qe-content-length"].to_str().unwrap(), expected.len().to_string());
++    assert_eq!(bytes(response).await.as_ref(), expected);
++}
++
++#[tokio::test]
++async fn empty_transaction_response_is_still_json_object() {
++    let response = empty_json_to_http_resp(None);
++    assert_eq!(response.status(), StatusCode::OK);
++    assert_eq!(response.headers()["qe-content-length"], "2");
++    assert_eq!(bytes(response).await.as_ref(), b"{}");
++}
++
++#[tokio::test]
++async fn transaction_and_timeout_error_statuses_are_preserved() {
++    use query_core::{CoreError, TransactionError};
++    let cases = [
++        (CoreError::TransactionError(TransactionError::AcquisitionTimeout), StatusCode::GATEWAY_TIMEOUT),
++        (CoreError::TransactionError(TransactionError::NotFound), StatusCode::NOT_FOUND),
++        (CoreError::TransactionError(TransactionError::Closed { reason: "closed".into() }), StatusCode::UNPROCESSABLE_ENTITY),
++        (CoreError::TransactionError(TransactionError::Unknown { reason: "unknown".into() }), StatusCode::INTERNAL_SERVER_ERROR),
++        (CoreError::QueryTimeout, StatusCode::REQUEST_TIMEOUT),
++    ];
++    for (error, status) in cases {
++        let response = err_to_http_resp(error, None);
++        assert_eq!(response.status(), status);
++        assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
++        let value: serde_json::Value = serde_json::from_slice(&bytes(response).await).unwrap();
++        assert_eq!(value["is_panic"], false);
++    }
++}
++
++#[tokio::test]
++async fn debug_without_headers_returns_empty_success() {
++    let request = Request::new(ResponseBody::default());
++    let response = handle_debug_headers(&request);
++    assert_eq!(response.status(), StatusCode::OK);
++    assert!(bytes(response).await.is_empty());
++}
++
++#[tokio::test]
++async fn nonfatal_debug_header_preserves_the_panic_envelope() {
++    let request = Request::builder().header("x-debug-non-fatal", "1").body(ResponseBody::default()).unwrap();
++    let response = handle_debug_headers(&request);
++    assert_eq!(response.status(), StatusCode::OK);
++    let value: serde_json::Value = serde_json::from_slice(&bytes(response).await).unwrap();
++    assert_eq!(value["is_panic"], true);
++    assert_eq!(value["message"], "Debug panic");
++}
++
++#[tokio::test]
++async fn playground_response_retains_the_exact_html_bytes() {
++    let response = playground_handler();
++    assert_eq!(response.status(), StatusCode::OK);
++    assert_eq!(response.headers()[CONTENT_TYPE], "text/html");
++    assert_eq!(bytes(response).await.as_ref(), include_bytes!("../../static_files/playground.html"));
++}
++
++#[test]
++fn transaction_header_is_case_insensitive_and_invalid_text_is_ignored() {
++    let mut headers = HeaderMap::new();
++    assert!(try_get_transaction_id(&headers).is_none());
++    headers.insert("X-Transaction-ID", "contract-transaction-id-0001".parse().unwrap());
++    assert_eq!(try_get_transaction_id(&headers).unwrap().to_string(), "contract-transaction-id-0001");
++    headers.insert("x-transaction-id", hyper::header::HeaderValue::from_bytes(&[0xff]).unwrap());
++    assert!(try_get_transaction_id(&headers).is_none());
++}
++
++#[test]
++fn query_timeout_header_preserves_optional_millisecond_parsing() {
++    let mut headers = HeaderMap::new();
++    assert_eq!(query_timeout(&headers), None);
++    for (text, expected) in [("0", Some(Duration::ZERO)), ("123", Some(Duration::from_millis(123))),
++        ("-1", None), ("invalid", None), ("18446744073709551616", None)] {
++        headers.insert("X-Query-Timeout", text.parse().unwrap());
++        assert_eq!(query_timeout(&headers), expected);
++    }
++}
++
++#[tokio::test]
++async fn chunked_request_body_and_trailers_are_collected_without_losing_bytes() {
++    let f = fixture().await;
++    let address = f.url.strip_prefix("http://").unwrap();
++    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
++    socket.write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nX-Contract: request-value\r\nTransfer-Encoding: chunked\r\nTrailer: X-End\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\nX-End: done\r\n\r\n").await.unwrap();
++    let mut response = Vec::new();
++    tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut response)).await.unwrap().unwrap();
++    assert!(response.starts_with(b"HTTP/1.1 200"));
++    assert!(response.ends_with(b"abcdef"));
++}
++
++#[tokio::test]
++async fn malformed_connection_does_not_stop_accepting_new_clients() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"not an HTTP request\r\n\r\n").await.unwrap();
++    socket.shutdown().await.unwrap();
++    let mut ignored = Vec::new();
++    let _ = tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut ignored)).await.unwrap();
++    let response = reqwest::Client::new().get(format!("{}/version", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++}
++
++#[tokio::test]
++async fn disconnected_partial_body_does_not_stop_the_listener() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nX-Contract: request-value\r\nContent-Length: 100\r\n\r\nshort").await.unwrap();
++    drop(socket);
++    let response = reqwest::Client::new().get(format!("{}/metrics", f.url)).send().await.unwrap();
++    assert_eq!(response.status(), 200);
++}
++
++#[tokio::test]
++async fn http1_keepalive_serves_two_requests_on_the_same_connection() {
++    let f = fixture().await;
++    let socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    let (mut sender, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket)).await.unwrap();
++    let driver = tokio::spawn(connection);
++    for path in ["/version", "/metrics"] {
++        let request = Request::builder().uri(path).header("host", "localhost").body(ResponseBody::default()).unwrap();
++        let response = sender.send_request(request).await.unwrap();
++        assert_eq!(response.status(), StatusCode::OK);
++        assert!(!response.into_body().collect().await.unwrap().to_bytes().is_empty());
++    }
++    driver.abort();
++}
++
++#[tokio::test]
++async fn cancelling_listener_closes_its_existing_connection_tasks() {
++    let f = fixture().await;
++    let mut socket = tokio::net::TcpStream::connect(f.url.strip_prefix("http://").unwrap()).await.unwrap();
++    socket.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\n\r\n").await.unwrap();
++    let mut response = Vec::new();
++    let mut buffer = [0; 256];
++    while !response.ends_with(b"HTTP/1.1") {
++        let count = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buffer)).await.unwrap().unwrap();
++        assert!(count > 0);
++        response.extend_from_slice(&buffer[..count]);
++    }
++    drop(f);
++    let result = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buffer)).await.unwrap();
++    assert!(matches!(result, Ok(0) | Err(_)));
++}
++
++#[tokio::test]
++async fn http2_supports_concurrent_requests() {
++    let f = fixture().await;
++    let client = reqwest::Client::builder().http2_prior_knowledge().build().unwrap();
++    let mut tasks = tokio::task::JoinSet::new();
++    for _ in 0..16 {
++        let client = client.clone();
++        let url = format!("{}/metrics", f.url);
++        tasks.spawn(async move {
++            let response = client.get(url).send().await.unwrap();
++            assert_eq!(response.version(), reqwest::Version::HTTP_2);
++            assert_eq!(response.text().await.unwrap(), "# TYPE requests counter\nrequests 1\n");
++        });
++    }
++    while let Some(result) = tasks.join_next().await { result.unwrap(); }
++}
+diff --git a/security-contracts/src/winauth_contracts.rs b/security-contracts/src/winauth_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/winauth_contracts.rs
+@@ -0,0 +1,18 @@
++use winauth::oja_security_contracts as actual;
++
++#[test]
++fn ntlm_password_key_known_vector() { actual::password_key(); }
++#[test]
++fn ntlm_crypto_known_vectors() { actual::crypto_vectors(); }
++#[test]
++fn ntlm_channel_binding_layout_and_hash() { actual::channel_bindings(); }
++#[test]
++fn ntlm_real_random_response_and_session_key_consistency() { actual::response_consistency(); }
++#[test]
++fn ntlm_nonce_and_session_key_are_not_reused() { actual::fresh_randomness(); }
++#[test]
++fn ntlm_negotiate_wire_flags_and_invalid_state() { actual::negotiate_state(); }
++#[test]
++fn ntlm_rejects_invalid_server_challenges() { actual::reject_challenges(); }
++#[test]
++fn ntlm_fake_handshake_keeps_spn_cbt_and_mic() { actual::fake_handshake(); }
+diff --git a/security-contracts/src/winauth_parser_contracts.rs b/security-contracts/src/winauth_parser_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/winauth_parser_contracts.rs
+@@ -0,0 +1,32 @@
++use winauth::oja_parser_contracts as actual;
++
++macro_rules! contracts {
++    ($($name:ident),+ $(,)?) => { $(#[test] fn $name() { actual::$name(); })+ };
++}
++
++contracts!(
++    absent_target_full_exchange,
++    absent_info_ignores_bytes,
++    absent_fields_ignore_offsets,
++    max_lengths_ignored,
++    payload_orders_and_padding,
++    version_header_boundaries,
++    truncated_header_prefixes,
++    active_offsets_rejected,
++    overlapping_fields_rejected,
++    payload_lengths_bounded,
++    unicode_name_alignment,
++    unicode_decoder_rejects_invalid,
++    av_eol_and_trailing_bytes,
++    av_cannot_escape_info_length,
++    av_scalar_lengths,
++    av_unknown_and_single_host_error,
++    av_strings_and_unaligned_info,
++    av_truncation_corpus,
++    deterministic_malformed_corpus,
++    av_unicode_wire_lengths,
++    auth_unicode_fields_and_mic,
++    outgoing_wire_length_boundaries,
++    oversized_response_rejected,
++    failed_challenges_do_not_accumulate,
++);
+diff --git a/security-contracts/src/paste_contracts.rs b/security-contracts/src/paste_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/paste_contracts.rs
+@@ -0,0 +1,94 @@
++use paste::paste;
++
++#[test]
++fn item_alias_keeps_quaint_generated_type_test_names() {
++    paste::item! {
++        fn [<test_type_ scalar _round_trip>]() -> u32 { 17 }
++    }
++    assert_eq!(test_type_scalar_round_trip(), 17);
++}
++
++#[test]
++fn expr_alias_keeps_identifier_expressions() {
++    let column_type = 23;
++    assert_eq!(paste::expr! { [<column _type>] }, 23);
++}
++
++#[test]
++fn nested_repetitions_keep_generated_test_names_and_calls() {
++    macro_rules! cases {
++        ($($db:ident),+) => {
++            paste! {
++                $(fn [<$db _test_api>]() -> &'static str { stringify!($db) })+
++                fn generated() -> Vec<&'static str> { vec![$([<$db _test_api>]()),+] }
++            }
++        };
++    }
++    cases!(postgres, mysql, sqlite, mssql);
++    assert_eq!(generated(), ["postgres", "mysql", "sqlite", "mssql"]);
++}
++
++#[test]
++fn case_modifiers_keep_introspection_identifiers() {
++    macro_rules! names {
++        ($name:ident) => {
++            paste! {
++                struct [<$name:camel>];
++                impl [<$name:camel>] {
++                    fn [<$name:snake>]() -> &'static str { stringify!([<$name:upper>]) }
++                }
++            }
++        };
++    }
++    names!(query_engine);
++    assert_eq!(QueryEngine::query_engine(), "QUERY_ENGINE");
++}
++
++#[test]
++fn composed_modifiers_keep_upper_snake_case() {
++    macro_rules! constant {
++        ($name:ident) => {
++            paste! { const [<$name:snake:upper>]: &str = stringify!($name); }
++        };
++    }
++    constant!(RelationLoadStrategy);
++    assert_eq!(RELATION_LOAD_STRATEGY, "RelationLoadStrategy");
++}
++
++#[test]
++fn lifetime_and_field_generation_keep_accessors() {
++    macro_rules! accessor {
++        ($field:ident) => {
++            paste! {
++                fn [<get_ $field>]<[<'value>]>(value: &[<'value>] str) -> &[<'value>] str { value }
++            }
++        };
++    }
++    accessor!(name);
++    assert_eq!(get_name("example"), "example");
++}
++
++#[test]
++fn documentation_and_attributes_expand_with_items() {
++    macro_rules! documented {
++        ($field:ident) => {
++            paste! {
++                #[doc = "Read " $field " value."]
++                #[allow(non_snake_case)]
++                fn [<read_ $field>]() -> bool { true }
++            }
++        };
++    }
++    documented!(ID);
++    assert!(read_ID());
++}
++
++#[test]
++fn string_literal_segments_keep_relation_strategy_names() {
++    paste! {
++        fn [<"relation_" join "_strategy">]() -> &'static str { "join" }
++        fn [<"relation_" query "_strategy">]() -> &'static str { "query" }
++    }
++    assert_eq!(relation_join_strategy(), "join");
++    assert_eq!(relation_query_strategy(), "query");
++}
+diff --git a/security-contracts/src/postgres_contracts.rs b/security-contracts/src/postgres_contracts.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/postgres_contracts.rs
+@@ -0,0 +1,198 @@
++use fallible_iterator::FallibleIterator;
++use postgres_protocol::authentication::sasl::{oja_scram_with_nonce, ChannelBinding, ScramSha256};
++use postgres_protocol::types::{hstore_from_sql, hstore_to_sql};
++use tokio_postgres::row::oja_security_contracts::{row, simple_row};
++
++#[path = "scram_grammar.rs"]
++mod scram_grammar;
++
++const NONCE: &str = "9IZ2O01zb9IgiIZ1WJ/zgpJB";
++const FIRST: &str = "r=9IZ2O01zb9IgiIZ1WJ/zgpJBjx/oIRLs02gGSHcw1KEty3eY,s=fs3IXBy7U7+IvVjZ,i=4096";
++fn scram() -> ScramSha256 {
++    oja_scram_with_nonce(b"foobar", ChannelBinding::unsupported(), NONCE)
++}
++fn iterations(value: &str) -> Vec<u8> {
++    FIRST.replace("4096", value).into_bytes()
++}
++
++#[test]
++fn scram_original_proof_and_server_signature() {
++    let mut client = scram();
++    assert_eq!(client.message(), format!("n,,n=,r={NONCE}").as_bytes());
++    client.update(FIRST.as_bytes()).unwrap();
++    assert_eq!(client.message(), b"c=biws,r=9IZ2O01zb9IgiIZ1WJ/zgpJBjx/oIRLs02gGSHcw1KEty3eY,p=AmNKosjJzS31NTlQYNs5BTeQjdHdk7lOflDo5re2an8=");
++    client.finish(b"v=U+ppxD5XUKtradnv8e2MkeupiA8FU87Sg8CXzXHDAzw=").unwrap();
++}
++#[test]
++fn scram_accepts_exact_iteration_limit() {
++    scram().update(&iterations("100000")).unwrap();
++}
++#[test]
++fn scram_rejects_above_limit_before_decoding_salt() {
++    let error = scram().update(&String::from_utf8(iterations("100001")).unwrap().replace("fs3IXBy7U7+IvVjZ", "A").into_bytes()).unwrap_err();
++    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
++    assert!(error.to_string().contains("maximum allowed"));
++}
++#[test]
++fn scram_rejects_maximum_u32_without_hashing() {
++    assert!(scram().update(&iterations("4294967295")).unwrap_err().to_string().contains("maximum allowed"));
++}
++#[test]
++fn scram_malformed_iterations_and_nonce_fail() {
++    for value in ["-1", "no", "4294967296", ""] {
++        assert!(scram().update(&iterations(value)).is_err());
++    }
++    assert!(scram().update(FIRST.replace(NONCE, "other").as_bytes()).is_err());
++    assert!(scram().update(&[0xff]).is_err());
++}
++#[test]
++fn scram_bad_salt_or_signature_fails() {
++    assert!(scram().update(FIRST.replace("fs3IXBy7U7+IvVjZ", "???").as_bytes()).is_err());
++    let mut client = scram();
++    client.update(FIRST.as_bytes()).unwrap();
++    assert!(client.finish(b"v=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_err());
++}
++#[test]
++fn scram_failed_update_cannot_reuse_state() {
++    let mut client = scram();
++    assert!(client.update(&iterations("100001")).is_err());
++    assert!(client.update(FIRST.as_bytes()).unwrap_err().to_string().contains("invalid SCRAM state"));
++    assert!(client.finish(b"v=bad").is_err());
++}
++#[test]
++fn scram_real_nonce_and_channel_binding_paths_remain() {
++    let a = ScramSha256::new(b"offline-only", ChannelBinding::unsupported());
++    let b = ScramSha256::new(b"offline-only", ChannelBinding::unsupported());
++    assert_ne!(a.message(), b.message());
++    for binding in [ChannelBinding::unrequested(), ChannelBinding::tls_server_end_point(vec![1,2,3])] {
++        let mut client = oja_scram_with_nonce(b"foobar", binding, NONCE);
++        client.update(FIRST.as_bytes()).unwrap();
++        assert!(client.message().starts_with(b"c="));
++    }
++}
++
++fn hstore(count: i32, key_len: i32, key: &[u8], value_len: i32, value: &[u8]) -> Vec<u8> {
++    let mut bytes = count.to_be_bytes().to_vec();
++    bytes.extend(key_len.to_be_bytes()); bytes.extend(key);
++    bytes.extend(value_len.to_be_bytes()); bytes.extend(value);
++    bytes
++}
++fn decoded(bytes: &[u8]) -> Result<Vec<(&str, Option<&str>)>, Box<dyn std::error::Error + Send + Sync>> {
++    hstore_from_sql(bytes)?.collect()
++}
++#[test]
++fn hstore_empty_and_null_pairs_roundtrip() {
++    assert!(decoded(&0i32.to_be_bytes()).unwrap().is_empty());
++    assert_eq!(decoded(&hstore(1,0,b"",-1,b"")).unwrap(), vec![("",None)]);
++}
++#[test]
++fn hstore_unicode_and_multiple_pairs_roundtrip() {
++    // UTF-8 encoded without source-language-dependent encoding.
++    let key = "\u{6771}\u{4eac}";
++    let pairs = [(key, Some("value")), ("second", None), ("empty", Some(""))];
++    let mut output = Default::default();
++    hstore_to_sql(pairs, &mut output).unwrap();
++    assert_eq!(decoded(&output).unwrap(), pairs);
++    let ty = postgres_types::Type::new("hstore".to_owned(), 99999, postgres_types::Kind::Simple);
++    let actual = <std::collections::HashMap<String,Option<String>> as postgres_types::FromSql>::from_sql(&ty,&output).unwrap();
++    assert_eq!(actual.get(key), Some(&Some("value".to_owned())));
++}
++#[test]
++fn hstore_oversized_key_is_error() {
++    for len in [9, i32::MAX] { assert!(decoded(&hstore(1,len,b"",-1,b"")).is_err()); }
++}
++#[test]
++fn hstore_oversized_value_is_error() {
++    for len in [1, i32::MAX] { assert!(decoded(&hstore(1,0,b"",len,b"")).is_err()); }
++}
++#[test]
++fn hstore_negative_key_and_invalid_utf8_are_errors() {
++    assert!(decoded(&hstore(1,-1,b"",-1,b"")).is_err());
++    assert!(decoded(&hstore(1,1,&[255],-1,b"")).is_err());
++    assert!(decoded(&hstore(1,0,b"",1,&[255])).is_err());
++}
++#[test]
++fn hstore_impossible_count_rejected_before_reserving() {
++    for count in [-1,1,i32::MAX] { assert!(hstore_from_sql(&count.to_be_bytes()).is_err()); }
++    let bytes = hstore(2,0,b"",-1,b"");
++    assert!(hstore_from_sql(&bytes).is_err());
++    assert_eq!(hstore_from_sql(&hstore(1,0,b"",-1,b"")).unwrap().size_hint(), (1,Some(1)));
++}
++#[test]
++fn hstore_truncated_and_trailing_data_are_errors() {
++    let valid = hstore(1,1,b"a",1,b"b");
++    for n in 0..valid.len() { assert!(decoded(&valid[..n]).is_err()); }
++    let mut trailing=valid; trailing.push(0);
++    assert!(decoded(&trailing).is_err());
++}
++#[test]
++fn hstore_bounded_length_mutation_corpus_never_panics() {
++    let original = hstore(1,1,b"a",1,b"b");
++    for i in 0..4096usize {
++        let mut bytes=original.clone(); let pos=i%bytes.len(); bytes[pos]=(i/bytes.len()) as u8;
++        let _=decoded(&bytes);
++    }
++}
++
++fn packet(fields: &[Option<&[u8]>]) -> Vec<u8> {
++    let mut body=(fields.len() as u16).to_be_bytes().to_vec();
++    for field in fields { match field {
++        Some(bytes)=>{body.extend((bytes.len() as i32).to_be_bytes());body.extend(*bytes);},
++        None=>body.extend((-1i32).to_be_bytes()),
++    }}
++    let mut packet=b"D".to_vec(); packet.extend((body.len() as i32+4).to_be_bytes()); packet.extend(body); packet
++}
++#[test]
++fn row_fewer_fields_rejected_at_construction() {
++    assert!(row(&["a","b"],&packet(&[Some(b"one")])).is_err());
++}
++#[test]
++fn simple_row_fewer_fields_rejected_at_construction() {
++    assert!(simple_row(&["a","b"],&packet(&[Some(b"one")])).is_err());
++}
++#[test]
++fn row_extra_fields_rejected_at_construction() {
++    assert!(row(&["a"],&packet(&[Some(b"one"),None])).is_err());
++    assert!(simple_row(&["a"],&packet(&[Some(b"one"),None])).is_err());
++}
++#[test]
++fn row_zero_columns_and_fields_work() {
++    assert_eq!(row(&[],&packet(&[])).unwrap().len(),0);
++    assert_eq!(simple_row(&[],&packet(&[])).unwrap().len(),0);
++    assert!(row(&["a"],&packet(&[])).is_err());
++    assert!(simple_row(&["a"],&packet(&[])).is_err());
++}
++#[test]
++fn row_matching_fields_and_accessors_work() {
++    let p=packet(&[Some(b"one"),Some(b"two")]);
++    let r=row(&["a","b"],&p).unwrap();
++    assert_eq!(r.get::<_,&str>(0),"one");
++    assert_eq!(r.try_get::<_,&str>("b").unwrap(),"two");
++    assert!(r.try_get::<_,&str>(2).is_err());
++    let s=simple_row(&["a","b"],&p).unwrap();
++    assert_eq!(s.get(0),Some("one"));
++    assert_eq!(s.try_get("b").unwrap(),Some("two"));
++    assert!(s.try_get(2).is_err());
++}
++#[test]
++fn row_null_fields_preserve_option_semantics() {
++    let p=packet(&[None]);
++    assert_eq!(row(&["a"],&p).unwrap().get::<_,Option<&str>>(0),None);
++    assert_eq!(simple_row(&["a"],&p).unwrap().get(0),None);
++}
++#[test]
++fn row_truncated_and_bad_field_lengths_are_errors() {
++    let p=packet(&[Some(b"one")]);
++    for n in 0..p.len() { assert!(row(&["a"],&p[..n]).is_err()); assert!(simple_row(&["a"],&p[..n]).is_err()); }
++    let mut p=packet(&[Some(b"one")]); p[7..11].copy_from_slice(&i32::MAX.to_be_bytes());
++    assert!(row(&["a"],&p).is_err()); assert!(simple_row(&["a"],&p).is_err());
++}
++#[test]
++fn pgbouncer_config_and_native_tls_types_are_retained() {
++    let mut config=tokio_postgres::Config::new();
++    config.pgbouncer_mode(true); assert!(config.get_pgbouncer_mode());
++    config.pgbouncer_mode(false); assert!(!config.get_pgbouncer_mode());
++    // Type checking only: no TLS connector, network, real account, or database is opened.
++    fn tls_api(_: Option<postgres_native_tls::MakeTlsConnector>) {}
++    tls_api(None);
++}
+diff --git a/security-contracts/src/scram_grammar.rs b/security-contracts/src/scram_grammar.rs
+new file mode 100644
+--- /dev/null
++++ b/security-contracts/src/scram_grammar.rs
+@@ -0,0 +1,88 @@
++use super::{iterations, scram, FIRST, NONCE};
++use std::io::ErrorKind;
++
++const SIGNATURE: &[u8] = b"v=U+ppxD5XUKtradnv8e2MkeupiA8FU87Sg8CXzXHDAzw=";
++
++#[test]
++fn zero_iterations_fail_before_salt_decode() {
++    let input = String::from_utf8(iterations("0")).unwrap().replace("fs3IXBy7U7+IvVjZ", "A");
++    let error = scram().update(input.as_bytes()).unwrap_err();
++    assert_eq!(error.kind(), ErrorKind::InvalidInput);
++    assert_eq!(error.to_string(), "invalid SCRAM iteration count");
++}
++
++#[test]
++fn leading_zero_iterations_are_not_positive_number_syntax() {
++    for value in ["00", "01", "04096", "0100000"] {
++        let error = scram().update(&iterations(value)).unwrap_err();
++        assert_eq!(error.kind(), ErrorKind::InvalidInput);
++        assert_eq!(error.to_string(), "invalid SCRAM iteration count");
++    }
++}
++
++#[test]
++fn positive_minimum_still_requires_a_correct_server_signature() {
++    let mut client = scram();
++    client.update(&iterations("1")).unwrap();
++    let error = client.finish(SIGNATURE).unwrap_err();
++    assert_eq!(error.to_string(), "SCRAM verification error");
++}
++
++#[test]
++fn standard_server_errors_remain_authentication_failures() {
++    for value in ["invalid-proof", "unknown-user", "no-resources", "other-error", "channel-bindings-dont-match"] {
++        let mut client = scram();
++        client.update(FIRST.as_bytes()).unwrap();
++        let error = client.finish(format!("e={value}").as_bytes()).unwrap_err();
++        assert_eq!(error.kind(), ErrorKind::Other);
++        assert_eq!(error.to_string(), format!("SCRAM error: {value}"));
++        assert_eq!(client.finish(SIGNATURE).unwrap_err().to_string(), "invalid SCRAM state");
++    }
++}
++
++#[test]
++fn nonempty_server_error_values_support_equals_and_utf8() {
++    for value in ["custom=reason", "=", "\u{6771}\u{4eac}", "space allowed", "\u{0001}"] {
++        let mut client = scram();
++        client.update(FIRST.as_bytes()).unwrap();
++        let error = client.finish(format!("e={value}").as_bytes()).unwrap_err();
++        assert_eq!(error.kind(), ErrorKind::Other);
++        assert_eq!(error.to_string(), format!("SCRAM error: {value}"));
++    }
++}
++
++#[test]
++fn empty_nul_comma_and_invalid_utf8_errors_are_not_valid_values() {
++    for value in [b"e=".as_slice(), b"e=\0", b"e=,", b"e=bad,extra=value", b"e=bad\0value", b"e=\xff"] {
++        let mut client = scram();
++        client.update(FIRST.as_bytes()).unwrap();
++        let error = client.finish(value).unwrap_err();
++        assert_eq!(error.kind(), ErrorKind::InvalidInput);
++        assert!(!error.to_string().starts_with("SCRAM error:"));
++    }
++}
++
++#[test]
++fn signature_success_and_failure_are_terminal_states() {
++    for signature in [SIGNATURE, b"v=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".as_slice()] {
++        let mut client = scram();
++        client.update(FIRST.as_bytes()).unwrap();
++        assert_eq!(client.finish(signature).is_ok(), signature == SIGNATURE);
++        assert_eq!(client.finish(SIGNATURE).unwrap_err().to_string(), "invalid SCRAM state");
++        assert_eq!(client.update(FIRST.as_bytes()).unwrap_err().to_string(), "invalid SCRAM state");
++    }
++}
++
++#[test]
++fn client_nonce_prefix_contract_is_preserved_without_claiming_authentication() {
++    for nonce in [NONCE.to_owned(), format!("{NONCE}server")] {
++        let mut client = scram();
++        let first = format!("r={nonce},s=fs3IXBy7U7+IvVjZ,i=4096");
++        client.update(first.as_bytes()).unwrap();
++        assert!(client.finish(SIGNATURE).is_err());
++    }
++    for nonce in ["other", "", &NONCE[1..]] {
++        let first = format!("r={nonce},s=fs3IXBy7U7+IvVjZ,i=4096");
++        assert!(scram().update(first.as_bytes()).is_err());
++    }
++}

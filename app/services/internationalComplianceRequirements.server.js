@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { withInternationalGateInvalidation } from "./internationalGateQueue.server.js";
 import {
   INTERNATIONAL_COMPLIANCE_REQUIREMENTS,
   INTERNATIONAL_REQUIREMENT_VERSION,
@@ -22,11 +23,13 @@ function asMetadata(value) {
 
 export async function syncInternationalComplianceRequirements(
   { actor = "admin", now = new Date() } = {},
-  { prismaClient = prisma } = {},
+  { prismaClient = prisma, invalidationHandled = false } = {},
 ) {
   if (!prismaClient?.complianceRequirement?.upsert) {
     return { ok: false, reason: "compliance_requirement_table_unavailable" };
   }
+  if (!invalidationHandled) return withInternationalGateInvalidation(prismaClient, (tx) =>
+    syncInternationalComplianceRequirements({ actor, now }, { prismaClient: tx, invalidationHandled: true }));
 
   const requirements = [];
   for (const requirement of INTERNATIONAL_COMPLIANCE_REQUIREMENTS) {
@@ -147,8 +150,10 @@ export async function reviewInternationalComplianceRequirements(
     reviewedAt.getTime() +
       INTERNATIONAL_REQUIREMENT_REVIEW_DAYS * 24 * 60 * 60 * 1000,
   );
-  const operations = requirements.map((requirement) =>
-    prismaClient.complianceRequirement.update({
+  const updated = await withInternationalGateInvalidation(prismaClient, async (tx) => {
+  const results = [];
+  for (const requirement of requirements) {
+    results.push(await tx.complianceRequirement.update({
       where: { id: requirement.id },
       data: {
         reviewDueAt,
@@ -161,11 +166,10 @@ export async function reviewInternationalComplianceRequirements(
           legalReviewVersion: INTERNATIONAL_REQUIREMENT_VERSION,
         },
       },
-    }),
-  );
-  const updated = prismaClient.$transaction
-    ? await prismaClient.$transaction(operations)
-    : await Promise.all(operations);
+    }));
+  }
+  return results;
+  });
 
   return {
     ok: true,

@@ -52,8 +52,10 @@ export function isDomesticAutonomousLaunchRiskAcceptedCheck(checkId) {
 export function inspectDomesticAutonomousLaunchAuthorization(
   env = process.env,
   now = new Date(),
+  observedCheckoutMode = null,
 ) {
-  const checkoutMode = inspectPlatformDirectCheckoutMode(env);
+  const checkoutMode =
+    observedCheckoutMode || inspectPlatformDirectCheckoutMode(env, { available: false });
   const authorizedAt = parseDate(
     env.DOMESTIC_AUTONOMOUS_LAUNCH_AUTHORIZED_AT,
   );
@@ -85,6 +87,7 @@ export function inspectDomesticAutonomousLaunchAuthorization(
       scopeMatches &&
       monitorEnabled &&
       checkoutMode.standardDirectReady &&
+      checkoutMode.scopeAvailable === true &&
       timeValid,
   );
 
@@ -95,6 +98,8 @@ export function inspectDomesticAutonomousLaunchAuthorization(
   else if (!monitorEnabled) reason = "production_monitor_required";
   else if (!checkoutMode.standardDirectReady) {
     reason = checkoutMode.reason || "standard_direct_mode_required";
+  } else if (checkoutMode.scopeAvailable !== true) {
+    reason = "checkout_scope_unverified";
   } else if (!durationValid) reason = "authorization_window_invalid";
   else if (!timeValid) reason = "authorization_expired_or_not_started";
 

@@ -13,6 +13,7 @@ import {
 } from "./marketplaceGovernance.server.js";
 import { getPlatformOperationalControl } from "./operationalControls.server.js";
 import { OPERATIONAL_TIMING_DEFAULTS } from "./operationalTimingPolicy.js";
+import { inspectPlatformDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 
 export const SALE_ELIGIBILITY_POLICY_VERSION = "sale-eligibility-2026-09-v2";
 export const SALE_ELIGIBILITY_PROJECTION_SCHEMA_VERSION = 3;
@@ -178,6 +179,7 @@ function buildInputHash({
   salesChannel,
   control,
   governanceGateEnabled,
+  domesticOnlyRequested,
 }) {
   const store = product?.vendorStore || null;
   const seller =
@@ -230,6 +232,8 @@ function buildInputHash({
         destinationCountry: normalizeUpper(destinationCountry),
         salesChannel: normalizeUpper(salesChannel),
         checkoutHold: control?.checkoutHold === true,
+        internationalShippingHold: control?.internationalShippingHold === true,
+        domesticOnlyRequested,
         checkoutControlState: control?.checkoutControlState || null,
         governanceGateEnabled,
         complianceProfile: profile
@@ -302,6 +306,8 @@ export function evaluateSaleEligibilitySnapshot({
 } = {}) {
   const reasons = [];
   const governanceGateEnabled = isMarketplaceGovernanceGateEnabled(env);
+  const domesticOnlyRequested =
+    inspectPlatformDirectCheckoutMode(env).standardDirectRequested;
   const store = product?.vendorStore || null;
   const normalizedChannel =
     normalizeUpper(salesChannel) || SALE_ELIGIBILITY_CHANNEL.MONITORING;
@@ -402,6 +408,10 @@ export function evaluateSaleEligibilitySnapshot({
     );
   }
   if (normalizedCountry && normalizedCountry !== "JP") {
+    if (domesticOnlyRequested) reasons.push("INTERNATIONAL_SALES_DISABLED");
+    if (operationalControl?.internationalShippingHold === true) {
+      reasons.push("INTERNATIONAL_SHIPPING_STOP_ACTIVE");
+    }
     if (!productGovernance.ready) {
       reasons.push(
         ...productGovernance.reasons.map(
@@ -491,6 +501,7 @@ export function evaluateSaleEligibilitySnapshot({
       salesChannel: normalizedChannel,
       control: operationalControl,
       governanceGateEnabled,
+      domesticOnlyRequested,
     }),
   };
 }

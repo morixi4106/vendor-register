@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-11-11",
+  "status": "FIXED_CANDIDATE_ARTIFACTS_VERIFIED",
+  "advisory": "RUSTSEC-2026-0459",
+  "aliases": [
+    "CVE-2026-119375",
+    "GHSA-72w2-rjgg-q729"
+  ],
+  "advisoryUrl": "https://rustsec.org/advisories/RUSTSEC-2026-0459.html",
+  "advisoryModified": "2026-11-09T10:00:02.337112Z",
+  "parsedAdvisoryJsonSha256": "6047853b50b8b7aecca35c309372acb2f44a462f59c5818e046e9088a3e1ab6e",
+  "package": "libsqlite3-sys",
+  "version": "0.30.1",
+  "archiveSha256": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149",
+  "sqliteVersion": "3.46.0",
+  "amalgamationSha256": "c01235302fe80da901fb70c7622c39147e29d9f29b7f6eb746b23517f320c90d",
+  "walFunctionSha256": "64db8bd716d398f250bf4319c9a73f6f3f8c1be646c3f7dabb01749727d6569f",
+  "upstreamFix": "e5bf119821f25be1d7f10ef0a2edbe175289166e",
+  "candidatePatch": "vendor/native/prisma/sqlite-wal.candidate.patch",
+  "candidatePatchSha256": "71581435ba60a8dd426fb7339d396cf843c03715874fb0037152b0d526901907",
+  "sourceApplicabilityChecked": true,
+  "enginePolicySha256": "77fafe98de32a1213dfaf4374ffe45e23142e07f49dbeca153a306f73a0a9d1d",
+  "failedNativeRun": "43016958931",
+  "failedNativeSourceHead": "a021df77432828f26d8e661c0d1dbe13aef32def",
+  "artifacts": [
+    {
+      "platform": "linux",
+      "id": 13852284713,
+      "zipSha256": "dcc145bb4519cb1f83e6f33c25353ebf7b2f45397a3f283cd0e044e35f4f349f"
+    },
+    {
+      "platform": "windows",
+      "id": 13852469233,
+      "zipSha256": "16cb6bb631cd53c1855592cab06821efcb5102d6d85b59c4e72b970ac484a2ab"
+    }
+  ],
+  "historicalReachability": {
+    "run": "42300766846",
+    "sourceHead": "373617a9dbddbf08b6a6d26313888d6e04e586cc",
+    "bundledFeature": true,
+    "affectedRoots": [
+      "query-engine-node-api",
+      "schema-engine-cli",
+      "query-engine"
+    ],
+    "excludedRoot": "prisma-fmt",
+    "scope": "Previously verified normal/build metadata on both OSes; not current production or customer-input reachability"
+  },
+  "repairPlan": "Exact official C patch adopted into bounded current-version path override, retaining original registry/advisory and all27 original/adopted file hashes. Both actual OS source/native artifacts and real C baseline/fixed regressions independently verified; immutable downstream native inputs now bind these new bytes. Fresh application DB/runtime verification remains separate; no production approval.",
+  "sourcePatchAdopted": true,
+  "compiledRegressionPassed": true,
+  "newNativeBuildCompleted": true,
+  "productionExposureConfirmed": false,
+  "productionPatched": false,
+  "productionApproved": false,
+  "adoptedAmalgamationSha256": "11139aa084fc8e6aa4fb7d3527d7dc44a5f58afbd070815edc382a4f1a839897",
+  "verifiedEvidence": {
+    "sourceHead": "f1b35a87f21504e61569093a9ad654fd222c0290",
+    "sourceRun": "43023329951",
+    "nativeRun": "43023329899",
+    "cCasePairsPerOs": 72,
+    "baselineStaleTailsPerOs": 24,
+    "fixedZeroTailsPerOs": 24,
+    "originalFunctionSha256": "64db8bd716d398f250bf4319c9a73f6f3f8c1be646c3f7dabb01749727d6569f",
+    "fixedFunctionSha256": "81c4334bb274460f2117b5cdfa5c409b87c400001dd8410ac8b1bfb5909ef86d",
+    "artifacts": [
+      {
+        "platform": "linux",
+        "id": 13857085599,
+        "zipSha256": "40edd8153f69f5e1a57dbea8fdc0c42c0436087fe87dc5b2e212a487063ae934",
+        "librarySha256": "1b61b7a72983448d2bdca05c96649a4d68f02b7fc9594fdb37bf5c1a9690bfc6",
+        "schemaSha256": "f91fffa3b176e49fa0a47499602bd79487385956e9ffe0980e63def85fd6e0bc"
+      },
+      {
+        "platform": "windows",
+        "id": 13856193729,
+        "zipSha256": "80cf05523b39ca90621f6c0e393dd2bcdb67824fda02261ab77edc0e54958f77",
+        "librarySha256": "45740d03dc6b79a9c3ce158e6d08610d7539b1300393dde707580d0e806eb166",
+        "schemaSha256": "c367e87ce2b7901661a3fc8c606c6546069725977f7ff909cd727ad34f489aca"
+      }
+    ]
+  }
+}

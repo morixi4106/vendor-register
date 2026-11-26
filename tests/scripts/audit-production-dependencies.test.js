@@ -25,6 +25,9 @@ const CURRENT_LOCKFILE = JSON.parse(
 // The repository lockfile itself must remain patched and exception-free.
 const LOCKFILE = structuredClone(CURRENT_LOCKFILE);
 LOCKFILE.packages["node_modules/brace-expansion"].version = "2.1.2";
+LOCKFILE.packages["node_modules/minimatch"].name = "minimatch";
+LOCKFILE.packages["node_modules/minimatch"].version = "9.0.9";
+LOCKFILE.packages[""].devDependencies.minimatch = "9.0.9";
 const ARCHIVED_RISK = JSON.parse(
   fs.readFileSync(
     path.join(

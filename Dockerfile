@@ -1,21 +1,19 @@
-FROM node:24-alpine
-RUN apk add --no-cache openssl
+FROM node:24.22.3-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 3000
 
 WORKDIR /app
 
-ENV NODE_ENV=production
-
-COPY package.json package-lock.json* ./
-
-RUN npm ci --omit=dev && npm cache clean --force
-# Remove CLI packages since we don't need them in production by default.
-# Remove this line if you want to run CLI commands in your container.
-RUN npm remove @shopify/cli
-
 COPY . .
 
-RUN npm run build
+RUN node scripts/security/node-runtime.mjs \
+    && npm ci --ignore-scripts \
+    && npm run native:esbuild \
+    && npm run build:production \
+    && npm cache clean --force
+
+ENV NODE_ENV=production
 
 CMD ["npm", "run", "docker-start"]

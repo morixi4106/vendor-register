@@ -42,7 +42,12 @@ import {
   inspectOperationalReadiness,
 } from "./operationalReadiness.server.js";
 import { refreshKomojuLimitedLaunchControl } from "./komojuLimitedLaunchControl.server.js";
-import { isShopifyStandardDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
+import { createNativeReadSession } from "./internationalNativeInventory.server.js";
+import { inspectInternationalCheckoutGate, buildInternationalCheckoutGateCheck } from "./internationalCheckoutInspection.server.js";
+import {
+  inspectCheckoutCommerceContext,
+  buildCheckoutCommerceScopeCheck,
+} from "./checkoutCommerceContext.server.js";
 import {
   getDomesticMarketplacePilotDashboard,
   isDomesticMarketplacePilotEnabled,
@@ -78,6 +83,8 @@ const READINESS_LIGHT_CHECK_IDS = new Set([
   "payment_settlements_unmatched",
 ]);
 const READINESS_HEAVY_CHECK_IDS = new Set([
+  "international_checkout_gate",
+  "platform_direct_checkout_scope",
   "product_shipping_profiles_available",
   "marketplace_checkout_publication_boundary",
   "marketplace_checkout_server_validation",
@@ -484,11 +491,29 @@ export async function collectLaunchMonitorReport({
   const shopDomain = String(
     env?.SHOPIFY_PRIMARY_SHOP_DOMAIN || env?.SHOPIFY_SHOP || "",
   ).trim();
+  const nativeGraphQL = createNativeReadSession();
+  const checkoutContext = await inspectCheckoutCommerceContext({
+    shopDomain, prismaClient, env, now, graphQL: nativeGraphQL,
+    inspectShippingProfilesImpl: inspectProductShippingProfilesImpl,
+    inspectNativeScopeImpl: dependencies.inspectShopifyCommerceScope,
+  });
+  const scopeCheck = readinessCheckToMonitorCheck(
+    buildCheckoutCommerceScopeCheck(checkoutContext.mode),
+  );
+  checks.push(scopeCheck);
+  if (runHeavyChecks && checkoutContext.mode.internationalConfigured) {
+    const international = await (dependencies.inspectInternationalCheckoutGate || inspectInternationalCheckoutGate)(
+      { shopDomain, prismaClient, env, now }, { graphQL: nativeGraphQL },
+    );
+    const check = readinessCheckToMonitorCheck(buildInternationalCheckoutGateCheck(international));
+    heavyChecks.push(check);
+    checks.push(check);
+  }
 
   try {
     const guard = await runDomesticAutonomousLaunchGuardImpl(
       { shopDomain },
-      { prismaClient, env, now },
+      { prismaClient, env, now, inspectCheckoutCommerceContextImpl: async () => checkoutContext },
     );
     if (guard.active || guard.secured) {
       checks.push(
@@ -528,7 +553,7 @@ export async function collectLaunchMonitorReport({
   }
 
   try {
-    if (shopDomain && isShopifyStandardDirectCheckoutMode(env)) {
+    if (shopDomain && checkoutContext.mode.standardDirectReady) {
       checks.push(
         okCheck(
           "komoju_limited_launch_control",
@@ -738,6 +763,7 @@ export async function collectLaunchMonitorReport({
   }
 
   if (runHeavyChecks) {
+    heavyChecks.push(scopeCheck);
     let checkoutBoundaryCompleted = false;
     let checkoutValidationCompleted = false;
     let launchIntegrityCompleted = false;
@@ -782,7 +808,7 @@ export async function collectLaunchMonitorReport({
         await inspectMarketplaceCheckoutValidationImpl(shopDomain);
       const validationCheck = readinessCheckToMonitorCheck(
         buildMarketplaceCheckoutValidationReadinessCheck(validationStatus, {
-          standardDirect: isShopifyStandardDirectCheckoutMode(env),
+          standardDirect: checkoutContext.mode.standardDirectReady,
         }),
       );
       heavyChecks.push(validationCheck);
@@ -828,16 +854,13 @@ export async function collectLaunchMonitorReport({
       checks.push(failure);
     }
     try {
-      const shippingProfiles = await inspectProductShippingProfilesImpl({
-        prismaClient,
-        now,
-      });
+      const shippingProfiles = checkoutContext.shippingProfiles;
       const shippingChecks = buildProductShippingProfileChecks(shippingProfiles)
         .filter((check) => READINESS_HEAVY_CHECK_IDS.has(check.id))
         .map(readinessCheckToMonitorCheck);
       heavyChecks.push(...shippingChecks);
       checks.push(...shippingChecks);
-      productShippingProfilesCompleted = true;
+      productShippingProfilesCompleted = checkoutContext.mode.scopeAvailable;
     } catch (error) {
       const failure = issueCheck(
         "international_product_readiness",
@@ -851,7 +874,12 @@ export async function collectLaunchMonitorReport({
     try {
       const [operationalReadiness, platformOperationalControl] =
         await Promise.all([
-          inspectOperationalReadinessImpl({ prismaClient, now }),
+          inspectOperationalReadinessImpl({
+            prismaClient,
+            now,
+            env,
+            checkoutContext,
+          }),
           getPlatformOperationalControlImpl({ prismaClient }),
         ]);
       const operationalChecks = buildOperationalReadinessChecks({
@@ -883,7 +911,7 @@ export async function collectLaunchMonitorReport({
       operationalReadinessCompleted;
   } else {
     const cachedHeavyChecks = asCheckArray(previousHeavyChecks).filter(
-      (check) => READINESS_HEAVY_CHECK_IDS.has(check.id),
+      (check) => READINESS_HEAVY_CHECK_IDS.has(check.id) && check.id !== scopeCheck.id,
     );
     checks.push(
       ...(cachedHeavyChecks.length > 0

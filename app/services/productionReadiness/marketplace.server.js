@@ -13,6 +13,7 @@ export function applyReleaseDisposition(check, {
   env,
   operationEnv,
   directReturns,
+  checkoutMode,
   now = new Date(),
 } = {}) {
   if (check.status === "pass") {
@@ -30,7 +31,7 @@ export function applyReleaseDisposition(check, {
     };
   }
   const launchAuthorization =
-    inspectDomesticAutonomousLaunchAuthorization(env, now);
+    inspectDomesticAutonomousLaunchAuthorization(env, now, checkoutMode);
   if (
     check.releaseDisposition === "owner_risk_accepted" &&
     check.releaseBlocking === false &&

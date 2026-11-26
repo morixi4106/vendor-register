@@ -1,0 +1,58 @@
+name: Fixed Prisma TLS certificate probes
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prisma-tds-tls-contracts.yml
+      - scripts/security/test-prisma-tds-tls.mjs
+      - scripts/security/test-prisma-tds.mjs
+      - security/prisma-tds-tls-contracts.json
+      - tests/fixtures/prisma-tds-tls/**
+      - tests/scripts/prisma-tds-tls.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certificates:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Preserve fixed source bytes on this disposable runner
+        run: git config --global core.autocrlf false
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject unreviewed fork sources
+        env:
+          TRUSTED_REVIEW_SOURCE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node -e "if (process.env.TRUSTED_REVIEW_SOURCE !== 'true') process.exit(1)"
+      - name: Use pinned Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify certificate source and rejection contracts
+        run: node --test tests/scripts/prisma-tds-tls.test.js
+      - name: Build and run real certificate handshakes in memory
+        run: node scripts/security/test-prisma-tds-tls.mjs
+      - name: Reject tracked changes
+        run: git diff --exit-code
+      - name: Upload bounded test identities and real native evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: prisma-tds-tls-${{ matrix.os }}-${{ github.run_id }}
+          path: .audit/prisma-tds-tls/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 45

@@ -1,6 +1,7 @@
 
 import { Form, Link, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
 import { useEffect } from "react";
+import { inspectCheckoutCommerceContext } from "../services/checkoutCommerceContext.server.js";
 
 import {
   previewKomojuZeroBalanceLimitedLaunch,
@@ -21,7 +22,6 @@ import {
   refreshProductionTransactionProbe,
   serializeProductionTransactionProbe,
 } from "../services/productionTransactionProbe.server.js";
-import { inspectPlatformDirectCheckoutMode } from "../services/platformDirectCheckoutMode.server.js";
 import {
   MARKETPLACE_OPERATOR_ROLES,
   requireMarketplaceOperator,
@@ -43,14 +43,15 @@ export async function loader({ request }) {
     shopDomain: session.shop,
     releaseExpectation,
   });
+  const checkoutContext = await inspectCheckoutCommerceContext({ shopDomain: session.shop });
   const preflight = await inspectProductionTransactionProbePreflight({
     shopDomain: session.shop,
     releaseExpectation,
     checkoutValidation,
     targetProvider: "KOMOJU",
     targetPaymentMethod: "CARD",
-  });
-  const operationalReadiness = await inspectOperationalReadiness();
+  }, { inspectCheckoutCommerceContextImpl: async () => checkoutContext });
+  const operationalReadiness = await inspectOperationalReadiness({ shopDomain: session.shop, checkoutContext });
   const limitedLaunch = operationalReadiness.rows.find(
     (row) =>
       row.definition.key === KOMOJU_ZERO_BALANCE_LIMITED_LAUNCH_CHECK_KEY,
@@ -77,7 +78,7 @@ export async function loader({ request }) {
         flow: preflight.checkoutMode,
       }),
       preflight,
-      checkoutMode: inspectPlatformDirectCheckoutMode(),
+      checkoutMode: preflight.checkoutPolicy,
       limitedLaunch: limitedLaunch || null,
     },
     { headers: privateHeaders() },
