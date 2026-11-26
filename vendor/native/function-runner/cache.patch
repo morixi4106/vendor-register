@@ -6,8 +6,8 @@ index 432c68e..76dd098 100644
  edition = "2024"
  rust-version = "1.86.0"
  name = "wasmtime-internal-cache"
--version = "36.0.20"
-+version = "36.0.20+oja.1"
+-version = "36.0.22"
++version = "36.0.22+oja.1"
  authors = ["The Wasmtime Project Developers"]
  build = "build.rs"
  autolib = false

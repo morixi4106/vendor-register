@@ -9,21 +9,21 @@
   },
   "patch": {
     "path": "vendor/native/function-runner/runner.patch",
-    "sha256": "4b744db8c523c4d5bef946fc0ac5f3c5b7a919caa69a832d21935bb836fc0480"
+    "sha256": "d77d2dbaf20473e445a7b09b102c909a28e92f3681922bc5d762851e27d32ea2"
   },
   "lockfile": {
     "path": "vendor/native/function-runner/Cargo.lock",
-    "sha256": "b1e14f010d07dfbcd8a36d506805e3fa9daa8f9aaed06f0f745909e8b55df047"
+    "sha256": "a552914ce241ec40f986a189cf41d5c5e74e6603e7986b38f4fd4a86e78e3fe8"
   },
   "overrides": [
     {
       "name": "wasmtime-internal-cache",
-      "upstreamVersion": "36.0.20",
-      "version": "36.0.20+oja.1",
-      "sha256": "65f09c789d1bb2e7ab1618ac8336d783c1ff0babc38430c7f1940d01c546722b",
+      "upstreamVersion": "36.0.22",
+      "version": "36.0.22+oja.1",
+      "sha256": "072308008acc1cc3d75691df9db11a151ef76f1cd1c3d223603af362246e157f",
       "patch": {
         "path": "vendor/native/function-runner/cache.patch",
-        "sha256": "d32e09afe11e105e4aa50a5537da64460322eeb26ac21bc9a50a5a5fe2b6bc08"
+        "sha256": "80c132d158f57825498f779e77a62a59c657d9d10fc8c486295463947e9350f4"
       }
     },
     {

@@ -57,7 +57,7 @@ export function validateRunnerPolicy(policy) {
   checked(policy.patch, "runner.patch");
   checked(policy.lockfile, "Cargo.lock");
   for (const [index, name, version, file] of [
-    [0, "wasmtime-internal-cache", "36.0.20", "cache.patch"],
+    [0, "wasmtime-internal-cache", "36.0.22", "cache.patch"],
     [1, "fxprof-processed-profile", "0.6.0", "profiler.patch"],
   ]) {
     const entry = policy.overrides[index];
@@ -138,7 +138,7 @@ export function validateRunnerMetadata(metadata, source, policy) {
   );
   if (
     wasmtime.length !== 2 ||
-    wasmtime.some((pkg) => pkg.version !== "36.0.20")
+    wasmtime.some((pkg) => pkg.version !== "36.0.22")
   )
     throw new Error("runner_wasmtime_unpatched");
   return true;

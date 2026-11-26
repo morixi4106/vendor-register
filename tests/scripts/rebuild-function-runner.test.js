@@ -135,8 +135,9 @@ test("frozen runner lock removes old compression, hash and certificate dependenc
       );
   }
   for (const [name, version] of [
-    ["wasmtime", "36.0.20"],
-    ["wasmtime-wasi", "36.0.20"],
+    ["wasmtime", "36.0.22"],
+    ["wasmtime-wasi", "36.0.22"],
+    ["url", "2.5.9"],
     ["zstd", "0.14.3"],
     ["zstd-safe", "8.2.0"],
   ])
@@ -198,13 +199,13 @@ test("runner metadata rejects outside path packages and unpatched runtime select
   packages.push(
     ...["wasmtime", "wasmtime-wasi"].map((name) => ({
       name,
-      version: "36.0.20",
+      version: "36.0.22",
       source: "registry+https://github.com/rust-lang/crates.io-index",
     })),
   );
   const metadata = { packages, resolve: { nodes: [] } };
   assert.equal(validateRunnerMetadata(metadata, root, policy), true);
-  for (const version of ["36.0.14", "36.0.19"]) {
+  for (const version of ["36.0.14", "36.0.19", "36.0.20", "36.0.21"]) {
     const changed = structuredClone(metadata);
     changed.packages.find((pkg) => pkg.name === "wasmtime").version = version;
     assert.throws(

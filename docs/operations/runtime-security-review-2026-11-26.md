@@ -49,6 +49,23 @@ References: [libz-sys](https://rustsec.org/advisories/RUSTSEC-2026-0544.html),
 [WASI Windows](https://rustsec.org/advisories/RUSTSEC-2026-0587.html),
 [chrono](https://rustsec.org/advisories/RUSTSEC-2026-0543.html).
 
+Runner inputs now select Wasmtime/WASI36.0.22 and url2.5.9. Cargo generated
+the lock from the verified canonical source; the complete426-registry-package
+scan has zero findings/unresolved packages. The upstream default-feature choice,
+explicit feature list, compiler, source commit and isolated cache behavior stay
+unchanged. Negative tests reject36.0.20 and36.0.21. Both-OS native compilation
+and artifact verification are separate follow-up evidence, not implied by this
+lock scan. Prisma/Javy findings above remain unresolved; a changed SQLite
+advisory payload is also rejected by the existing reviewed-payload guard.
+
+At checkpoint8ec195e, isolated Debian Node24.22.3 native/client/SQLite checks
+and both PostgreSQL17.12/18.7 compatibility jobs passed. Fresh esbuild builds
+on both OS hosts agree on both target executable hashes with zero Go scan
+findings. Downloaded ZIPs and their contained receipts, inputs and job logs
+were independently bound to the exact checkpoint. These are isolated
+compatibility results using the previously verified native pair, not new
+Prisma security fixes or current Render runtime proof.
+
 No old native binary becomes patched because its recipe or a version string is
 edited. New locked inputs need real compilation, regression tests and artifact
 binding before adoption. Existing original13 source/native/provider/compiler

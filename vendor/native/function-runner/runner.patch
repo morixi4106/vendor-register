@@ -24,7 +24,7 @@ index 2b69892..3d8f408 100644
  
  [dependencies]
 -wasmtime = { version = "=36.0.14", default-features = false, features = [
-+wasmtime = { version = "=36.0.20", default-features = false, features = [
++wasmtime = { version = "=36.0.22", default-features = false, features = [
    "addr2line",
    "all-arch",
    "async",
@@ -33,7 +33,7 @@ index 2b69892..3d8f408 100644
    "winch",
  ] }
 -wasmtime-wasi = "=36.0.14"
-+wasmtime-wasi = "=36.0.20"
++wasmtime-wasi = "=36.0.22"
  deterministic-wasi-ctx = "=3.0.1"
  anyhow = "1.0"
  clap = { version = "4.5", features = ["derive"] }
