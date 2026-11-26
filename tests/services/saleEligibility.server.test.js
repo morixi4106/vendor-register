@@ -196,6 +196,70 @@ test("valid international general goods remain eligible without cosmetics eviden
   assert.equal(result.status, "ELIGIBLE");
 });
 
+test("domestic mode blocks foreign destinations across every sales channel without deleting international configuration", () => {
+  const product = internationalReadyPlatformProduct();
+  const original = structuredClone(product);
+  for (const salesChannel of Object.values(SALE_ELIGIBILITY_CHANNEL)) {
+    for (const enabledThirdParty of [false, true]) {
+      const result = evaluateSaleEligibilitySnapshot({
+        product,
+        destinationCountry: " us ",
+        salesChannel,
+        env: {
+          PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT",
+          PUBLIC_DRAFT_ORDER_CHECKOUT_ENABLED: String(enabledThirdParty),
+        },
+      });
+      assert.equal(result.allowed, false, salesChannel);
+      assert.ok(result.reasonCodes.includes("INTERNATIONAL_SALES_DISABLED"));
+    }
+  }
+  assert.deepEqual(product, original);
+});
+
+test("international stop and domestic mode invalidate country projections independently", () => {
+  const options = {
+    product: internationalReadyPlatformProduct(),
+    destinationCountry: "US",
+    salesChannel: SALE_ELIGIBILITY_CHANNEL.SHOPIFY_STANDARD_CHECKOUT,
+    evaluatedAt: new Date("2026-11-26T00:00:00Z"),
+    env: { PLATFORM_DIRECT_CHECKOUT_MODE: "MARKETPLACE_VALIDATED" },
+  };
+  const international = evaluateSaleEligibilitySnapshot(options);
+  const stopped = evaluateSaleEligibilitySnapshot({
+    ...options,
+    operationalControl: { internationalShippingHold: true },
+  });
+  const domestic = evaluateSaleEligibilitySnapshot({
+    ...options,
+    env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+  });
+  assert.equal(international.allowed, true);
+  assert.equal(stopped.allowed, false);
+  assert.ok(stopped.reasonCodes.includes("INTERNATIONAL_SHIPPING_STOP_ACTIVE"));
+  assert.notEqual(international.inputHash, stopped.inputHash);
+  assert.notEqual(international.inputHash, domestic.inputHash);
+  const unreviewed = evaluateSaleEligibilitySnapshot({
+    ...options,
+    product: internationalReadyPlatformProduct({ complianceEvidence: [] }),
+  });
+  assert.equal(unreviewed.allowed, false);
+});
+
+test("domestic mode and international-only stop preserve Japanese checkout and countryless publication", () => {
+  for (const destinationCountry of ["JP", null]) {
+    const result = evaluateSaleEligibilitySnapshot({
+      product: platformProduct(),
+      destinationCountry,
+      env: { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" },
+      operationalControl: { internationalShippingHold: true },
+    });
+    assert.equal(result.allowed, true);
+    assert.ok(!result.reasonCodes.includes("INTERNATIONAL_SALES_DISABLED"));
+    assert.ok(!result.reasonCodes.includes("INTERNATIONAL_SHIPPING_STOP_ACTIVE"));
+  }
+});
+
 test("sale eligibility input hash ignores unrelated Product.updatedAt changes", () => {
   const base = platformProduct({
     updatedAt: new Date("2026-07-01T00:00:00.000Z"),

@@ -16,6 +16,36 @@ PLATFORM_DIRECT_CHECKOUT_MODE=SHOPIFY_STANDARD_DIRECT
 An unknown value, a missing value, or any enabled third-party commerce flag
 falls back to `MARKETPLACE_VALIDATED`.
 
+## Initial Domestic Scope (2026-11-26)
+
+The owner selected Japan-only initial sales, with international functionality
+retained for a later controlled switch. Use the existing mode above; do not add
+a second boolean that can disagree with it. Selecting standard direct mode
+blocks non-JP destinations in every application sale-eligibility channel and
+the carrier callback, even when an old product still has international data or
+an accidentally enabled third-party flag makes standard checkout unready.
+The independent international shipping stop also blocks foreign eligibility.
+Both controls participate in the projection input hash, preventing stale
+country eligibility from being reused after a switch.
+
+These application checks do not control Shopify's manual/free shipping rates,
+other carrier services, Markets, or an already active Shopify Function. Before
+domestic launch, obtain fresh complete native Markets/delivery-profile and DB
+observations proving JP-only scope. Foreign Markets, foreign/rest-of-world
+zones, unknown/incomplete inventory or international DB configuration block
+domestic readiness. Do not label the store domestic merely by changing this
+environment variable. Preserve overseas source/evidence/configuration history;
+review which configuration must remain inactive for launch rather than deleting
+international features.
+
+For a later international switch, select `MARKETPLACE_VALIDATED` only through
+an approved configuration/release change, then complete the country allowlist,
+shipping, market/product evidence and strict active checkout-validation/live
+proof requirements. Selecting the mode is not an authorization or proof of
+international readiness. Do not enable a Market, release a Function, charge a
+customer, or resume monitoring emails automatically as part of the switch.
+Unverified international countries and routes remain blocked.
+
 ## Ownership boundaries
 
 Shopify is the source of truth for:

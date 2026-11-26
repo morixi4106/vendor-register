@@ -97,7 +97,11 @@ test("a real timed-out child is killed and subsequent checks still complete", ()
         ++calls === 1
           ? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"
           : "";
-      return spawnSync(command, ["-e", source], { ...options, timeout: 200 });
+      // Only the deliberately hung child needs the short kill deadline.
+      return spawnSync(command, ["-e", source], {
+        ...options,
+        timeout: calls === 1 ? 200 : Math.min(options.timeout, 5000),
+      });
     },
   });
   assert.equal(calls, 4);

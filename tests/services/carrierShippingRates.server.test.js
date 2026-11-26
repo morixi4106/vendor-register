@@ -50,6 +50,45 @@ function createCarrierRequest(overrides = {}) {
   };
 }
 
+test("domestic checkout rejects foreign carrier quotes before product lookup and returns no rates", async () => {
+  const env = { PLATFORM_DIRECT_CHECKOUT_MODE: "SHOPIFY_STANDARD_DIRECT" };
+  const prismaClient = {
+    product: { findMany: async () => assert.fail("foreign product lookup") },
+  };
+  const body = createCarrierRequest({ rate: { destination: { country: "US" } } });
+  const result = await validateCarrierEuDeliveryPolicy({
+    quoteRequest: buildCarrierShippingV2QuoteRequest(body),
+    prismaClient,
+    env,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "international_sales_disabled");
+  const domestic = await validateCarrierEuDeliveryPolicy({
+    quoteRequest: buildCarrierShippingV2QuoteRequest(createCarrierRequest()),
+    prismaClient,
+    env,
+  });
+  assert.equal(domestic.ok, true);
+  const action = createCarrierShippingRatesAction({
+    env,
+    prismaClient,
+    resolveCarrierFulfillmentOwnershipImpl: async (args) => {
+      assert.equal(args.env, env);
+      return passThroughOwnershipResolution(args);
+    },
+    fetchShippingV2QuoteImpl: async () => assert.fail("foreign rate calculation"),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  const response = await action({
+    request: new Request("https://example.com/carrier/shipping-rates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  });
+  assert.deepEqual(await response.json(), { rates: [] });
+});
+
 test("carrier shipping rates converts Shopify destination and items to Shipping V2 quote input", () => {
   const quoteRequest = buildCarrierShippingV2QuoteRequest(
     createCarrierRequest(),

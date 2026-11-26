@@ -20,6 +20,7 @@ import {
   JAPAN_POST_AIR_PACKET_RATE_VERSION,
 } from "./japanPostAirPacket.server.js";
 import { getPlatformOperationalControl } from "./operationalReadiness.server.js";
+import { inspectPlatformDirectCheckoutMode } from "./platformDirectCheckoutMode.server.js";
 import {
   SALE_ELIGIBILITY_CHANNEL,
   evaluateSaleEligibilitySnapshot,
@@ -288,6 +289,7 @@ function findCarrierLineProducts(products, line) {
 export async function resolveCarrierFulfillmentOwnership({
   quoteRequest,
   prismaClient = prisma,
+  env = process.env,
 } = {}) {
   const lines = Array.isArray(quoteRequest?.orderLike?.lines)
     ? quoteRequest.orderLike.lines
@@ -418,6 +420,7 @@ export async function resolveCarrierFulfillmentOwnership({
       destinationCountry,
       salesChannel: SALE_ELIGIBILITY_CHANNEL.CARRIER_SERVICE,
       operationalControl,
+      env,
     });
     if (!saleEligibility.allowed) {
       saleEligibilityFailures.push({
@@ -471,6 +474,7 @@ export async function resolveCarrierFulfillmentOwnership({
 export async function validateCarrierInternationalDeliveryPolicy({
   quoteRequest,
   prismaClient = prisma,
+  env = process.env,
 } = {}) {
   const countryCode = normalizeCountryCode(
     quoteRequest?.shippingAddress?.countryCode ||
@@ -482,6 +486,16 @@ export async function validateCarrierInternationalDeliveryPolicy({
       ok: true,
       reason: null,
       checked: false,
+    };
+  }
+
+  if (inspectPlatformDirectCheckoutMode(env).standardDirectRequested) {
+    return {
+      ok: false,
+      reason: "international_sales_disabled",
+      checked: true,
+      countryCode,
+      productCount: 0,
     };
   }
 
@@ -952,6 +966,7 @@ export function createCarrierShippingRatesAction({
   fetchShippingV2QuoteImpl = fetchShippingV2Quote,
   resolveCarrierFulfillmentOwnershipImpl = resolveCarrierFulfillmentOwnership,
   prismaClient = prisma,
+  env = process.env,
   logInfo = console.log,
   logError = console.error,
 } = {}) {
@@ -1038,6 +1053,7 @@ export function createCarrierShippingRatesAction({
       ownershipResolution = await resolveCarrierFulfillmentOwnershipImpl({
         quoteRequest,
         prismaClient,
+        env,
       });
     } catch (error) {
       logError?.("carrier shipping rates ownership lookup failed:", {
@@ -1136,6 +1152,7 @@ export function createCarrierShippingRatesAction({
         await validateCarrierInternationalDeliveryPolicy({
           quoteRequest,
           prismaClient,
+          env,
         });
 
       if (!internationalDeliveryPolicy.ok) {

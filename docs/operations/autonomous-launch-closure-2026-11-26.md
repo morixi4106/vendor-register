@@ -5,6 +5,33 @@ launch readiness, without asking for another "next" after every small step.
 This does not authorize publication, financial actions, access changes,
 notification resumption or weaker admission gates.
 
+## Latest Owner Scope
+
+The owner answered the country question: keep international sales switchable,
+but exclude overseas destinations from the initial launch. Initial scope is
+Japan-only platform-direct sales, not the earlier overseas-from-day-one plan.
+International code and strict country/proof requirements remain in place for a
+future explicitly approved switch. International-only proof work is not a
+domestic prerequisite when fresh native/DB observations prove domestic scope.
+
+Standard direct mode now rejects foreign sale eligibility across all seven
+channels and foreign carrier quotes. An international shipping hold is also a
+hard foreign-sale blocker. Projection hashes bind both controls; neither a
+stale overseas product profile nor a conflicting third-party flag can reopen
+foreign application sales. Existing validated-mode compliance checks remain.
+This is application code, not proof of changed Shopify Markets or deployment.
+See [domestic switch boundaries](../platform-direct-standard-checkout.md).
+
+Domestic-change verification:74 focused tests pass; full1721 tests include
+1712 passes,0 failures and9 existing Windows skips. Lint, encoding,
+architecture, app build and audit tests pass (187/0/3, coverage98.71/92.60/98.61).
+Initial full-suite attempts retained failures from a pre-existing200ms deadline
+also imposed on healthy maintenance-test children; only that fixture now keeps
+the hung child at200ms and allows bounded healthy startup. Production deadlines
+are unchanged. One overlapping build/test attempt also hit Effect's unchanged
+8-second outer bound; its isolated and final full-suite checks pass. Failure
+logs are retained privately, not erased or relabeled.
+
 ## Current Repairs
 
 - Javy selects Wasmtime/WASI48.0.10 and50.0.3, and url2.5.9. Both JIT-debug
