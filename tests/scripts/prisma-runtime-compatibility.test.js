@@ -51,7 +51,7 @@ test("runtime image uses the exact application base and system-package prefix, w
   const recipe = read("tests/fixtures/prisma/runtime.Dockerfile");
   assert.match(
     PRISMA_RUNTIME_BASE,
-    /^node:24\.22\.1-bookworm-slim@sha256:[a-f0-9]{64}$/,
+    /^node:24\.22\.3-bookworm-slim@sha256:[a-f0-9]{64}$/,
   );
   assert.equal(
     verifyPrismaRuntimeRecipe(recipe, read("Dockerfile")),

@@ -5,17 +5,17 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 export const PRISMA_LAB_IMAGE =
-  "postgres:17.11@sha256:996e9dc583ba9f0265a2c75547a9c95fb22c251e394749cab205a0a00e1856a1";
+  "postgres:17.12@sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf";
 export const PRISMA_LAB_DATABASES = Object.freeze([
   Object.freeze({
     image: PRISMA_LAB_IMAGE,
-    serverVersionNum: 170011,
+    serverVersionNum: 170012,
     hbaFile: "/var/lib/postgresql/data/pg_hba.conf",
   }),
   Object.freeze({
     image:
-      "postgres:18.6-bookworm@sha256:02fb3245e038f33536cf13bc6c4e59f21d07b0cea3c1fe1c07c6e8aa8f083bcc",
-    serverVersionNum: 180006,
+      "postgres:18.7-bookworm@sha256:e742a2668255221388004f3a42b6150a2103f5054ab3a4a93ae9e4f01e551c35",
+    serverVersionNum: 180007,
     hbaFile: "/var/lib/postgresql/18/docker/pg_hba.conf",
   }),
 ]);

@@ -6,7 +6,8 @@ storefront, transactions, access settings and notification policy stay unchanged
 ## Observed Target
 
 The owner-provided November11 Shell screenshot reports Node24.13.1, bundled
-OpenSSL3.5.5, N-API10, Linux/x64 and glibc2.36. Candidate Node is pinned24.22.1.
+OpenSSL3.5.5, N-API10, Linux/x64 and glibc2.36. Candidate Node is now pinned24.22.3
+after the November26 recheck; the earlier candidate was24.22.1.
 This is selected Shell process output, not independent application-release/hash,
 all-worker, OS distribution, system OpenSSL or database evidence. The last
 read-only service metadata used native Node, not the repository Dockerfile.

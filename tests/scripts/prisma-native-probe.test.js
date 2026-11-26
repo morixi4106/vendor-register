@@ -284,7 +284,7 @@ test("TLS lab accepts only an exact CI service container with the immutable synt
       }),
       /arguments_invalid/,
     );
-  assert.match(PRISMA_LAB_IMAGE, /^postgres:17\.11@sha256:[a-f0-9]{64}$/);
+  assert.match(PRISMA_LAB_IMAGE, /^postgres:17\.12@sha256:[a-f0-9]{64}$/);
 });
 
 test("TLS evidence rejects absent certificates, forged manifests and private-path aliases", (t) => {
@@ -306,7 +306,7 @@ test("TLS evidence rejects absent certificates, forged manifests and private-pat
     path.join(lab, "manifest.json"),
     JSON.stringify({
       image: PRISMA_LAB_IMAGE,
-      serverVersionNum: 170011,
+      serverVersionNum: 170012,
       hostname: "localhost",
       plaintextRejected: true,
       productionApproved: false,
@@ -324,14 +324,14 @@ test("TLS lab binds both database majors to exact images, server versions and da
       entry.hbaFile,
     ]),
     [
-      [170011, "/var/lib/postgresql/data/pg_hba.conf"],
-      [180006, "/var/lib/postgresql/18/docker/pg_hba.conf"],
+      [170012, "/var/lib/postgresql/data/pg_hba.conf"],
+      [180007, "/var/lib/postgresql/18/docker/pg_hba.conf"],
     ],
   );
   assert.equal(PRISMA_LAB_DATABASES[0].image, PRISMA_LAB_IMAGE);
   assert.match(
     PRISMA_LAB_DATABASES[1].image,
-    /^postgres:18\.6-bookworm@sha256:[a-f0-9]{64}$/,
+    /^postgres:18\.7-bookworm@sha256:[a-f0-9]{64}$/,
   );
   const f = fixture(t),
     root = path.join(f.root, "repo");
@@ -347,6 +347,8 @@ test("TLS lab binds both database majors to exact images, server versions and da
     };
     for (const changed of [
       { ...manifest, serverVersionNum: undefined },
+      { ...manifest, serverVersionNum: 170011 },
+      { ...manifest, serverVersionNum: 180006 },
       { ...manifest, serverVersionNum: 180005 },
       {
         ...manifest,
@@ -698,7 +700,7 @@ test("native workflow has no production settings and keeps every probe as an ind
   assert.deepEqual(workflow.permissions, { contents: "read" });
   assert.equal(workflow.on.schedule, undefined);
   const pg = workflow.jobs["linux-postgres"].services.postgres;
-  assert.match(pg.image, /^postgres:17\.11@sha256:[a-f0-9]{64}$/);
+  assert.match(pg.image, /^postgres:17\.12@sha256:[a-f0-9]{64}$/);
   assert.equal(pg.env.POSTGRES_HOST_AUTH_METHOD, "scram-sha-256");
   assert.equal(pg.env.POSTGRES_INITDB_ARGS, "--auth-host=scram-sha-256");
   assert.deepEqual(pg.ports, ["5432/tcp"]);

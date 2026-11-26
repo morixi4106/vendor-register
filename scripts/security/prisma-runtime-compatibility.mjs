@@ -16,7 +16,7 @@ import { assertNodeRuntime, evaluateNodeRuntime } from "./node-runtime.mjs";
 import { rustBuildEnvironment } from "./rust-toolchain.mjs";
 
 export const PRISMA_RUNTIME_BASE =
-  "node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c";
+  "node:24.22.3-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530";
 const LIBRARIES = [
   "libssl.so.3",
   "libcrypto.so.3",

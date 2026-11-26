@@ -106,7 +106,7 @@ test("all Node setup workflows use the exact version policy and no floating acti
   );
   assert.match(
     read("Dockerfile"),
-    /^FROM node:24\.22\.1-bookworm-slim@sha256:[a-f0-9]{64}/,
+    /^FROM node:24\.22\.3-bookworm-slim@sha256:[a-f0-9]{64}/,
   );
   assert.match(read("Dockerfile"), /npm run build:production/);
   assert.match(

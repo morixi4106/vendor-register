@@ -1,5 +1,20 @@
 # Production dependency advisories
 
+## November Runtime Recheck: 2026-11-26
+
+PHP's November19 security releases are genuine, but no PHP usage was identified
+in the scoped application/PC inventory. Candidate Node is upgraded to signed
+24.22.3 and isolated PostgreSQL images to17.12/18.7. Effect3.22.1 fixes the fresh
+ReDoS finding without a Prisma/session-storage downgrade. PC Node/Python/.NET
+updates are separate from actual production execution; provider metadata alone
+does not attest its Node executable or PostgreSQL minor version.
+
+[Evidence, sources, applicability and remaining native findings](operations/runtime-security-review-2026-11-26.md).
+Fresh Rust locks also reveal libz-sys/url/Wasmtime/WASI vulnerabilities and
+chrono/humantime maintenance notices. OpenSSL November Low source fixes are
+scheduled for packaged release December1. Those are not claimed applied or
+waived. Native/whole-source/provider/production approval remains false.
+
 ## Runtime Package Native Admission: 2026-11-11
 
 The incident check inspects the build tree, while runtime packaging installs a

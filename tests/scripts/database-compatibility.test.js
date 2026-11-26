@@ -367,7 +367,7 @@ test("database receipts reject missing tests, drift, partial migrations, swapped
     clientVersion: "6.19.3",
     postgres: {
       image: PRISMA_LAB_DATABASES[0].image,
-      serverVersionNum: 170011,
+      serverVersionNum: 170012,
       encrypted: true,
       tlsVersion: "TLSv1.3",
     },

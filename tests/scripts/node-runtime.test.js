@@ -30,10 +30,11 @@ test("old, unknown, prerelease and different major Nodes are not approved", () =
   for (const version of [
     "24.13.1",
     "24.22.0",
+    "24.22.1",
     "24.22.2",
-    "24.22.1-rc.1",
+    "24.22.3-rc.1",
     "26.12.1",
-    "v24.22.1",
+    "v24.22.3",
     null,
   ])
     assert.equal(evaluateNodeRuntime({ ...observed, version }).ok, false);
