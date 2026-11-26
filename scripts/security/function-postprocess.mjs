@@ -22,6 +22,14 @@ export const OPTIMIZER_FLAGS = [
   "--strip-debug",
 ];
 
+export function verifyOptimizerNode(report, policy) {
+  assert.equal(evaluateNodeRuntime(report.node, policy).ok, true);
+  assert.equal(report.node.platform, "linux");
+  assert.equal(report.node.arch, "x64");
+  assert.equal(report.nodeSha256, report.node.sha256);
+  return true;
+}
+
 export function postprocessOptions(
   args,
   env = process.env,
@@ -597,16 +605,9 @@ export async function postprocessFunctions(root = ROOT) {
         /^(invalid|truncated-)/.test(command.name) ? 1 : 0,
       );
     }
-    assert.equal(
-      evaluateNodeRuntime(
-        report.node,
-        JSON.parse(regular(path.join(root, "security/node-runtime.json"))),
-      ).ok,
-      true,
-    );
-    assert.equal(
-      report.nodeSha256,
-      "e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb",
+    verifyOptimizerNode(
+      report,
+      JSON.parse(regular(path.join(root, "security/node-runtime.json"))),
     );
     assert.equal(report.candidates.length, 2);
     for (const c of candidates) {

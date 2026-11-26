@@ -11,6 +11,7 @@ import {
   validatePostprocessPolicy,
   optimizerCreateArguments,
   verifyOptimizerContainer,
+  verifyOptimizerNode,
   observeFunctionWasm,
   downloadOptimizer,
 } from "../../scripts/security/function-postprocess.mjs";
@@ -27,6 +28,35 @@ const settings = {
   work: "/tmp/lab/work",
   container: "3".repeat(64),
 };
+
+test("optimizer Node identity follows the approved Linux executable and rejects stale or inconsistent hashes", () => {
+  const nodePolicy = JSON.parse(read("security/node-runtime.json"));
+  const hash = nodePolicy.artifacts["linux-x64"].executableSha256;
+  const report = {
+    node: {
+      version: nodePolicy.version,
+      platform: "linux",
+      arch: "x64",
+      sha256: hash,
+    },
+    nodeSha256: hash,
+  };
+  assert.equal(verifyOptimizerNode(report, nodePolicy), true);
+  for (const mutate of [
+    (r) => (r.node.version = "24.22.1"),
+    (r) => (r.node.sha256 = "0".repeat(64)),
+    (r) => (r.nodeSha256 = "0".repeat(64)),
+    (r) => {
+      r.node.platform = "win32";
+      r.node.sha256 = nodePolicy.artifacts["win32-x64"].executableSha256;
+      r.nodeSha256 = r.node.sha256;
+    },
+  ]) {
+    const changed = structuredClone(report);
+    mutate(changed);
+    assert.throws(() => verifyOptimizerNode(changed, nodePolicy));
+  }
+});
 
 test("postprocessing is argument-free Linux CI only, with no supplied URL, tool or publication option", () => {
   const ci = { CI: "true", GITHUB_ACTIONS: "true" };
